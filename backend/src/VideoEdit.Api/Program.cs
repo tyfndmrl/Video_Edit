@@ -273,6 +273,7 @@ try
     app.MapAuthEndpoints();
     app.MapProjectEndpoints();
     app.MapAssetEndpoints();
+    app.MapExportEndpoints();
 
     app.Run();
     return 0;

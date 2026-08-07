@@ -102,6 +102,24 @@ public sealed class FfmpegTestMediaFixture : IDisposable
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
     ]);
 
+    /// <summary>
+    /// 2 sn, 320×240 @30fps HAREKETLİ sentetik kaynak + 440 Hz sinüs — GOLDEN FRAME kaynağı.
+    /// testsrc2 deterministiktir (sistem fontu/freetype KULLANMAZ — desenler gömülüdür) ve her
+    /// karesi farklıdır; statik smptebars'ın aksine kesim sınırındaki ±1 frame kaymaları golden
+    /// karşılaştırmasında GÖRÜNÜR (rendering-semantics §9.2 n_cut-1/n_cut örneklemesi bunun
+    /// üstüne kuruludur).
+    /// </summary>
+    public string Video320x240Moving2sWithAudio() => GetOrCreate("moving2s.mp4",
+    [
+        "-y",
+        "-f", "lavfi", "-i", "testsrc2=duration=2:size=320x240:rate=30",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+        "-af", "volume=5",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", "48000",
+        "-shortest",
+    ]);
+
     /// <summary>3 sn 440 Hz sinüs WAV (audio-only asset senaryosu).</summary>
     public string AudioWav() => GetOrCreate("tone.wav",
     [

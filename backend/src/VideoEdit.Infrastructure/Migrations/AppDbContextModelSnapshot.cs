@@ -342,6 +342,10 @@ namespace VideoEdit.Infrastructure.Migrations
                     b.Property<string>("ErrorMessage")
                         .HasColumnType("text");
 
+                    b.Property<string>("ExportProfile")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
                     b.Property<string>("HangfireJobId")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");

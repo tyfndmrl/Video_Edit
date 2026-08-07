@@ -164,6 +164,92 @@ describe('autosave deferTimers (transaction-aware, finding 8)', () => {
   });
 });
 
+describe('autosave saveNow (ExportDialog flush)', () => {
+  it('resolves immediately without a request when nothing is unsaved', async () => {
+    const h = makeHarness({ auto: { type: 'ok', revisionNumber: 6 } });
+    const state = await h.controller.saveNow();
+    expect(state.status).toBe('idle');
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('dirty: fires the save immediately (no debounce wait) and resolves as saved', async () => {
+    const h = makeHarness({ auto: { type: 'ok', revisionNumber: 6 } });
+    h.controller.noteChange();
+    expect(h.calls).toHaveLength(0); // debounce has not elapsed
+    const state = await h.controller.saveNow();
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0].baseRevision).toBe(5);
+    expect(state.status).toBe('saved');
+    expect(state.revision).toBe(6);
+  });
+
+  it('saving: waits for the in-flight request to land', async () => {
+    const h = makeHarness({ auto: null }); // manual resolution
+    h.controller.noteChange();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(h.controller.getState().status).toBe('saving');
+
+    let settled: AutosaveState | null = null;
+    void h.controller.saveNow().then((s) => {
+      settled = s;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBeNull(); // still in flight
+    expect(h.calls).toHaveLength(1); // saveNow must NOT start a second request
+
+    h.calls[0].resolve({ type: 'ok', revisionNumber: 6 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).not.toBeNull();
+    expect((settled as unknown as AutosaveState).status).toBe('saved');
+  });
+
+  it('saving + newly dirty: waits until the follow-up save persists the latest snapshot', async () => {
+    const h = makeHarness({ auto: null });
+    h.controller.noteChange();
+    await vi.advanceTimersByTimeAsync(2_000);
+    h.controller.noteChange(); // dirty again while in flight
+
+    let settled: AutosaveState | null = null;
+    void h.controller.saveNow().then((s) => {
+      settled = s;
+    });
+
+    h.calls[0].resolve({ type: 'ok', revisionNumber: 6 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBeNull(); // follow-up save for the latest snapshot is in flight
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1].baseRevision).toBe(6);
+
+    h.calls[1].resolve({ type: 'ok', revisionNumber: 7 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).not.toBeNull();
+    expect((settled as unknown as AutosaveState).status).toBe('saved');
+    expect((settled as unknown as AutosaveState).revision).toBe(7);
+  });
+
+  it('save failure: resolves with the error state right away (no retry wait)', async () => {
+    const h = makeHarness({ auto: { type: 'error', message: 'boom' } });
+    h.controller.noteChange();
+    const state = await h.controller.saveNow();
+    expect(state.status).toBe('error');
+    expect(state.errorMessage).toBe('boom');
+    expect(h.calls).toHaveLength(1); // resolved before the 5 s retry re-fires
+  });
+
+  it('conflict: resolves immediately with the conflict state and never saves', async () => {
+    const h = makeHarness({
+      auto: { type: 'conflict', revisionNumber: 9, timeline: { fake: 'doc' } },
+    });
+    h.controller.noteChange();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(h.controller.getState().status).toBe('conflict');
+
+    const state = await h.controller.saveNow();
+    expect(state.status).toBe('conflict');
+    expect(h.calls).toHaveLength(1); // only the save that DISCOVERED the conflict
+  });
+});
+
 describe('autosave errors', () => {
   it('marks error and retries after the retry interval', async () => {
     let failFirst = true;

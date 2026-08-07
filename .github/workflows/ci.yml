@@ -82,6 +82,19 @@ jobs:
           # MinIO service container ayakta -> [MinioFact] testleri kosar.
           MINIO_AVAILABLE: "1"
 
+      # Golden/snapshot drift kontrolu: testler golden PNG ya da export snapshot'i yeniden
+      # uretip DEGISTIRDIYSE commit'li hali bayat demektir -> CI kirmizi (uretilen fark
+      # incelemeden merge edilemez; degisiklik bilincliyse dosyalar commit'lenir).
+      - name: Golden/snapshot drift kontrolu
+        run: |
+          PATHS="backend/tests/GoldenFrames backend/tests/VideoEdit.UnitTests/ExportSnapshots"
+          if [ -n "$(git status --porcelain -- $PATHS)" ]; then
+            echo "::error::Golden/snapshot drift tespit edildi:"
+            git status --porcelain -- $PATHS
+            git diff -- $PATHS
+            exit 1
+          fi
+
       # Uretilmis C# kontratlarinin drift kontrolu.
       - name: Contracts drift kontrolu
         run: |

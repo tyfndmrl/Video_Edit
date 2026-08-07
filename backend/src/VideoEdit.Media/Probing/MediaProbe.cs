@@ -43,6 +43,12 @@ public sealed record MediaProbe
     public string? ColorTransfer { get; init; }
     public string? ColorPrimaries { get; init; }
 
+    /// <summary>color_space (matris) — export çıktı gate'i bt709 doğrular (rendering-semantics §6.1).</summary>
+    public string? ColorSpace { get; init; }
+
+    /// <summary>color_range (tv/pc) — export çıktısında tv beklenir (rendering-semantics §6.1).</summary>
+    public string? ColorRange { get; init; }
+
     /// <summary>
     /// HDR tespiti (rendering-semantics §6.2): color_trc ∈ {smpte2084, arib-std-b67}
     /// VEYA color_primaries = bt2020.

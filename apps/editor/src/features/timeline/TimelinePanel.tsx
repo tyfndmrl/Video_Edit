@@ -41,7 +41,6 @@ import {
   type TrimEdge,
   type TrimMode,
 } from '../../state/timelineOps';
-import { AutosaveIndicator } from './AutosaveIndicator';
 import { ConflictDialog } from './ConflictDialog';
 import {
   RULER_H,
@@ -828,7 +827,6 @@ export function TimelinePanel() {
               Proje yüklenemedi
             </span>
           )}
-          <AutosaveIndicator />
           <button
             type="button"
             title="Snapping (S)"

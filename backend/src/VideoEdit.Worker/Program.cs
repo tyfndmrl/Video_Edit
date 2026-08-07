@@ -63,7 +63,11 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ProcessingOpt
 
 // İş sınıfları — Hangfire DI (AspNetCoreJobActivator) scope başına çözer.
 builder.Services.AddScoped<IProcessAssetJob, ProcessAssetJob>();
+builder.Services.AddScoped<IExportJob, ExportJob>();
 builder.Services.AddScoped<AssetReaperJob>();
+
+// Export orijinal LRU cache'i (tasarım 04 §4.2) — süreç başına tek instance.
+builder.Services.AddSingleton<OriginalCache>();
 
 // Hangfire SERVER (mimar kararı 1.d: tek kuyruk mekanizması Hangfire; api yalnız client).
 // InvisibilityTimeout 2 saat: uzun transcode'lar "kayboldu" sanılıp ikinci worker'a verilmez;
@@ -95,6 +99,15 @@ builder.Services.AddHangfireServer(options =>
     // Eşzamanlı transcode sayısı = worker thread sayısı (tasarım 02 §3.1: ffmpeg'e -threads
     // sınırı konmaz, eşzamanlılık worker sayısıyla yönetilir). 2: bir transcode + bir hafif iş.
     options.WorkerCount = 2;
+});
+
+// Export kuyruğu AYRI server, WorkerCount=1: ffmpeg render'ı zaten tüm çekirdekleri kullanır;
+// paralel iki export disk/CPU'yu ikiye böler ve rezervasyon matematiğini bozar (tasarım 04 §4.3).
+builder.Services.AddHangfireServer(options =>
+{
+    options.ServerName = $"videoedit-export-{Environment.MachineName}";
+    options.Queues = ["export"];
+    options.WorkerCount = 1;
 });
 
 var host = builder.Build();

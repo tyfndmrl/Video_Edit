@@ -478,6 +478,14 @@ public sealed class AssetEndpointsTests : IDisposable
         public Task UploadFileAsync(string key, string filePath, string contentType, CancellationToken ct = default) =>
             Task.CompletedTask;
 
+        public Task UploadExportAsync(string key, string filePath, string contentType, CancellationToken ct = default)
+        {
+            Calls.Add(("upload-export", key));
+            return Task.CompletedTask;
+        }
+
+        public string PresignExportGet(string key) => $"https://fake-exports/{key}?sig=get";
+
         public Task EnsureBucketsExistAsync(CancellationToken ct = default) => Task.CompletedTask;
     }
 

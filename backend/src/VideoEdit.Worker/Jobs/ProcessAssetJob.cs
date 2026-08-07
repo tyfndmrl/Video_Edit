@@ -118,7 +118,7 @@ public sealed class ProcessAssetJob(
                 return;
             }
 
-            var progress = new ProgressWriter(db, job, clock);
+            var progress = new JobProgressWriter(db, job, clock);
 
             // ── 2) Orijinali indir (stream) — %0-15.
             var originalPath = Path.Combine(tempDir, "original" + Path.GetExtension(asset.StorageKey));
@@ -282,7 +282,7 @@ public sealed class ProcessAssetJob(
 
     private async Task ProcessVideoAsync(
         Asset asset, MediaProbe probe, string originalPath, string tempDir,
-        ProgressWriter progress, CancellationToken ct)
+        JobProgressWriter progress, CancellationToken ct)
     {
         var keys = new DerivedKeys(asset.OwnerId, asset.Id);
         var durationUs = probe.DurationUs!.Value; // gate garantiler
@@ -357,7 +357,7 @@ public sealed class ProcessAssetJob(
 
     private async Task ProcessAudioAsync(
         Asset asset, MediaProbe probe, string originalPath, string tempDir,
-        ProgressWriter progress, CancellationToken ct)
+        JobProgressWriter progress, CancellationToken ct)
     {
         var keys = new DerivedKeys(asset.OwnerId, asset.Id);
 
@@ -385,7 +385,7 @@ public sealed class ProcessAssetJob(
 
     private async Task ProcessImageAsync(
         Asset asset, MediaProbe probe, string originalPath, string tempDir,
-        ProgressWriter progress, CancellationToken ct)
+        JobProgressWriter progress, CancellationToken ct)
     {
         var keys = new DerivedKeys(asset.OwnerId, asset.Id);
 
@@ -402,24 +402,20 @@ public sealed class ProcessAssetJob(
     // ───────────────────────── Yardımcılar ─────────────────────────
 
     private async Task DownloadOriginalAsync(
-        string key, string destinationPath, ProgressWriter progress, CancellationToken ct)
+        string key, string destinationPath, JobProgressWriter progress, CancellationToken ct)
     {
         await progress.ReportAsync(0, "download", ct);
-        using var download = await storage.OpenReadAsync(key, ct);
-        await using var file = File.Create(destinationPath);
-        var buffer = new byte[256 * 1024];
-        long total = 0;
-        int read;
-        while ((read = await download.Content.ReadAsync(buffer, ct)) > 0)
-        {
-            await file.WriteAsync(buffer.AsMemory(0, read), ct);
-            total += read;
-            if (download.Length > 0)
+        // İndirme deseni ORTAK yardımcıda (OriginalDownloader) — ExportJob'un LRU cache'i de
+        // aynı yolu kullanır (.part + atomik rename).
+        await OriginalDownloader.DownloadToFileAsync(storage, key, destinationPath,
+            async (total, length, c) =>
             {
-                var percent = (int)(15 * Math.Min(total, download.Length) / download.Length);
-                await progress.ReportAsync(percent, "download", ct);
-            }
-        }
+                if (length > 0)
+                {
+                    var percent = (int)(15 * Math.Min(total, length) / length);
+                    await progress.ReportAsync(percent, "download", c);
+                }
+            }, ct);
     }
 
     /// <summary>Sıfır-dışı exit / watchdog kill → FfmpegFailedException (deterministik).</summary>
@@ -618,39 +614,4 @@ public sealed class ProcessAssetJob(
         public string FilmstripSprite(string fileName) => $"{_base}/filmstrip/{fileName}";
     }
 
-    /// <summary>
-    /// Job.ProgressPercent/ProgressStage throttle'ı: DB'ye stage değişiminde, ≥5 puan artışta
-    /// YA DA son yazımdan ≥2 dk geçince yazar (zaman koşulu: reaper'ın LastProgressAt
-    /// heartbeat'i çok yavaş ilerleyen uzun transcode'da bile taze kalsın). Her yazım
-    /// LastProgressAt'ı damgalar. Çağrılar TEK thread'den gelir (ffmpeg progress callback'i
-    /// FfmpegRunner'ın okuma döngüsünden seri await edilir) — DbContext güvenli.
-    /// </summary>
-    private sealed class ProgressWriter(AppDbContext db, Job job, TimeProvider clock)
-    {
-        public static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(2);
-
-        private int _lastWritten = int.MinValue;
-        private string? _lastStage;
-        private DateTimeOffset _lastWrittenAt = DateTimeOffset.MinValue;
-
-        public async Task ReportAsync(int percent, string stage, CancellationToken ct)
-        {
-            percent = Math.Clamp(percent, 0, 100);
-            var now = clock.GetUtcNow();
-            if (stage == _lastStage
-                && percent - _lastWritten < 5
-                && now - _lastWrittenAt < HeartbeatInterval)
-            {
-                return;
-            }
-
-            job.ProgressPercent = percent;
-            job.ProgressStage = stage;
-            job.LastProgressAt = now;
-            _lastWritten = percent;
-            _lastStage = stage;
-            _lastWrittenAt = now;
-            await db.SaveChangesAsync(ct);
-        }
-    }
 }

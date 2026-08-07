@@ -19,4 +19,9 @@
     <ProjectReference Include="..\VideoEdit.Infrastructure\VideoEdit.Infrastructure.csproj" />
     <ProjectReference Include="..\VideoEdit.Media\VideoEdit.Media.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Testler internal yüzeye erişir (ExportJob.FindSourceOutOfRange / FreeSpaceProbe). -->
+    <InternalsVisibleTo Include="VideoEdit.UnitTests" />
+  </ItemGroup>
 </Project>

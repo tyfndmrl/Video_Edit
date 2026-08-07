@@ -68,6 +68,13 @@ export interface AutosaveController {
   noteChange(): void;
   /** Force an immediate save when dirty (dev tooling / tests). */
   flush(): void;
+  /**
+   * Flush unsaved changes and WAIT until autosave is quiescent: resolves with
+   * the final state once nothing is dirty or in flight ('saved'/'idle'), or
+   * immediately-on-settle when the save ends in 'error'/'conflict' (no retry
+   * wait). Used by ExportDialog so an export renders the latest document.
+   */
+  saveNow(): Promise<AutosaveState>;
   /** Snapshot to persist on page hide, or null when there is nothing unsaved. */
   pendingSnapshot(): { baseRevision: number; doc: TimelineDoc } | null;
   /**
@@ -106,10 +113,26 @@ export function createAutosaveController(
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Pending saveNow() promises waiting for autosave to settle. */
+  let saveNowWaiters: ((finalState: AutosaveState) => void)[] = [];
 
   function emit(patch: Partial<AutosaveState>): void {
     state = { ...state, ...patch };
     deps.onState?.(state);
+  }
+
+  /**
+   * Resolve pending saveNow() promises once autosave is quiescent: nothing in
+   * flight AND (nothing dirty, or saving is pointless — conflict/error keep
+   * dirty=true on purpose and saveNow must not wait out the retry timer).
+   */
+  function settleSaveNowWaiters(): void {
+    if (saveNowWaiters.length === 0 || inFlight) return;
+    const stuck = state.status === 'conflict' || state.status === 'error';
+    if (dirty && !stuck && !disposed) return;
+    const waiters = saveNowWaiters;
+    saveNowWaiters = [];
+    for (const resolve of waiters) resolve(state);
   }
 
   function clearTimer(t: 'debounce' | 'maxWait' | 'retry'): void {
@@ -142,7 +165,10 @@ export function createAutosaveController(
     void deps.save(baseRevision, snapshot).then(
       (outcome) => {
         inFlight = false;
-        if (disposed) return;
+        if (disposed) {
+          settleSaveNowWaiters();
+          return;
+        }
         if (outcome.type === 'ok') {
           emit({
             status: dirty ? 'dirty' : 'saved',
@@ -168,10 +194,14 @@ export function createAutosaveController(
             fire();
           }, retryMs);
         }
+        settleSaveNowWaiters();
       },
       (err: unknown) => {
         inFlight = false;
-        if (disposed) return;
+        if (disposed) {
+          settleSaveNowWaiters();
+          return;
+        }
         dirty = true;
         emit({ status: 'error', errorMessage: err instanceof Error ? err.message : String(err) });
         clearTimer('retry');
@@ -179,6 +209,7 @@ export function createAutosaveController(
           retryTimer = null;
           fire();
         }, retryMs);
+        settleSaveNowWaiters();
       },
     );
   }
@@ -206,6 +237,19 @@ export function createAutosaveController(
     },
     flush() {
       fire();
+    },
+    saveNow() {
+      // Already quiescent (or stuck in conflict — saving is impossible until
+      // the user resolves it): report the current state without a round trip.
+      if (disposed || state.status === 'conflict' || (!dirty && !inFlight)) {
+        return Promise.resolve(state);
+      }
+      return new Promise<AutosaveState>((resolve) => {
+        saveNowWaiters.push(resolve);
+        // fire() is a no-op while a save is in flight — that save's completion
+        // re-fires for remaining dirty state and then settles the waiters.
+        fire();
+      });
     },
     pendingSnapshot() {
       if (!dirty && !inFlight) return null;
@@ -238,6 +282,9 @@ export function createAutosaveController(
       clearTimer('debounce');
       clearTimer('maxWait');
       clearTimer('retry');
+      // Never leave a saveNow() caller hanging (in-flight saves settle their
+      // own waiters on completion via the disposed branch above).
+      if (!inFlight) settleSaveNowWaiters();
     },
   };
 }

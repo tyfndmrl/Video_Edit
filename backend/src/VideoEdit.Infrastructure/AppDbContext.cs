@@ -91,6 +91,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options)
         builder.Entity<Job>(e =>
         {
             ConfigureNullableJson(e.Property(j => j.TimelineSnapshot), isNpgsql);
+            e.Property(j => j.ExportProfile).HasMaxLength(50);
             e.Property(j => j.ProgressStage).HasMaxLength(100);
             e.Property(j => j.OutputKey).HasMaxLength(500);
             e.Property(j => j.HangfireJobId).HasMaxLength(100);

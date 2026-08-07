@@ -58,6 +58,7 @@ public static class MediaProbeParser
             int width = 0, height = 0, fpsNum = 0, fpsDen = 0, avgNum = 0, avgDen = 0;
             var isVfr = false;
             string? colorTransfer = null, colorPrimaries = null, videoCodec = null;
+            string? colorSpace = null, colorRange = null;
             var videoIndex = -1;
 
             if (video is { } v)
@@ -97,6 +98,8 @@ public static class MediaProbeParser
 
                 colorTransfer = GetString(v, "color_transfer");
                 colorPrimaries = GetString(v, "color_primaries");
+                colorSpace = GetString(v, "color_space");
+                colorRange = GetString(v, "color_range");
             }
 
             int? sampleRate = null, channels = null;
@@ -133,6 +136,8 @@ public static class MediaProbeParser
                 AudioChannels = channels,
                 ColorTransfer = colorTransfer,
                 ColorPrimaries = colorPrimaries,
+                ColorSpace = colorSpace,
+                ColorRange = colorRange,
                 IsHdr = Recipes.ColorChain.IsHdr(colorTransfer, colorPrimaries),
                 VideoCodec = videoCodec,
                 AudioCodec = audioCodec,

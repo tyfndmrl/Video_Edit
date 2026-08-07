@@ -68,6 +68,10 @@ services:
       - R2__SecretAccessKey=${R2_SECRET_ACCESS_KEY}
       - R2__Bucket=${R2_BUCKET}
       - R2__ExportsBucket=${R2_EXPORTS_BUCKET}
+      # Export orijinal LRU cache'i kalici worker_data volume'unda yasar (tasarim 04 §4.2).
+      # Bos birakilirsa container-ici temp'e duser: her restart'ta cache kaybolur ve ayni
+      # projeyi tekrar export eden kullanici icin GB'larca indirme tekrarlanir.
+      - Processing__CacheDirectory=/data/cache
     volumes:
       - worker_data:/data # scratch + asset LRU cache
     depends_on:

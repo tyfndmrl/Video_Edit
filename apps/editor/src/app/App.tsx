@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from './queryClient';
+import { TopBar } from './TopBar';
 import { LoginGate } from '../features/auth/LoginGate';
 import { LibraryPanel } from '../features/library/LibraryPanel';
 import { PlayerPanel } from '../features/player/PlayerPanel';
@@ -12,8 +13,10 @@ import { useEditorStore } from '../state/editorStore';
 import { closeProject, openProject } from '../state/projectSession';
 
 /**
- * Editor shell — 4-panel CSS grid layout:
+ * Editor shell — top bar + 4-panel CSS grid layout:
  *
+ *   +---------------------------------------+
+ *   |                Top bar                |
  *   +----------+----------------+-----------+
  *   | Library  |     Player     | Inspector |
  *   |          +----------------+           |
@@ -25,17 +28,20 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <LoginGate>
         <EditorBoot />
-        <div className="grid h-full grid-cols-[280px_minmax(0,1fr)_320px] grid-rows-[minmax(0,1fr)_280px] bg-surface-0">
-          <aside className="row-span-2 min-h-0 border-r border-edge bg-surface-1">
+        <div className="grid h-full grid-cols-[280px_minmax(0,1fr)_320px] grid-rows-[auto_minmax(0,1fr)_280px] bg-surface-0">
+          <div className="col-span-3">
+            <TopBar />
+          </div>
+          <aside className="row-span-2 row-start-2 min-h-0 border-r border-edge bg-surface-1">
             <LibraryPanel />
           </aside>
-          <main className="min-h-0 bg-surface-0">
+          <main className="col-start-2 row-start-2 min-h-0 bg-surface-0">
             <PlayerPanel />
           </main>
-          <aside className="row-span-2 col-start-3 min-h-0 border-l border-edge bg-surface-1">
+          <aside className="col-start-3 row-span-2 row-start-2 min-h-0 border-l border-edge bg-surface-1">
             <InspectorPanel />
           </aside>
-          <section className="col-start-2 min-h-0 border-t border-edge bg-surface-1">
+          <section className="col-start-2 row-start-3 min-h-0 border-t border-edge bg-surface-1">
             <TimelinePanel />
           </section>
         </div>

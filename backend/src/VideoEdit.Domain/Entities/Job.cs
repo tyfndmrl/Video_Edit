@@ -19,6 +19,9 @@ public class Job
     /// <summary>Export: iş anındaki timeline'ın gömülü kopyası (jsonb).</summary>
     public JsonDocument? TimelineSnapshot { get; set; }
 
+    /// <summary>Export çıktı profili adı ("1080p" — ExportProfiles.TryParse ile çözülür).</summary>
+    public string? ExportProfile { get; set; }
+
     public Guid RequestedBy { get; set; }
 
     public int ProgressPercent { get; set; }
@@ -44,7 +47,8 @@ public class Job
     public DateTimeOffset? LastProgressAt { get; set; }
 
     public static Job Create(JobType type, Guid requestedBy, DateTimeOffset nowUtc,
-        Guid? assetId = null, Guid? projectId = null, JsonDocument? timelineSnapshot = null) => new()
+        Guid? assetId = null, Guid? projectId = null, JsonDocument? timelineSnapshot = null,
+        string? exportProfile = null) => new()
     {
         Id = Guid.CreateVersion7(),
         Type = type,
@@ -52,6 +56,7 @@ public class Job
         AssetId = assetId,
         ProjectId = projectId,
         TimelineSnapshot = timelineSnapshot,
+        ExportProfile = exportProfile,
         RequestedBy = requestedBy,
         CreatedAt = nowUtc,
     };

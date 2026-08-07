@@ -22,6 +22,18 @@ public sealed class R2StorageService : IStorageService, IDisposable
     /// <summary>Presigned GET ömrü — media-urls toplu yanıtıyla birlikte 12 saat (tasarım 02 §4).</summary>
     public static readonly TimeSpan GetUrlLifetime = TimeSpan.FromHours(12);
 
+    /// <summary>Export indirme URL ömrü (tasarım 04 §4.2: presigned GET 24h).</summary>
+    public static readonly TimeSpan ExportGetUrlLifetime = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// Bu boyutun ÜSTÜNDEKİ export çıktısı multipart ile yüklenir (tasarım 04 §4.2: upload
+    /// multipart olmalı; tek dev PutObject uzun timeout + baştan-yükleme riskleri taşır).
+    /// </summary>
+    public const long MultipartExportThresholdBytes = 256L * 1024 * 1024;
+
+    /// <summary>Export multipart part boyutu — R2 eşit-part kuralına uygun sabit (son part kalan).</summary>
+    public const long ExportPartSizeBytes = 64L * 1024 * 1024;
+
     private readonly AmazonS3Client _s3;
     private readonly R2Options _options;
     private readonly Protocol _presignProtocol;
@@ -228,6 +240,124 @@ public sealed class R2StorageService : IStorageService, IDisposable
             continuationToken = list.IsTruncated == true ? list.NextContinuationToken : null;
         } while (continuationToken is not null);
     }
+
+    /// <summary>Eşik kararı saf ve statik — birim testleri sabitler.</summary>
+    public static bool ShouldUseMultipartExport(long sizeBytes) => sizeBytes > MultipartExportThresholdBytes;
+
+    /// <summary>
+    /// Multipart part aralıkları (offset, length): 64 MiB eşit partlar + kalan son part
+    /// (R2 eşit-part kuralı). 1 tabanlı part numarası = listedeki sıra + 1. Saf ve statik.
+    /// </summary>
+    public static IReadOnlyList<(long Offset, long Length)> ExportPartRanges(long sizeBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sizeBytes);
+        var ranges = new List<(long, long)>();
+        for (long offset = 0; offset < sizeBytes; offset += ExportPartSizeBytes)
+        {
+            ranges.Add((offset, Math.Min(ExportPartSizeBytes, sizeBytes - offset)));
+        }
+
+        return ranges;
+    }
+
+    public async Task UploadExportAsync(string key, string filePath, string contentType, CancellationToken ct = default)
+    {
+        var bucket = RequireExportsBucket();
+        var sizeBytes = new FileInfo(filePath).Length;
+
+        // ≤256 MiB: tek PutObject yeterli (5 GiB tek-put sınırının çok altı, tek round-trip).
+        if (!ShouldUseMultipartExport(sizeBytes))
+        {
+            await _s3.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = bucket,
+                Key = key,
+                FilePath = filePath,
+                ContentType = contentType,
+            }, ct);
+            return;
+        }
+
+        // >256 MiB: multipart — uzun tek istek yerine 64 MiB partlar; hata yolunda Abort
+        // (yarım upload R2'de yetim part olarak depolama sızdırmasın).
+        var uploadId = (await _s3.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
+        {
+            BucketName = bucket,
+            Key = key,
+            ContentType = contentType,
+        }, ct)).UploadId;
+
+        try
+        {
+            var ranges = ExportPartRanges(sizeBytes);
+            var parts = new List<PartETag>(ranges.Count);
+            for (var i = 0; i < ranges.Count; i++)
+            {
+                var response = await _s3.UploadPartAsync(new UploadPartRequest
+                {
+                    BucketName = bucket,
+                    Key = key,
+                    UploadId = uploadId,
+                    PartNumber = i + 1,
+                    FilePath = filePath,
+                    FilePosition = ranges[i].Offset,
+                    PartSize = ranges[i].Length,
+                }, ct);
+                parts.Add(new PartETag(i + 1, response.ETag));
+            }
+
+            await _s3.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest
+            {
+                BucketName = bucket,
+                Key = key,
+                UploadId = uploadId,
+                PartETags = parts,
+            }, ct);
+        }
+        catch
+        {
+            try
+            {
+                await _s3.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
+                {
+                    BucketName = bucket,
+                    Key = key,
+                    UploadId = uploadId,
+                }, CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                // Abort best-effort — asıl hata yutulmaz.
+            }
+
+            throw;
+        }
+    }
+
+    public string PresignExportGet(string key) =>
+        _s3.GetPreSignedURL(new GetPreSignedUrlRequest
+        {
+            BucketName = RequireExportsBucket(),
+            Key = key,
+            Verb = HttpVerb.GET,
+            Expires = DateTime.UtcNow.Add(ExportGetUrlLifetime),
+            Protocol = _presignProtocol,
+            // Cross-origin <a download> tarayıcıda çalışmaz (same-origin şartı) — indirme,
+            // sunulan Content-Disposition ile tarayıcıda tetiklenir. Dosya adı key'deki job
+            // id'sinden türetilir (exports/{projectId}/{jobId}.mp4).
+            ResponseHeaderOverrides = new ResponseHeaderOverrides
+            {
+                ContentDisposition =
+                    $"attachment; filename=\"export-{Path.GetFileNameWithoutExtension(key)}.mp4\"",
+            },
+        });
+
+    /// <summary>Exports bucket'ı yapılandırılmadan export yüzeyi kullanılamaz — sessiz çöp key üretme.</summary>
+    private string RequireExportsBucket() =>
+        string.IsNullOrWhiteSpace(_options.ExportsBucket)
+            ? throw new InvalidOperationException(
+                "R2 exports bucket yapılandırılmamış (env: R2__ExportsBucket) — export yüzeyi kullanılamaz.")
+            : _options.ExportsBucket;
 
     public async Task EnsureBucketsExistAsync(CancellationToken ct = default)
     {

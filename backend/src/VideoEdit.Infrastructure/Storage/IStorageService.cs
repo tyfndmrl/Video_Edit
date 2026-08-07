@@ -26,9 +26,10 @@ public sealed class StorageDownload(Stream content, long length, IDisposable own
 }
 
 /// <summary>
-/// R2 (S3-uyumlu) medya bucket'ı üzerindeki depolama operasyonları.
-/// Tüm key'ler medya bucket'ına (R2Options.Bucket) göredir; exports bucket M3'te
-/// ayrı bir yüzeyle eklenir. Presign metodları YEREL imzalama yapar (ağ çağrısı yok).
+/// R2 (S3-uyumlu) depolama operasyonları. Aksi belirtilmedikçe key'ler MEDYA bucket'ına
+/// (R2Options.Bucket) göredir; "Export" önekli üyeler EXPORTS bucket'ında
+/// (R2Options.ExportsBucket — farklı lifecycle) çalışır. Presign metodları YEREL imzalama
+/// yapar (ağ çağrısı yok).
 /// </summary>
 public interface IStorageService
 {
@@ -75,6 +76,21 @@ public interface IStorageService
     /// (idempotent yeniden işleme — tasarım 02 §3.1).
     /// </summary>
     Task UploadFileAsync(string key, string filePath, string contentType, CancellationToken ct = default);
+
+    /// <summary>
+    /// Export çıktısını EXPORTS bucket'ına yükler (key: exports/{projectId}/{jobId}.mp4).
+    /// 256 MiB üstü dosyalar multipart ile yüklenir (hata yolunda Abort — yetim part kalmaz).
+    /// Var olan key'in üzerine yazar — retry/yeniden koşu idempotenttir (tasarım 04 §4.3).
+    /// ExportsBucket yapılandırılmamışsa InvalidOperationException.
+    /// </summary>
+    Task UploadExportAsync(string key, string filePath, string contentType, CancellationToken ct = default);
+
+    /// <summary>
+    /// EXPORTS bucket'ından 24 saatlik presigned GET (indirilebilir çıktı — tasarım 04 §4.2).
+    /// URL, 'attachment; filename="export-{jobId}.mp4"' Content-Disposition override'ı taşır —
+    /// cross-origin &lt;a download&gt; çalışmadığı için indirme tarayıcıda bu başlıkla tetiklenir.
+    /// </summary>
+    string PresignExportGet(string key);
 
     /// <summary>SADECE Development startup'ında çağrılır: bucket'lar yoksa oluşturur (MinIO).</summary>
     Task EnsureBucketsExistAsync(CancellationToken ct = default);

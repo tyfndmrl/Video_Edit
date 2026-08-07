@@ -1,0 +1,16 @@
+# inputs
+-ss 0.000000 -t 2.000000 -i assets/a.mp4
+-ss 2.000000 -t 2.000000 -i assets/b.mp4
+
+# filter_complex_script
+color=c=0x000000:s=1920x1080:r=30/1:d=1.033333,trim=end_frame=30,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[g0];
+[0:v]fps=30/1,trim=end_frame=60,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x000000,setsar=1,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[v0];
+color=c=0x000000:s=1920x1080:r=30/1:d=1.033333,trim=end_frame=30,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[g1];
+[1:v]fps=30/1,trim=end_frame=60,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x000000,setsar=1,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[v1];
+[g0][v0][g1][v1]concat=n=4:v=1:a=0,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv[vout];
+anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=6.000000[aout]
+
+# output
+-map [vout] -map [aout] -r 30/1 -c:v libx264 -preset veryfast -crf 18 -profile:v high -g 150 -pix_fmt yuv420p -color_primaries bt709 -color_trc bt709 -colorspace bt709 -color_range tv -c:a aac -b:a 192k -ar 48000 -movflags +faststart
+
+# expectedDurationUs=6000000
