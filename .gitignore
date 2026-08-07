@@ -27,3 +27,6 @@ Thumbs.db
 coverage/
 TestResults/
 playwright-report/
+
+# E2E gecici fixture (commit'lenmez)
+apps/editor/public/e2e-test-video.mp4

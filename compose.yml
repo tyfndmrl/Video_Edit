@@ -26,6 +26,9 @@ services:
       context: ./backend
       dockerfile: src/VideoEdit.Api/Dockerfile
     environment:
+      # Ortam ACIKCA Production: prod guard'lari (zorunlu conn-string/R2/Jwt kontrolleri)
+      # ortam adina bakar — bkz. deploy/README.md "Ortam degiskenleri" notu.
+      - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__Postgres=Host=postgres;Database=videoedit;Username=app;Password=${PG_PASSWORD}
       - ConnectionStrings__Redis=redis:6379
@@ -55,6 +58,9 @@ services:
       context: ./backend
       dockerfile: src/VideoEdit.Worker/Dockerfile
     environment:
+      # Worker generic host'tur: ortami DOTNET_ENVIRONMENT'tan okur (ASPNETCORE_ degil).
+      # Prod guard'lari + localhost fallback yasagi bu degere bakar — bkz. deploy/README.md.
+      - DOTNET_ENVIRONMENT=Production
       - ConnectionStrings__Postgres=Host=postgres;Database=videoedit;Username=app;Password=${PG_PASSWORD}
       - ConnectionStrings__Redis=redis:6379
       - R2__AccountId=${R2_ACCOUNT_ID}

@@ -29,9 +29,24 @@ public sealed class R2Options
     /// <summary>Export çıktıları bucket'ı (farklı lifecycle) — M3'te kullanılır.</summary>
     public string ExportsBucket { get; set; } = "";
 
-    /// <summary>Etkin S3 endpoint'i: ServiceUrl ?? https://{AccountId}.r2.cloudflarestorage.com.</summary>
-    public string ResolveServiceUrl() =>
-        !string.IsNullOrWhiteSpace(ServiceUrl)
-            ? ServiceUrl
-            : $"https://{AccountId}.r2.cloudflarestorage.com";
+    /// <summary>
+    /// Etkin S3 endpoint'i: ServiceUrl ?? https://{AccountId}.r2.cloudflarestorage.com.
+    /// İkisi de boşsa InvalidOperationException — "https://.r2.cloudflarestorage.com" gibi
+    /// çöp bir URL ile sessizce ayağa kalkılmaz (startup guard'larının son savunması).
+    /// </summary>
+    public string ResolveServiceUrl()
+    {
+        if (!string.IsNullOrWhiteSpace(ServiceUrl))
+        {
+            return ServiceUrl;
+        }
+
+        if (string.IsNullOrWhiteSpace(AccountId))
+        {
+            throw new InvalidOperationException(
+                "R2 endpoint çözülemedi: R2__ServiceUrl veya R2__AccountId'den en az biri set edilmeli.");
+        }
+
+        return $"https://{AccountId}.r2.cloudflarestorage.com";
+    }
 }

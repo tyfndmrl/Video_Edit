@@ -296,6 +296,35 @@ describe('uploadEngine — retry & re-presign', () => {
     expect(result.status).toBe('completed');
   });
 
+  it('drops EVERY cached presigned URL after a 403 — the whole batch expires together', async () => {
+    const { api, calls } = makeApi({ partSize: 4 });
+    const engine = makeEngine(api, 8, { concurrency: 1 });
+    const done = engine.start();
+
+    // one presign batch [1, 2], all URLs carry sig=1
+    await waitFor(() => MockXhr.instances.length === 1, 'part 1 attempt 1');
+    expect(calls.presign).toEqual([[1, 2]]);
+    expect(MockXhr.instances[0]!.url).toContain('sig=1');
+    MockXhr.instances[0]!.respondStatus(403);
+
+    // The next PUT (part 2, or part 1's retry — worker order is timing
+    // dependent) must trigger ONE fresh presign batch covering BOTH parts:
+    // part 2 must not burn an attempt on its equally-expired sig=1 URL.
+    await waitFor(() => MockXhr.instances.length === 2, 'next part PUT');
+    expect(calls.presign).toHaveLength(2);
+    expect([...calls.presign[1]!].sort()).toEqual([1, 2]);
+    expect(MockXhr.instances[1]!.url).toContain('sig=2');
+    MockXhr.instances[1]!.succeed('etag-a');
+
+    await waitFor(() => MockXhr.instances.length === 3, 'remaining part PUT');
+    expect(MockXhr.instances[2]!.url).toContain('sig=2');
+    MockXhr.instances[2]!.succeed('etag-b');
+
+    const result = await done;
+    expect(result.status).toBe('completed');
+    expect(calls.presign).toHaveLength(2); // batch 2 served both remaining parts
+  });
+
   it('fails fast with a CORS hint when the ETag header is unreadable', async () => {
     const { api, calls } = makeApi({ partSize: 4 });
     const engine = makeEngine(api, 4, { concurrency: 1 });
@@ -386,6 +415,76 @@ describe('uploadEngine — pause / resume / cancel', () => {
     expect(calls.complete).toHaveLength(0);
     await tick();
     expect(MockXhr.instances.length).toBe(1); // no further uploads
+  });
+
+  it('a pause->resume race does not burn part attempts (abort rejections are not failures)', async () => {
+    const { api } = makeApi({ partSize: 4 });
+    // maxAttemptsPerPart 1: if the abort rejection were counted as a failed
+    // attempt, the upload would fail immediately instead of completing.
+    const engine = makeEngine(api, 4, { concurrency: 1, maxAttemptsPerPart: 1 });
+    const done = engine.start();
+    await waitFor(() => MockXhr.instances.length === 1, 'part PUT');
+
+    // pause() aborts the XHR; resume() runs before the abort rejection is
+    // processed, so the rejection lands while phase is 'uploading' again.
+    engine.pause();
+    engine.resume();
+
+    await waitFor(() => MockXhr.instances.length === 2, 'part restart');
+    MockXhr.instances[1]!.succeed('etag-1');
+    const result = await done;
+    expect(result.status).toBe('completed');
+    expect(engine.phase).toBe('done');
+  });
+
+  it('cancel during completing waits for the complete outcome and settles completed on success', async () => {
+    const { api, calls } = makeApi({ partSize: 4 });
+    let resolveComplete!: () => void;
+    const realComplete = api.completeUpload;
+    api.completeUpload = (assetId, parts) =>
+      new Promise((resolve) => {
+        resolveComplete = () => resolve(realComplete(assetId, parts));
+      });
+    const engine = makeEngine(api, 4, { concurrency: 1 });
+    const done = engine.start();
+    await waitFor(() => MockXhr.instances.length === 1, 'part PUT');
+    MockXhr.instances[0]!.succeed('etag-1');
+    await waitFor(() => engine.phase === 'completing', 'completing phase');
+
+    const cancelled = engine.cancel();
+    await tick();
+    expect(engine.phase).toBe('completing'); // cancel parked on the complete outcome
+
+    resolveComplete();
+    await cancelled;
+    const result = await done;
+    expect(result).toEqual({ status: 'completed' }); // NOT counted as a cancel
+    expect(engine.phase).toBe('done');
+    expect(calls.complete).toHaveLength(1);
+    expect(calls.abortCount).toBe(0);
+  });
+
+  it('cancel during completing settles aborted when the complete request fails', async () => {
+    const { api, calls } = makeApi({ partSize: 4 });
+    let rejectComplete!: (err: Error) => void;
+    api.completeUpload = () =>
+      new Promise((_resolve, reject) => {
+        rejectComplete = reject;
+      });
+    const engine = makeEngine(api, 4, { concurrency: 1 });
+    const done = engine.start();
+    await waitFor(() => MockXhr.instances.length === 1, 'part PUT');
+    MockXhr.instances[0]!.succeed('etag-1');
+    await waitFor(() => engine.phase === 'completing', 'completing phase');
+
+    const cancelled = engine.cancel();
+    rejectComplete(new Error('boom'));
+    await cancelled;
+
+    const result = await done; // resolves aborted — no error card for a user cancel
+    expect(result).toEqual({ status: 'aborted' });
+    expect(engine.phase).toBe('aborted');
+    await waitFor(() => calls.abortCount === 1, 'abort endpoint call');
   });
 
   it('cancel during init still aborts the created upload server-side', async () => {

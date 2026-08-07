@@ -19,7 +19,10 @@ public enum QuotaViolation
 public static class UploadQuota
 {
     /// <param name="requestedBytes">Yeni dosyanın beyan edilen boyutu.</param>
-    /// <param name="usedBytes">Kullanıcının silinmemiş, Failed olmayan asset'lerinin toplamı.</param>
+    /// <param name="usedBytes">
+    /// Kullanıcının silinmemiş TÜM asset'lerinin toplamı (Failed DAHİL — objesi R2'den
+    /// silinen yollar asset'i soft-delete eder, bkz. AssetEndpoints kota sorgusu).
+    /// </param>
     /// <param name="activeUploads">Kullanıcının hâlen Uploading durumundaki asset sayısı.</param>
     public static QuotaViolation Evaluate(
         long requestedBytes, long usedBytes, int activeUploads, QuotasOptions options)

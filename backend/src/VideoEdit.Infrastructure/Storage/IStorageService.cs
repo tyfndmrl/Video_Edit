@@ -10,6 +10,22 @@ public sealed record StorageCompletedPart(int PartNumber, string ETag);
 public sealed record StorageObjectInfo(long SizeBytes);
 
 /// <summary>
+/// GetObject stream'i + toplam boyut. Dispose hem stream'i hem alttaki S3 yanıtını kapatır.
+/// Worker'ın "orijinali diske indir" adımı bunu chunk chunk kopyalar (RAM'e almaz).
+/// </summary>
+public sealed class StorageDownload(Stream content, long length, IDisposable owner) : IDisposable
+{
+    public Stream Content { get; } = content;
+    public long Length { get; } = length;
+
+    public void Dispose()
+    {
+        Content.Dispose();
+        owner.Dispose();
+    }
+}
+
+/// <summary>
 /// R2 (S3-uyumlu) medya bucket'ı üzerindeki depolama operasyonları.
 /// Tüm key'ler medya bucket'ına (R2Options.Bucket) göredir; exports bucket M3'te
 /// ayrı bir yüzeyle eklenir. Presign metodları YEREL imzalama yapar (ağ çağrısı yok).
@@ -39,6 +55,26 @@ public interface IStorageService
 
     /// <summary>Prefix altındaki tüm objeleri siler (asset GC — batch'li DeleteObjects).</summary>
     Task DeletePrefixAsync(string prefix, CancellationToken ct = default);
+
+    /// <summary>
+    /// Tek objeyi siler (idempotent — S3 DeleteObject obje yokken de başarı döner).
+    /// Complete'in size-mismatch yolu ve abort temizliği kullanır: uyuşmayan/iptal edilen
+    /// obje R2'de bırakılırsa kota bypass'ı + depolama sızıntısı olur.
+    /// </summary>
+    Task DeleteObjectAsync(string key, CancellationToken ct = default);
+
+    /// <summary>
+    /// Objeyi okumak için stream açar (worker orijinal indirmesi — stream'lenir, RAM'e alınmaz).
+    /// Obje yoksa AmazonS3Exception(404) fırlar — çağıran deterministik hata olarak sınıflar.
+    /// </summary>
+    Task<StorageDownload> OpenReadAsync(string key, CancellationToken ct = default);
+
+    /// <summary>
+    /// Yerel dosyayı tek PutObject ile yükler (türev çıktıları — proxy/sprite/manifest/waveform/
+    /// poster; hepsi 5 GiB tek-put sınırının çok altında). Var olan key'in ÜZERİNE YAZAR
+    /// (idempotent yeniden işleme — tasarım 02 §3.1).
+    /// </summary>
+    Task UploadFileAsync(string key, string filePath, string contentType, CancellationToken ct = default);
 
     /// <summary>SADECE Development startup'ında çağrılır: bucket'lar yoksa oluşturur (MinIO).</summary>
     Task EnsureBucketsExistAsync(CancellationToken ct = default);

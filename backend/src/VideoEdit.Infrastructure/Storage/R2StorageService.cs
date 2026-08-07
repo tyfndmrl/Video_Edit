@@ -166,6 +166,38 @@ public sealed class R2StorageService : IStorageService, IDisposable
             Protocol = _presignProtocol,
         });
 
+    public async Task<StorageDownload> OpenReadAsync(string key, CancellationToken ct = default)
+    {
+        var response = await _s3.GetObjectAsync(new GetObjectRequest
+        {
+            BucketName = _options.Bucket,
+            Key = key,
+        }, ct);
+        return new StorageDownload(response.ResponseStream, response.ContentLength, response);
+    }
+
+    public async Task UploadFileAsync(string key, string filePath, string contentType, CancellationToken ct = default)
+    {
+        await _s3.PutObjectAsync(new PutObjectRequest
+        {
+            BucketName = _options.Bucket,
+            Key = key,
+            FilePath = filePath,
+            ContentType = contentType,
+        }, ct);
+    }
+
+    public async Task DeleteObjectAsync(string key, CancellationToken ct = default)
+    {
+        // S3/R2 DeleteObject idempotenttir: obje yoksa da 204 döner — çağıranın
+        // varlık kontrolü yapması gerekmez.
+        await _s3.DeleteObjectAsync(new DeleteObjectRequest
+        {
+            BucketName = _options.Bucket,
+            Key = key,
+        }, ct);
+    }
+
     public async Task DeletePrefixAsync(string prefix, CancellationToken ct = default)
     {
         string? continuationToken = null;

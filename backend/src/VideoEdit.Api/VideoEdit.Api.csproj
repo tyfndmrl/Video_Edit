@@ -23,4 +23,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Endpoint handler'ları internal — birim testleri doğrudan çağırır. -->
+    <InternalsVisibleTo Include="VideoEdit.UnitTests" />
+  </ItemGroup>
+
 </Project>

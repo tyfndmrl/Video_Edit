@@ -33,9 +33,11 @@ public static class AssetEndpoints
         // Asset-scoped uçlar (asset sahipliği denetlenir).
         var assets = app.MapGroup("/api/assets").WithTags("Assets").RequireAuthorization();
         assets.MapPost("/{id:guid}/parts/presign", PresignParts).RequireRateLimiting("upload-init");
-        assets.MapPost("/{id:guid}/complete", Complete);
-        assets.MapPost("/{id:guid}/abort", Abort);
-        assets.MapGet("/{id:guid}/upload/status", UploadStatus);
+        // complete/abort/upload-status da kullanıcı-bazlı sınırlanır: her biri S3 çağrısı
+        // tetikler (Class A/B operasyon) — sınırsız çağrı MinIO/R2 maliyeti + DoS yüzeyidir.
+        assets.MapPost("/{id:guid}/complete", Complete).RequireRateLimiting("upload-ops");
+        assets.MapPost("/{id:guid}/abort", Abort).RequireRateLimiting("upload-ops");
+        assets.MapGet("/{id:guid}/upload/status", UploadStatus).RequireRateLimiting("upload-ops");
         assets.MapGet("/{id:guid}", GetById);
         assets.MapDelete("/{id:guid}", SoftDelete);
 
@@ -44,7 +46,8 @@ public static class AssetEndpoints
 
     // ---------- Upload yaşam döngüsü ----------
 
-    private static async Task<IResult> InitUpload(
+    // Not: handler'lar internal — birim testleri (Sqlite in-memory + sahte storage) doğrudan çağırır.
+    internal static async Task<IResult> InitUpload(
         Guid projectId, InitAssetUploadRequest request, ClaimsPrincipal principal, AppDbContext db,
         IStorageService storage, IOptions<QuotasOptions> quotasOptions, TimeProvider clock,
         CancellationToken ct)
@@ -62,13 +65,16 @@ public static class AssetEndpoints
             return Results.ValidationProblem(errors);
         }
 
-        // Kota: silinmemiş asset'lerin toplamı (Failed hariç) + eşzamanlı Uploading sayısı.
+        // Kota: silinmemiş TÜM asset'lerin toplamı (Failed DAHİL) + eşzamanlı Uploading sayısı.
+        // Failed hariç tutulursa objesi R2'de duran başarısız asset'ler kotadan kaçar (bypass).
+        // Değişmez (invariant): objesi R2'den silinen her yol asset'i soft-delete eder
+        // (abort, size-mismatch) — soft-delete kotadan düşer, obje sayılmaz, tutarlı.
         var stats = await db.Assets.AsNoTracking()
             .Where(a => a.OwnerId == userId && a.DeletedAt == null)
             .GroupBy(_ => 1)
             .Select(g => new
             {
-                UsedBytes = g.Where(a => a.Status != AssetStatus.Failed).Sum(a => (long?)a.SizeBytes) ?? 0L,
+                UsedBytes = g.Sum(a => (long?)a.SizeBytes) ?? 0L,
                 ActiveUploads = g.Count(a => a.Status == AssetStatus.Uploading),
             })
             .FirstOrDefaultAsync(ct);
@@ -136,12 +142,12 @@ public static class AssetEndpoints
         return Results.Ok(parts);
     }
 
-    private static async Task<IResult> Complete(
+    internal static async Task<IResult> Complete(
         Guid id, CompleteUploadRequest request, ClaimsPrincipal principal, AppDbContext db,
         IStorageService storage, IBackgroundJobClient jobs, TimeProvider clock, CancellationToken ct)
     {
         var userId = principal.GetUserId();
-        var asset = await FindOwnedAssetAsync(db, id, userId, track: true, ct);
+        var asset = await FindOwnedAssetAsync(db, id, userId, track: false, ct);
         if (asset is null)
         {
             return Results.NotFound();
@@ -160,6 +166,7 @@ public static class AssetEndpoints
         }
 
         var now = clock.GetUtcNow();
+        StorageObjectInfo? head = null;
 
         try
         {
@@ -169,30 +176,86 @@ public static class AssetEndpoints
         }
         catch (AmazonS3Exception ex) when (ex.ErrorCode == "NoSuchUpload")
         {
-            // Yarışan complete/abort ya da lifecycle süpürmesi.
+            // İdempotent complete: upload id yoksa daha önceki bir complete başarmış olabilir
+            // (yanıt istemciye ulaşmadan koptu → retry). Obje var VE boyut beyanla eşitse
+            // başarı yolundan devam; değilse gerçek çakışma/expiry → 409.
+            head = await storage.HeadObjectAsync(asset.StorageKey, ct);
+            if (head is null || head.SizeBytes != asset.SizeBytes)
+            {
+                return Results.Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Multipart upload no longer exists (already completed, aborted or expired).");
+            }
+        }
+        catch (AmazonS3Exception ex) when (ex.ErrorCode is "InvalidPart" or "InvalidPartOrder")
+        {
+            // İstemcinin gönderdiği part listesi hatalı (yanlış etag/sıra) — istemci hatasıdır,
+            // 500'e düşürülmez; upload hâlâ aktif, istemci doğru listeyle retry edebilir.
             return Results.Problem(
-                statusCode: StatusCodes.Status409Conflict,
-                title: "Multipart upload no longer exists (already completed, aborted or expired).");
+                statusCode: StatusCodes.Status422UnprocessableEntity,
+                title: $"S3 rejected the completed part list ({ex.ErrorCode}). "
+                       + "Verify part numbers and etags, then retry complete.");
+        }
+        catch (AmazonS3Exception ex) when ((int)ex.StatusCode is >= 400 and < 500)
+        {
+            // Diğer 4xx S3 hataları (EntityTooSmall vb.) da istemci-kaynaklıdır — generic 500 değil.
+            return Results.Problem(
+                statusCode: StatusCodes.Status422UnprocessableEntity,
+                title: $"Storage rejected the complete request ({ex.ErrorCode ?? "client error"}).");
         }
 
         // Bütünlük: HeadObject boyutu beyan edilen sizeBytes ile birebir eşleşmeli
         // (tasarım 02 §1.6 — Content-Length imzalamak yerine ucuz ve kesin kontrol).
-        var head = await storage.HeadObjectAsync(asset.StorageKey, ct);
+        head ??= await storage.HeadObjectAsync(asset.StorageKey, ct);
         if (head is null || head.SizeBytes != asset.SizeBytes)
         {
-            asset.Fail("size-mismatch", now);
-            asset.UploadId = null;
-            await db.SaveChangesAsync(ct);
-            // Obje R2'de kalır; GC/temizlik M6 hijyen kapsamında (backlog).
+            // Kota bypass + sızıntı önleme: uyuşmayan obje R2'den SİLİNİR ve asset soft-delete
+            // edilir — kota sorgusu (InitUpload) silinmemiş tüm asset'leri saydığı için
+            // "objesi silinmiş ama kotada duran" veya "kotadan düşmüş ama objesi duran"
+            // tutarsızlığı kalmaz. Durum-korumalı UPDATE: yarışan istek kazandıysa üzerine yazmayız.
+            if (head is not null)
+            {
+                await storage.DeleteObjectAsync(asset.StorageKey, ct);
+            }
+
+            await db.Assets
+                .Where(a => a.Id == id && a.Status == AssetStatus.Uploading && a.DeletedAt == null)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.Status, AssetStatus.Failed)
+                    .SetProperty(a => a.FailureReason, "size-mismatch")
+                    .SetProperty(a => a.UploadId, (string?)null)
+                    .SetProperty(a => a.DeletedAt, now), ct);
+
             return Results.Problem(
                 statusCode: StatusCodes.Status422UnprocessableEntity,
                 title: $"Uploaded object size ({head?.SizeBytes.ToString() ?? "missing"}) does not match "
                        + $"declared sizeBytes ({asset.SizeBytes}). Asset marked as failed.");
         }
 
-        asset.TransitionTo(AssetStatus.Uploaded, now);
-        asset.TransitionTo(AssetStatus.Processing, now);
-        asset.UploadId = null;
+        // Durum-korumalı atomik geçiş (Uploading → Processing): koşulu sağlayan tek istek
+        // kazanır; kaybeden ikinci bir job ENQUEUE ETMEZ (çift işleme önlenir).
+        // ProcessingStartedAt reaper'ın "stalled" tespiti için burada damgalanır.
+        var claimed = await db.Assets
+            .Where(a => a.Id == id && a.Status == AssetStatus.Uploading && a.DeletedAt == null)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.Status, AssetStatus.Processing)
+                .SetProperty(a => a.FailureReason, (string?)null)
+                .SetProperty(a => a.UploadId, (string?)null)
+                .SetProperty(a => a.ProcessingStartedAt, now), ct);
+
+        if (claimed == 0)
+        {
+            // Yarışı başka bir istek kazandı (paralel complete/abort/delete).
+            var current = await FindOwnedAssetAsync(db, id, userId, track: false, ct);
+            if (current is null)
+            {
+                return Results.NotFound(); // yarışan abort/delete soft-delete etmiş
+            }
+
+            return current.Status is AssetStatus.Uploaded or AssetStatus.Processing or AssetStatus.Ready
+                ? Results.Ok(new CompleteUploadResponse(StatusString(current.Status))) // idempotent, 2. enqueue yok
+                : UploadNotActiveProblem(current.Status);
+        }
 
         var job = Job.Create(JobType.ProcessAsset, userId, now, assetId: asset.Id);
         db.Jobs.Add(job);
@@ -202,14 +265,14 @@ public static class AssetEndpoints
         job.HangfireJobId = jobs.Enqueue<IProcessAssetJob>(j => j.Run(job.Id, CancellationToken.None));
         await db.SaveChangesAsync(ct);
 
-        return Results.Ok(new CompleteUploadResponse(StatusString(asset.Status)));
+        return Results.Ok(new CompleteUploadResponse(StatusString(AssetStatus.Processing)));
     }
 
-    private static async Task<IResult> Abort(
+    internal static async Task<IResult> Abort(
         Guid id, ClaimsPrincipal principal, AppDbContext db, IStorageService storage,
         TimeProvider clock, CancellationToken ct)
     {
-        var asset = await FindOwnedAssetAsync(db, id, principal.GetUserId(), track: true, ct);
+        var asset = await FindOwnedAssetAsync(db, id, principal.GetUserId(), track: false, ct);
         if (asset is null)
         {
             return Results.NotFound();
@@ -221,11 +284,30 @@ public static class AssetEndpoints
         }
 
         var now = clock.GetUtcNow();
+
+        // ÖNCE durum-korumalı claim: Complete yarışı kazandıysa (Status artık Uploading değil)
+        // asset'i Failed'a ÇEKMEYİZ ve tamamlanmış objeye dokunmayız — 0 satır → mevcut durumla 409.
+        var claimed = await db.Assets
+            .Where(a => a.Id == id && a.Status == AssetStatus.Uploading && a.DeletedAt == null)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.Status, AssetStatus.Failed)
+                .SetProperty(a => a.FailureReason, "aborted")
+                .SetProperty(a => a.UploadId, (string?)null)
+                .SetProperty(a => a.DeletedAt, now), ct); // soft-delete: görünmez + kotaya sayılmaz
+
+        if (claimed == 0)
+        {
+            var current = await FindOwnedAssetAsync(db, id, principal.GetUserId(), track: false, ct);
+            return current is null
+                ? Results.NoContent() // yarışan abort/delete zaten soft-delete etmiş — idempotent
+                : UploadNotActiveProblem(current.Status);
+        }
+
+        // Claim SONRASI S3 temizliği: multipart iptali + (yarı-tamamlanmış bir complete
+        // objeyi yazmış olabilir) tekil obje silme. İkisi de idempotent; hata durumunda
+        // kalıntıyı R2 lifecycle (7 gün) süpürür — DB durumu zaten tutarlı (soft-deleted).
         await AbortUploadIgnoringMissingAsync(storage, asset, ct);
-        asset.Fail("aborted", now);
-        asset.UploadId = null;
-        asset.DeletedAt = now; // iptal edilen upload kütüphanede görünmez, kotaya sayılmaz
-        await db.SaveChangesAsync(ct);
+        await storage.DeleteObjectAsync(asset.StorageKey, ct);
 
         return Results.NoContent();
     }
@@ -297,7 +379,7 @@ public static class AssetEndpoints
             assets.Select(ToDto).ToList(), page, pageSize, total));
     }
 
-    private static async Task<IResult> MediaUrls(
+    internal static async Task<IResult> MediaUrls(
         Guid projectId, ClaimsPrincipal principal, AppDbContext db, IStorageService storage,
         TimeProvider clock, CancellationToken ct)
     {
@@ -315,18 +397,46 @@ public static class AssetEndpoints
             .ToListAsync(ct);
 
         var expiresAt = clock.GetUtcNow().Add(R2StorageService.GetUrlLifetime);
-        var map = assets.ToDictionary(
-            a => a.Id.ToString("D"),
-            a => AssetMediaUrlBuilder.Build(a, storage.PresignGet));
+        var map = new Dictionary<string, AssetMediaUrlsDto>(assets.Count);
+        foreach (var asset in assets)
+        {
+            // BuildAsync filmstrip'li asset başına tek küçük GetObject yapar (manifest.json,
+            // <2 KB) — proje asset sayısıyla sınırlı; manifest okunamazsa sprites null döner.
+            map[asset.Id.ToString("D")] = await AssetMediaUrlBuilder.BuildAsync(
+                asset, storage.PresignGet, (key, token) => ReadObjectOrNullAsync(storage, key, token), ct);
+        }
 
         return Results.Ok(new MediaUrlsResponse(expiresAt, map));
     }
 
-    private static async Task<IResult> SoftDelete(
+    /// <summary>Küçük objeyi RAM'e okur; yoksa/okunamazsa null (media-urls manifest okuması best-effort).</summary>
+    private static async Task<byte[]?> ReadObjectOrNullAsync(
+        IStorageService storage, string key, CancellationToken ct)
+    {
+        try
+        {
+            using var download = await storage.OpenReadAsync(key, ct);
+            if (download.Length is < 0 or > AssetMediaUrlBuilder.MaxManifestBytes)
+            {
+                return null;
+            }
+
+            using var buffer = new MemoryStream((int)download.Length);
+            await download.Content.CopyToAsync(buffer, ct);
+            return buffer.ToArray();
+        }
+        catch (AmazonS3Exception)
+        {
+            // Manifest yok/erişilemedi — sprites alanı düşer, yanıt yine döner (geriye uyumlu).
+            return null;
+        }
+    }
+
+    internal static async Task<IResult> SoftDelete(
         Guid id, ClaimsPrincipal principal, AppDbContext db, IStorageService storage,
         TimeProvider clock, CancellationToken ct)
     {
-        var asset = await FindOwnedAssetAsync(db, id, principal.GetUserId(), track: true, ct);
+        var asset = await FindOwnedAssetAsync(db, id, principal.GetUserId(), track: false, ct);
         if (asset is null)
         {
             return Results.NotFound();
@@ -335,18 +445,32 @@ public static class AssetEndpoints
         var now = clock.GetUtcNow();
 
         // Aktif upload'ı olan asset silinirse multipart da iptal edilir (Class A israfı olmasın).
+        // Durum-korumalı: Complete yarışı kazandıysa (0 satır) Failed'a çekmeyiz,
+        // aşağıdaki düz soft-delete'e düşeriz (Processing bir asset de silinebilir).
         if (asset.Status == AssetStatus.Uploading && asset.UploadId is not null)
         {
-            await AbortUploadIgnoringMissingAsync(storage, asset, ct);
-            asset.Fail("aborted", now);
-            asset.UploadId = null;
+            var claimed = await db.Assets
+                .Where(a => a.Id == id && a.Status == AssetStatus.Uploading && a.DeletedAt == null)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.Status, AssetStatus.Failed)
+                    .SetProperty(a => a.FailureReason, "aborted")
+                    .SetProperty(a => a.UploadId, (string?)null)
+                    .SetProperty(a => a.DeletedAt, now), ct);
+
+            if (claimed == 1)
+            {
+                await AbortUploadIgnoringMissingAsync(storage, asset, ct);
+                return Results.NoContent();
+            }
         }
 
         // M6 (backlog): timeline'larda kullanım kontrolü ("N projede kullanılıyor" uyarısı,
         // dangling assetId UX'i) ve R2 prefix GC (DeletePrefix) hard-delete job'ına gelecek.
-        // Şimdilik yalnız soft delete — R2 objeleri yerinde kalır.
-        asset.DeletedAt = now;
-        await db.SaveChangesAsync(ct);
+        // Şimdilik yalnız soft delete — R2 objeleri yerinde kalır. 0 satır (zaten silinmiş)
+        // de 204: silme idempotenttir.
+        await db.Assets
+            .Where(a => a.Id == id && a.DeletedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.DeletedAt, now), ct);
 
         return Results.NoContent();
     }

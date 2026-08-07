@@ -44,12 +44,21 @@ function hasIndexedDb(): boolean {
 }
 
 function getDb(): Promise<IDBPDatabase<UploadSessionsDbSchema>> {
-  dbPromise ??= openDB<UploadSessionsDbSchema>(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      const store = db.createObjectStore(STORE, { keyPath: 'assetId' });
-      store.createIndex('byProject', 'projectId');
-    },
-  });
+  if (!dbPromise) {
+    const opening = openDB<UploadSessionsDbSchema>(DB_NAME, DB_VERSION, {
+      upgrade(db) {
+        const store = db.createObjectStore(STORE, { keyPath: 'assetId' });
+        store.createIndex('byProject', 'projectId');
+      },
+    });
+    // A failed open (private mode, quota, corrupted DB, version conflict) must
+    // not poison every later call with the same cached rejection — drop the
+    // cache so the next call retries the open.
+    opening.catch(() => {
+      if (dbPromise === opening) dbPromise = null;
+    });
+    dbPromise = opening;
+  }
   return dbPromise;
 }
 

@@ -22,6 +22,38 @@ export function setAccessToken(token: string | null): void {
   accessToken = token;
 }
 
+/**
+ * Register succeeded but the follow-up automatic login failed. The account
+ * EXISTS — the UI must not present this as a registration failure; it should
+ * switch to the login form instead (see LoginGate).
+ */
+export class AutoLoginFailedError extends Error {
+  constructor(cause: unknown) {
+    super('Account created, but automatic sign-in failed', { cause });
+    this.name = 'AutoLoginFailedError';
+  }
+}
+
+/** Register a new account, then log in to obtain an access token. */
+export async function register(email: string, password: string, displayName: string): Promise<void> {
+  const res = await fetch('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, displayName }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { title?: string } | null;
+    throw new Error(body?.title ?? `Register failed (${res.status})`);
+  }
+  try {
+    await login(email, password);
+  } catch (err) {
+    // Distinct error type: the caller must be able to tell "register failed"
+    // (retry register) apart from "registered but not signed in" (go log in).
+    throw new AutoLoginFailedError(err);
+  }
+}
+
 /** Password login. Stores the returned access token in memory. */
 export async function login(email: string, password: string): Promise<void> {
   const res = await fetch('/api/auth/login', {

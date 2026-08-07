@@ -72,9 +72,24 @@ function LibraryContent({ projectId }: { projectId: string }) {
     };
     // re-check when an upload starts/finishes (not on every progress tick)
   }, [projectId, uploadCount]);
+  // Hide sessions whose upload is active in THIS tab: match by assetId, and —
+  // for uploads whose init has not returned yet (assetId still null) — by the
+  // file identity the session record stores. Prevents the same upload showing
+  // both as a live card and as an "interrupted" entry.
   const pendingSessions = useMemo(
-    () => sessions.filter((r) => !activeAssetIds.has(r.assetId)),
-    [sessions, activeAssetIds],
+    () =>
+      sessions.filter(
+        (r) =>
+          !activeAssetIds.has(r.assetId) &&
+          !uploads.some(
+            (u) =>
+              u.assetId === null &&
+              u.fileName === r.fileName &&
+              u.totalBytes === r.fileSize &&
+              u.lastModified === r.lastModified,
+          ),
+      ),
+    [sessions, activeAssetIds, uploads],
   );
 
   const discardSession = useCallback(async (assetId: string) => {
@@ -308,7 +323,13 @@ function UploadCard({ item }: { item: UploadItem }) {
   const isError = item.phase === 'error';
   const canPause = item.phase === 'uploading' || item.phase === 'preparing' || item.phase === 'idle';
   const canResume = item.phase === 'paused';
-  const canCancel = item.phase !== 'error' && item.phase !== 'done' && item.phase !== 'aborted';
+  // No Cancel while 'completing': the complete request is already in flight and
+  // the server may finish the upload regardless — cancelling here is a lie.
+  const canCancel =
+    item.phase !== 'error' &&
+    item.phase !== 'done' &&
+    item.phase !== 'aborted' &&
+    item.phase !== 'completing';
 
   return (
     <div className="rounded border border-edge bg-surface-2 p-2">
@@ -329,6 +350,10 @@ function UploadCard({ item }: { item: UploadItem }) {
           style={{ width: `${pct}%` }}
         />
       </div>
+
+      {item.warning && (
+        <p className="mt-1 text-[11px] leading-snug break-words text-amber-400">{item.warning}</p>
+      )}
 
       {isError ? (
         <p className="mt-1 text-[11px] leading-snug break-words text-danger" title={item.errorMessage ?? undefined}>

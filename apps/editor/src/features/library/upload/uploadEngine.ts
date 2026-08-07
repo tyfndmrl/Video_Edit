@@ -159,6 +159,18 @@ class PartHttpError extends Error {
   }
 }
 
+/**
+ * Internal marker for xhr.abort() rejections. Aborts are engine-initiated
+ * (pause/cancel/fail) and must never be counted as a failed part attempt —
+ * see the pause()->resume() micro-race handling in runPart().
+ */
+class PartAbortedError extends Error {
+  constructor(partNumber: number) {
+    super(`Part ${partNumber} upload aborted`);
+    this.name = 'PartAbortedError';
+  }
+}
+
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -192,6 +204,10 @@ export class UploadEngine {
   private started = false;
   private settled = false;
   private completedBytes = 0;
+  /** Set when cancel() arrives while the complete request is in flight. */
+  private cancelRequested = false;
+  /** The in-flight finish() run, so cancel() can await the complete outcome. */
+  private finishPromise: Promise<void> | null = null;
 
   private lastEmitAt = 0;
   private samples: { t: number; bytes: number }[] = [];
@@ -297,6 +313,18 @@ export class UploadEngine {
   /** Abort everything and tell the server to AbortMultipartUpload. */
   async cancel(): Promise<void> {
     if (TERMINAL_PHASES.includes(this.phaseValue)) return;
+    if (this.phaseValue === 'completing') {
+      // The complete request is already in flight — the server may finish the
+      // upload regardless of anything we do now. Wait for the outcome and
+      // honor it: a successful complete wins (the asset exists; this is NOT
+      // counted as a cancel), a failed complete falls through to the abort
+      // path inside finish().
+      this.cancelRequested = true;
+      await this.finishPromise?.catch(() => {
+        // finish() already settled/failed the engine; nothing more to do here
+      });
+      return;
+    }
     const initPending = this.phaseValue === 'preparing' && this.assetIdValue === null;
     this.setPhase('aborted');
     this.clearBackoffTimers();
@@ -355,7 +383,7 @@ export class UploadEngine {
       this.backoffTimers.size === 0 &&
       this.phaseValue === 'uploading'
     ) {
-      void this.finish();
+      void (this.finishPromise = this.finish());
     }
   }
 
@@ -379,6 +407,14 @@ export class UploadEngine {
         return;
       }
       if (this.phaseValue !== 'uploading') return; // aborted / already failed
+      if (err instanceof PartAbortedError) {
+        // pause()->resume() micro-race: the abort rejection of an in-flight
+        // XHR can land AFTER resume() flipped the phase back to 'uploading'.
+        // That is not a real failure — re-queue without burning an attempt
+        // (otherwise paused parts creep toward maxAttempts and get failed).
+        this.queue.unshift(partNumber);
+        return;
+      }
       if (err instanceof UploadError && err.code === 'etag-missing') {
         this.fail(err); // config error (CORS) — retrying cannot help
         return;
@@ -394,9 +430,12 @@ export class UploadEngine {
         );
         return;
       }
-      // Expired presigned URL — force a fresh one on the next attempt.
+      // Expired presigned URL. URLs are presigned in batches with identical
+      // lifetimes, so when one has expired every other cached URL is expired
+      // (or about to be) too — drop the whole cache, not just this part, so
+      // the remaining parts do not each burn an attempt on a dead URL.
       if (err instanceof PartHttpError && err.status === 403) {
-        this.urls.delete(partNumber);
+        this.urls.clear();
       }
       const delay = this.backoffBaseMs * 2 ** (part.attempts - 1);
       const timer = setTimeout(() => {
@@ -483,7 +522,7 @@ export class UploadEngine {
       };
       xhr.onabort = () => {
         cleanup();
-        reject(new Error(`Part ${part.partNumber} upload aborted`));
+        reject(new PartAbortedError(part.partNumber));
       };
       xhr.send(this.opts.file.slice(part.start, part.end));
     });
@@ -505,6 +544,18 @@ export class UploadEngine {
       await this.opts.api.completeUpload(this.assetIdValue!, completed);
     } catch (err) {
       if (this.phaseValue !== 'completing') return; // cancelled meanwhile
+      if (this.cancelRequested) {
+        // cancel() arrived while complete was in flight and complete failed:
+        // honor the cancel instead of surfacing an error card.
+        this.setPhase('aborted');
+        this.settle({ status: 'aborted' });
+        try {
+          if (this.assetIdValue) await this.opts.api.abortUpload(this.assetIdValue);
+        } catch {
+          // best effort — the 7-day bucket lifecycle sweeps leftovers
+        }
+        return;
+      }
       this.fail(new UploadError('complete-failed', `Complete failed: ${describe(err)}`, { cause: err }));
       return;
     }

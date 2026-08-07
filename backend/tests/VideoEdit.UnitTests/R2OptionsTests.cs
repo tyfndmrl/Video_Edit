@@ -60,6 +60,16 @@ public class R2OptionsTests
     }
 
     [Fact]
+    public void ResolveServiceUrl_BothMissing_ThrowsInsteadOfGarbageUrl()
+    {
+        // Eskiden "https://.r2.cloudflarestorage.com" üretilip sessizce ayağa kalkılıyordu.
+        var options = new R2Options();
+        Assert.Throws<InvalidOperationException>(() => options.ResolveServiceUrl());
+        Assert.Throws<InvalidOperationException>(
+            () => new R2Options { ServiceUrl = "  ", AccountId = "" }.ResolveServiceUrl());
+    }
+
+    [Fact]
     public void SectionName_IsR2_MatchingComposePrefix()
     {
         Assert.Equal("R2", R2Options.SectionName);

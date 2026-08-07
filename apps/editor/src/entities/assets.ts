@@ -66,5 +66,10 @@ export function useProjectAssets(projectId: string | null) {
       const busy = items.some((a) => a.status === 'uploaded' || a.status === 'processing');
       return busy ? 3000 : false;
     },
+    // Keep polling while the tab is in the background so processing status is
+    // fresh when the user returns (react-query pauses refetchInterval in
+    // hidden tabs by default). ACCEPTED interim solution until SignalR push
+    // replaces this polling in M2.
+    refetchIntervalInBackground: true,
   });
 }

@@ -74,4 +74,84 @@ public class AssetMediaUrlBuilderTests
         Assert.Equal("https://signed.example/u/x/a/y/filmstrip/manifest.json?sig=test", urls.FilmstripManifest);
         Assert.Equal("https://signed.example/u/x/a/y/filmstrip/sprite_1.jpg?sig=test", urls.Filmstrip);
     }
+
+    // ---------- BuildAsync: çoklu-sprite çözümü (manifest storage'dan okunur) ----------
+
+    private static Func<string, CancellationToken, Task<byte[]?>> ManifestReader(string? json) =>
+        (_, _) => Task.FromResult(json is null ? null : System.Text.Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task BuildAsync_ManifestWithMultipleSprites_ReturnsPresignedSpriteMap()
+    {
+        var manifest = """{"intervalUs":1000000,"cols":30,"rows":10,"frameCount":600,"sprites":["sprite_1.jpg","sprite_2.jpg"]}""";
+        string? readKey = null;
+        Func<string, CancellationToken, Task<byte[]?>> reader = (key, _) =>
+        {
+            readKey = key;
+            return Task.FromResult<byte[]?>(System.Text.Encoding.UTF8.GetBytes(manifest));
+        };
+
+        var urls = await AssetMediaUrlBuilder.BuildAsync(
+            ReadyAsset(filmstrip: "u/x/a/y/filmstrip/sprite_1.jpg"), FakePresign, reader);
+
+        Assert.Equal("u/x/a/y/filmstrip/manifest.json", readKey); // tek küçük GetObject
+        Assert.NotNull(urls.Sprites);
+        Assert.Equal(2, urls.Sprites!.Count);
+        Assert.Equal("https://signed.example/u/x/a/y/filmstrip/sprite_1.jpg?sig=test", urls.Sprites["sprite_1.jpg"]);
+        Assert.Equal("https://signed.example/u/x/a/y/filmstrip/sprite_2.jpg?sig=test", urls.Sprites["sprite_2.jpg"]);
+        // Eski alanlar korunur (geriye uyumluluk).
+        Assert.Equal("https://signed.example/u/x/a/y/filmstrip/sprite_1.jpg?sig=test", urls.Filmstrip);
+        Assert.Equal("https://signed.example/u/x/a/y/filmstrip/manifest.json?sig=test", urls.FilmstripManifest);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ManifestUnreadable_OmitsSpritesButKeepsFilmstripFields()
+    {
+        var urls = await AssetMediaUrlBuilder.BuildAsync(
+            ReadyAsset(filmstrip: "u/x/a/y/filmstrip/sprite_1.jpg"), FakePresign, ManifestReader(null));
+
+        Assert.Null(urls.Sprites);
+        Assert.NotNull(urls.Filmstrip);
+        Assert.NotNull(urls.FilmstripManifest);
+    }
+
+    [Fact]
+    public async Task BuildAsync_MalformedManifest_OmitsSprites()
+    {
+        var urls = await AssetMediaUrlBuilder.BuildAsync(
+            ReadyAsset(filmstrip: "u/x/a/y/filmstrip/sprite_1.jpg"), FakePresign, ManifestReader("{not json"));
+
+        Assert.Null(urls.Sprites);
+        Assert.NotNull(urls.Filmstrip);
+    }
+
+    [Fact]
+    public async Task BuildAsync_SpriteNamesWithPathSeparators_AreSkipped()
+    {
+        var manifest = """{"sprites":["sprite_1.jpg","../../../etc/passwd","a/b.jpg"]}""";
+
+        var urls = await AssetMediaUrlBuilder.BuildAsync(
+            ReadyAsset(filmstrip: "u/x/a/y/filmstrip/manifest.json"), FakePresign, ManifestReader(manifest));
+
+        Assert.NotNull(urls.Sprites);
+        Assert.Single(urls.Sprites!);
+        Assert.True(urls.Sprites!.ContainsKey("sprite_1.jpg"));
+    }
+
+    [Fact]
+    public async Task BuildAsync_NoFilmstripKey_DoesNotReadStorage()
+    {
+        var reads = 0;
+        Func<string, CancellationToken, Task<byte[]?>> reader = (_, _) =>
+        {
+            reads++;
+            return Task.FromResult<byte[]?>(null);
+        };
+
+        var urls = await AssetMediaUrlBuilder.BuildAsync(ReadyAsset(), FakePresign, reader);
+
+        Assert.Equal(0, reads);
+        Assert.Null(urls.Sprites);
+        Assert.Null(urls.Filmstrip);
+    }
 }

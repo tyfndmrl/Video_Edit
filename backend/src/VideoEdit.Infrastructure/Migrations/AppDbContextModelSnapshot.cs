@@ -346,6 +346,9 @@ namespace VideoEdit.Infrastructure.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<DateTimeOffset?>("LastProgressAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("OutputKey")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");

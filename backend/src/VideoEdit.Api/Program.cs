@@ -3,6 +3,7 @@ using System.Threading.RateLimiting;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
@@ -170,6 +171,19 @@ try
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }));
+
+        // complete/abort/upload-status: kullanıcı başına 60/dk — her istek S3 çağrısı tetikler
+        // (Complete/ListParts/Abort); init'ten ayrı bütçe ki resume polling'i init kotasını yemesin.
+        o.AddPolicy("upload-ops", context => RateLimitPartition.GetFixedWindowLimiter(
+            context.User.Identity?.IsAuthenticated == true
+                ? context.User.GetUserId().ToString("D")
+                : context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
     });
 
     // --- Uygulama servisleri ---
@@ -206,6 +220,20 @@ try
                 + "Upload uçları MinIO olmadan çalışmaz; API yine de başlatılıyor.");
         }
     }
+
+    // Caddy arkasında gerçek istemci IP'si: X-Forwarded-For/Proto başlıklarını uygula
+    // (IP-bazlı rate limit bölümleri ve loglar aksi halde hep Caddy'nin IP'sini görür).
+    // KnownProxies/KnownNetworks TEMİZLENİR: Caddy compose ağında dinamik IP alır, sabit
+    // proxy listesi tutulamaz. RİSK: API'ye Caddy atlanıp DOĞRUDAN erişilebilirse istemci
+    // X-Forwarded-For sahteleyerek IP-bazlı rate limit'i (auth policy) atlatabilir —
+    // deploy'da 5000 portu yalnız compose iç ağına açık tutulmalı, host'a publish edilmemeli.
+    var forwardedOptions = new ForwardedHeadersOptions
+    {
+        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+    };
+    forwardedOptions.KnownIPNetworks.Clear();
+    forwardedOptions.KnownProxies.Clear();
+    app.UseForwardedHeaders(forwardedOptions);
 
     app.UseExceptionHandler();
     app.UseSerilogRequestLogging();

@@ -37,6 +37,12 @@ public class Job
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
 
+    /// <summary>
+    /// Son progress kalp atışı (worker her progress yazımında damgalar). Reaper "stalled"
+    /// kararını buna bakarak verir: yakın zamanda heartbeat varsa iş canlıdır, süpürülmez.
+    /// </summary>
+    public DateTimeOffset? LastProgressAt { get; set; }
+
     public static Job Create(JobType type, Guid requestedBy, DateTimeOffset nowUtc,
         Guid? assetId = null, Guid? projectId = null, JsonDocument? timelineSnapshot = null) => new()
     {

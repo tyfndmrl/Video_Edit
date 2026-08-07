@@ -12,7 +12,14 @@ namespace VideoEdit.Infrastructure.Jobs;
 /// </summary>
 public interface IProcessAssetJob
 {
-    /// <summary>jobId = Jobs tablosundaki satırın id'si. ct Hangfire tarafından enjekte edilir.</summary>
+    /// <summary>
+    /// jobId = Jobs tablosundaki satırın id'si. ct Hangfire tarafından enjekte edilir.
+    /// AutomaticRetry(2): yalnız TRANSIENT hatalar (ağ/S3/IO — pipeline throw eder) retry'lanır;
+    /// deterministik ffmpeg/probe hataları pipeline içinde Failed işaretlenip normal döner,
+    /// exception fırlatılmaz — Hangfire retry'ı tetiklenmez. İşleme idempotenttir
+    /// (çıktı key'lerinin üzerine yazılır — tasarım 02 §3.1).
+    /// </summary>
     [Queue("transcode")]
+    [AutomaticRetry(Attempts = 2, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
     Task Run(Guid jobId, CancellationToken ct);
 }

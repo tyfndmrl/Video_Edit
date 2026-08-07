@@ -30,9 +30,13 @@ export interface UploadItem {
   projectId: string;
   fileName: string;
   totalBytes: number;
+  /** File.lastModified — part of the duplicate-drop identity. */
+  lastModified: number;
   phase: UploadPhase;
   progress: UploadProgress | null;
   errorMessage: string | null;
+  /** Transient notice on the card (e.g. duplicate drop rejected). */
+  warning: string | null;
 }
 
 interface UploadStore {
@@ -78,8 +82,47 @@ function kindFromContentType(contentType: string): AssetKind {
   return 'video';
 }
 
-/** Kick off a multipart upload for a picked/dropped file. Returns the card id. */
-export function startUpload(file: File, projectId: string): string {
+const ACTIVE_PHASES: readonly UploadPhase[] = ['idle', 'preparing', 'uploading', 'paused', 'completing'];
+
+/** Card of an active upload of the same file (name+size+lastModified+project), if any. */
+function findActiveDuplicate(file: File, projectId: string): UploadItem | null {
+  for (const item of useUploadStore.getState().items.values()) {
+    if (
+      item.projectId === projectId &&
+      item.fileName === file.name &&
+      item.totalBytes === file.size &&
+      item.lastModified === file.lastModified &&
+      ACTIVE_PHASES.includes(item.phase)
+    ) {
+      return item;
+    }
+  }
+  return null;
+}
+
+/** Show a transient warning on a card; auto-clears after a few seconds. */
+function flashWarning(localId: string, message: string): void {
+  useUploadStore.getState().patch(localId, { warning: message });
+  setTimeout(() => {
+    const current = useUploadStore.getState().items.get(localId);
+    if (current?.warning === message) {
+      useUploadStore.getState().patch(localId, { warning: null });
+    }
+  }, 4000);
+}
+
+/**
+ * Kick off a multipart upload for a picked/dropped file. Returns the card id,
+ * or null when the same file is already actively uploading to the project
+ * (duplicate drops are rejected with a warning on the existing card).
+ */
+export function startUpload(file: File, projectId: string): string | null {
+  const duplicate = findActiveDuplicate(file, projectId);
+  if (duplicate) {
+    flashWarning(duplicate.localId, 'This file is already uploading.');
+    return null;
+  }
+
   const localId = crypto.randomUUID();
   const contentType = file.type || 'application/octet-stream';
   const store = useUploadStore.getState();
@@ -90,9 +133,11 @@ export function startUpload(file: File, projectId: string): string {
     projectId,
     fileName: file.name,
     totalBytes: file.size,
+    lastModified: file.lastModified,
     phase: 'idle',
     progress: null,
     errorMessage: null,
+    warning: null,
   });
   files.set(localId, file);
 
@@ -122,7 +167,8 @@ export function startUpload(file: File, projectId: string): string {
         progress: 0,
       });
       const now = Date.now();
-      void saveUploadSession({
+      // Best-effort: a broken IndexedDB must not affect the upload itself.
+      saveUploadSession({
         assetId: info.assetId,
         projectId,
         fileName: file.name,
@@ -131,33 +177,51 @@ export function startUpload(file: File, projectId: string): string {
         partSize: info.partSize,
         createdAt: now,
         updatedAt: now,
+      }).catch(() => {
+        // no session record -> no cross-session resume entry; upload unaffected
       });
     },
   });
   engines.set(localId, engine);
 
-  void engine
-    .start()
-    .then(async (result) => {
+  // Two-argument then(): the rejection handler catches ONLY engine failures.
+  // Errors thrown by the success handler must never repaint a completed
+  // upload as failed — every session/cache side effect in it is best-effort.
+  void engine.start().then(
+    async (result) => {
       engines.delete(localId);
       const assetId = engine.assetId;
       if (result.status === 'completed' && assetId) {
-        await deleteUploadSession(assetId);
+        try {
+          await deleteUploadSession(assetId);
+        } catch {
+          // orphan record stays listed as "interrupted"; user can discard it
+        }
         useAssetStore.getState().updateAsset(assetId, { status: 'uploaded', progress: 1 });
+        // Refresh the server list BEFORE removing the card so the asset never
+        // double-renders or disappears while the refetch is in flight.
+        try {
+          await queryClient.invalidateQueries({ queryKey: projectAssetsQueryKey(projectId) });
+        } catch {
+          // refetch errors surface through the query state itself
+        }
         useUploadStore.getState().remove(localId); // hand the card off to the server list
         files.delete(localId);
-        void queryClient.invalidateQueries({ queryKey: projectAssetsQueryKey(projectId) });
       } else {
         // aborted (user cancel): server record is gone, clean everything up
         if (assetId) {
-          await deleteUploadSession(assetId);
+          try {
+            await deleteUploadSession(assetId);
+          } catch {
+            // best effort — stale record is discardable from the UI
+          }
           useAssetStore.getState().removeAsset(assetId);
         }
         useUploadStore.getState().remove(localId);
         files.delete(localId);
       }
-    })
-    .catch((err: unknown) => {
+    },
+    (err: unknown) => {
       engines.delete(localId);
       const message = err instanceof Error ? err.message : String(err);
       useUploadStore.getState().patch(localId, { phase: 'error', errorMessage: message });
@@ -170,7 +234,8 @@ export function startUpload(file: File, projectId: string): string {
       }
       // Session record is intentionally KEPT: parts already in R2 stay
       // resumable for 7 days (cross-session resume arrives in M6).
-    });
+    },
+  );
 
   return localId;
 }

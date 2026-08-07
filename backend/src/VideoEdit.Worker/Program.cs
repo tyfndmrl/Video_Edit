@@ -1,15 +1,47 @@
+using System.Diagnostics;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using VideoEdit.Infrastructure;
 using VideoEdit.Infrastructure.Jobs;
 using VideoEdit.Infrastructure.Storage;
+using VideoEdit.Media;
+using VideoEdit.Media.Probing;
+using VideoEdit.Media.Waveform;
 using VideoEdit.Worker.Jobs;
 
 var builder = Host.CreateApplicationBuilder(args);
 
+// --- Prod guard'ları (Api/Program.cs ile aynı desen): yanlış konfigurasyonla sessizce
+// ayağa kalkma. DİKKAT: generic host ortamı DOTNET_ENVIRONMENT'tan okur (ASPNETCORE_ değil)
+// — compose.yml worker servisi DOTNET_ENVIRONMENT'ı açıkça set eder (bkz. deploy/README.md).
+if (!builder.Environment.IsDevelopment())
+{
+    if (string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("Postgres")))
+    {
+        throw new InvalidOperationException(
+            "Production'da ConnectionStrings:Postgres zorunludur (env: ConnectionStrings__Postgres).");
+    }
+
+    var r2Check = builder.Configuration.GetSection(R2Options.SectionName).Get<R2Options>() ?? new R2Options();
+    if (string.IsNullOrWhiteSpace(r2Check.AccessKeyId)
+        || string.IsNullOrWhiteSpace(r2Check.SecretAccessKey)
+        || string.IsNullOrWhiteSpace(r2Check.Bucket)
+        || (string.IsNullOrWhiteSpace(r2Check.ServiceUrl) && string.IsNullOrWhiteSpace(r2Check.AccountId)))
+    {
+        throw new InvalidOperationException(
+            "Production'da R2 konfigürasyonu zorunludur: R2__AccessKeyId, R2__SecretAccessKey, "
+            + "R2__Bucket ve R2__AccountId (veya R2__ServiceUrl).");
+    }
+}
+
+// --- Veritabanı (localhost fallback SADECE Development) ---
 var connectionString = builder.Configuration.GetConnectionString("Postgres")
-    ?? "Host=localhost;Port=5432;Database=videoedit;Username=app;Password=devpassword";
+    ?? (builder.Environment.IsDevelopment()
+        ? "Host=localhost;Port=5432;Database=videoedit;Username=app;Password=devpassword"
+        : throw new InvalidOperationException(
+            "ConnectionStrings:Postgres yapılandırılmamış (env: ConnectionStrings__Postgres)."));
 builder.Services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
 
 builder.Services.AddSingleton(TimeProvider.System);
@@ -18,17 +50,36 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.Configure<R2Options>(builder.Configuration.GetSection(R2Options.SectionName));
 builder.Services.AddSingleton<IStorageService, R2StorageService>();
 
+// Medya araç katmanı (VideoEdit.Media) — ffmpeg/ffprobe PATH'ten (Ffmpeg section override eder).
+builder.Services.Configure<FfmpegOptions>(builder.Configuration.GetSection(FfmpegOptions.SectionName));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<FfmpegOptions>>().Value);
+builder.Services.AddSingleton<FfprobeService>();
+builder.Services.AddSingleton<FfmpegRunner>();
+builder.Services.AddSingleton<WaveformGenerator>();
+
+// İşleme sınırları (süre gate'i vb.).
+builder.Services.Configure<ProcessingOptions>(builder.Configuration.GetSection(ProcessingOptions.SectionName));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ProcessingOptions>>().Value);
+
 // İş sınıfları — Hangfire DI (AspNetCoreJobActivator) scope başına çözer.
 builder.Services.AddScoped<IProcessAssetJob, ProcessAssetJob>();
 builder.Services.AddScoped<AssetReaperJob>();
 
 // Hangfire SERVER (mimar kararı 1.d: tek kuyruk mekanizması Hangfire; api yalnız client).
 // InvisibilityTimeout 2 saat: uzun transcode'lar "kayboldu" sanılıp ikinci worker'a verilmez;
-// gerçek çökmede iş en geç 2 saat sonra yeniden koşar (işleme idempotent — üzerine yazmak güvenli).
-builder.Services.AddHangfire(cfg => cfg
+// gerçek çökmede iş en geç 2 saat sonra yeniden koşar. İş aslında bittiyse ikinci teslim
+// ProcessAssetJob'ın başındaki idempotency kısa devresine takılır (Ready+Succeeded → no-op);
+// yarı kalmışsa yeniden işlemek güvenlidir (çıktı key'lerinin üzerine yazılır) ve yarışan iki
+// koşu jobId+Guid suffix'li AYRI temp dizinleri kullandığından birbirinin dosyasını bozamaz.
+// JobFailureStateFilter: nihai FailedState'te Jobs satırı + asset durumu DB'de senkronlanır.
+builder.Services.AddHangfire((sp, cfg) => cfg
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
     .UseSimpleAssemblyNameTypeSerializer()
     .UseRecommendedSerializerSettings()
+    .UseFilter(new JobFailureStateFilter(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<TimeProvider>(),
+        sp.GetRequiredService<ILogger<JobFailureStateFilter>>()))
     .UsePostgreSqlStorage(
         o => o.UseNpgsqlConnection(connectionString),
         new PostgreSqlStorageOptions
@@ -48,6 +99,12 @@ builder.Services.AddHangfireServer(options =>
 
 var host = builder.Build();
 
+// Boot doğrulaması: ffmpeg/ffprobe gerçekten çalışıyor mu ('-version') — yoksa worker işe
+// yaramaz; ilk transcode'da değil AÇILIŞTA, açıklayıcı mesajla düş.
+var ffmpegOptions = host.Services.GetRequiredService<FfmpegOptions>();
+EnsureMediaToolAvailable(ffmpegOptions.FfmpegPath, "ffmpeg");
+EnsureMediaToolAvailable(ffmpegOptions.FfprobePath, "ffprobe");
+
 // Reaper: 15 dk'da bir (kuyruk seçimi AssetReaperJob.Run üzerindeki [Queue] attribute'undan).
 using (var scope = host.Services.CreateScope())
 {
@@ -58,3 +115,47 @@ using (var scope = host.Services.CreateScope())
 }
 
 host.Run();
+
+static void EnsureMediaToolAvailable(string path, string toolName)
+{
+    try
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = path,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        psi.ArgumentList.Add("-version");
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("process could not be started");
+        if (!process.WaitForExit(10_000))
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // best-effort
+            }
+
+            throw new InvalidOperationException("'-version' did not exit within 10s");
+        }
+
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"'-version' exited with code {process.ExitCode}");
+        }
+    }
+    catch (Exception ex)
+    {
+        throw new InvalidOperationException(
+            $"Worker boot check failed: {toolName} could not be executed ('{path}'). "
+            + "ffmpeg/ffprobe worker için zorunludur — PATH'e kur (Debian/Ubuntu ya da Docker "
+            + "imajında: apt-get install -y ffmpeg) veya Ffmpeg__FfmpegPath / Ffmpeg__FfprobePath "
+            + "ile tam yol ver.", ex);
+    }
+}

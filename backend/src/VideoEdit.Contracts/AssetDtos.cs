@@ -59,10 +59,16 @@ public sealed record MediaUrlsResponse(
     DateTimeOffset ExpiresAt,
     Dictionary<string, AssetMediaUrlsDto> Assets);
 
+/// <summary>
+/// sprites: filmstrip manifest'indeki dosya adı → presigned GET URL sözlüğü (çoklu-sprite
+/// videolar; manifest sprites[] ile aynı adlar). Manifest okunamazsa null — istemci
+/// filmstrip/filmstripManifest ile geriye uyumlu çalışır. filmstrip her zaman ilk sprite'tır.
+/// </summary>
 public sealed record AssetMediaUrlsDto(
     string? Original,
     string? Proxy,
     string? Filmstrip,
     string? FilmstripManifest,
     string? Waveform,
-    string? Poster);
+    string? Poster,
+    IReadOnlyDictionary<string, string>? Sprites = null);

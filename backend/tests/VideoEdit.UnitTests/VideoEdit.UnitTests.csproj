@@ -26,6 +26,7 @@
     <ProjectReference Include="..\..\src\VideoEdit.Media\VideoEdit.Media.csproj" />
     <ProjectReference Include="..\..\src\VideoEdit.Contracts\VideoEdit.Contracts.csproj" />
     <ProjectReference Include="..\..\src\VideoEdit.Api\VideoEdit.Api.csproj" />
+    <ProjectReference Include="..\..\src\VideoEdit.Worker\VideoEdit.Worker.csproj" />
   </ItemGroup>
 
 </Project>

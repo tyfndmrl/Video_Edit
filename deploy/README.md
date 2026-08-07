@@ -20,6 +20,20 @@ docker compose up -d
 docker compose logs -f migrator   # migration'in basariyla bittigini dogrula
 ```
 
+### Ortam degiskenleri: ASPNETCORE_ENVIRONMENT ve DOTNET_ENVIRONMENT
+
+Iki servis ortam adini FARKLI degiskenlerden okur ve compose.yml IKISINI BIRDEN acikca set eder:
+
+- `api` (ASP.NET Core web host) -> `ASPNETCORE_ENVIRONMENT=Production`
+- `worker` (generic host) -> `DOTNET_ENVIRONMENT=Production` (`ASPNETCORE_ENVIRONMENT`'i OKUMAZ)
+
+Prod guard'lari (zorunlu `ConnectionStrings__Postgres`, `R2__*`, api'de `Jwt__Secret`) ve
+"localhost fallback yalniz Development" kurali bu ortam adina bakar. Degiskenler silinirse
+varsayilan yine Production'dur, ama acik set etmek yanlislikla `Development`'a dusup
+guard'larin atlanmasini onler. Worker ayrica acilista `ffmpeg -version` / `ffprobe -version`
+kontrolu yapar — imajda ffmpeg yoksa fail-fast olur (Dockerfile kurar; ozel imajda
+`Ffmpeg__FfmpegPath` / `Ffmpeg__FfprobePath` ile tam yol verilebilir).
+
 ## 3. Frontend dagitimi
 
 Frontend statik dist Caddy'nin `caddy_srv` volume'undan servis edilir:

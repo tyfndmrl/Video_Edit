@@ -47,11 +47,40 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # [FfmpegFact]/[MinioAndFfmpegFact] testleri icin — yoksa Skip olurlar,
+      # kuruluyken gercekten kosarlar.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      # MinIO: [MinioFact]/[MinioAndFfmpegFact] testleri CI'da GERCEK kossun.
+      # GitHub `services:` blogu imaj komutunu override EDEMEZ ve resmi
+      # minio/minio imaji `server /data` komutu ister (bitnami/minio artik
+      # yayinlanmiyor) — bu yuzden docker run adimi kullanilir. Imaj +
+      # kimlik bilgileri + healthcheck compose.dev.yml ile birebir ayni.
+      # Bucket on-olusturma GEREKMEZ: testler kendi bucket'larini
+      # EnsureBucketsExistAsync ile olusturur (MinioStorageSmokeTests gibi).
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=videoedit \
+            -e MINIO_ROOT_PASSWORD=devpassword123 \
+            --health-cmd "mc ready local" \
+            --health-interval 5s --health-timeout 3s --health-retries 20 \
+            minio/minio:latest server /data
+          echo "MinIO health bekleniyor..."
+          timeout 90 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" minio)" = "healthy" ]; do sleep 2; done'
+          docker inspect -f '{{.State.Health.Status}}' minio
+
       - name: Build
         run: dotnet build backend/VideoEdit.sln
 
       - name: Test
         run: dotnet test backend/VideoEdit.sln --no-build
+        env:
+          # MinIO service container ayakta -> [MinioFact] testleri kosar.
+          MINIO_AVAILABLE: "1"
 
       # Uretilmis C# kontratlarinin drift kontrolu.
       - name: Contracts drift kontrolu
@@ -60,10 +89,14 @@ jobs:
           git diff --exit-code -- backend/src/VideoEdit.Contracts/Generated
 
   docker:
-    name: Docker build (Api)
+    name: Docker build (${{ matrix.project }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [Api, Worker]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Api image
-        run: docker build -f backend/src/VideoEdit.Api/Dockerfile backend
+      - name: Build ${{ matrix.project }} image
+        run: docker build -f backend/src/VideoEdit.${{ matrix.project }}/Dockerfile backend
