@@ -1,0 +1,204 @@
+/**
+ * TimelineHarness — canvas timeline üzerinde GERÇEK fare jestleri.
+ *
+ * KURAL: burada `page.mouse.*` / `page.keyboard.*` dışında hiçbir olay üretimi
+ * yoktur. `dispatchEvent`, `element.click()` gibi sentetik yollar bilinçli
+ * olarak KULLANILMAZ — kullanıcının şikayet ettiği hatalar tam olarak sentetik
+ * testlerin göremediği hatalardı (pointer capture, buton maskesi, wheel
+ * modifier'ları, contextmenu zinciri).
+ *
+ * Piksel geometrisi uygulamanın KENDİ geometry modülünden gelir (tek kaynak):
+ * xPx = (timeUs - scrollUs) * pxPerUs, satır yüksekliği TRACK_H + TRACK_GAP.
+ */
+import { expect, type Page } from '@playwright/test';
+import { RULER_H, TRACK_H, TRACK_GAP } from '../../src/features/timeline/geometry';
+import { findClip, readAppState, type AppState } from './appBridge';
+
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Sürüklemede kullanılan ara adım sayısı — gerçek fare gibi kademeli hareket. */
+const DRAG_STEPS = 16;
+
+export class TimelineHarness {
+  constructor(private readonly page: Page) {}
+
+  /**
+   * Canvas yığınını saran öğenin ekran kutusu. Öncelik `data-testid`; yoksa
+   * "içinde 3 canvas barındıran div" (ruler + body + overlay) sezgisi.
+   */
+  async wrapBox(): Promise<Box> {
+    const box = await this.page.evaluate(() => {
+      const tagged = document.querySelector('[data-testid="timeline-canvas"]');
+      const wrap =
+        tagged ??
+        [...document.querySelectorAll('div')].find(
+          (d) => [...d.children].filter((c) => c.tagName === 'CANVAS').length >= 3,
+        );
+      if (!wrap) return null;
+      const r = wrap.getBoundingClientRect();
+      return { x: r.left, y: r.top, width: r.width, height: r.height };
+    });
+    expect(box, 'Timeline canvas sarmalayıcısı bulunamadı (3 canvas içeren div).').not.toBeNull();
+    return box as Box;
+  }
+
+  async state(): Promise<AppState> {
+    return readAppState(this.page);
+  }
+
+  /**
+   * Gövde canvas'ının piksel imzası (toDataURL üzerinden ucuz hash).
+   *
+   * Seçili klip için canvas DIŞINDA bir DOM göstergesi yok (seçim çerçevesi
+   * canvas'a çiziliyor), bu yüzden "UI gerçekten tepki verdi mi?" sorusunun
+   * store'dan bağımsız tek yanıtı budur: imza değiştiyse timeline yeniden
+   * boyanmıştır.
+   */
+  async bodySignature(): Promise<string> {
+    const sig = await this.page.evaluate(() => {
+      const tagged = document.querySelector('[data-testid="timeline-canvas"]');
+      const wrap =
+        tagged ??
+        [...document.querySelectorAll('div')].find(
+          (d) => [...d.children].filter((c) => c.tagName === 'CANVAS').length >= 3,
+        );
+      if (!wrap) return null;
+      // Canvas sırası: ruler, body, overlay (TimelinePanel render'ı).
+      const body = wrap.querySelectorAll('canvas')[1] as HTMLCanvasElement | undefined;
+      if (!body) return null;
+      const url = body.toDataURL('image/png');
+      let h = 0;
+      for (let i = 0; i < url.length; i++) h = (h * 31 + url.charCodeAt(i)) | 0;
+      return `${url.length}:${h}`;
+    });
+    expect(sig, 'Timeline gövde canvas\'ı okunamadı.').not.toBeNull();
+    return sig as string;
+  }
+
+  /** Zaman + track satırı -> sayfa koordinatı (canvas gövdesi içinde). */
+  async point(timeUs: number, trackIndex: number, state?: AppState): Promise<{ x: number; y: number }> {
+    const st = state ?? (await this.state());
+    const wrap = await this.wrapBox();
+    return {
+      x: wrap.x + (timeUs - st.scrollUs) * st.pxPerUs,
+      y: wrap.y + RULER_H + trackIndex * (TRACK_H + TRACK_GAP) + TRACK_H / 2,
+    };
+  }
+
+  /** Cetvel (ruler) üzerinde bir zamanın sayfa koordinatı. */
+  async rulerPoint(timeUs: number, state?: AppState): Promise<{ x: number; y: number }> {
+    const st = state ?? (await this.state());
+    const wrap = await this.wrapBox();
+    return { x: wrap.x + (timeUs - st.scrollUs) * st.pxPerUs, y: wrap.y + RULER_H / 2 };
+  }
+
+  /** Klibin ekrandaki kutusu (sol kenar, genişlik dahil). */
+  async clipBox(clipId: string, state?: AppState): Promise<Box> {
+    const st = state ?? (await this.state());
+    const { clip, trackIndex } = findClip(st, clipId);
+    const wrap = await this.wrapBox();
+    return {
+      x: wrap.x + (clip.timelineStartUs - st.scrollUs) * st.pxPerUs,
+      y: wrap.y + RULER_H + trackIndex * (TRACK_H + TRACK_GAP),
+      width: clip.timelineDurationUs * st.pxPerUs,
+      height: TRACK_H,
+    };
+  }
+
+  /** Klibin gövde ortası (trim tutamaklarından uzak). */
+  async clipCenter(clipId: string, state?: AppState): Promise<{ x: number; y: number }> {
+    const box = await this.clipBox(clipId, state);
+    return { x: box.x + box.width / 2, y: box.y + TRACK_H / 2 };
+  }
+
+  // ---------------------------------------------------------------------
+  // Gerçek fare jestleri
+  // ---------------------------------------------------------------------
+
+  async click(point: { x: number; y: number }, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
+    await this.page.mouse.move(point.x, point.y);
+    await this.page.mouse.down({ button });
+    await this.page.mouse.up({ button });
+    await this.settle();
+  }
+
+  /** Olay -> store -> rAF çizim zinciri tamamlansın. */
+  private async settle(): Promise<void> {
+    await this.page.waitForTimeout(120);
+  }
+
+  /**
+   * Basılı tut + kademeli hareket + bırak. Ara hareketler şart: TimelinePanel
+   * 4 px sürükleme eşiğinden sonra "pendingClip -> move" terfisi yapar ve
+   * bırakma anında SON pointermove'daki plana göre commit eder.
+   */
+  async drag(
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    button: 'left' | 'middle' = 'left',
+  ): Promise<void> {
+    await this.page.mouse.move(from.x, from.y);
+    await this.page.mouse.down({ button });
+    // Eşiği aşan ilk küçük hareket (jest "sürükleme" olarak tanınsın).
+    await this.page.mouse.move(from.x + Math.sign(to.x - from.x || 1) * 6, from.y, { steps: 2 });
+    await this.page.mouse.move(to.x, to.y, { steps: DRAG_STEPS });
+    // Son konumu bir kez daha teyit et (yuvarlama/rAF gecikmesine karşı).
+    await this.page.mouse.move(to.x, to.y);
+    await this.page.mouse.up({ button });
+    await this.settle();
+  }
+
+  /** Klibi gövdesinden yakalayıp verilen süre kadar öteler (opsiyonel track değişimi). */
+  async dragClipByTime(clipId: string, deltaUs: number, trackDelta = 0): Promise<void> {
+    const st = await this.state();
+    const from = await this.clipCenter(clipId, st);
+    const to = {
+      x: from.x + deltaUs * st.pxPerUs,
+      y: from.y + trackDelta * (TRACK_H + TRACK_GAP),
+    };
+    await this.drag(from, to);
+  }
+
+  /** Sağ kenardan (trim tutamağı) sürükleyerek kırpma. */
+  async dragRightEdgeByTime(clipId: string, deltaUs: number): Promise<void> {
+    const st = await this.state();
+    const box = await this.clipBox(clipId, st);
+    // Tutamak genişliği min(8, w/3); 3 px içeriden yakala.
+    const from = { x: box.x + box.width - 3, y: box.y + TRACK_H / 2 };
+    await this.drag(from, { x: from.x + deltaUs * st.pxPerUs, y: from.y });
+  }
+
+  /** Cetvele gerçek tıklama -> playhead o zamana gider (scrub). */
+  async scrubTo(timeUs: number): Promise<void> {
+    await this.click(await this.rulerPoint(timeUs));
+  }
+
+  /** Ctrl+wheel: imleç çapalı zoom. Modifier gerçek klavye durumundan gelir. */
+  async ctrlWheel(deltaY: number, at?: { x: number; y: number }): Promise<void> {
+    const point = at ?? (await this.centerOfBody());
+    await this.page.mouse.move(point.x, point.y);
+    await this.page.keyboard.down('Control');
+    await this.page.mouse.wheel(0, deltaY);
+    await this.page.keyboard.up('Control');
+  }
+
+  /** Shift+wheel: yatay pan. */
+  async shiftWheel(deltaY: number, at?: { x: number; y: number }): Promise<void> {
+    const point = at ?? (await this.centerOfBody());
+    await this.page.mouse.move(point.x, point.y);
+    await this.page.keyboard.down('Shift');
+    await this.page.mouse.wheel(0, deltaY);
+    await this.page.keyboard.up('Shift');
+  }
+
+  /** Canvas gövdesinin ortası (cetvelin altı). */
+  async centerOfBody(): Promise<{ x: number; y: number }> {
+    const wrap = await this.wrapBox();
+    return { x: wrap.x + wrap.width / 2, y: wrap.y + RULER_H + (wrap.height - RULER_H) / 2 };
+  }
+}

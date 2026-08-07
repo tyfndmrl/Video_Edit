@@ -1,0 +1,19 @@
+{
+  "//": "E2E testleri ayrı derlenir: uygulamanın tsconfig'i (include: ['src']) Playwright tiplerini ve DOM+Node karışımını içine almasın. `pnpm test:e2e:typecheck` ile kontrol edilir.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  },
+  "include": ["**/*.ts", "../playwright.config.ts"]
+}

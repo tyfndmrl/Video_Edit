@@ -13,12 +13,14 @@ import {
   addClipFromAsset,
   addTrack,
   deleteClips,
+  deleteTrack,
   knownAssetDurations,
   moveClips,
   planMoveClips,
   splitClipAt,
   splitKeyframes,
   toggleTrackLocked,
+  trackDeleteBlockReason,
   trimClip,
 } from './timelineOps';
 
@@ -114,6 +116,106 @@ describe('addTrack / addClipFromAsset', () => {
     expect(currentDoc().tracks).toHaveLength(1);
     expect(currentDoc().tracks[0].type).toBe('video');
     expectValid();
+  });
+});
+
+describe('deleteTrack', () => {
+  const TRACK_2 = '01890000-0000-7000-8000-000000000102';
+  const AUDIO_TRACK = '01890000-0000-7000-8000-000000000103';
+
+  function audioTrack(id: string): Track {
+    return { id, type: 'audio', muted: false, hidden: false, locked: false, clips: [] };
+  }
+
+  it('deletes the track together with its clips and keeps the document valid', () => {
+    const c1 = mediaClip('01890000-0000-7000-8000-000000000201', ASSET_A, 0, 0, 2 * US);
+    const c2 = mediaClip('01890000-0000-7000-8000-000000000202', ASSET_B, 3 * US, 0, 2 * US);
+    useDocStore
+      .getState()
+      .loadDoc(docWith([videoTrack(TRACK_1, [c1, c2]), videoTrack(TRACK_2, [])]));
+
+    const res = deleteTrack(TRACK_1);
+    expect(res.ok).toBe(true);
+    expect(currentDoc().tracks).toHaveLength(1);
+    expect(currentDoc().tracks[0].id).toBe(TRACK_2);
+    expectValid();
+  });
+
+  it('is a single undoable history entry that restores the clips', () => {
+    const c1 = mediaClip('01890000-0000-7000-8000-000000000201', ASSET_A, US, 0, 2 * US);
+    useDocStore
+      .getState()
+      .loadDoc(docWith([videoTrack(TRACK_1, [c1]), videoTrack(TRACK_2, [])]));
+
+    deleteTrack(TRACK_1);
+    expect(useDocStore.getState().history).toHaveLength(1);
+
+    useDocStore.getState().undo();
+    expect(currentDoc().tracks).toHaveLength(2);
+    expect(currentDoc().tracks[0].id).toBe(TRACK_1);
+    expect(currentDoc().tracks[0].clips).toHaveLength(1);
+    expect(currentDoc().tracks[0].clips[0].timelineStartUs).toBe(US);
+    expectValid();
+
+    useDocStore.getState().redo();
+    expect(currentDoc().tracks).toHaveLength(1);
+    expectValid();
+  });
+
+  it('refuses the last video track (doc unchanged, no history entry)', () => {
+    useDocStore.getState().loadDoc(docWith([videoTrack(TRACK_1, []), audioTrack(AUDIO_TRACK)]));
+    const before = JSON.stringify(currentDoc());
+
+    const res = deleteTrack(TRACK_1);
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.reason).toBe('cannot delete the last video track');
+    expect(JSON.stringify(currentDoc())).toBe(before);
+    expect(useDocStore.getState().history).toHaveLength(0);
+
+    // Aynı dokümanda ses track'i silinebilir.
+    expect(deleteTrack(AUDIO_TRACK).ok).toBe(true);
+    expectValid();
+  });
+
+  it('refuses a locked track and an unknown id', () => {
+    useDocStore
+      .getState()
+      .loadDoc(docWith([videoTrack(TRACK_1, []), videoTrack(TRACK_2, [])]));
+    toggleTrackLocked(TRACK_2);
+    const historyBefore = useDocStore.getState().history.length;
+
+    expect(deleteTrack(TRACK_2).ok).toBe(false);
+    expect(deleteTrack('01890000-0000-7000-8000-0000000009ff').ok).toBe(false);
+    expect(useDocStore.getState().history).toHaveLength(historyBefore);
+    expect(currentDoc().tracks).toHaveLength(2);
+  });
+
+  it('drops the deleted track clips from the selection', () => {
+    const c1 = mediaClip('01890000-0000-7000-8000-000000000201', ASSET_A, 0, 0, 2 * US);
+    const c2 = mediaClip('01890000-0000-7000-8000-000000000202', ASSET_B, 0, 0, 2 * US);
+    useDocStore
+      .getState()
+      .loadDoc(docWith([videoTrack(TRACK_1, [c1]), videoTrack(TRACK_2, [c2])]));
+    useEditorStore.getState().setSelection([c1.id, c2.id]);
+
+    deleteTrack(TRACK_1);
+    expect([...useEditorStore.getState().selection]).toEqual([c2.id]);
+  });
+
+  it('trackDeleteBlockReason mirrors the op guards (menu disabled state)', () => {
+    const doc = docWith([videoTrack(TRACK_1, []), videoTrack(TRACK_2, []), audioTrack(AUDIO_TRACK)]);
+    expect(trackDeleteBlockReason(doc, TRACK_1)).toBeNull();
+    expect(trackDeleteBlockReason(doc, AUDIO_TRACK)).toBeNull();
+    expect(trackDeleteBlockReason(doc, 'missing')).toBe('track not found');
+
+    const single = docWith([videoTrack(TRACK_1, [])]);
+    expect(trackDeleteBlockReason(single, TRACK_1)).toBe('cannot delete the last video track');
+
+    const locked = docWith([
+      videoTrack(TRACK_1, []),
+      { ...videoTrack(TRACK_2, []), locked: true },
+    ]);
+    expect(trackDeleteBlockReason(locked, TRACK_2)).toBe('track is locked');
   });
 });
 

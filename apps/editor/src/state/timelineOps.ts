@@ -232,6 +232,51 @@ export const toggleTrackHidden = (trackId: Uuid): OpResult =>
 export const toggleTrackLocked = (trackId: Uuid): OpResult =>
   toggleTrackFlag(trackId, 'locked', 'Track kilitlendi/açıldı');
 
+/**
+ * Why `trackId` cannot be deleted, or null when it can.
+ *
+ * Exported so the timeline context menu can grey the item out with EXACTLY the
+ * rule deleteTrack enforces — a menu must never offer an action the op refuses.
+ * The "last video track" guard is a UX invariant (an editor without a video
+ * lane has nowhere to drop footage), not a schema one.
+ */
+export function trackDeleteBlockReason(d: TimelineDoc, trackId: Uuid): string | null {
+  const track = d.tracks.find((t) => t.id === trackId);
+  if (!track) return 'track not found';
+  if (track.locked) return 'track is locked';
+  if (track.type === 'video' && d.tracks.filter((t) => t.type === 'video').length <= 1) {
+    return 'cannot delete the last video track';
+  }
+  return null;
+}
+
+/**
+ * Deletes a track WITH the clips it contains (one undo entry). Refuses locked
+ * tracks and the last video track (see trackDeleteBlockReason).
+ */
+export function deleteTrack(trackId: Uuid): OpResult {
+  const d = doc();
+  const blocked = trackDeleteBlockReason(d, trackId);
+  if (blocked !== null) return fail(blocked);
+  const track = d.tracks.find((t) => t.id === trackId);
+  if (!track) return fail('track not found');
+
+  const removedClipIds = new Set(track.clips.map((c) => c.id));
+  const label =
+    track.clips.length > 0 ? `Track silindi (${track.clips.length} klip)` : 'Track silindi';
+  useDocStore.getState().mutate('deleteTrack', label, (dd) => {
+    const i = dd.tracks.findIndex((t) => t.id === trackId);
+    if (i >= 0) dd.tracks.splice(i, 1);
+  });
+  assertDocValidDev('deleteTrack');
+
+  // Selection may not survive its clips.
+  const editor = useEditorStore.getState();
+  const next = [...editor.selection].filter((id) => !removedClipIds.has(id));
+  if (next.length !== editor.selection.size) editor.setSelection(next);
+  return OK;
+}
+
 // ---------------------------------------------------------------------------
 // addClipFromAsset
 // ---------------------------------------------------------------------------
@@ -962,6 +1007,11 @@ let clipboard: ClipboardEntry[] | null = null;
 /** Test hook / paranoia: reset module clipboard. */
 export function clearClipboardForTests(): void {
   clipboard = null;
+}
+
+/** True when there is something to paste (context menu disabled state). */
+export function hasClipboardContent(): boolean {
+  return clipboard !== null && clipboard.length > 0;
 }
 
 function cloneClip(clip: Clip): Clip {

@@ -14,7 +14,7 @@
  * library asset drop (pointer DnD).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import {
   formatTimecode,
   snapUsToFrameGrid,
@@ -27,21 +27,41 @@ import { useEditorStore } from '../../state/editorStore';
 import { useProjectSession } from '../../state/projectSession';
 import {
   addClipFromAsset,
+  addMarkerAtPlayhead,
   addTrack,
   applyTrimToDraft,
   assertDocValidDev,
   clipEndUs,
+  copyClips,
+  cutClips,
+  deleteClips,
+  deleteTrack,
+  duplicateClips,
+  hasClipboardContent,
   knownAssetDurations,
   moveClips,
+  pasteAtPlayhead,
   planMoveClips,
   projectEndUs,
+  splitAtPlayhead,
   toggleTrackHidden,
   toggleTrackLocked,
   toggleTrackMuted,
+  trimSelectedToPlayhead,
+  type OpResult,
   type TrimEdge,
   type TrimMode,
 } from '../../state/timelineOps';
+import { autoFitSettled, decideAutoFit } from './autoFit';
 import { ConflictDialog } from './ConflictDialog';
+import {
+  buildTimelineMenu,
+  type TimelineMenuActionId,
+  type TimelineMenuTarget,
+} from './contextMenu';
+import { MOVE_CONFLICT_MESSAGE, WARNING_TTL_MS, opFailureMessage } from './feedback';
+import { panScrollUs, panScrollY } from './pan';
+import { TimelineContextMenu } from './TimelineContextMenu';
 import {
   RULER_H,
   TRACK_GAP,
@@ -98,7 +118,7 @@ type PointerState =
       anchorTrackIndex: number;
       grabOffsetUs: MicroSec;
       candidates: MicroSec[];
-      last: { deltaUs: MicroSec; trackDelta: number; valid: boolean };
+      last: { deltaUs: MicroSec; trackDelta: number; valid: boolean; reason: string | null };
     }
   | {
       mode: 'trim';
@@ -117,7 +137,23 @@ type PointerState =
       startY: number;
       additive: boolean;
       baseSelection: Uuid[];
+    }
+  /** Orta fare tuşuyla kaydırma (pan) — doküman değişmez, yalnız görünüm. */
+  | {
+      mode: 'pan';
+      pointerId: number;
+      startX: number;
+      startY: number;
+      startScrollUs: MicroSec;
+      startScrollY: number;
     };
+
+/** Sağ tık menüsünün açık durumu (client koordinatları + hedef). */
+interface MenuState {
+  x: number;
+  y: number;
+  target: TimelineMenuTarget;
+}
 
 export function TimelinePanel() {
   // NOTE: deliberately NO React selector on playheadUs — during playback the
@@ -153,6 +189,35 @@ export function TimelinePanel() {
   const dragVisualRef = useRef<DragVisual | null>(null);
   const pointerRef = useRef<PointerState>({ mode: 'idle' });
   const rafRef = useRef(0);
+
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  // Kısa süreli inline uyarı (çakışan taşıma, reddedilen menü eylemi …).
+  // Sessiz ret kullanıcıya "çalışmıyor" hissi veriyordu.
+  const [warning, setWarning] = useState<string | null>(null);
+  const warnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warn = useCallback((message: string) => {
+    setWarning(message);
+    if (warnTimerRef.current !== null) clearTimeout(warnTimerRef.current);
+    warnTimerRef.current = setTimeout(() => {
+      warnTimerRef.current = null;
+      setWarning(null);
+    }, WARNING_TTL_MS);
+  }, []);
+  useEffect(
+    () => () => {
+      if (warnTimerRef.current !== null) clearTimeout(warnTimerRef.current);
+    },
+    [],
+  );
+  /** Op sonucu başarısızsa uyarı balonunu göster. */
+  const reportOp = useCallback(
+    (result: OpResult) => {
+      if (!result.ok) warn(opFailureMessage(result.reason));
+    },
+    [warn],
+  );
 
   // ---------------------------------------------------------------------
   // Drawing
@@ -322,15 +387,31 @@ export function TimelinePanel() {
     [zoomAt, fitToProject],
   );
 
-  // Fit once when a project finishes loading.
-  const didInitialFit = useRef(false);
+  // Otomatik sığdırma — proje açılışında görünümü içeriğe oturt (autoFit.ts).
+  //
+  // Bu efekt DOKÜMAN ve VIEWPORT değişimlerinde de çalışır ama kararı
+  // decideAutoFit verir: sığdırma proje oturumu başına yalnız bir kez uygulanır
+  // (kullanıcının zoom'u asla ezilmez) ve canvas henüz ölçülmemişse 'wait'
+  // dönerek ilk ölçümü bekler (yarış yok, uydurma genişlikle yanlış zoom yok).
+  const autoFitAppliedRef = useRef(false);
   useEffect(() => {
-    if (sessionStatus === 'ready' && !didInitialFit.current) {
-      didInitialFit.current = true;
-      fitToProject();
+    if (sessionStatus === 'loading' || sessionStatus === 'idle') {
+      autoFitAppliedRef.current = false;
+      return;
     }
-    if (sessionStatus === 'loading') didInitialFit.current = false;
-  }, [sessionStatus, fitToProject]);
+    const decision = decideAutoFit({
+      sessionStatus,
+      contentEndUs: projectEndUs(useDocStore.getState().doc),
+      viewportWidthPx: viewport.w,
+      alreadyApplied: autoFitAppliedRef.current,
+    });
+    if (autoFitSettled(decision)) autoFitAppliedRef.current = true;
+    if (decision.kind === 'fit') {
+      const st = useEditorStore.getState();
+      st.setPxPerUs(decision.pxPerUs);
+      st.setScrollUs(decision.scrollUs);
+    }
+  }, [sessionStatus, viewport.w, doc]);
 
   // Wheel: Ctrl=zoom (cursor anchored), Shift=pan, plain=vertical scroll.
   // Native non-passive listener (React attaches wheel passively).
@@ -409,9 +490,28 @@ export function TimelinePanel() {
 
   const onPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (e.button !== 0) return;
       const wrap = wrapRef.current;
       if (!wrap) return;
+
+      // Orta tuş: sürükleyerek kaydırma (pan). Boşlukta space+sürükleme
+      // GEREKMEZ; preventDefault Windows'un orta tuş otomatik kaydırmasını da
+      // devre dışı bırakır.
+      if (e.button === 1) {
+        e.preventDefault();
+        wrap.setPointerCapture(e.pointerId);
+        const p = localPoint(e.clientX, e.clientY);
+        pointerRef.current = {
+          mode: 'pan',
+          pointerId: e.pointerId,
+          startX: p.x,
+          startY: p.y,
+          startScrollUs: useEditorStore.getState().scrollUs,
+          startScrollY: scrollYRef.current,
+        };
+        wrap.style.cursor = 'grabbing';
+        return;
+      }
+      if (e.button !== 0) return;
       wrap.setPointerCapture(e.pointerId);
       const { x, y, contentY } = localPoint(e.clientX, e.clientY);
       const st = useEditorStore.getState();
@@ -497,7 +597,7 @@ export function TimelinePanel() {
   const onPointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       const state = pointerRef.current;
-      const { x, contentY } = localPoint(e.clientX, e.clientY);
+      const { x, y, contentY } = localPoint(e.clientX, e.clientY);
       const st = useEditorStore.getState();
       const d = useDocStore.getState().doc;
 
@@ -513,6 +613,14 @@ export function TimelinePanel() {
       }
       if (state.mode === 'scrub') {
         scrubTo(x);
+        return;
+      }
+
+      if (state.mode === 'pan') {
+        st.setScrollUs(panScrollUs(state.startScrollUs, state.startX, x, st.pxPerUs));
+        const bodyH = Math.max(0, viewportRef.current.h - RULER_H);
+        const maxScroll = Math.max(0, tracksContentHeight(d.tracks.length) - bodyH);
+        setScrollY(panScrollY(state.startScrollY, state.startY, y, maxScroll));
         return;
       }
 
@@ -549,7 +657,7 @@ export function TimelinePanel() {
             excludeClipIds: new Set(ids),
             playheadUs: st.playheadUs,
           }),
-          last: { deltaUs: 0, trackDelta: 0, valid: true },
+          last: { deltaUs: 0, trackDelta: 0, valid: true, reason: null },
         };
         return;
       }
@@ -570,7 +678,13 @@ export function TimelinePanel() {
         const trackDelta =
           typeof row === 'number' ? row - state.anchorTrackIndex : state.last.trackDelta;
         const plan = planMoveClips(d, state.clipIds, snap.deltaUs, trackDelta);
-        state.last = { deltaUs: snap.deltaUs, trackDelta, valid: plan.ok };
+        state.last = {
+          deltaUs: snap.deltaUs,
+          trackDelta,
+          valid: plan.ok,
+          // Bırakınca gösterilecek uyarının gerekçesi (sessiz ret yok).
+          reason: plan.ok ? null : plan.reason,
+        };
 
         const ghosts: Extract<DragVisual, { kind: 'move' }>['ghosts'] = [];
         for (const id of state.clipIds) {
@@ -639,21 +753,36 @@ export function TimelinePanel() {
       } else if (state.mode === 'pendingMarquee') {
         if (!state.additive) st.clearSelection();
       } else if (state.mode === 'move') {
-        if (state.last.valid && (state.last.deltaUs !== 0 || state.last.trackDelta !== 0)) {
-          moveClips(state.clipIds, state.last.deltaUs, state.last.trackDelta);
+        const moved = state.last.deltaUs !== 0 || state.last.trackDelta !== 0;
+        if (moved && !state.last.valid) {
+          // Çakışma/kilit yüzünden reddedilen taşıma artık SESSİZ değil.
+          warn(
+            state.last.reason !== null
+              ? opFailureMessage(state.last.reason)
+              : MOVE_CONFLICT_MESSAGE,
+          );
+        } else if (moved) {
+          reportOp(moveClips(state.clipIds, state.last.deltaUs, state.last.trackDelta));
         }
       } else if (state.mode === 'trim') {
         state.tx.commit();
         assertDocValidDev('trim drag');
+      } else if (state.mode === 'pan') {
+        const wrap = wrapRef.current;
+        if (wrap) wrap.style.cursor = 'default';
       }
       finishInteraction();
     },
-    [finishInteraction],
+    [finishInteraction, reportOp, warn],
   );
 
   const cancelInteraction = useCallback(() => {
     const state = pointerRef.current;
     if (state.mode === 'trim') state.tx.abort();
+    if (state.mode === 'pan') {
+      const wrap = wrapRef.current;
+      if (wrap) wrap.style.cursor = 'default';
+    }
     if (state.mode !== 'idle') finishInteraction();
   }, [finishInteraction]);
 
@@ -668,6 +797,137 @@ export function TimelinePanel() {
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [cancelInteraction]);
+
+  // ---------------------------------------------------------------------
+  // Sağ tık menüsü + çift tık
+  // ---------------------------------------------------------------------
+
+  // Proje yeniden yüklenirken menü açık kalmasın (hedef kaybolabilir).
+  useEffect(() => {
+    if (sessionLoading) setMenu(null);
+  }, [sessionLoading]);
+
+  const onContextMenu = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      if (pointerRef.current.mode !== 'idle') return; // sürükleme sürerken açma
+      const { x, y, contentY } = localPoint(e.clientX, e.clientY);
+      const st = useEditorStore.getState();
+      const d = useDocStore.getState().doc;
+
+      if (y < RULER_H) {
+        setMenu({
+          x: e.clientX,
+          y: e.clientY,
+          target: {
+            kind: 'ruler',
+            timeUs: snapUsToFrameGrid(xToTime(x, st.scrollUs, st.pxPerUs), d.settings.fps),
+          },
+        });
+        return;
+      }
+
+      const hit = hitTestClips(hitsRef.current, x, contentY);
+      if (hit) {
+        // Menü açılırken klip seçili değilse seç (eylemler seçim üzerinden çalışır).
+        if (!st.selection.has(hit.clipId)) st.setSelection([hit.clipId]);
+        setMenu({ x: e.clientX, y: e.clientY, target: { kind: 'clip', clipId: hit.clipId } });
+        return;
+      }
+
+      const row = trackIndexAtY(contentY, d.tracks.length);
+      const track = typeof row === 'number' ? d.tracks[row] : undefined;
+      setMenu({
+        x: e.clientX,
+        y: e.clientY,
+        target: track ? { kind: 'track', trackId: track.id } : { kind: 'empty' },
+      });
+    },
+    [localPoint],
+  );
+
+  const onDoubleClick = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      const { x, y, contentY } = localPoint(e.clientX, e.clientY);
+      if (y < RULER_H) return;
+      const hit = hitTestClips(hitsRef.current, x, contentY);
+      if (!hit) return;
+      const clip = useDocStore
+        .getState()
+        .doc.tracks[hit.trackIndex]?.clips.find((c) => c.id === hit.clipId);
+      if (!clip) return;
+      // Keşfedilebilirlik: klibi seç ve playhead'i klip başına götür.
+      const st = useEditorStore.getState();
+      st.setSelection([hit.clipId]);
+      st.setPlayheadUs(clip.timelineStartUs);
+    },
+    [localPoint],
+  );
+
+  /**
+   * Menü eylemleri — hepsi MEVCUT timelineOps fonksiyonlarını çağırır; burada
+   * yeni düzenleme mantığı yoktur. Başarısız sonuçlar uyarı balonuna düşer.
+   */
+  const runMenuAction = useCallback(
+    (id: TimelineMenuActionId) => {
+      const target = menu?.target;
+      closeMenu();
+      if (target === undefined) return;
+      if (useProjectSession.getState().status !== 'ready') return;
+      const st = useEditorStore.getState();
+      const selection = [...st.selection];
+
+      switch (id) {
+        case 'splitAtPlayhead':
+          reportOp(splitAtPlayhead());
+          return;
+        case 'cut':
+          reportOp(cutClips(selection));
+          return;
+        case 'copy':
+          if (!copyClips(selection)) warn(opFailureMessage('nothing to copy'));
+          return;
+        case 'duplicate':
+          reportOp(duplicateClips(selection));
+          return;
+        case 'delete':
+          reportOp(deleteClips(selection));
+          return;
+        case 'rippleDelete':
+          reportOp(deleteClips(selection, { ripple: true }));
+          return;
+        case 'trimStartToPlayhead':
+          reportOp(trimSelectedToPlayhead('left'));
+          return;
+        case 'trimEndToPlayhead':
+          reportOp(trimSelectedToPlayhead('right'));
+          return;
+        case 'paste':
+          reportOp(pasteAtPlayhead());
+          return;
+        case 'toggleMuted':
+          if (target.kind === 'track') reportOp(toggleTrackMuted(target.trackId));
+          return;
+        case 'toggleHidden':
+          if (target.kind === 'track') reportOp(toggleTrackHidden(target.trackId));
+          return;
+        case 'toggleLocked':
+          if (target.kind === 'track') reportOp(toggleTrackLocked(target.trackId));
+          return;
+        case 'deleteTrack':
+          if (target.kind === 'track') reportOp(deleteTrack(target.trackId));
+          return;
+        case 'addMarker':
+          if (target.kind === 'ruler') {
+            // "Buraya": önce playhead tıklanan kareye gider, sonra mevcut op.
+            st.setPlayheadUs(target.timeUs);
+            addMarkerAtPlayhead();
+          }
+          return;
+      }
+    },
+    [closeMenu, menu, reportOp, warn],
+  );
 
   // ---------------------------------------------------------------------
   // Library drag-and-drop (pointer DnD from LibraryPanel)
@@ -770,6 +1030,21 @@ export function TimelinePanel() {
 
   const fps = doc.settings.fps;
 
+  // Menü içeriği bağlamdan SAF olarak üretilir (contextMenu.ts). Playhead
+  // burada getState ile okunur — panel oynatma sırasında yeniden render
+  // edilmesin diye playheadUs'a selector bağlanmıyor (bkz. dosya başı notu).
+  const menuEntries =
+    menu !== null
+      ? buildTimelineMenu({
+          target: menu.target,
+          doc,
+          selectionCount: selection.size,
+          playheadUs: useEditorStore.getState().playheadUs,
+          clipboardHasContent: hasClipboardContent(),
+          mutationAllowed: sessionStatus === 'ready',
+        })
+      : [];
+
   // Timecode readout: imperative textContent updates (no React re-render per
   // playback frame — finding 12). Re-synced when fps/doc changes.
   const timecodeRef = useRef<HTMLSpanElement | null>(null);
@@ -821,6 +1096,16 @@ export function TimelinePanel() {
         <span className="font-mono text-[10px] text-fg-muted">
           / {formatTimecode(projectEndUs(doc), fps)}
         </span>
+        {/* Kısa süreli inline uyarı: reddedilen taşıma / menü eylemi. */}
+        {warning !== null && (
+          <span
+            role="status"
+            data-testid="timeline-warning"
+            className="ml-2 truncate rounded border border-danger/60 bg-danger/15 px-2 py-0.5 text-[11px] text-danger"
+          >
+            {warning}
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-1.5">
           {sessionStatus === 'error' && (
             <span className="text-[10px] text-danger" title={sessionError ?? undefined}>
@@ -877,6 +1162,14 @@ export function TimelinePanel() {
                   key={track.id}
                   className="flex items-center gap-1 px-2"
                   style={{ height: TRACK_H, marginBottom: TRACK_GAP }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setMenu({
+                      x: e.clientX,
+                      y: e.clientY,
+                      target: { kind: 'track', trackId: track.id },
+                    });
+                  }}
                 >
                   <span className="min-w-0 flex-1 truncate text-[11px] text-fg-muted">
                     {track.name ?? `${track.type === 'audio' ? 'Ses' : track.type === 'overlay' ? 'Overlay' : 'Video'} ${i + 1}`}
@@ -913,6 +1206,12 @@ export function TimelinePanel() {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={cancelInteraction}
+          onContextMenu={onContextMenu}
+          onDoubleClick={onDoubleClick}
+          // Orta tuşun tarayıcı otomatik kaydırmasını bastır (pan modu bizde).
+          onAuxClick={(e) => {
+            if (e.button === 1) e.preventDefault();
+          }}
         >
           <canvas ref={rulerRef} className="block" />
           <canvas ref={bodyRef} className="block" />
@@ -933,6 +1232,16 @@ export function TimelinePanel() {
             Proje yükleniyor…
           </span>
         </div>
+      )}
+
+      {menuEntries.length > 0 && menu !== null && (
+        <TimelineContextMenu
+          x={menu.x}
+          y={menu.y}
+          entries={menuEntries}
+          onSelect={runMenuAction}
+          onClose={closeMenu}
+        />
       )}
 
       <ConflictDialog />

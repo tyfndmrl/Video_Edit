@@ -34,6 +34,11 @@ jobs:
       - name: Typecheck editor
         run: pnpm --filter @videoedit/editor exec tsc -b
 
+      # E2E testleri uygulamanin tsconfig'ine DAHIL DEGIL (include: ['src']) —
+      # Playwright tipleri src derlemesine sizmasin diye ayri proje.
+      - name: Typecheck editor E2E
+        run: pnpm --filter @videoedit/editor test:e2e:typecheck
+
       # Uretilmis artefakt drift kontrolu: schema.json + test vektorleri
       # commit'lenmis halleriyle birebir ayni olmali.
       - name: Schema drift kontrolu
@@ -106,6 +111,95 @@ jobs:
         run: |
           dotnet run --project backend/tools/SchemaGen
           git diff --exit-code -- backend/src/VideoEdit.Contracts/Generated
+
+  e2e:
+    name: E2E (Playwright — gercek fare)
+    # Bilincli olarak node/dotnet job'larina BAGIMLI DEGIL: paralel kossun.
+    # continue-on-error YOK — bu job kirmiziysa CI kirmizidir; kullanicinin
+    # "kirpma/tasima/sag tik calismiyor" sikayetini yakalayan tek katman bu.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install (node)
+        run: pnpm install --frozen-lockfile
+
+      # dist/ gitignore'lu; editor paketi timeline-schema'yi dist uzerinden import eder.
+      - name: Build timeline-schema
+        run: pnpm --filter @videoedit/timeline-schema build
+
+      # YALNIZ gerekli altyapi:
+      # - postgres: auth + proje + timeline (E2E'nin tek zorunlu bagimliligi).
+      # - minio   : API Development'ta acilista bucket kontrolu yapar (hata
+      #             olursa uyarip devam eder, ama gurultuyu onlemek icin ayakta).
+      # - redis   : API tarafinda KULLANILMIYOR (Hangfire storage = PostgreSQL) -> baslatilmaz.
+      # - Worker  : baslatilmaz. E2E medya YUKLEMEZ; timeline dogrudan API'den
+      #             seed edilir (bkz. e2e/fixtures/seed.ts), hicbir is kuyruga
+      #             girmez. Worker'i acmak yalnizca derleme suresi + log gurultusu olurdu.
+      - name: Altyapi servisleri (postgres + minio)
+        run: docker compose -f compose.dev.yml up -d postgres minio
+
+      - name: Postgres hazir olsun
+        run: |
+          timeout 120 sh -c 'until docker compose -f compose.dev.yml exec -T postgres pg_isready -U app -d videoedit; do sleep 2; done'
+
+      - name: Veritabani migrasyonlari
+        run: dotnet run --project backend/src/VideoEdit.Api --no-launch-profile -- --migrate-only
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+
+      # Arka planda API. --no-launch-profile: launchSettings yerine acik env
+      # (CI'da profil cozumlemesine guvenmeyiz).
+      - name: API'yi baslat (http://localhost:5000)
+        run: |
+          dotnet run --project backend/src/VideoEdit.Api --no-launch-profile > api.log 2>&1 &
+          timeout 120 sh -c 'until curl -sf http://localhost:5000/health > /dev/null; do sleep 2; done'
+          echo "API hazir."
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          ASPNETCORE_URLS: http://localhost:5000
+
+      # DEV sunucusu (preview degil): E2E, store'lari Vite'in modul grafigi
+      # uzerinden okur (e2e/support/appBridge.ts) — production build'de modul
+      # yollari hash'lenir ve bu kopru calismaz.
+      - name: Vite dev sunucusunu baslat (http://localhost:5173)
+        run: |
+          pnpm --filter @videoedit/editor exec vite --port 5173 --strictPort > vite.log 2>&1 &
+          timeout 120 sh -c 'until curl -sf http://localhost:5173/ > /dev/null; do sleep 2; done'
+          echo "Vite hazir."
+
+      - name: Playwright chromium
+        run: pnpm --filter @videoedit/editor exec playwright install --with-deps chromium
+
+      - name: E2E kos
+        run: pnpm --filter @videoedit/editor test:e2e
+
+      - name: Sunucu loglari (yalniz hata durumunda)
+        if: failure()
+        run: |
+          echo "----- API -----"; tail -n 200 api.log || true
+          echo "----- VITE -----"; tail -n 200 vite.log || true
+
+      - name: Playwright trace/rapor artefaktlari
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: apps/editor/e2e/.artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
 
   docker:
     name: Docker build (${{ matrix.project }})
