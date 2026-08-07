@@ -1,0 +1,128 @@
+# Prod / VPS dagitimi. Kullanim:
+#   cp .env.example .env  # doldur
+#   docker compose build
+#   docker compose up -d
+#
+# Frontend statik dosyalari (apps/editor dist) caddy_srv volume'una kopyalanir — bkz. deploy/README.md.
+services:
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # Let's Encrypt sertifikalari — SILME
+      - caddy_config:/config
+      - caddy_srv:/srv/editor # frontend dist buraya kopyalanir
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: src/VideoEdit.Api/Dockerfile
+    environment:
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__Postgres=Host=postgres;Database=videoedit;Username=app;Password=${PG_PASSWORD}
+      - ConnectionStrings__Redis=redis:6379
+      - Jwt__Secret=${JWT_SECRET}
+      - R2__AccountId=${R2_ACCOUNT_ID}
+      - R2__AccessKeyId=${R2_ACCESS_KEY_ID}
+      - R2__SecretAccessKey=${R2_SECRET_ACCESS_KEY}
+      - R2__Bucket=${R2_BUCKET}
+      - R2__ExportsBucket=${R2_EXPORTS_BUCKET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: src/VideoEdit.Worker/Dockerfile
+    environment:
+      - ConnectionStrings__Postgres=Host=postgres;Database=videoedit;Username=app;Password=${PG_PASSWORD}
+      - ConnectionStrings__Redis=redis:6379
+      - R2__AccountId=${R2_ACCOUNT_ID}
+      - R2__AccessKeyId=${R2_ACCESS_KEY_ID}
+      - R2__SecretAccessKey=${R2_SECRET_ACCESS_KEY}
+      - R2__Bucket=${R2_BUCKET}
+      - R2__ExportsBucket=${R2_EXPORTS_BUCKET}
+    volumes:
+      - worker_data:/data # scratch + asset LRU cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      migrator:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 6g # ffmpeg OOM korumasi
+    restart: unless-stopped
+
+  # One-shot migration servisi — api imajini kullanir, migration'i uygular ve cikar.
+  # Coklu instance yarisini onler (api replikalar migration calistirmaz).
+  migrator:
+    build:
+      context: ./backend
+      dockerfile: src/VideoEdit.Api/Dockerfile
+    # ENTRYPOINT zaten `dotnet VideoEdit.Api.dll` — command yalniz ek arguman olarak eklenir.
+    command: ["--migrate-only"]
+    environment:
+      - ConnectionStrings__Postgres=Host=postgres;Database=videoedit;Username=app;Password=${PG_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: videoedit
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d videoedit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+  caddy_srv:
+  pg_data:
+  redis_data:
+  worker_data:

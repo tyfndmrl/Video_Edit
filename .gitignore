@@ -1,0 +1,29 @@
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+
+# .NET
+bin/
+obj/
+*.user
+.vs/
+
+# Env / secrets
+.env
+.env.local
+appsettings.*.local.json
+
+# Editor
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Test / coverage
+coverage/
+TestResults/
+playwright-report/

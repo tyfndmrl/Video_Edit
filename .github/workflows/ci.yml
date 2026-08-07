@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  node:
+    name: Node (schema paketi + editor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Test (tum workspace)
+        run: pnpm -r test
+
+      - name: Typecheck editor
+        run: pnpm --filter @videoedit/editor exec tsc -b
+
+      # Uretilmis artefakt drift kontrolu: schema.json + test vektorleri
+      # commit'lenmis halleriyle birebir ayni olmali.
+      - name: Schema drift kontrolu
+        run: |
+          pnpm --filter @videoedit/timeline-schema generate
+          git diff --exit-code -- packages/timeline-schema/generated
+
+  dotnet:
+    name: .NET (backend)
+    # Bilincli olarak node job'ina BAGIMLI DEGIL: SchemaGen commit'li
+    # packages/timeline-schema/generated/schema.json'u kullanir.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build backend/VideoEdit.sln
+
+      - name: Test
+        run: dotnet test backend/VideoEdit.sln --no-build
+
+      # Uretilmis C# kontratlarinin drift kontrolu.
+      - name: Contracts drift kontrolu
+        run: |
+          dotnet run --project backend/tools/SchemaGen
+          git diff --exit-code -- backend/src/VideoEdit.Contracts/Generated
+
+  docker:
+    name: Docker build (Api)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Api image
+        run: docker build -f backend/src/VideoEdit.Api/Dockerfile backend

@@ -1,0 +1,35 @@
+{
+  "name": "@videoedit/timeline-schema",
+  "version": "0.1.0",
+  "description": "Shared timeline document contract: zod schemas, invariants, time math, easing reference implementation and JSON Schema generation",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "generated",
+    "test-vectors"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "generate": "tsx scripts/generate.ts"
+  },
+  "dependencies": {
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  }
+}

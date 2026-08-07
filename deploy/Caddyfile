@@ -1,0 +1,41 @@
+# Caddy 2 — otomatik HTTPS (Let's Encrypt). DOMAIN degiskeni compose'tan gelir (.env).
+#
+# Varsayim: frontend build ciktisi (apps/editor/dist) `caddy_srv` volume'una
+# (/srv/editor) kopyalanmistir — bkz. deploy/README.md "Frontend dagitimi".
+# Frontend, api imajinin icinde DEGILDIR; statik dosyalar dogrudan Caddy'den servis edilir.
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# API ve SignalR hub'lari -> .NET api container'i (container ici port 8080).
+	# SignalR/WebSocket icin ekstra ayar gerekmez; Caddy WebSocket'i varsayilan proxy'ler.
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+	handle /hubs/* {
+		reverse_proxy api:8080
+	}
+
+	# Geri kalan her sey: statik SPA (React/Vite dist).
+	# try_files SPA fallback'i — bilinmeyen path'ler index.html'e duser (client-side routing).
+	handle {
+		root * /srv/editor
+
+		# Cross-origin isolation (SharedArrayBuffer / WebCodecs icin gerekli).
+		# NOT: R2 CORS smoke testi require-corp ile basarisiz olursa dev + prod
+		# BIRLIKTE `Cross-Origin-Embedder-Policy: credentialless`a dusulur.
+		header Cross-Origin-Opener-Policy "same-origin"
+		header Cross-Origin-Embedder-Policy "require-corp"
+
+		# index.html (ve SPA fallback ile ona dusen tum path'ler): her zaman revalidate.
+		# NOT: `header` direktifi try_files rewrite'indan ONCE calisir; bu yuzden
+		# /index.html matcher'i "/" ve SPA route'larini yakalamaz — varsayilan no-cache
+		# + /assets/* icin override kullaniyoruz.
+		header Cache-Control "no-cache"
+		# Vite hash'li asset'ler: icerik degisince dosya adi degisir -> sonsuz cache.
+		header /assets/* Cache-Control "public, max-age=31536000, immutable"
+
+		try_files {path} /index.html
+		file_server
+	}
+}

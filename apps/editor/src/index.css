@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+/* Dark editor theme tokens (Tailwind v4 theme variables).
+ * Usage: bg-surface-0, border-edge, text-fg-muted, bg-accent, ... */
+@theme {
+  --color-surface-0: #0b0e14; /* app background */
+  --color-surface-1: #11151d; /* panels */
+  --color-surface-2: #1a2029; /* raised elements, headers */
+  --color-surface-3: #232b37; /* hover states */
+  --color-edge: #2a313d;      /* panel borders */
+  --color-fg: #e5e9f0;        /* primary text */
+  --color-fg-muted: #8b93a1;  /* secondary text */
+  --color-accent: #f97316;    /* playhead / selection orange */
+  --color-danger: #ef4444;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-surface-0);
+  color: var(--color-fg);
+  overscroll-behavior: none;
+}

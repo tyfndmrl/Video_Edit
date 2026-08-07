@@ -1,0 +1,16 @@
+{
+  "name": "videoedit",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Web tabanlı video editörü (CapCut/Canva benzeri) — React + .NET + Cloudflare R2",
+  "scripts": {
+    "dev": "pnpm --filter @videoedit/editor dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "schema:generate": "pnpm --filter @videoedit/timeline-schema generate && dotnet run --project backend/tools/SchemaGen"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.12.1"
+}

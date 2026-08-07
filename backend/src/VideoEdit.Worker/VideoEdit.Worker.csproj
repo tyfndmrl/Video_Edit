@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-VideoEdit.Worker-fbe7c2b0-5de7-4ad9-896a-3ce1c7a19966</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.24" />
+    <PackageReference Include="Hangfire.PostgreSql" Version="1.21.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VideoEdit.Domain\VideoEdit.Domain.csproj" />
+    <ProjectReference Include="..\VideoEdit.Infrastructure\VideoEdit.Infrastructure.csproj" />
+    <ProjectReference Include="..\VideoEdit.Media\VideoEdit.Media.csproj" />
+  </ItemGroup>
+</Project>

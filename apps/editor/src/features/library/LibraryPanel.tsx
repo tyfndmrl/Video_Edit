@@ -1,0 +1,484 @@
+/**
+ * Media library panel (M1): file picking + drag-drop upload, active upload
+ * cards (progress / speed / ETA, pause-resume-cancel), interrupted-session
+ * badge, and the project asset list with status badges (react-query, 3 s
+ * polling while the server is processing — SignalR replaces this in M1-B).
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { DragEvent, ReactNode } from 'react';
+import { useProjectAssets, type AssetDto } from '../../entities/assets';
+import { useAssetStore, type AssetSummary } from '../../state/assetStore';
+import { useEditorStore } from '../../state/editorStore';
+import { formatBytes, formatDurationUs, formatEta, formatSpeed } from './format';
+import { uploadApi } from './upload/uploadApi';
+import {
+  cancelUpload,
+  dismissUpload,
+  pauseUpload,
+  resumeUpload,
+  retryUpload,
+  startUpload,
+  useUploadStore,
+  type UploadItem,
+} from './upload/uploadManager';
+import {
+  deleteUploadSession,
+  listUploadSessions,
+  type UploadSessionRecord,
+} from './upload/uploadSessions';
+
+export function LibraryPanel() {
+  const projectId = useEditorStore((s) => s.activeProjectId);
+  return (
+    <div className="flex h-full flex-col">
+      <header className="border-b border-edge bg-surface-2 px-3 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase">
+        Library
+      </header>
+      {projectId === null ? <NoProject /> : <LibraryContent projectId={projectId} />}
+    </div>
+  );
+}
+
+function NoProject() {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-1 p-4 text-center text-sm text-fg-muted">
+      <span>No project selected</span>
+      <span className="text-xs">Open a project to upload and browse media.</span>
+    </div>
+  );
+}
+
+function LibraryContent({ projectId }: { projectId: string }) {
+  const uploadsMap = useUploadStore((s) => s.items);
+  const uploads = useMemo(
+    () => [...uploadsMap.values()].filter((u) => u.projectId === projectId),
+    [uploadsMap, projectId],
+  );
+  const activeAssetIds = useMemo(
+    () => new Set(uploads.map((u) => u.assetId).filter((id): id is string => id !== null)),
+    [uploads],
+  );
+
+  // ---- interrupted uploads from previous sessions (IndexedDB) ----
+  const [sessions, setSessions] = useState<UploadSessionRecord[]>([]);
+  const uploadCount = uploads.length;
+  useEffect(() => {
+    let cancelled = false;
+    void listUploadSessions(projectId).then((records) => {
+      if (!cancelled) setSessions(records);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // re-check when an upload starts/finishes (not on every progress tick)
+  }, [projectId, uploadCount]);
+  const pendingSessions = useMemo(
+    () => sessions.filter((r) => !activeAssetIds.has(r.assetId)),
+    [sessions, activeAssetIds],
+  );
+
+  const discardSession = useCallback(async (assetId: string) => {
+    try {
+      await uploadApi.abortUpload(assetId); // free the server-side multipart upload
+    } catch {
+      // best effort — the 7-day lifecycle sweeps it anyway
+    }
+    await deleteUploadSession(assetId);
+    setSessions((prev) => prev.filter((r) => r.assetId !== assetId));
+  }, []);
+
+  // ---- server asset list (react-query) + assetStore sync ----
+  const assetsQuery = useProjectAssets(projectId);
+  useEffect(() => {
+    const items = assetsQuery.data?.items;
+    if (!items) return;
+    const store = useAssetStore.getState();
+    for (const dto of items) {
+      const existing = store.assets.get(dto.id);
+      // While a local upload is running, its progress is fresher than the poll.
+      if (existing?.status === 'uploading' && dto.status === 'uploading') continue;
+      store.upsertAsset(toAssetSummary(dto));
+    }
+  }, [assetsQuery.data]);
+
+  const serverAssets = useMemo(
+    () => (assetsQuery.data?.items ?? []).filter((dto) => !activeAssetIds.has(dto.id)),
+    [assetsQuery.data, activeAssetIds],
+  );
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 p-3 pb-0">
+        <DropZone projectId={projectId} />
+      </div>
+
+      {pendingSessions.length > 0 && (
+        <div className="shrink-0 px-3 pt-3">
+          <PendingSessionsNotice sessions={pendingSessions} onDiscard={discardSession} />
+        </div>
+      )}
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {uploads.length > 0 && (
+          <section className="mb-3">
+            <SectionTitle>
+              Uploading
+              <CountBadge count={uploads.length} />
+            </SectionTitle>
+            <ul className="flex flex-col gap-2">
+              {uploads.map((item) => (
+                <li key={item.localId}>
+                  <UploadCard item={item} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        <section>
+          <SectionTitle>
+            Media
+            {assetsQuery.data && <CountBadge count={assetsQuery.data.totalCount} />}
+          </SectionTitle>
+          {assetsQuery.isLoading && <p className="py-2 text-xs text-fg-muted">Loading assets…</p>}
+          {assetsQuery.isError && (
+            <div className="flex items-center gap-2 py-2 text-xs text-danger">
+              <span>Could not load assets.</span>
+              <button
+                type="button"
+                className="rounded border border-edge px-2 py-0.5 text-fg-muted hover:bg-surface-3 hover:text-fg"
+                onClick={() => void assetsQuery.refetch()}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+          {assetsQuery.isSuccess && serverAssets.length === 0 && uploads.length === 0 && (
+            <p className="py-2 text-xs text-fg-muted">No media yet — drop files above.</p>
+          )}
+          <ul className="flex flex-col gap-1.5">
+            {serverAssets.map((dto) => (
+              <li key={dto.id}>
+                <AssetRow dto={dto} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Upload drop zone
+// ---------------------------------------------------------------------------
+
+function hasFiles(e: DragEvent): boolean {
+  return Array.from(e.dataTransfer.types).includes('Files');
+}
+
+function DropZone({ projectId }: { projectId: string }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepth = useRef(0);
+
+  const acceptFiles = useCallback(
+    (fileList: FileList | null) => {
+      if (!fileList) return;
+      for (const file of Array.from(fileList)) {
+        startUpload(file, projectId);
+      }
+    },
+    [projectId],
+  );
+
+  return (
+    <div
+      className={`flex flex-col items-center gap-1.5 rounded border border-dashed px-3 py-4 text-center transition-colors ${
+        dragOver ? 'border-accent bg-accent/10' : 'border-edge bg-surface-2/50'
+      }`}
+      onDragEnter={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        dragDepth.current += 1;
+        setDragOver(true);
+      }}
+      onDragOver={(e) => {
+        if (hasFiles(e)) e.preventDefault();
+      }}
+      onDragLeave={() => {
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        dragDepth.current = 0;
+        setDragOver(false);
+        acceptFiles(e.dataTransfer.files);
+      }}
+    >
+      <span className="text-xs text-fg-muted">Drop media here, or</span>
+      <button
+        type="button"
+        className="rounded bg-accent px-3 py-1 text-xs font-semibold text-surface-0 hover:opacity-90"
+        onClick={() => inputRef.current?.click()}
+      >
+        Choose files
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        hidden
+        accept="video/*,audio/*,image/*"
+        onChange={(e) => {
+          acceptFiles(e.target.files);
+          e.target.value = ''; // allow re-picking the same file
+        }}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Interrupted sessions (browser was closed mid-upload)
+// ---------------------------------------------------------------------------
+
+function PendingSessionsNotice({
+  sessions,
+  onDiscard,
+}: {
+  sessions: UploadSessionRecord[];
+  onDiscard: (assetId: string) => Promise<void>;
+}) {
+  return (
+    <div className="rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-2">
+      <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-400">
+        <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500/20 px-1 text-[10px]">
+          {sessions.length}
+        </span>
+        Interrupted upload{sessions.length > 1 ? 's' : ''}
+      </div>
+      <p className="mt-0.5 text-[11px] leading-snug text-fg-muted">
+        Resume after restart arrives in a later milestone; unfinished uploads are kept server-side
+        for 7 days.
+      </p>
+      <ul className="mt-1.5 flex flex-col gap-1">
+        {sessions.map((s) => (
+          <li key={s.assetId} className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="truncate text-fg" title={s.fileName}>
+              {s.fileName}
+            </span>
+            <span className="flex shrink-0 items-center gap-2 text-fg-muted">
+              {formatBytes(s.fileSize)}
+              <button
+                type="button"
+                className="rounded border border-edge px-1.5 py-0.5 hover:bg-surface-3 hover:text-fg"
+                onClick={() => void onDiscard(s.assetId)}
+                title="Abort the unfinished upload and remove this entry"
+              >
+                Discard
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Upload card
+// ---------------------------------------------------------------------------
+
+const PHASE_LABELS: Record<UploadItem['phase'], string> = {
+  idle: 'Starting…',
+  preparing: 'Starting…',
+  uploading: 'Uploading',
+  paused: 'Paused',
+  completing: 'Finishing…',
+  done: 'Done',
+  aborted: 'Cancelled',
+  error: 'Failed',
+};
+
+function UploadCard({ item }: { item: UploadItem }) {
+  const p = item.progress;
+  const pct = p && p.totalBytes > 0 ? Math.min(100, (p.bytesUploaded / p.totalBytes) * 100) : 0;
+  const isError = item.phase === 'error';
+  const canPause = item.phase === 'uploading' || item.phase === 'preparing' || item.phase === 'idle';
+  const canResume = item.phase === 'paused';
+  const canCancel = item.phase !== 'error' && item.phase !== 'done' && item.phase !== 'aborted';
+
+  return (
+    <div className="rounded border border-edge bg-surface-2 p-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-xs font-medium text-fg" title={item.fileName}>
+          {item.fileName}
+        </span>
+        <span className={`shrink-0 text-[11px] ${isError ? 'text-danger' : 'text-fg-muted'}`}>
+          {PHASE_LABELS[item.phase]}
+        </span>
+      </div>
+
+      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
+        <div
+          className={`h-full rounded-full transition-[width] duration-200 ${
+            isError ? 'bg-danger' : item.phase === 'paused' ? 'bg-fg-muted' : 'bg-accent'
+          }`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+
+      {isError ? (
+        <p className="mt-1 text-[11px] leading-snug break-words text-danger" title={item.errorMessage ?? undefined}>
+          {item.errorMessage ?? 'Upload failed'}
+        </p>
+      ) : (
+        <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-fg-muted">
+          <span>
+            {p ? `${formatBytes(p.bytesUploaded)} / ${formatBytes(p.totalBytes)}` : formatBytes(item.totalBytes)}
+          </span>
+          <span className="shrink-0">
+            {item.phase === 'uploading' && p
+              ? `${formatSpeed(p.bytesPerSecond)} · ${formatEta(p.etaSeconds)} left · ${Math.floor(pct)}%`
+              : `${Math.floor(pct)}%`}
+          </span>
+        </div>
+      )}
+
+      <div className="mt-1.5 flex items-center gap-1.5">
+        {canPause && <CardButton onClick={() => pauseUpload(item.localId)}>Pause</CardButton>}
+        {canResume && <CardButton onClick={() => resumeUpload(item.localId)}>Resume</CardButton>}
+        {canCancel && <CardButton onClick={() => cancelUpload(item.localId)}>Cancel</CardButton>}
+        {isError && (
+          <>
+            <CardButton onClick={() => retryUpload(item.localId)}>Retry</CardButton>
+            <CardButton onClick={() => dismissUpload(item.localId)}>Dismiss</CardButton>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CardButton({ onClick, children }: { onClick: () => void; children: string }) {
+  return (
+    <button
+      type="button"
+      className="rounded border border-edge px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-3 hover:text-fg"
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Asset list
+// ---------------------------------------------------------------------------
+
+function toAssetSummary(dto: AssetDto): AssetSummary {
+  return {
+    id: dto.id,
+    kind: dto.kind === 'audio' || dto.kind === 'image' ? dto.kind : 'video',
+    name: dto.fileName,
+    status: dto.status,
+    progress: dto.progress,
+    durationUs: dto.durationMicros,
+    width: dto.width,
+    height: dto.height,
+    errorCode: dto.errorCode,
+  };
+}
+
+const KIND_LABELS: Record<string, string> = {
+  video: 'VID',
+  audio: 'AUD',
+  image: 'IMG',
+};
+
+function AssetRow({ dto }: { dto: AssetDto }) {
+  const meta: string[] = [];
+  if (dto.status === 'ready') {
+    if (dto.durationMicros !== undefined) meta.push(formatDurationUs(dto.durationMicros));
+    if (dto.width && dto.height) meta.push(`${dto.width}×${dto.height}`);
+  }
+  meta.push(formatBytes(dto.sizeBytes));
+  if (dto.status === 'failed' && dto.errorCode) meta.push(dto.errorCode);
+
+  return (
+    <div className="flex items-center gap-2 rounded border border-edge bg-surface-2 px-2 py-1.5 hover:bg-surface-3">
+      <span className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-surface-3 text-[9px] font-bold tracking-wider text-fg-muted">
+        {KIND_LABELS[dto.kind] ?? 'MED'}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-xs font-medium text-fg" title={dto.fileName}>
+          {dto.fileName}
+        </div>
+        <div className="truncate text-[11px] text-fg-muted">{meta.join(' · ')}</div>
+      </div>
+      <StatusBadge dto={dto} />
+    </div>
+  );
+}
+
+function StatusBadge({ dto }: { dto: AssetDto }) {
+  switch (dto.status) {
+    case 'uploading':
+      return <Badge className="border-accent/40 text-accent">Uploading</Badge>;
+    case 'uploaded':
+      return <Badge className="border-sky-400/40 text-sky-400">Queued</Badge>;
+    case 'processing': {
+      const pct = dto.progress !== undefined ? ` ${Math.round(dto.progress * 100)}%` : '';
+      return <Badge className="border-amber-400/40 text-amber-400">{`Processing${pct}`}</Badge>;
+    }
+    case 'ready':
+      return <Badge className="border-emerald-400/40 text-emerald-400">Ready</Badge>;
+    case 'failed':
+      return (
+        <Badge className="border-danger/40 text-danger" title={dto.errorCode}>
+          Failed
+        </Badge>
+      );
+  }
+}
+
+function Badge({
+  className,
+  title,
+  children,
+}: {
+  className: string;
+  title?: string;
+  children: string;
+}) {
+  return (
+    <span
+      className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${className}`}
+      title={title}
+    >
+      {children}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Small shared bits
+// ---------------------------------------------------------------------------
+
+function SectionTitle({ children }: { children: ReactNode }) {
+  return (
+    <h3 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-fg-muted uppercase">
+      {children}
+    </h3>
+  );
+}
+
+function CountBadge({ count }: { count: number }) {
+  return (
+    <span className="rounded-full bg-surface-3 px-1.5 py-px text-[10px] font-semibold text-fg-muted">
+      {count}
+    </span>
+  );
+}

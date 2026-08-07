@@ -1,0 +1,64 @@
+# Gelistirme ortami: SADECE altyapi servisleri (Postgres + Redis).
+# API'yi `dotnet run` ile (http://localhost:5000), frontend'i Vite ile (http://localhost:5173) lokal calistirin.
+#
+#   docker compose -f compose.dev.yml up -d
+#
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: videoedit
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: devpassword # sadece dev — prod icin compose.yml + .env
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d videoedit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Lokal S3-uyumlu depolama (Cloudflare R2 yerine dev'de). DIKKAT: MinIO,
+  # R2'nin "tum part'lar esit boyutta" kuralini ZORLAMAZ — istemci kodu bu
+  # kurala yine de uyar (sabit 64 MiB part); gercek R2 dogrulamasi deploy'da.
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: videoedit
+      MINIO_ROOT_PASSWORD: devpassword123
+      # Taraycidan dogrudan PUT icin CORS (ETag'in okunabilmesi sart).
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:5173"
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web konsolu
+    volumes:
+      - minio_data_dev:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pg_data_dev:
+  redis_data_dev:
+  minio_data_dev:
