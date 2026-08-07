@@ -72,6 +72,13 @@ try
         .AddIdentityCore<AppUser>(options =>
         {
             options.User.RequireUniqueEmail = true;
+            // Şifre politikası: 8+ karakter, rakam + küçük harf yeterli. Özel karakter ve
+            // büyük harf zorunluluğu KALDIRILDI — kayıt akışını opaklaştırıyordu; kalan
+            // kurallar LoginGate'teki ipucu satırıyla ('En az 8 karakter, harf ve rakam
+            // içermeli') birebir eşleşir. RequireDigit/RequireLowercase varsayılanı (true) kalır.
+            options.Password.RequiredLength = 8;
+            options.Password.RequireNonAlphanumeric = false;
+            options.Password.RequireUppercase = false;
             // Brute-force koruması: 5 başarısız denemede 15 dk kilit (AuthEndpoints.AuthenticateAsync).
             options.Lockout.AllowedForNewUsers = true;
             options.Lockout.MaxFailedAccessAttempts = 5;

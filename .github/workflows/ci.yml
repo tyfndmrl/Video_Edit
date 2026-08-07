@@ -22,6 +22,12 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # dist/ gitignore'lu; editor paketi dist uzerinden import eder.
+      # prepare script'i install'da build eder ama frozen-lockfile/CI kosullarina
+      # karsi acik adim emniyet kemeridir (temiz klonda 139 test bunsuz kirilir).
+      - name: Build timeline-schema
+        run: pnpm --filter @videoedit/timeline-schema build
+
       - name: Test (tum workspace)
         run: pnpm -r test
 

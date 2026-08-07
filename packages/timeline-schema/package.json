@@ -20,6 +20,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepare": "tsc -p tsconfig.json",
     "test": "vitest run",
     "generate": "tsx scripts/generate.ts"
   },

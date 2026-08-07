@@ -10,6 +10,8 @@
  * credentials: 'include'.
  */
 
+import { problemDetailsMessage } from './problemDetails';
+
 let accessToken: string | null = null;
 let refreshInFlight: Promise<boolean> | null = null;
 
@@ -34,6 +36,24 @@ export class AutoLoginFailedError extends Error {
   }
 }
 
+/**
+ * Kayıt hatası -> kullanıcı mesajı. ValidationProblem errors sözlüğü (Identity
+ * şifre kuralları dahil) düzleştirilir; jenerik başlık yerine asıl açıklamalar
+ * gösterilir. Gövde çözülemezse durum koduyla jenerik Türkçe mesaj.
+ */
+export function registerErrorMessage(status: number, body: unknown): string {
+  return problemDetailsMessage(body) ?? `Kayıt başarısız (HTTP ${status}).`;
+}
+
+/**
+ * Giriş hatası -> kullanıcı mesajı. Backend 401'i bilinçli olarak jeneriktir
+ * (hesap varlığı sızdırılmaz) — kullanıcıya net Türkçe karşılığı gösterilir.
+ */
+export function loginErrorMessage(status: number, body: unknown): string {
+  if (status === 401) return 'E-posta veya şifre hatalı.';
+  return problemDetailsMessage(body) ?? `Giriş başarısız (HTTP ${status}).`;
+}
+
 /** Register a new account, then log in to obtain an access token. */
 export async function register(email: string, password: string, displayName: string): Promise<void> {
   const res = await fetch('/api/auth/register', {
@@ -42,8 +62,8 @@ export async function register(email: string, password: string, displayName: str
     body: JSON.stringify({ email, password, displayName }),
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { title?: string } | null;
-    throw new Error(body?.title ?? `Register failed (${res.status})`);
+    const body: unknown = await res.json().catch(() => null);
+    throw new Error(registerErrorMessage(res.status, body));
   }
   try {
     await login(email, password);
@@ -63,13 +83,34 @@ export async function login(email: string, password: string): Promise<void> {
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) {
-    throw new Error(`Login failed (${res.status})`);
+    const body: unknown = await res.json().catch(() => null);
+    throw new Error(loginErrorMessage(res.status, body));
   }
   const data = (await res.json()) as { accessToken?: string };
   if (!data.accessToken) {
     throw new Error('Login response did not include an access token');
   }
   accessToken = data.accessToken;
+}
+
+/**
+ * Logout: sunucudaki refresh token'lar iptal edilir (POST /api/auth/logout),
+ * yerel access token temizlenir. Sunucu çağrısı best-effort — ağ hatasında
+ * bile yerel oturum kapanmış olur. Raw fetch: apiClient bu modülü import
+ * ettiği için buradan apiFetch kullanmak döngü yaratırdı.
+ */
+export async function logout(): Promise<void> {
+  const token = accessToken;
+  accessToken = null;
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
+    });
+  } catch {
+    // best effort — yerel oturum zaten temizlendi
+  }
 }
 
 /**

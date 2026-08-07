@@ -27,6 +27,11 @@ import {
 } from '../../state/timelineOps';
 import { getTimelineViewControl } from '../timeline/viewControl';
 import { withEngine } from './playerBridge';
+import {
+  closeShortcutsOverlay,
+  isShortcutsOverlayOpen,
+  toggleShortcutsOverlay,
+} from './shortcutsHelp';
 
 export interface KeyEventLike {
   key: string;
@@ -159,6 +164,16 @@ export function handleShortcut(e: KeyEventLike): boolean {
   const doc = useDocStore.getState().doc;
 
   switch (e.key) {
+    case '?':
+      // Keşfedilebilirlik: kısayol listesi overlay'i (çoğu düzende Shift+/).
+      toggleShortcutsOverlay();
+      return true;
+    case 'Escape':
+      if (isShortcutsOverlayOpen()) {
+        closeShortcutsOverlay();
+        return true;
+      }
+      return false;
     case ' ':
       togglePlayback();
       return true;

@@ -18,10 +18,10 @@ export type PlayheadWriteSource = 'user' | 'engine';
 
 export interface EditorStore {
   /**
-   * Project currently open in the editor. null until a project is selected
-   * (the library shows a "no project" state). A real project picker/router
-   * arrives later; for now it can be set programmatically or via the
-   * ?project=<id> URL parameter (dev convenience).
+   * Project currently open in the editor. null -> the ProjectPicker renders
+   * instead of the editor grid. Set via the picker (openProjectInEditor) or
+   * the ?project=<id> URL parameter — the OFFICIAL shareable deep-link, kept
+   * in sync by features/projects/projectPickerLogic (history.replaceState).
    */
   activeProjectId: Uuid | null;
   /** Selected clip ids (marquee / shift-click multi-select). */
@@ -70,7 +70,11 @@ export interface EditorStore {
   setIsPlaying(playing: boolean): void;
 }
 
-/** Dev convenience until the project picker exists: ?project=<id> in the URL. */
+/**
+ * ?project=<id> is the official deep-link: an initial load with the parameter
+ * opens that project directly (the ProjectPicker keeps the parameter in sync
+ * on select/close, so the address bar stays shareable).
+ */
 function initialProjectId(): Uuid | null {
   if (typeof window === 'undefined') return null;
   try {

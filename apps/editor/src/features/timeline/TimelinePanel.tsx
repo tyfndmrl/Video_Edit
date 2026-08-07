@@ -829,7 +829,7 @@ export function TimelinePanel() {
           )}
           <button
             type="button"
-            title="Snapping (S)"
+            title="Yapışma (S)"
             className={`rounded border px-1.5 py-0.5 text-[11px] ${
               snappingEnabled
                 ? 'border-accent/60 text-accent'

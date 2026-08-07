@@ -12,10 +12,10 @@ export function InspectorPanel() {
   return (
     <div className="flex h-full flex-col">
       <header className="border-b border-edge bg-surface-2 px-3 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase">
-        Inspector
+        Özellikler
       </header>
-      <div className="flex min-h-0 flex-1 items-center justify-center p-4 text-sm text-fg-muted">
-        No selection
+      <div className="flex min-h-0 flex-1 items-center justify-center p-4 text-center text-sm text-fg-muted">
+        Seçili klip özellikleri M4'te gelecek.
       </div>
       <section className="max-h-[50%] shrink-0 overflow-y-auto border-t border-edge">
         <h3 className="sticky top-0 border-b border-edge bg-surface-2 px-3 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase">

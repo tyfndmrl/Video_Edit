@@ -1,25 +1,62 @@
 /**
- * TopBar — thin editor top bar (M3): project name on the left, autosave chip
- * (moved here from the timeline header) + the export entry point on the right.
+ * TopBar — ince editör üst çubuğu: solda "Projeler" (seçiciye dönüş) + proje
+ * adı; sağda Undo/Redo, autosave çipi, kısayol listesi ('?'), export girişi ve
+ * çıkış. Seçiciye dönüş activeProjectId'yi null'a çeker — EditorBoot
+ * closeProject() ile autosave'i dispose-flush eder, URL'den ?project= silinir.
  */
 import { useState } from 'react';
 import { AutosaveIndicator } from '../features/timeline/AutosaveIndicator';
 import { ExportDialog } from '../features/export/ExportDialog';
+import { returnToProjectPicker } from '../features/projects/projectPickerLogic';
+import { toggleShortcutsOverlay } from '../features/shortcuts/shortcutsHelp';
+import { logout } from '../entities/auth';
+import { useDocStore } from '../state/docStore';
 import { useProjectSession } from '../state/projectSession';
 
 export function TopBar() {
   const projectId = useProjectSession((s) => s.projectId);
   const projectName = useProjectSession((s) => s.projectName);
   const sessionReady = useProjectSession((s) => s.status) === 'ready';
+  const canUndo = useDocStore((s) => s.cursor > 0);
+  const canRedo = useDocStore((s) => s.cursor < s.history.length);
   const [exportOpen, setExportOpen] = useState(false);
 
   return (
     <header className="flex items-center gap-2 border-b border-edge bg-surface-2 px-3 py-1.5">
+      <button
+        type="button"
+        className="shrink-0 rounded border border-edge px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-3 hover:text-fg"
+        title="Proje seçiciye dön"
+        onClick={returnToProjectPicker}
+      >
+        Projeler
+      </button>
       <span className="min-w-0 truncate text-xs font-semibold text-fg" title={projectName ?? undefined}>
         {projectName ?? '—'}
       </span>
+
+      <div className="ml-3 flex items-center gap-1">
+        <IconButton
+          label="Geri al (Ctrl+Z)"
+          disabled={!canUndo}
+          onClick={() => useDocStore.getState().undo()}
+        >
+          ↺
+        </IconButton>
+        <IconButton
+          label="Yinele (Ctrl+Y)"
+          disabled={!canRedo}
+          onClick={() => useDocStore.getState().redo()}
+        >
+          ↻
+        </IconButton>
+      </div>
+
       <div className="ml-auto flex items-center gap-2">
         <AutosaveIndicator />
+        <IconButton label="Klavye kısayolları (?)" onClick={toggleShortcutsOverlay}>
+          ?
+        </IconButton>
         <button
           type="button"
           disabled={!sessionReady}
@@ -27,6 +64,18 @@ export function TopBar() {
           onClick={() => setExportOpen(true)}
         >
           Dışa Aktar
+        </button>
+        <button
+          type="button"
+          className="rounded border border-edge px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-3 hover:text-fg"
+          title="Oturumu kapat"
+          onClick={() => {
+            // Token temizlenir + sunucudaki refresh token'lar iptal edilir;
+            // reload sonrası LoginGate'in cookie denemesi 401 alır -> giriş formu.
+            void logout().then(() => window.location.reload());
+          }}
+        >
+          Çıkış
         </button>
       </div>
       {sessionReady && projectId !== null && (
@@ -37,5 +86,30 @@ export function TopBar() {
         />
       )}
     </header>
+  );
+}
+
+function IconButton({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      className="flex h-6 w-6 items-center justify-center rounded border border-edge text-xs text-fg-muted hover:bg-surface-3 hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+      onClick={onClick}
+    >
+      {children}
+    </button>
   );
 }

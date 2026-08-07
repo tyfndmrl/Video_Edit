@@ -14,13 +14,27 @@ Ayrıntılar: [docs/design/](docs/design/) (alt sistem tasarımları) ve [docs/r
 
 ## Geliştirme
 
-Gereksinimler: Node ≥ 22, pnpm ≥ 10, .NET 10 SDK, Docker (postgres/redis için).
+Gereksinimler: Node ≥ 22, pnpm ≥ 10, .NET 10 SDK, Docker (postgres/redis/minio için), **ffmpeg + ffprobe (PATH üzerinde)** — worker açılışta varlıklarını doğrular, yoksa başlamaz.
 
 ```bash
+# 1) Bağımlılıklar (timeline-schema paketi prepare script'i ile otomatik build edilir)
 pnpm install
-docker compose -f compose.dev.yml up -d   # postgres + redis
+
+# 2) Altyapı: postgres + redis + minio
+docker compose -f compose.dev.yml up -d
+
+# 3) İlk kurulumda (ve her yeni migration sonrası) veritabanı şeması
+dotnet run --project backend/src/VideoEdit.Api -- --migrate-only
+
+# 4) API (http://localhost:5000)
 dotnet run --project backend/src/VideoEdit.Api
-pnpm dev                                   # Vite dev server (http://localhost:5173)
+
+# 5) Worker — AYRI terminalde (proxy/filmstrip/waveform üretimi ve export
+#    render'ı yalnız burada koşar; başlatılmazsa medya "İşleniyor"da kalır)
+dotnet run --project backend/src/VideoEdit.Worker
+
+# 6) Editör (http://localhost:5173)
+pnpm dev
 ```
 
 Şema değişikliği sonrası: `pnpm schema:generate` (JSON Schema + C# DTO yeniden üretilir).

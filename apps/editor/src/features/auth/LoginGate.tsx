@@ -114,6 +114,11 @@ export function LoginGate({ children }: { children: ReactNode }) {
           onChange={(e) => setPassword(e.target.value)}
           data-testid="auth-password"
         />
+        {mode === 'register' && (
+          <p className="text-[11px] leading-snug text-fg-muted">
+            En az 8 karakter, harf ve rakam içermeli.
+          </p>
+        )}
         {notice && <p className="text-sm text-emerald-400">{notice}</p>}
         {error && <p className="text-sm text-red-400">{error}</p>}
         <button

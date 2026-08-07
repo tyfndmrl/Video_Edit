@@ -193,7 +193,7 @@ export function PlayerPanel() {
       <div
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black p-2"
         onClick={togglePlayback}
-        title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+        title={isPlaying ? 'Duraklat (Space)' : 'Oynat (Space)'}
       >
         <canvas
           ref={canvasRef}
@@ -213,18 +213,18 @@ export function PlayerPanel() {
           type="button"
           className="flex h-6 w-6 items-center justify-center rounded border border-edge text-fg hover:bg-surface-3"
           onClick={togglePlayback}
-          aria-label={isPlaying ? 'Pause' : 'Play'}
+          aria-label={isPlaying ? 'Duraklat' : 'Oynat'}
         >
           {isPlaying ? <PauseIcon /> : <PlayIcon />}
         </button>
-        <span className="font-mono text-fg" title="Playhead (project fps timecode)">
+        <span className="font-mono text-fg" title="Playhead (proje fps zaman kodu)">
           {formatTimecode(Math.max(0, Math.round(playheadUs)), settings.fps)}
         </span>
         <span className="text-fg-muted">/</span>
-        <span className="font-mono" title="Project duration">
+        <span className="font-mono" title="Proje süresi">
           {formatTimecode(durationUs, settings.fps)}
         </span>
-        <span className="ml-auto text-[10px] tracking-wide uppercase" title="Playback engine">
+        <span className="ml-auto text-[10px] tracking-wide uppercase" title="Oynatma motoru">
           v1
         </span>
       </div>

@@ -8,12 +8,16 @@ import { PlayerPanel } from '../features/player/PlayerPanel';
 import { TimelinePanel } from '../features/timeline/TimelinePanel';
 import { InspectorPanel } from '../features/inspector/InspectorPanel';
 import { installShortcutDispatcher } from '../features/shortcuts/dispatcher';
+import { ShortcutsHelpOverlay } from '../features/shortcuts/ShortcutsHelpOverlay';
+import { ProjectPicker } from '../features/projects/ProjectPicker';
 import { useMediaUrlSync } from '../features/player/mediaUrls';
 import { useEditorStore } from '../state/editorStore';
 import { closeProject, openProject } from '../state/projectSession';
 
 /**
- * Editor shell — top bar + 4-panel CSS grid layout:
+ * App shell: login gate -> proje seçici (activeProjectId null) VEYA editör.
+ *
+ * Editor layout — top bar + 4-panel CSS grid:
  *
  *   +---------------------------------------+
  *   |                Top bar                |
@@ -28,25 +32,35 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <LoginGate>
         <EditorBoot />
-        <div className="grid h-full grid-cols-[280px_minmax(0,1fr)_320px] grid-rows-[auto_minmax(0,1fr)_280px] bg-surface-0">
-          <div className="col-span-3">
-            <TopBar />
-          </div>
-          <aside className="row-span-2 row-start-2 min-h-0 border-r border-edge bg-surface-1">
-            <LibraryPanel />
-          </aside>
-          <main className="col-start-2 row-start-2 min-h-0 bg-surface-0">
-            <PlayerPanel />
-          </main>
-          <aside className="col-start-3 row-span-2 row-start-2 min-h-0 border-l border-edge bg-surface-1">
-            <InspectorPanel />
-          </aside>
-          <section className="col-start-2 row-start-3 min-h-0 border-t border-edge bg-surface-1">
-            <TimelinePanel />
-          </section>
-        </div>
+        <AppContent />
+        <ShortcutsHelpOverlay />
       </LoginGate>
     </QueryClientProvider>
+  );
+}
+
+/** activeProjectId null iken editör grid'i yerine tam ekran proje seçici. */
+function AppContent() {
+  const projectId = useEditorStore((s) => s.activeProjectId);
+  if (projectId === null) return <ProjectPicker />;
+  return (
+    <div className="grid h-full grid-cols-[280px_minmax(0,1fr)_320px] grid-rows-[auto_minmax(0,1fr)_280px] bg-surface-0">
+      <div className="col-span-3">
+        <TopBar />
+      </div>
+      <aside className="row-span-2 row-start-2 min-h-0 border-r border-edge bg-surface-1">
+        <LibraryPanel />
+      </aside>
+      <main className="col-start-2 row-start-2 min-h-0 bg-surface-0">
+        <PlayerPanel />
+      </main>
+      <aside className="col-start-3 row-span-2 row-start-2 min-h-0 border-l border-edge bg-surface-1">
+        <InspectorPanel />
+      </aside>
+      <section className="col-start-2 row-start-3 min-h-0 border-t border-edge bg-surface-1">
+        <TimelinePanel />
+      </section>
+    </div>
   );
 }
 

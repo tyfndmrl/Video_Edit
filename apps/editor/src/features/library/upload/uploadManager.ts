@@ -20,6 +20,7 @@ import {
   type UploadPhase,
   type UploadProgress,
 } from './uploadEngine';
+import { uploadErrorMessage } from './uploadErrors';
 import { deleteUploadSession, saveUploadSession } from './uploadSessions';
 
 export interface UploadItem {
@@ -119,7 +120,7 @@ function flashWarning(localId: string, message: string): void {
 export function startUpload(file: File, projectId: string): string | null {
   const duplicate = findActiveDuplicate(file, projectId);
   if (duplicate) {
-    flashWarning(duplicate.localId, 'This file is already uploading.');
+    flashWarning(duplicate.localId, 'Bu dosya zaten yükleniyor.');
     return null;
   }
 
@@ -223,7 +224,9 @@ export function startUpload(file: File, projectId: string): string | null {
     },
     (err: unknown) => {
       engines.delete(localId);
-      const message = err instanceof Error ? err.message : String(err);
+      // ApiError.body'deki ProblemDetails içeriği kartta ham "HTTP 400" yerine
+      // anlaşılır mesaj olarak gösterilir (uploadErrors.ts).
+      const message = uploadErrorMessage(err);
       useUploadStore.getState().patch(localId, { phase: 'error', errorMessage: message });
       const assetId = engine.assetId;
       if (assetId) {

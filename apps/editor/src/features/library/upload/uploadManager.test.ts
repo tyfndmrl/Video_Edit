@@ -143,7 +143,7 @@ describe('uploadManager — duplicate drops', () => {
     const second = startUpload(makeFile('dup.mp4', 42), 'p1');
     expect(second).toBeNull();
     expect(useUploadStore.getState().items.size).toBe(1);
-    expect(useUploadStore.getState().items.get(first!)?.warning).toMatch(/already uploading/i);
+    expect(useUploadStore.getState().items.get(first!)?.warning).toMatch(/zaten yükleniyor/i);
 
     // A DIFFERENT file (same name/size, different lastModified) is accepted.
     const third = startUpload(makeFile('dup.mp4', 43), 'p1');

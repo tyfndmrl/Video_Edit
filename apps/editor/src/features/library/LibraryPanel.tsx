@@ -8,6 +8,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { useProjectAssets, type AssetDto } from '../../entities/assets';
 import { useEditorStore } from '../../state/editorStore';
+import { openProject, useProjectSession } from '../../state/projectSession';
+import { addAssetToTimelineAtPlayhead } from './addToTimeline';
+import { FILE_ACCEPT, isSupportedMediaFile, unsupportedFileMessage } from './fileTypes';
 import { syncServerAssets, toAssetKind } from './assetSync';
 import { IMAGE_DEFAULT_DURATION_US } from '../../state/timelineOps';
 import {
@@ -41,7 +44,7 @@ export function LibraryPanel() {
   return (
     <div className="flex h-full flex-col">
       <header className="border-b border-edge bg-surface-2 px-3 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase">
-        Library
+        Kitaplık
       </header>
       {projectId === null ? <NoProject /> : <LibraryContent projectId={projectId} />}
     </div>
@@ -51,13 +54,17 @@ export function LibraryPanel() {
 function NoProject() {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-1 p-4 text-center text-sm text-fg-muted">
-      <span>No project selected</span>
-      <span className="text-xs">Open a project to upload and browse media.</span>
+      <span>Proje seçilmedi</span>
+      <span className="text-xs">Medya yüklemek ve görmek için bir proje açın.</span>
     </div>
   );
 }
 
 function LibraryContent({ projectId }: { projectId: string }) {
+  // Oturum durumu: 'error' -> DropZone yerine retry'lı hata bloğu; 'ready'
+  // değilken DropZone kapalı (timeline'daki +V/+A guard'ıyla aynı şart).
+  const sessionStatus = useProjectSession((s) => s.status);
+  const sessionError = useProjectSession((s) => s.error);
   const uploadsMap = useUploadStore((s) => s.items);
   const uploads = useMemo(
     () => [...uploadsMap.values()].filter((u) => u.projectId === projectId),
@@ -129,7 +136,11 @@ function LibraryContent({ projectId }: { projectId: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 p-3 pb-0">
-        <DropZone projectId={projectId} />
+        {sessionStatus === 'error' ? (
+          <SessionErrorNotice projectId={projectId} message={sessionError} />
+        ) : (
+          <DropZone projectId={projectId} disabled={sessionStatus !== 'ready'} />
+        )}
       </div>
 
       {pendingSessions.length > 0 && (
@@ -142,7 +153,7 @@ function LibraryContent({ projectId }: { projectId: string }) {
         {uploads.length > 0 && (
           <section className="mb-3">
             <SectionTitle>
-              Uploading
+              Yükleniyor
               <CountBadge count={uploads.length} />
             </SectionTitle>
             <ul className="flex flex-col gap-2">
@@ -157,24 +168,24 @@ function LibraryContent({ projectId }: { projectId: string }) {
 
         <section>
           <SectionTitle>
-            Media
+            Medya
             {assetsQuery.data && <CountBadge count={assetsQuery.data.totalCount} />}
           </SectionTitle>
-          {assetsQuery.isLoading && <p className="py-2 text-xs text-fg-muted">Loading assets…</p>}
+          {assetsQuery.isLoading && <p className="py-2 text-xs text-fg-muted">Medya listesi yükleniyor…</p>}
           {assetsQuery.isError && (
             <div className="flex items-center gap-2 py-2 text-xs text-danger">
-              <span>Could not load assets.</span>
+              <span>Medya listesi yüklenemedi.</span>
               <button
                 type="button"
                 className="rounded border border-edge px-2 py-0.5 text-fg-muted hover:bg-surface-3 hover:text-fg"
                 onClick={() => void assetsQuery.refetch()}
               >
-                Retry
+                Tekrar dene
               </button>
             </div>
           )}
           {assetsQuery.isSuccess && serverAssets.length === 0 && uploads.length === 0 && (
-            <p className="py-2 text-xs text-fg-muted">No media yet — drop files above.</p>
+            <p className="py-2 text-xs text-fg-muted">Henüz medya yok — dosyaları yukarıya bırakın.</p>
           )}
           <ul className="flex flex-col gap-1.5">
             {serverAssets.map((dto) => (
@@ -278,65 +289,111 @@ function hasFiles(e: DragEvent): boolean {
   return Array.from(e.dataTransfer.types).includes('Files');
 }
 
-function DropZone({ projectId }: { projectId: string }) {
+/** Proje açma hatası: DropZone yerine gösterilen, openProject'i yeniden çağıran blok. */
+function SessionErrorNotice({ projectId, message }: { projectId: string; message: string | null }) {
+  return (
+    <div className="rounded border border-danger/40 bg-danger/10 px-2.5 py-2">
+      <p className="text-xs font-semibold text-danger">Proje yüklenemedi.</p>
+      {message && <p className="mt-0.5 text-[11px] leading-snug break-words text-fg-muted">{message}</p>}
+      <button
+        type="button"
+        className="mt-1.5 rounded border border-edge px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-3 hover:text-fg"
+        onClick={() => void openProject(projectId)}
+      >
+        Tekrar dene
+      </button>
+    </div>
+  );
+}
+
+function DropZone({ projectId, disabled }: { projectId: string; disabled: boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  /** Desteklenmeyen dosyalar için Türkçe hatalar (sonraki drop/seçimde sıfırlanır). */
+  const [rejections, setRejections] = useState<string[]>([]);
   const dragDepth = useRef(0);
 
   const acceptFiles = useCallback(
     (fileList: FileList | null) => {
-      if (!fileList) return;
+      if (disabled || !fileList) return;
+      const rejected: string[] = [];
       for (const file of Array.from(fileList)) {
+        // Uzantı whitelist'i backend contentType whitelist'iyle eşleşir
+        // (fileTypes.ts) — desteklenmeyen dosya kart açılmadan reddedilir.
+        if (!isSupportedMediaFile(file.name)) {
+          rejected.push(unsupportedFileMessage(file.name));
+          continue;
+        }
         startUpload(file, projectId);
       }
+      setRejections(rejected);
     },
-    [projectId],
+    [projectId, disabled],
   );
 
   return (
-    <div
-      className={`flex flex-col items-center gap-1.5 rounded border border-dashed px-3 py-4 text-center transition-colors ${
-        dragOver ? 'border-accent bg-accent/10' : 'border-edge bg-surface-2/50'
-      }`}
-      onDragEnter={(e) => {
-        if (!hasFiles(e)) return;
-        e.preventDefault();
-        dragDepth.current += 1;
-        setDragOver(true);
-      }}
-      onDragOver={(e) => {
-        if (hasFiles(e)) e.preventDefault();
-      }}
-      onDragLeave={() => {
-        dragDepth.current = Math.max(0, dragDepth.current - 1);
-        if (dragDepth.current === 0) setDragOver(false);
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        dragDepth.current = 0;
-        setDragOver(false);
-        acceptFiles(e.dataTransfer.files);
-      }}
-    >
-      <span className="text-xs text-fg-muted">Drop media here, or</span>
-      <button
-        type="button"
-        className="rounded bg-accent px-3 py-1 text-xs font-semibold text-surface-0 hover:opacity-90"
-        onClick={() => inputRef.current?.click()}
-      >
-        Choose files
-      </button>
-      <input
-        ref={inputRef}
-        type="file"
-        multiple
-        hidden
-        accept="video/*,audio/*,image/*"
-        onChange={(e) => {
-          acceptFiles(e.target.files);
-          e.target.value = ''; // allow re-picking the same file
+    <div>
+      <div
+        className={`flex flex-col items-center gap-1.5 rounded border border-dashed px-3 py-4 text-center transition-colors ${
+          disabled
+            ? 'border-edge bg-surface-2/30 opacity-50'
+            : dragOver
+              ? 'border-accent bg-accent/10'
+              : 'border-edge bg-surface-2/50'
+        }`}
+        onDragEnter={(e) => {
+          if (disabled || !hasFiles(e)) return;
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragOver(true);
         }}
-      />
+        onDragOver={(e) => {
+          if (!disabled && hasFiles(e)) e.preventDefault();
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragOver(false);
+        }}
+        onDrop={(e) => {
+          if (disabled) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragOver(false);
+          acceptFiles(e.dataTransfer.files);
+        }}
+      >
+        <span className="text-xs text-fg-muted">
+          {disabled ? 'Proje yükleniyor…' : 'Medyayı buraya bırakın veya'}
+        </span>
+        <button
+          type="button"
+          disabled={disabled}
+          className="rounded bg-accent px-3 py-1 text-xs font-semibold text-surface-0 hover:opacity-90 disabled:pointer-events-none disabled:opacity-50"
+          onClick={() => inputRef.current?.click()}
+        >
+          Dosya seç
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          hidden
+          accept={FILE_ACCEPT}
+          onChange={(e) => {
+            acceptFiles(e.target.files);
+            e.target.value = ''; // allow re-picking the same file
+          }}
+        />
+      </div>
+      {rejections.length > 0 && (
+        <ul className="mt-1.5 flex flex-col gap-1">
+          {rejections.map((message) => (
+            <li key={message} className="text-[11px] leading-snug break-words text-danger">
+              {message}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -358,11 +415,11 @@ function PendingSessionsNotice({
         <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500/20 px-1 text-[10px]">
           {sessions.length}
         </span>
-        Interrupted upload{sessions.length > 1 ? 's' : ''}
+        Yarım kalan yükleme{sessions.length > 1 ? 'ler' : ''}
       </div>
       <p className="mt-0.5 text-[11px] leading-snug text-fg-muted">
-        Resume after restart arrives in a later milestone; unfinished uploads are kept server-side
-        for 7 days.
+        Tarayıcı yeniden açıldıktan sonra devam ettirme ileri bir milestone'da gelecek; yarım kalan
+        yüklemeler sunucuda 7 gün saklanır.
       </p>
       <ul className="mt-1.5 flex flex-col gap-1">
         {sessions.map((s) => (
@@ -376,9 +433,9 @@ function PendingSessionsNotice({
                 type="button"
                 className="rounded border border-edge px-1.5 py-0.5 hover:bg-surface-3 hover:text-fg"
                 onClick={() => void onDiscard(s.assetId)}
-                title="Abort the unfinished upload and remove this entry"
+                title="Yarım kalan yüklemeyi iptal et ve bu kaydı kaldır"
               >
-                Discard
+                Sil
               </button>
             </span>
           </li>
@@ -393,14 +450,14 @@ function PendingSessionsNotice({
 // ---------------------------------------------------------------------------
 
 const PHASE_LABELS: Record<UploadItem['phase'], string> = {
-  idle: 'Starting…',
-  preparing: 'Starting…',
-  uploading: 'Uploading',
-  paused: 'Paused',
-  completing: 'Finishing…',
-  done: 'Done',
-  aborted: 'Cancelled',
-  error: 'Failed',
+  idle: 'Başlatılıyor…',
+  preparing: 'Başlatılıyor…',
+  uploading: 'Yükleniyor',
+  paused: 'Duraklatıldı',
+  completing: 'Tamamlanıyor…',
+  done: 'Tamamlandı',
+  aborted: 'İptal edildi',
+  error: 'Başarısız',
 };
 
 function UploadCard({ item }: { item: UploadItem }) {
@@ -443,7 +500,7 @@ function UploadCard({ item }: { item: UploadItem }) {
 
       {isError ? (
         <p className="mt-1 text-[11px] leading-snug break-words text-danger" title={item.errorMessage ?? undefined}>
-          {item.errorMessage ?? 'Upload failed'}
+          {item.errorMessage ?? 'Yükleme başarısız'}
         </p>
       ) : (
         <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-fg-muted">
@@ -452,20 +509,20 @@ function UploadCard({ item }: { item: UploadItem }) {
           </span>
           <span className="shrink-0">
             {item.phase === 'uploading' && p
-              ? `${formatSpeed(p.bytesPerSecond)} · ${formatEta(p.etaSeconds)} left · ${Math.floor(pct)}%`
+              ? `${formatSpeed(p.bytesPerSecond)} · ${formatEta(p.etaSeconds)} kaldı · ${Math.floor(pct)}%`
               : `${Math.floor(pct)}%`}
           </span>
         </div>
       )}
 
       <div className="mt-1.5 flex items-center gap-1.5">
-        {canPause && <CardButton onClick={() => pauseUpload(item.localId)}>Pause</CardButton>}
-        {canResume && <CardButton onClick={() => resumeUpload(item.localId)}>Resume</CardButton>}
-        {canCancel && <CardButton onClick={() => cancelUpload(item.localId)}>Cancel</CardButton>}
+        {canPause && <CardButton onClick={() => pauseUpload(item.localId)}>Duraklat</CardButton>}
+        {canResume && <CardButton onClick={() => resumeUpload(item.localId)}>Devam et</CardButton>}
+        {canCancel && <CardButton onClick={() => cancelUpload(item.localId)}>İptal</CardButton>}
         {isError && (
           <>
-            <CardButton onClick={() => retryUpload(item.localId)}>Retry</CardButton>
-            <CardButton onClick={() => dismissUpload(item.localId)}>Dismiss</CardButton>
+            <CardButton onClick={() => retryUpload(item.localId)}>Tekrar dene</CardButton>
+            <CardButton onClick={() => dismissUpload(item.localId)}>Kapat</CardButton>
           </>
         )}
       </div>
@@ -511,7 +568,9 @@ function AssetRow({ dto }: { dto: AssetDto }) {
         dto.status === 'ready' ? 'cursor-grab touch-none select-none' : ''
       }`}
       {...dragHandlers}
-      title={dto.status === 'ready' ? 'Timeline\'a sürükleyin' : undefined}
+      // Çift tık: DnD'nin yedek yolu — playhead'e (çakışıyorsa proje sonuna) ekler.
+      onDoubleClick={dto.status === 'ready' ? () => addAssetToTimelineAtPlayhead(dto.id) : undefined}
+      title={dto.status === 'ready' ? "Timeline'a sürükleyin · Çift tık: timeline'a ekle" : undefined}
     >
       <span className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-surface-3 text-[9px] font-bold tracking-wider text-fg-muted">
         {KIND_LABELS[dto.kind] ?? 'MED'}
@@ -530,19 +589,19 @@ function AssetRow({ dto }: { dto: AssetDto }) {
 function StatusBadge({ dto }: { dto: AssetDto }) {
   switch (dto.status) {
     case 'uploading':
-      return <Badge className="border-accent/40 text-accent">Uploading</Badge>;
+      return <Badge className="border-accent/40 text-accent">Yükleniyor</Badge>;
     case 'uploaded':
-      return <Badge className="border-sky-400/40 text-sky-400">Queued</Badge>;
+      return <Badge className="border-sky-400/40 text-sky-400">Sırada</Badge>;
     case 'processing': {
-      const pct = dto.progress !== undefined ? ` ${Math.round(dto.progress * 100)}%` : '';
-      return <Badge className="border-amber-400/40 text-amber-400">{`Processing${pct}`}</Badge>;
+      const pct = dto.progress !== undefined ? ` %${Math.round(dto.progress * 100)}` : '';
+      return <Badge className="border-amber-400/40 text-amber-400">{`İşleniyor${pct}`}</Badge>;
     }
     case 'ready':
-      return <Badge className="border-emerald-400/40 text-emerald-400">Ready</Badge>;
+      return <Badge className="border-emerald-400/40 text-emerald-400">Hazır</Badge>;
     case 'failed':
       return (
         <Badge className="border-danger/40 text-danger" title={dto.errorCode}>
-          Failed
+          Başarısız
         </Badge>
       );
   }
