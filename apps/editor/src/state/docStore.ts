@@ -39,6 +39,24 @@ export interface DocStore {
   /** Linear history. Entries [0, cursor) are applied; [cursor, length) is the redo stack. */
   history: HistoryEntry[];
   cursor: number;
+  /**
+   * True while projectSession is loading a project (fetch in flight). While
+   * locked, mutate/beginTransaction are refused: throw in dev, no-op in prod
+   * (M2 chief-architect finding 1c — no edits may race a project load).
+   */
+  locked: boolean;
+  /**
+   * Reactive mirror of "a transaction is open". Autosave subscribes to this to
+   * defer its timers until the gesture commits (half-finished drags must never
+   * be PUT to the server).
+   */
+  transactionOpen: boolean;
+  /**
+   * Incremented every time loadDoc APPLIES (including deferred applications
+   * after a queued load). Lets subscribers distinguish "document replaced by a
+   * load" from "document edited" even when the application is asynchronous.
+   */
+  loadSeq: number;
 
   /** Single-step mutation: one recipe -> one undo entry (no entry if the recipe changed nothing). */
   mutate(actionType: string, label: string, recipe: (draft: TimelineDoc) => void): void;
@@ -55,8 +73,15 @@ export interface DocStore {
   canUndo(): boolean;
   canRedo(): boolean;
 
-  /** Replace the document (project open / restore). Clears the undo history. */
+  /**
+   * Replace the document (project open / restore). Clears the undo history.
+   * If a transaction is open the load is QUEUED and applied when the
+   * transaction commits or aborts (a project fetch landing mid-drag must not
+   * throw — chief-architect finding 1d).
+   */
   loadDoc(doc: TimelineDoc): void;
+  /** Lock/unlock document mutations (projectSession loading window). */
+  setLocked(locked: boolean): void;
 }
 
 /** Empty document factory. Settings come from the project record on the server. */
@@ -84,14 +109,24 @@ const initialDoc = createEmptyDoc(
   defaultProjectSettings,
 );
 
+/** A closed transaction handed out while the store is locked (prod no-op path). */
+const NOOP_TRANSACTION: Transaction = {
+  update() {},
+  commit() {},
+  abort() {},
+};
+
 export const useDocStore = create<DocStore>()((set, get) => {
   /**
    * The currently open transaction, if any. While a transaction is open,
-   * mutate/undo/redo/jumpTo/loadDoc must not run: they would interleave with
-   * the transaction's patches, and abort() would silently discard their
-   * changes when it restores the begin() snapshot.
+   * mutate/undo/redo/jumpTo must not run: they would interleave with the
+   * transaction's patches, and abort() would silently discard their changes
+   * when it restores the begin() snapshot. loadDoc is the exception: it is
+   * queued and applied when the transaction closes.
    */
   let activeTransaction: Transaction | null = null;
+  /** Document waiting to be loaded once the open transaction closes. */
+  let pendingLoadDoc: TimelineDoc | null = null;
 
   function assertNoActiveTransaction(op: string): void {
     if (activeTransaction !== null) {
@@ -99,6 +134,19 @@ export const useDocStore = create<DocStore>()((set, get) => {
         `Cannot ${op} while a transaction is open — finish or abort the active transaction first`,
       );
     }
+  }
+
+  /**
+   * Refuse doc mutations while projectSession is loading: loud in dev,
+   * silently ignored in prod (better to drop a keystroke than to corrupt the
+   * incoming document / autosave baseline).
+   */
+  function refuseWhenLocked(op: string): boolean {
+    if (!get().locked) return false;
+    if (import.meta.env?.DEV) {
+      throw new Error(`Cannot ${op} while the document store is locked (project loading)`);
+    }
+    return true;
   }
 
   function pushEntry(entry: HistoryEntry): void {
@@ -112,13 +160,29 @@ export const useDocStore = create<DocStore>()((set, get) => {
     set({ history: next, cursor: next.length });
   }
 
+  /** Server restore / project open: history is client-only and starts fresh. */
+  function applyLoad(doc: TimelineDoc): void {
+    set((s) => ({ doc, history: [], cursor: 0, loadSeq: s.loadSeq + 1 }));
+  }
+
+  function applyPendingLoadIfAny(): void {
+    if (pendingLoadDoc === null) return;
+    const doc = pendingLoadDoc;
+    pendingLoadDoc = null;
+    applyLoad(doc);
+  }
+
   return {
     doc: initialDoc,
     history: [],
     cursor: 0,
+    locked: false,
+    transactionOpen: false,
+    loadSeq: 0,
 
     mutate(actionType, label, recipe) {
       assertNoActiveTransaction('mutate');
+      if (refuseWhenLocked('mutate')) return;
       const [nextDoc, patches, inversePatches] = produceWithPatches(get().doc, recipe);
       if (patches.length === 0) return; // no-op recipes never pollute history
       set({ doc: nextDoc });
@@ -127,6 +191,7 @@ export const useDocStore = create<DocStore>()((set, get) => {
 
     beginTransaction(actionType, label) {
       assertNoActiveTransaction('begin a transaction');
+      if (refuseWhenLocked('begin a transaction')) return NOOP_TRANSACTION;
       const baseDoc = get().doc; // immutable snapshot — safe to keep by reference
       let patches: Patch[] = [];
       let inversePatches: Patch[] = [];
@@ -149,17 +214,26 @@ export const useDocStore = create<DocStore>()((set, get) => {
           if (!open) return;
           open = false;
           activeTransaction = null;
-          if (patches.length === 0) return; // nothing changed -> no entry
-          pushEntry({ label, actionType, patches, inversePatches, timestamp: Date.now() });
+          if (patches.length > 0) {
+            pushEntry({ label, actionType, patches, inversePatches, timestamp: Date.now() });
+          }
+          // A queued load supersedes the gesture: apply it BEFORE announcing
+          // the transaction close so subscribers (autosave) see the load first
+          // and do not schedule a save of the now-replaced document.
+          applyPendingLoadIfAny();
+          set({ transactionOpen: false });
         },
         abort() {
           if (!open) return;
           open = false;
           activeTransaction = null;
           set({ doc: baseDoc });
+          applyPendingLoadIfAny();
+          set({ transactionOpen: false });
         },
       };
       activeTransaction = tx;
+      set({ transactionOpen: true });
       return tx;
     },
 
@@ -199,9 +273,17 @@ export const useDocStore = create<DocStore>()((set, get) => {
     canRedo: () => get().cursor < get().history.length,
 
     loadDoc(doc) {
-      assertNoActiveTransaction('loadDoc');
-      // Server restore / project open: history is client-only and starts fresh.
-      set({ doc, history: [], cursor: 0 });
+      if (activeTransaction !== null) {
+        // A gesture is mid-flight: queue the load; commit()/abort() applies it.
+        pendingLoadDoc = doc;
+        return;
+      }
+      pendingLoadDoc = null;
+      applyLoad(doc);
+    },
+
+    setLocked(locked) {
+      if (get().locked !== locked) set({ locked });
     },
   };
 });

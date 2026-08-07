@@ -1,0 +1,274 @@
+{
+    "toplam":  37,
+    "dagilim":  {
+                    "high":  6,
+                    "medium":  15,
+                    "low":  16
+                },
+    "findings":  [
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "high",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Endpoints\\AssetEndpoints.cs",
+                         "sorun":  "Kota bypass + depolama sızıntısı: Complete\u0027te boyut uyuşmazlığında (satır 181-191) asset Failed\u0027a çekiliyor ama R2 objesi YERİNDE KALIYOR (satır 186 yorumu: \u0027Obje R2\u0027de kalır; GC/temizlik M6\u0027) ve kota hesabı Failed asset\u0027leri DIŞLIYOR (satır 71: Where(a =\u003e a.Status != AssetStatus.Failed)). Presigned part PUT\u0027ta Content-Length imzalanmadığı için (tasarım 02 §1.6 bilinçli tercihi) saldırgan sizeBytes=1 beyan edip 5 GiB\u0027a kadar part yükleyebilir; complete → 422 → Failed → obje kalıcı ve HİÇBİR kotaya sayılmıyor. upload-init limiti 30/dk ile dakikada ~15 döngü × 5 GiB = sınırsız, faturalanan ama görünmeyen depolama.",
+                         "oneri":  "Size-mismatch dalında 422 dönmeden önce objeyi sil (R2\u0027de DeleteObject ÜCRETSİZ, tek satır storage.DeletePrefixAsync veya DeleteObject çağrısı); ek savunma olarak Failed-ama-objesi-duran asset\u0027leri GC koşana kadar UsedBytes\u0027a dahil et. M6\u0027yı beklemek bu delik için kabul edilemez — istismar maliyeti sıfır, tespit zor."
+                     },
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "high",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Worker\\Program.cs",
+                         "sorun":  "E2E bulgusu (a) doğrulandı: Worker\u0027da HİÇBİR startup doğrulaması yok. Satır 15-16 conn-string\u0027i HER ortamda sessizce localhost/devpassword\u0027e düşürüyor (Api Program.cs:62-66 bunu yalnız Development\u0027ta yapıyor); R2Options hiç doğrulanmıyor → boş AccountId ile R2Options.ResolveServiceUrl() (R2Options.cs:33-36) \u0027https://.r2.cloudflarestorage.com\u0027 üretip job\u0027ları yakıyor. Host.CreateApplicationBuilder yalnız DOTNET_ENVIRONMENT okuduğu için ASPNETCORE_ENVIRONMENT ile başlatma Production\u0027a düşüyor — tuzak tekrar yaşanacak.",
+                         "oneri":  "(1) Api\u0027deki prod guard bloğunu (Api/Program.cs:33-59) worker\u0027a taşı; daha iyisi R2Options\u0027a IValidateOptions + ValidateOnStart ekleyip HER ortamda AccessKeyId/Bucket/(ServiceUrl|AccountId) zorunlulaştır. (2) ResolveServiceUrl her iki alan da boşken InvalidOperationException fırlatsın — çöp URL üretmesin (bu tek satır tüm host\u0027ları korur). (3) Conn-string fallback\u0027ini Development koşuluna bağla. (4) compose/README\u0027ye DOTNET_ENVIRONMENT notu."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "high",
+                         "file":  "backend/src/VideoEdit.Worker/Jobs/AssetReaperJob.cs",
+                         "sorun":  "Reaper yarışı uzun transcode\u0027u öldürüp DomainException döngüsü yaratıyor: StalledProcessingAge=30 dk (AssetReaperJob.cs:22) hiçbir heartbeat\u0027e bakmadan Processing asset\u0027i Failed(\u0027stalled\u0027) yapıyor (satır 41). 30 dk\u0027yı aşan meşru bir transcode (4K kaynak; tasarım 02 §3.6 \u00274K\u0027da 2-3 kat uzar\u0027) hâlâ koşarken süpürülür; pipeline bitince ProcessAssetJob.cs:196 TransitionTo(Ready) Failed durumundan çağrılır → Asset.cs:57-64 Failed→Ready İZİNSİZ → DomainException → generic catch (satır 211) bunu TRANSIENT sayıp rethrow eder → Hangfire tüm transcode\u0027u baştan koşar → 30 dk\u0027da yine süpürülür. Ayrıca retry\u0027da asset zaten Processing olduğundan ProcessingStartedAt YENİDEN damgalanmaz (ProcessAssetJob.cs:80-83) — birikmiş denemeler 30 dk eşiğini kolayca aşar.",
+                         "oneri":  "Heartbeat tabanlı stalled tespiti: ProgressWriter zaten Job satırına yazıyor — Job\u0027a LastProgressAt ekleyin, ProgressWriter her yazımda damgalasın; reaper Assets\u0027i Jobs ile join edip \u0027son N dk\u0027da progress yazan job\u0027ı olan asset\u0027i\u0027 atlasın. Ek olarak her Run başında ProcessingStartedAt\u0027ı yeniden damgalayın. Son savunma: pipeline sonunda asset Failed(\u0027stalled\u0027) ise Failed→Processing→Ready iki adımla geçin (geçiş matrisi buna izin veriyor)."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "high",
+                         "file":  "backend/src/VideoEdit.Worker/Jobs/ProcessAssetJob.cs",
+                         "sorun":  "(E2E bulgu b) Transient retry tükenince DB Job satırı SONSUZA DEK Running kalıyor: satır 73 Status=Running yazar, transient yolda catch (satır 211-218) Job satırına dokunmadan rethrow eder; AutomaticRetry(2) tükenince Hangfire kendi job\u0027ını Failed yapar ama Jobs tablosuyla hiçbir senkron yok (repo\u0027da hiçbir IApplyStateFilter/IElectStateFilter yok). Asset da reaper\u0027a kadar 30 dk Processing\u0027de kalır; Job satırı ise reaper\u0027ın bile kapsamında değil — kalıcı Running.",
+                         "oneri":  "Worker Hangfire config\u0027ine global IApplyStateFilter kaydedin: ApplyState\u0027te NewState FailedState ise (AutomaticRetry OnAttemptsExceeded=Fail sonrası nihai durum) context.BackgroundJob.Job.Args[0]\u0027dan jobId\u0027yi okuyup yeni scope\u0027ta Jobs satırını Failed + ErrorMessage yapın; asset hâlâ Processing ise Fail(\u0027processing-error\u0027) ile kullanıcıya 30 dk beklemeden geri bildirim verin. AttemptCount tabanlı in-job çözüm ÖNERMİYORUM: disk-full Schedule yolu (satır 108) YENİ Hangfire job\u0027ı yarattığından retry bütçesi sıfırlanır ama AttemptCount karışık sayar — filtre temiz çözümdür."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "high",
+                         "file":  "backend/src/VideoEdit.Worker/Program.cs",
+                         "sorun":  "(E2E bulgu a) Worker\u0027da startup doğrulaması SIFIR: satır 15-16 ortamdan bağımsız localhost conn-string fallback\u0027i (Production\u0027da bile sessizce localhost\u0027a bağlanır); Api\u0027deki prod guard bloğunun (Api/Program.cs:33-59) karşılığı yok. R2 config appsettings.Development.json\u0027da yaşadığından, HostApplicationBuilder DOTNET_ENVIRONMENT okuyup (ASPNETCORE_ENVIRONMENT set edilince) Production\u0027a düşünce R2Options boş kalır ve R2Options.ResolveServiceUrl (R2Options.cs:33-36) \u0027https://.r2.cloudflarestorage.com\u0027 geçersiz URL\u0027sini sessizce üretir → her job aktivasyonu patlar, retry\u0027lar yanar. Ayrıca ffmpeg/ffprobe yokluğu da (Win32Exception) transient sayılıp retry yakar.",
+                         "oneri":  "1) Api\u0027deki guard desenini worker\u0027a kopyalayın: IsDevelopment değilse ConnectionStrings:Postgres + R2 (AccessKeyId/SecretAccessKey/Bucket + ServiceUrl|AccountId) zorunlu, yoksa throw. 2) Kaynağında savunma: ResolveServiceUrl hem ServiceUrl hem AccountId boşsa InvalidOperationException fırlatsın (iki süreç de kazanır). 3) Boot\u0027ta \u0027ffmpeg -version\u0027/\u0027ffprobe -version\u0027 fail-fast kontrolü. 4) DOTNET_ENVIRONMENT tuzağı README/deploy dokümanına yazılmalı ve compose/systemd şablonlarında İKİ değişken birden set edilmeli — evet, belgelenmeli."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "high",
+                         "file":  "D:\\Temp\\VideoEdit\\apps\\editor\\src\\features\\library\\upload\\uploadManager.ts",
+                         "sorun":  "Basarili upload\u0027un IndexedDB temizligi basari yolunu zehirleyebiliyor: engine.start().then() icinde `await deleteUploadSession(assetId)` (satir 145) reject ederse akis .catch\u0027e (satir 160-173) dusuyor ve TAMAMLANMIS upload UI\u0027da \u0027Failed\u0027 + assetStore\u0027da status:\u0027failed\u0027 olarak isaretleniyor; kart kaldirma ve invalidateQueries hic calismiyor. Kok neden zinciri: uploadSessions.ts:47 `dbPromise ??= openDB(...)` reject olmus promise\u0027i sonsuza dek cache\u0027liyor (IDB acilamayan ortamda — private mode, quota — her cagri throw eder); ayrica onCreated icindeki `void saveUploadSession(...)` (satir 125) unhandled rejection uretir.",
+                         "oneri":  "saveUploadSession/deleteUploadSession cagrilarini best-effort try/catch\u0027e sar (session temizligi asla upload sonucunu etkilememeli); uploadSessions.getDb\u0027de rejection\u0027da dbPromise\u0027i null\u0027a resetle; .catch blogunu yalnizca engine kaynakli UploadError\u0027a daralt."
+                     },
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Endpoints\\AssetEndpoints.cs",
+                         "sorun":  "Complete idempotent değil — crash penceresi ölü uca götürüyor: S3 CompleteMultipartUpload başarılı olup DB SaveChanges\u0027ten önce süreç ölürse (ya da HeadObject ağ hatası → 500) asset Uploading+UploadId dolu kalır; sonraki complete denemesi S3\u0027te NoSuchUpload alır ve satır 170-176 kalıcı 409 döner — obje R2\u0027de tam ve sağlıklı olduğu halde kullanıcı upload\u0027ı asla bitiremiyor, 7 gün sonra reaper \u0027expired\u0027 basıyor. Ardından abort çağrılırsa NoSuchUpload yutulup (satır 356-367) asset silinir, tamamlanmış obje sızar.",
+                         "oneri":  "Complete\u0027te NoSuchUpload yakalanınca HeadObject fallback yap: obje mevcutsa ve boyut beyanla eşleşiyorsa akışı başarı yolundan devam ettir (idempotent complete); eşleşmiyorsa mevcut 409. Bu, aynı zamanda çifte-complete yarışını da zararsızlaştırır."
+                     },
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Worker\\Jobs\\AssetReaperJob.cs",
+                         "sorun":  "E2E bulgusu (b) doğrulandı ve eksik: retry tükenince Hangfire kendi job\u0027ını Failed yapar ama BİZİM Jobs satırı Running\u0027de kalır (ProcessAssetJob.cs:73\u0027te Running\u0027e çekilip kaydediliyor, transient yol 211-218 rethrow ediyor, hiçbir şey satırı kapatmıyor). Reaper YALNIZ Assets tablosunu süpürüyor (satır 34-44) — Jobs\u0027a hiç dokunmuyor. Ayrıca iki yetim-yol daha var: (i) asset silinmiş/yokken job skip edip dönüyor (ProcessAssetJob.cs:55-70) — Job satırı terminal duruma hiç geçmiyor; (ii) AssetEndpoints.cs:197-203\u0027te Job satırı kaydedilip Enqueue\u0027dan önce crash → sonsuza dek Queued.",
+                         "oneri":  "En ucuz kalıcı çözüm: reaper\u0027a ikinci sorgu — StartedAt/CreatedAt\u0027i eşikten eski Running/Queued Job satırlarını Failed(\u0027stalled\u0027) yap. Daha doğru çözüm: Hangfire IApplyStateFilter ile son deneme FailedState\u0027e geçtiğinde Jobs satırını senkron Failed işaretle (kullanıcı 30 dk yalan \u0027processing\u0027 görmez). Skip yollarında da job.Status = Failed(\u0027asset-missing\u0027) yazılmalı."
+                     },
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Endpoints\\AssetEndpoints.cs",
+                         "sorun":  "Asset üzerinde eşzamanlılık token\u0027ı yok (migration snapshot\u0027ta rowversion/xmin yok) ve tüm durum geçişleri check-then-act: Complete ile Abort/SoftDelete yarışında abort, S3 NoSuchUpload\u0027ı yutup (satır 218-231) Complete\u0027in yazdığı Processing durumunu Failed+DeletedAt ile ezebilir; kuyruğa atılmış job silinmiş asset\u0027i görüp skip eder (Job satırı yetim — üstteki bulgu), tamamlanmış R2 objesi sızar. Çifte complete yarışı da iki Job satırı + iki enqueue üretebilir (dar pencere; ikinci S3 complete NoSuchUpload → 409 çoğu durumu keser).",
+                         "oneri":  "Npgsql xmin concurrency token\u0027ı ekle (EF: UseXminAsConcurrencyToken — migration gerektirmez) ve Complete/Abort/SoftDelete\u0027te DbUpdateConcurrencyException\u0027ı 409\u0027a çevir; alternatif olarak durum geçişlerini \u0027UPDATE ... WHERE Status = Uploading\u0027 koşullu yazıma dönüştür."
+                     },
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Program.cs",
+                         "sorun":  "Rate limit kapsamı eksik + S3 hata haritalaması yanlış: \u0027upload-init\u0027 yalnız init ve presign\u0027da (AssetEndpoints.cs:29,35); complete/abort/upload-status TAMAMEN korumasız. upload/status her çağrıda R2 ListParts (Class A, $4.50/M) yapıyor — aktif upload\u0027ı olan kullanıcı sınırsız tetikleyebilir. Complete\u0027te yalnız NoSuchUpload yakalanıyor (AssetEndpoints.cs:170); geçersiz ETag/eşit-olmayan part (R2 prod\u0027da InvalidPart/EntityTooSmall reddeder, MinIO dev\u0027de etmez) GlobalExceptionHandler.cs:19 ile 500\u0027e düşüyor — hem yanlış statü kodu hem sınırsız tekrarlanabilir Class A operasyonu. Not: media-urls SORUDAKİ endişenin aksine Class A/B vektörü DEĞİL — PresignGet yerel HMAC imzalamadır (R2StorageService.cs:159-167), storage\u0027a istek gitmez.",
+                         "oneri":  "complete/abort/status uçlarına kullanıcı-bazlı bir policy bağla (mevcut \u0027upload-init\u0027 partisyonu yeniden kullanılabilir); Complete\u0027te AmazonS3Exception InvalidPart/InvalidPartOrder/EntityTooSmall\u0027ı yakalayıp 422 ProblemDetails dön (MinIO-R2 davranış ayrışması sözleşme yorumuna da yazılsın: eşit-part kuralı dev\u0027de sınanmıyor)."
+                     },
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Endpoints\\AssetMediaUrlBuilder.cs",
+                         "sorun":  "media-urls filmstrip sözleşmesi 5 dakikadan uzun HER video için M2\u0027ye kırık gidiyor: FilmstripRecipe sprite başına 300 kare, 1 sn aralık → 300 sn\u0027den uzun video ≥2 sprite üretir (FilmstripRecipe.cs:21-31); worker sprite_1..N + manifest yüklüyor (ProcessAssetJob.cs:282-288). Builder ise yalnız sprite_1.jpg\u0027yi presign\u0027lıyor (satır 29), manifest\u0027teki sprites[] göreli dosya adları için istemcinin presigned URL türetme imkanı YOK (imza gerekir) ve AssetMediaUrlsDto\u0027da (AssetDtos.cs:62-66) tek Filmstrip alanı var. Ayrıca sprite_1/manifest kardeş key\u0027leri varlık kontrolü olmadan presign\u0027lanıyor — eksikse istemci 404\u0027lü URL alır.",
+                         "oneri":  "Şekil değişikliği sözleşme-kırıcı olduğundan ŞİMDİ ekle: AssetMediaUrlsDto\u0027ya `sprites: Dictionary\u003cstring,string\u003e` (dosyaAdı → presigned URL) alanı koy, builder manifest sprites[] üzerinden değil worker\u0027ın yazdığı key listesi üzerinden doldursun (ya da manifest\u0027i API\u0027de okumadan filmstrip/ prefix\u0027ini listelemek yerine sprite sayısını Asset\u0027e kolon olarak yaz). Presign yerel olduğundan maliyet sıfır."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "medium",
+                         "file":  "backend/src/VideoEdit.Worker/Jobs/ProcessAssetJob.cs",
+                         "sorun":  "Disk payı 3×SizeBytes düşük-bitrate kaynakta yetersiz ve süre tavanı yok: proxy boyutu kaynağın BOYUTUNA değil SÜRESİNE bağlıdır (CFR+GOP15+bf0 ~2-3 Mbps taban). Kota 4 GiB (appsettings.json:25) ama süre sınırsız: 4 GiB, 8 saatlik 1 Mbps screencast → proxy tek başına ~7-9 GB; 3×4=12 GB rezervi aşar VE 5 GiB tek-PutObject sınırını aşar (UploadFileAsync tek PUT, R2StorageService.cs:179; IStorageService.cs:66\u0027daki \u0027hepsi 5 GiB sınırının çok altında\u0027 varsayımı süre tavanı olmadan KANITSIZ). Ayrıca WorkerCount=2 (Program.cs:57) iki büyük transcode\u0027u aynı anda koşturabilir; free-space kontrolü check-then-use — rezervasyon yok (tasarım 04 tuzak 12\u0027nin uyardığı senaryo).",
+                         "oneri":  "Probe\u0027dan sonra deterministik süre gate\u0027i ekleyin (örn. MaxDurationUs=4h → Failed(\u0027too-long\u0027)); disk tahminini süre-farkındalı yapın: SizeBytes + durationUs×~3Mbps + emniyet. M1\u0027de transcode kuyruğu için WorkerCount=1 (ya da SemaphoreSlim ile tek büyük iş) — reçetedeki \u0027-threads sınırsız\u0027 kararıyla da tutarlı."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "medium",
+                         "file":  "backend/src/VideoEdit.Media/Waveform/WaveformGenerator.cs",
+                         "sorun":  "Satır 40: process.StandardError.ReadToEndAsync — stderr SINIRSIZ RAM\u0027e birikir. Bozuk-ama-decode-edilebilir uzun bir dosya frame başına \u0027error concealment\u0027 uyarısı basarsa (tipik korupt H.264) saatlerce süren extraction\u0027da yüzlerce MB string birikir. FfmpegRunner aynı problemi TailBuffer ring buffer\u0027ıyla doğru çözmüş (FfmpegRunner.cs:65-73); WaveformGenerator bu korumayı regres etmiş.",
+                         "oneri":  "FfmpegRunner\u0027daki satır-bazlı TailBuffer okuyucusunu paylaşılan yardımcıya çıkarıp WaveformGenerator\u0027da da kullanın (zaten sadece son 8 KB\u0027a ihtiyaç var — satır 78 sonradan kırpıyor ama biriktirme maliyeti ödendikten sonra)."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "medium",
+                         "file":  "backend/src/VideoEdit.Media/Probing/MediaProbeParser.cs",
+                         "sorun":  "avg_frame_rate=\u00270/0\u0027 olan VFR kaynak CFR normalizasyonundan KAÇAR: satır 83-87 geçersiz avg\u0027ı r\u0027a düşürür, satır 90-91 isVfr=false üretir → ProxyRecipe fps filtresi eklemez → VFR proxy timeline\u0027a sızar. rendering-semantics §1.6 \u0027VFR hiçbir katmana sızmaz\u0027 der; MKV/WebM konteynerlerinde (duration/nb_frames bilinmeyen stream) avg=0/0 gerçek bir vakadır ve tipik ekran kaydı VFR\u0027dir. Parser yorumu durumu kabul ediyor (\u0027VFR kararı verilemez\u0027) ama sonuç normatif kuralın ihlali.",
+                         "oneri":  "avg parse edilemiyorsa \u0027CFR\u0027 değil \u0027BİLİNMİYOR\u0027 muamelesi yapın: bu durumda fps=NominalCfr(r) filtresini yine de ekleyin — gerçekten CFR olan kaynakta fps filtresi zararsız (aynı grid\u0027e snap), VFR kaynakta ise sözleşmeyi kurtarır. Karar ne olursa olsun MediaProbeParserTests\u0027e avg=\u00270/0\u0027 vakası ekleyin."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "medium",
+                         "file":  "backend/src/VideoEdit.Media/Recipes/FilmstripRecipe.cs",
+                         "sorun":  "Satır 63-64: HDR kaynakta ColorChain fps=1/N filtresinden ÖNCE — tonemap zinciri (zscale linear float32 + hable, en pahalı filtre) kaynağın TÜM frame\u0027lerine uygulanıp sonra %96\u0027sı atılıyor. 30fps HDR kaynak + 1 sn aralıkta 30× gereksiz hesap; filmstrip adımı neredeyse tam bir tonemap geçişi kadar sürer (iPhone HDR tabanı yaygın — tasarım 04 tuzak 15).",
+                         "oneri":  "Sırayı çevirin: \u0027fps=1/N,{ColorChain},scale=160:-2,tile=30x10\u0027 — tonemap frame-bağımsız olduğundan çıktı birebir aynı, HDR filmstrip maliyeti ~30-60× düşer. Snapshot testini bilinçli güncelleyin."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "medium",
+                         "file":  "backend/src/VideoEdit.Worker/Jobs/ProcessAssetJob.cs",
+                         "sorun":  "InvisibilityTimeout(2h, Worker/Program.cs:47) aşan transcode\u0027da Hangfire aynı jobId\u0027yi İKİNCİ kez dağıtır; temp dizini yalnız jobId\u0027den türetildiğinden (satır 87) iki eşzamanlı koşu AYNI dosyalara yazar → korupt proxy yüklenebilir. Ayrıca \u0027commit sonrası, Hangfire ack öncesi\u0027 çökmede re-run Ready asset\u0027le başlar: satır 80 guard\u0027ı yalnız Uploaded/Failed\u0027i kapsar, pipeline yine koşar ve satır 196 Ready→Ready geçişi DomainException fırlatır (Asset.cs:63 Ready terminal) → transient sanılıp retry yakılır.",
+                         "oneri":  "1) Run başına idempotency short-circuit: asset zaten Ready + job Succeeded ise logla ve dön. 2) Temp dizinini jobId+deneme-guid\u0027i ile türetin (Guid.NewGuid suffix) — eşzamanlı koşular çakışmaz; finally kendi dizinini siler. 3) Boot\u0027ta videoedit-worker altındaki 24 saatten eski dizinleri süpüren temizlik ekleyin (crash artıkları için — şu an hiçbir şey temizlemiyor)."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\apps\\editor\\src\\features\\library\\upload\\uploadEngine.ts",
+                         "sorun":  "\u0027completing\u0027 fazinda Cancel yarisi: LibraryPanel.tsx:311 canCancel \u0027completing\u0027i kapsiyor ve cancel() (uploadEngine.ts:298-311) completing\u0027de fazi \u0027aborted\u0027 yapip abortUpload cagiriyor — ama complete istegi sunucuda cogu kez BASARILI olur (AssetEndpoints.cs:193-194 asset\u0027i dogrudan Processing\u0027e gecirir; sonraki abort 409 \u0027no active upload\u0027 doner, satir 218-220, sessizce yutulur). Istemci \u0027aborted\u0027 sanip uploadManager.ts:151-157\u0027de assetStore\u0027dan asset\u0027i ve IDB session\u0027i siler; asset sunucuda islenmeye devam eder ve sonraki refetch\u0027te \u0027hayalet\u0027 olarak geri gelir.",
+                         "oneri":  "UI\u0027da \u0027completing\u0027 fazinda Cancel butonunu gizle (en ucuz M1 cozumu); engine\u0027de cancel() completing\u0027deyse complete sonucunu bekleyip sonucuna gore settle etsin (basariliysa \u0027completed\u0027 don, kullaniciya \u0027upload zaten tamamlandi\u0027 de)."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\.github\\workflows\\ci.yml",
+                         "sorun":  "M1-B\u0027nin cekirdek medya pipeline\u0027i CI kapsaminda DEGIL: 13 yeni test (9x [FfmpegFact] FfmpegIntegrationTests.cs + 4x [MinioAndFfmpegFact] ProcessAssetPipelineTests.cs) ubuntu-latest\u0027ta sessizce Skip olur — runner imajinda ffmpeg yok, MINIO_AVAILABLE set edilmiyor (FfmpegTestInfra.cs:10-68). \u0027dotnet test yesil\u0027 sinyali probe/proxy/filmstrip/waveform kodu icin sahte guven veriyor; regresyon ancak canli E2E\u0027de yakalanir.",
+                         "oneri":  "dotnet job\u0027a iki step ekle: (1) `sudo apt-get update \u0026\u0026 sudo apt-get install -y --no-install-recommends ffmpeg`; (2) `docker run -d -p 9000:9000 -e MINIO_ROOT_USER=videoedit -e MINIO_ROOT_PASSWORD=devpassword123 minio/minio server /data` — testler localhost:9000 + bu kimlikleri zaten hardcode ediyor (ProcessAssetPipelineTests.cs:44-47). Test step\u0027ine `env: MINIO_AVAILABLE: \"1\"` ver. Sessiz skip regresyonuna karsi: CI\u0027da REQUIRE_MEDIA_TOOLS=1 set edilip FfmpegFactAttribute bu degisken varken Skip yerine fail etsin. Not: apt ffmpeg ~6.x, lokal ffmpeg 8 — surum farkini bir smoke assert\u0027le gorunur kilin."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\.github\\workflows\\ci.yml",
+                         "sorun":  "docker job\u0027i yalnizca Api imajini build ediyor (satir 62-69); backend/src/VideoEdit.Worker/Dockerfile mevcut ama CI\u0027da hic derlenmiyor. Worker imaji ffmpeg kurulum katmani gibi kirilgan adimlar icerir — kirildiginda deploy aninda patlar.",
+                         "oneri":  "Docker job\u0027ini matrix\u0027e cevir: `strategy: matrix: project: [Api, Worker]` + `docker build -f backend/src/VideoEdit.${{ matrix.project }}/Dockerfile backend`."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\apps\\editor\\src\\features\\library\\upload\\uploadManager.ts",
+                         "sorun":  "Invalidate yarisi (soru 2): basari yolunda kart `remove(localId)` ile kaldirilip (satir 147) SONRA invalidateQueries ateleniyor (satir 149). Polling \u0027uploading\u0027 status\u0027unu busy saymadigi icin (assets.ts:66 busy = uploaded||processing) upload suresince liste cache\u0027i kesin bayattir; refetch tamamlanana kadar asset ne Uploading kartinda ne Media listesinde — gorunur bir \u0027kaybolma\u0027 araligi var. Yavas API\u0027de saniyeler surebilir.",
+                         "oneri":  "Sirayi ters cevir: `await queryClient.invalidateQueries(...)` (promise refetch bitince cozulur) tamamlandiktan sonra kart kaldirilsin — kart aktifken activeAssetIds filtresi cift gosterimi zaten engelliyor. Alternatif: complete cevabiyla setQueryData ile optimistic satir ekle."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\apps\\editor\\src\\features\\auth\\LoginGate.tsx",
+                         "sorun":  "Form alanlarinda autocomplete/name oznitelikleri yok (satir 70-87): password manager\u0027lar dogru dolduramaz/kaydedemez, tarayici register\u0027da yeni sifre onerisi sunamaz. Ayrica mode degisince error state temizlenmiyor (satir 100) — \u0027Login failed\u0027 mesaji register formunun ustunde kalabiliyor.",
+                         "oneri":  "email input\u0027a `name=\"email\" autoComplete=\"email\"`; sifreye mode\u0027a gore `autoComplete={mode===\u0027register\u0027 ? \u0027new-password\u0027 : \u0027current-password\u0027}`; gorunen ada `autoComplete=\"name\"`. setMode cagrisinda setError(null) ekle."
+                     },
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Program.cs",
+                         "sorun":  "Rate limiter partisyonları RemoteIpAddress kullanıyor (satır 152-166) ama projede hiçbir yerde ForwardedHeaders middleware\u0027i yok (grep: 0 sonuç). Reverse proxy arkasındaki prod\u0027da tüm anonim trafik tek IP kovasına düşer: auth policy\u0027si (10/dk/IP) TÜM kullanıcıları kolektif kilitler, saldırgan da tek kurbanla herkesin login\u0027ini DoS\u0027layabilir. Deployment\u0027a bağımlı olduğu için low.",
+                         "oneri":  "Prod topolojisi netleşmeden önce UseForwardedHeaders (KnownProxies ile) ekle ve compose/deploy README\u0027ye \u0027proxy arkasında ForwardedHeaders şart\u0027 notu düş; alternatif olarak auth policy\u0027sini kullanıcı adı+IP bileşik anahtarına geçir."
+                     },
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Worker\\Jobs\\ProcessAssetJob.cs",
+                         "sorun":  "ffprobe gate Kind\u0027e göre gevşek (satır 388-408): Image kind\u0027ı \u0027video stream var mı\u0027ya bakıyor — image/png beyan edilip yüklenen 4 GiB\u0027lık gerçek bir VİDEO gate\u0027i geçer ve poster\u0027ı çıkarılıp Ready olur; Audio kind\u0027ı video stream\u0027i yok saymaz reddetmez. Content-type ile içerik uyumsuzluğu (soru 5: video/webm beyan + mp4 içerik) kind seviyesinde tolere ediliyor — bu bilinçli ve makul, ama Image/Audio kombinasyonları niyetlenmemiş genişlikte. Ayrıca mimar denetimi #75\u0027in istediği Content-Disposition R2 objesine hiç yazılmıyor (R2StorageService.cs:52-63\u0027te yalnız Content-Type; grep Content-Disposition: 0 sonuç) — whitelist\u0027li sunucu-belirlenmiş Content-Type sayesinde XSS riski kapalı, etki düşük.",
+                         "oneri":  "Image gate\u0027ine codec/format kontrolü ekle (probe format_name png/mjpeg/webp beklentisi veya DurationUs null/≈0 şartı); Audio gate\u0027ine \u0027video stream varsa reddet\u0027 opsiyonunu değerlendir. CreateMultipartUploadAsync\u0027e Content-Disposition: attachment; filename=\"source.ext\" ekle (tek satır, denetim #75 kapanır)."
+                     },
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Assets\\UploadQuota.cs",
+                         "sorun":  "Kota kontrolü check-then-act (satır 14-18\u0027de bilinçli MVP kabulü olarak belgelenmiş): eşzamanlı init\u0027ler MaxConcurrentUploads=5 ve MaxTotalBytes\u0027ı kıl payı aşabilir; DB kısıtı yok. Abort sonrası kota düşümü DOĞRU çalışıyor (AssetEndpoints.cs:227 DeletedAt set → sorgu dışı). Aşım miktarı istek yarışı genişliğiyle sınırlı olduğundan ve UsedBytes Uploading\u0027i beyan boyutuyla rezerve ettiğinden pratik risk düşük.",
+                         "oneri":  "MVP kabulü savunulabilir — dokümante edilmiş. Ucuz sıkılaştırma istenirse init\u0027i serializable transaction\u0027a ya da \u0027INSERT ... WHERE (SELECT count(*) ...) \u003c N\u0027 desenine al; asıl bariyer yukarıdaki high bulgusunun kapanmasıdır (sızıntı olmadan aşım tavanı zaten MaxFileSizeBytes ile sınırlı)."
+                     },
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\tests\\VideoEdit.UnitTests",
+                         "sorun":  "IDOR koruması kod olarak DOĞRU (FindOwnedAssetAsync OwnerId+DeletedAt filtresi, AssetEndpoints.cs:374-380; OwnsProjectAsync 382-384; tüm uçlar RequireAuthorization; soft-deleted asset\u0027e presign 404) ama bu disiplin YALNIZ konvansiyonla korunuyor: tests/ altında endpoint seviyesinde tek bir sahiplik/IDOR testi yok (yalnız validator/quota/transition birim testleri var; WebApplicationFactory tabanlı test projesi hiç yok). Gelecek bir refactor\u0027da tek bir Where kaldırılırsa hiçbir test kırılmaz.",
+                         "oneri":  "M2 başında minimal bir integration test projesi (WebApplicationFactory + Testcontainers-Postgres veya InMemory yeterli): \u0027B kullanıcısı A\u0027nın assetId\u0027siyle presign/complete/abort/status/get/delete çağırır → hepsi 404\u0027 tek parametrik test olarak yazılır; soft-deleted asset senaryosu da eklenir."
+                     },
+                     {
+                         "lens":  "upload-güvenlik",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\apps\\editor\\src\\entities\\assets.ts",
+                         "sorun":  "E2E bulgusu (c) değerlendirmesi: arka plan sekmesinde react-query polling\u0027in durması (satır 63-69, refetchIntervalInBackground yok) M2 SignalR\u0027a kadar KABUL EDİLEBİLİR — react-query\u0027nin refetchOnWindowFocus varsayılanı açık olduğundan sekmeye dönüşte anında refetch olur, bayatlık kullanıcının uzak kaldığı süreyle sınırlı ve dönüşte kendini onarıyor. Upload\u0027ın kendisi (fetch/PUT) arka planda sürer; yalnız processing durum görüntüsü donuk kalır.",
+                         "oneri":  "Kabul et ve backlog\u0027a not düş; istenirse tek satır iyileştirme: aktif upload/processing varken refetchIntervalInBackground: true (poll zaten yalnız busy iken 3 sn — arka plan maliyeti ihmal edilebilir)."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "low",
+                         "file":  "backend/src/VideoEdit.Media/FfmpegRunner.cs",
+                         "sorun":  "İki küçük yarış/sızıntı: (1) satır 91-97 watchdog, süreç tam o anda normal exit ederse timedOut=true bırakır (TryKill HasExited guard\u0027lı ama bayrak geri alınmaz) → exit 0\u0027a rağmen \u0027ffmpeg-timeout\u0027 Failed; pencere çok dar. (2) onProgress callback\u0027i (satır 111) DB hatasıyla fırlarsa RunAsync ffmpeg canlıyken çıkar; stdout pipe\u0027ı dolunca ffmpeg bloklanır ve ancak ~120 sn sonra watchdog öldürür — bu arada ProcessAssetJob finally\u0027si temp\u0027i silemez (Windows\u0027ta açık dosya) → sızıntı, sonraki retry aynı dizinde sharing-violation yiyebilir.",
+                         "oneri":  "(1) Watchdog kill\u0027inden önce process.HasExited\u0027i kontrol edip bayrağı ona göre set edin. (2) RunAsync\u0027i try/finally ile sarıp anormal çıkışta TryKill(process) + WaitForExit çağırın — süreç ölmeden dönmeyin; temp silme o zaman güvenilir olur."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "low",
+                         "file":  "backend/src/VideoEdit.Worker/Jobs/ProcessAssetJob.cs",
+                         "sorun":  "S3 4xx sınıflandırması eksik: yalnız NotFound deterministik sayılıyor (satır 125); 403 (imza/credential/misconfig), 400 (EntityTooLarge dahil) transient sayılıp 3 deneme yakıyor — her deneme tam transcode maliyeti. NoSuchKey\u0027in transient sayılması hatası YOK (doğru yapılmış); eksik olan ters yön. ffmpeg-timeout\u0027un deterministik sayılması da tartışılır (CPU açlığı ortamsal olabilir) ama 120 sn tam sessizlik pratikte bozuk stream\u0027dir — mevcut karar savunulabilir.",
+                         "oneri":  "AmazonS3Exception StatusCode 4xx (408/429 hariç) için: job\u0027ı Failed(\u0027storage-error\u0027) işaretleyip asset\u0027i Processing\u0027de bırakın (reaper/operatör müdahalesi) — retry transcode maliyetini yakmadan. Startup R2 doğrulaması (yukarıdaki bulgu) girince bu yolun sıklığı zaten düşer."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "low",
+                         "file":  "apps/editor/src/entities/assets.ts",
+                         "sorun":  "(E2E bulgu c) Satır 63-67: 3 sn\u0027lik refetchInterval yalnız sekme görünürken çalışır; arka planda durum bayatlar. Ancak react-query varsayılanı refetchOnWindowFocus açık olduğundan kullanıcı sekmeye dönünce anında tazelenir — bayatlık self-healing.",
+                         "oneri":  "M2 SignalR\u0027a kadar KABUL EDİLEBİLİR. İstenirse tek satır: bu sorguya refetchIntervalInBackground:true (yanıt küçük, 3 sn\u0027lik liste sorgusu ucuz) — ama tarayıcılar arka plan sekme timer\u0027larını zaten kısar, kazanç sınırlı. Karar notu olarak backlog\u0027a yazılması yeterli."
+                     },
+                     {
+                         "lens":  "pipeline",
+                         "severity":  "low",
+                         "file":  "backend/src/VideoEdit.Media/Waveform/WaveformPeaksBuilder.cs",
+                         "sorun":  "Satır 133: _min/256 tamsayı bölmesi negatiflerde sıfıra doğru kırpar (-255..-1 → 0); audiowaveform\u0027un aritmetik shift\u0027i (\u003e\u003e8, floor) -1 verir — sessize yakın negatif peak\u0027lerde ±1 fark. Görsel etkisi yok; yalnız \u0027audiowaveform byte-uyumlu\u0027 iddiası mutlaklaştırılırsa fark eder. Carry, 0-örnek, uzun dosya length hesabı ise doğru ve testli (PeakCount int taşması ~13 yıl ses gerektirir).",
+                         "oneri":  "Birebir uyum isteniyorsa (sbyte)(_min \u003e\u003e 8) kullanın; istenmiyorsa mevcut davranışı yorumla belgeleyin. Düşük öncelik."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\apps\\editor\\src\\features\\library\\upload\\uploadEngine.ts",
+                         "sorun":  "Pause/resume mikro-yarisi (soru 1): pause() XHR abort\u0027lari senkron tetikler ama runPart\u0027in reject handler\u0027i microtask\u0027ta calisir; ayni task icinde resume() cagrilirsa catch faz\u0027i \u0027uploading\u0027 gorur (satir 377-386) ve abort\u0027u gercek hata sayip part.attempts arttirir — 3 hizli pause/resume dongusu \u0027part-failed\u0027 ile upload\u0027u dusurebilir. UI\u0027dan (ayri click event\u0027leri) pratikte tetiklenmesi zor; programatik kullanim ve testlerde gercek.",
+                         "oneri":  "Abort\u0027u faz uzerinden degil isaretli hatayla ayirt et: onabort\u0027ta ozel PartAbortedError firlat; catch\u0027te bu tur icin attempts arttirmadan (faz paused ise) yeniden kuyrukla, degilse sessiz cik."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\apps\\editor\\src\\features\\library\\upload\\uploadEngine.ts",
+                         "sorun":  "Dosya-degisti senaryosu (soru 1, NotReadableError/ERR_UPLOAD_FILE_CHANGED): disk uzerindeki dosya degistiginde XHR generic onerror\u0027a duser (satir 480-483), \u0027Network error while uploading part N\u0027 mesajiyla 3 kez bosuna retry edilir; kullanici gercek nedeni (dosya degisti, yeniden secmeli) asla gormez. retryUpload da ayni bayat File handle\u0027i kullandigindan (uploadManager.ts:199-206) retry de ayni sekilde curur.",
+                         "oneri":  "Part hatasi catch\u0027inde bir kez `file.slice(0,1).arrayBuffer()` okunabilirlik probu yap; okunamiyorsa \u0027file-changed\u0027 koduyla fail-fast ve UI\u0027da \u0027dosya degisti — yeniden secin\u0027 mesaji + retry yerine yeniden secim akisi."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\apps\\editor\\src\\features\\library\\upload\\uploadEngine.ts",
+                         "sorun":  "403 re-presign yalnizca tek part\u0027in URL cache\u0027ini temizliyor (satir 398-400); ayni batch\u0027te alinan diger 19 URL ayni anda alinmistir ve ayni anda expire olur (TTL 1 saat, R2StorageService.cs:20). Yavas baglantida (64 MiB x 20 part \u003e 1 saat) her part birer attempt yakarak teker teker 403 yer; 2 attempt\u0027i zaten yanmis part\u0027lar upload\u0027u dusurur.",
+                         "oneri":  "Ilk 403\u0027te tamamlanmamis TUM part\u0027larin url cache\u0027ini temizle (this.urls\u0027ten etag\u0027i null olanlari sil) — sonraki ensureUrl tek batch\u0027le hepsini tazeler."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\apps\\editor\\src\\features\\library\\LibraryPanel.tsx",
+                         "sorun":  "Ayni yarim upload\u0027un cifte temsili + 7 gunluk hayalet satir: fail edilip dismiss edilen ya da onceki oturumdan yarim kalan upload, hem IndexedDB \u0027Interrupted uploads\u0027 bildiriminde hem de sunucu listesinde sonsuza donen \u0027Uploading\u0027 rozetli satir olarak gorunur (ListForProject status filtrelemez, AssetEndpoints.cs:283-289; reaper ancak 7 gun sonra expired\u0027a ceker, AssetReaperJob.cs:23). Kullanici icin \u0027yukleniyor\u0027 gorunen ama asla ilerlemeyen satir yaniltici.",
+                         "oneri":  "Aktif karti olmayan status===\u0027uploading\u0027 dto\u0027larini Media listesinde \u0027Interrupted\u0027 rozetiyle goster (Uploading yerine) ya da IDB session\u0027la eslesenleri gizleyip yalnizca bildirimde birak; Discard akisi zaten abort+delete yapiyor — ayni eylemi bu satirlara da bagla."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\apps\\editor\\src\\features\\library\\upload\\uploadManager.ts",
+                         "sorun":  "Ayni dosya iki kez birakilirsa (soru 5) dedupe yok: iki bagimsiz engine, iki sunucu asset\u0027i, iki IDB session — sessizce cift kopya olusur. Ayrica engine basina 4 paralel XHR var ama engine\u0027ler ARASI global limit yok; 3+ dosyalik multi-drop\u0027ta 12+ PUT tarayicinin 6/origin kuyroguna yigilir, ETA/hiz olcumleri carpitilir ve kuyrukta bekleyen part\u0027lar 1 saatlik presign TTL riskine girer.",
+                         "oneri":  "startUpload\u0027ta (fileName,size,lastModified) ile aktif upload/IDB session eslesmesi varsa kullaniciya sor (cift yukleme uyarisi); engine\u0027ler arasi paylasilan basit bir semafor (toplam 4-6 slot) ekle — UploadEngineOptions\u0027a enjekte edilebilir, test edilebilir."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\apps\\editor\\src\\entities\\auth.ts",
+                         "sorun":  "register() basarili + zincirlenmis otomatik login basarisiz olursa (satir 26-37; ornegin gecici ag hatasi) kullanici register modunda \u0027Login failed (5xx)\u0027 gorur; ayni formu tekrar gonderince bu kez register \u0027already registered\u0027 ile reddedilir — hesap olustu ama kullanici bunu bilmiyor. Bilgi sizintisi tarafi temiz: login generic \u0027(401)\u0027 mesaji verir (enumeration yok), register\u0027in ProblemDetails title\u0027i register endpoint\u0027i icin kabul edilebilir.",
+                         "oneri":  "register basarisini login hatasindan ayirt et: LoginGate\u0027te register adimi basariliysa mode=\u0027login\u0027e gec ve \u0027Hesap olusturuldu, giris yapin\u0027 bilgisi goster; auth.register\u0027in login\u0027i zincirlemesi yerine iki adimi LoginGate yonetsin."
+                     },
+                     {
+                         "lens":  "istemci-altyapı",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\.gitignore",
+                         "sorun":  "E2E fixture yolu `apps/editor/public/e2e-test-video.mp4` (satir 31): gitignore dogru ama dosya public/ altinda durdugu surece lokalde `vite build` calistiran herkesin dist/ ciktisina 116 MB test videosu kopyalanir — prod artefaktina sizma riski.",
+                         "oneri":  "Fixture\u0027i public/ disina tasi (orn. apps/editor/e2e-fixtures/ — dev server\u0027a servis gerekiyorsa vite server.fs.allow ya da ayri static middleware ile) veya build\u0027de `publicDir` kopyasindan haric tutulacak bir konum sec."
+                     }
+                 ],
+    "genel":  {
+                  "güvenlik":  "M1 upload hattı, tasarım 02 ve mimar denetimi 05\u0027in normatif isterlerinin çoğunu doğru ve kanıtlanabilir biçimde uyguluyor: (1) IDOR/sahiplik — tüm asset-scoped uçlar FindOwnedAssetAsync (OwnerId + DeletedAt) üzerinden, proje-scoped uçlar OwnsProjectAsync üzerinden geçiyor, soft-deleted asset\u0027e presign mümkün değil (404); açık bulunamadı. (2) Presign kötüye kullanımı — partNumber 1..partCount aralık/teklik/≤20 doğrulaması ve complete\u0027te tam-sıralı 1..N + HeadObject boyut eşitliği yerinde; ANCAK boyut uyuşmazlığında obje R2\u0027de bırakılıp Failed asset\u0027in kotadan düşülmesi kombinasyonu somut bir kota-bypass/depolama-sızıntısı saldırısı yaratıyor (en kritik bulgu, high) ve complete crash-penceresi idempotent olmadığından kurtarılamaz 409 ölü ucu var. R2\u0027nin eşit-part kuralı MinIO\u0027da sınanmadığından dev\u0027de geçen istemci prod\u0027da 500 alır (S3 hata haritalaması eksik). (3) Kota — check-then-act yarışı bilinçli ve belgeli MVP kabulü, abort kotayı doğru düşürüyor; asıl delik yarış değil Failed-obje sızıntısı. (4) Rate limit — init+presign doğru bağlı; media-urls\u0027in Class A/B saldırısı olduğu endişesi YERSİZ (presign yerel HMAC, storage çağrısı yok) ama upload/status gerçek bir korumasız ListParts (Class A) vektörü, complete de korumasız. (5) StorageKey tamamen sanitize (\u0027source\u0027+ASCII uzantı), Content-Type sunucu-belirlenmiş whitelist — XSS kapalı; Content-Disposition (denetim #75) eksik. (6) media-urls şekli mevcut frontend\u0027le uyumlu (henüz tüketici yok) fakat çoklu-sprite (\u003e5 dk her video) sözleşmesi M2\u0027ye KIRIK gidiyor — DTO\u0027ya sprites map\u0027i şimdi eklenmeli, sonra eklemek sözleşme-kırıcı. Canlı E2E bulguları: (a) worker guard eksikliği doğrulandı ve high — fail-fast doğrulama + ResolveServiceUrl\u0027ün çöp URL üretmemesi şart; (b) doğrulandı ve reaper\u0027ın Jobs tablosuna hiç dokunmaması nedeniyle bilinen kabulden DAHA GENİŞ (üç ayrı yetim-Job yolu var, medium); (c) kabul edilebilir — refetchOnWindowFocus dönüşte onarıyor. Toplam: 2 high, 5 medium, 5 low; kritik seviyede auth/IDOR açığı yok. Commit öncesi asgari kapatılması gerekenler: size-mismatch\u0027te obje silme, worker startup guard\u0027ları, complete idempotency (NoSuchUpload+HeadObject fallback) ve Jobs satırı yaşam döngüsü.",
+                  "pipeline":  "M1-B işleme hattının ÇEKİRDEĞİ sağlam: reçeteler normatif dokümanlarla birebir doğrulandı (ColorChain.HdrToSdr rendering-semantics §6.2 string\u0027iyle karakteri karakterine aynı; proxy argümanları tasarım 02 §3.3 ile eş, -keyint_min dahil; NominalCfr kümesi §1.6 ile aynı ve 120fps→60 testli; dikey/upscale-yasağı kısa-kenar mantığı doğru ve rotation-swap ile tutarlı), out_time_ms=µs tuzağı ve tr-TR culture riski testlerle kapatılmış, GOP/B-frame scrubbing sözleşmesi entegrasyon testiyle korunuyor, Ready geçişi tek transaction\u0027da key\u0027lerle atomik (media-urls yarım türev döndüremez) ve türev üretimi deterministik key + atomik PutObject sayesinde gerçekten idempotent. Asıl zafiyet kümesi HAT DEĞİL YAŞAM DÖNGÜSÜ: (1) reaper\u0027ın heartbeat\u0027siz 30 dk süpürmesi uzun transcode\u0027da Failed→Ready DomainException döngüsü yaratıyor ve retry\u0027da ProcessingStartedAt tazelenmiyor; (2) retry tükenince DB Job satırı kalıcı Running kalıyor (E2E bulgu b — çözüm: Hangfire IApplyStateFilter ile nihai FailedState\u0027te Jobs+Assets senkronu); (3) worker\u0027da startup doğrulaması hiç yok, localhost fallback ortam-bağımsız ve ResolveServiceUrl geçersiz URL\u0027i sessizce üretiyor (E2E bulgu a — Api\u0027deki guard deseni + ResolveServiceUrl\u0027de throw + ffmpeg varlık kontrolü + DOTNET_ENVIRONMENT belgelenmesi). Bunların üçü de commit ÖNCESİ kapatılmalı; kalanlar (süre tavanı + disk tahmini, WaveformGenerator stderr sınırı, avg=0/0 VFR kaçağı, HDR filmstrip filtre sırası, 2h invisibility çakışması) M1 kapanışı ya da erken M2 için sıralanabilir. Arka plan polling bayatlığı (bulgu c) refetchOnWindowFocus sayesinde kabul edilebilir bir M1 ödünüdür. Net karar: mimari yön doğru, normatif sözleşmelere sadakat kanıtlı; commit\u0027e giden yolda bloker üç yaşam-döngüsü bulgusudur, reçete/medya katmanında bloker yoktur.",
+                  "istemci":  "M1 frontend upload motoru + LoginGate dilimi genel olarak SAGLAM — commit\u0027e kosullu onay veriyorum (yukaridaki high/medium bulgular commit oncesi veya hemen ardindan kucuk bir duzeltme dilimiyle kapatilmali). Dogrulananlar (soru 1): complete\u0027te partNumber sirasi GARANTILI (uploadEngine.ts:496-503: sirali insa + acik sort; test uploadEngine.test.ts:201-207 out-of-order bitisi dogruluyor); ETag\u0027i alinmis part\u0027lar pause/abort sonrasi asla yeniden yuklenmiyor (test :360-361 part-1\u0027in tek PUT\u0027unu assert ediyor); bir part 3 denemede dusunce fail() diger tum in-flight XHR\u0027lari abort edip backoff timer\u0027larini temizliyor, diger worker\u0027larin rejection\u0027lari faz kontrolunde sessizce yutuluyor (uploadEngine.ts:381,516-525) — hata yayilimi dogru; basarisiz upload\u0027un bilenerek abort EDILMEMESI (parts 7 gun resumable, test :275-277) tasarimla tutarli. Editor suite\u0027i bu denetimde yeniden kosuldu: 21/21 yesil. LoginGate (soru 3): checking/refresh akisi yarissiz — refreshInFlight single-flight\u0027i StrictMode cift mount\u0027unda tek POST /api/auth/refresh garantiler (auth.ts:62-67), refresh token rotasyonu varsa bile guvenli; login hatasi generic olup enumeration sizdirmiyor. Soru 4 (arka plan polling) NET ONERI: refetchIntervalInBackground:true YAPMAYIN — tarayicilar arka plan sekmesinde zamanlayicilari zaten agresif kisar (Chrome intensive throttling ~1 tick/dk), 3 sn kadans tutmaz; v5 default refetchOnWindowFocus:true (queryClient.ts\u0027de override yok) sekmeye donuste aninda senkronlar ve upload bitisindeki invalidateQueries arka planda da calisir. M1 kabulu dogru; docs/backlog.md\u0027ye \u0027M2 SignalR: asset status push\u0027 satiri dusulsun (SignalR proxy\u0027si vite.config.ts:25\u0027te hazir). Soru 5 (IDB yasam dongusu): basari -\u003e silinir (uploadManager.ts:145), kullanici iptali -\u003e silinir (:152-154), hata/dismiss -\u003e bilerek tutulur (:171-173, M6 resume) — matris tutarli; updatedAt hic guncellenmiyor ama M6 zaten ListParts ile tazeleyecek, kabul. Soru 6 (CI) EN KRITIK ALTYAPI EKSIGI: 13 medya testi CI\u0027da sessizce skip; somut yml onerisi bulgu #3\u0027te, Worker Dockerfile build\u0027i #4\u0027te — ikisi de M1-B commit\u0027iyle BIRLIKTE girmeli, yoksa \u0027yesil CI\u0027 sinyali M1-B icin anlamsiz. compose.dev.yml minio servisi dogru kurgulanmis (CORS origin 5173, healthcheck, kalici volume); tek not: MINIO_API_CORS_ALLOW_ORIGIN 5173\u0027e sabit — vite baska porta duserse engine\u0027in etag-missing mesaji dogru tesnhis koyduruyor, kabul. E2E bulgulari: (a) Worker\u0027da Api\u0027deki startup R2/conn-string fail-fast validasyonunun aynisi Program.cs\u0027e eklenmelI ve DOTNET_ENVIRONMENT gereksinimi README/launch dokumanina yazilmali — config\u0027siz worker\u0027in job yakmasi bir daha yasanmamali (backend mercegine devir, ama altyapi geregi buradan da isaretliyorum); (b) retry tukeninca Asset\u0027i Failed\u0027a ceken bir Hangfire son-deneme filtresi (IServerFilter/JobFilterAttribute ile son attempt tespiti) reaper\u0027in 30 dk gecikmesinden cok daha iyi UX verir — M1 kabulu savunulabilir ama Job satirinin Running\u0027de kalmasi izleme panolarini kirletir, en azindan backlog\u0027a girmeli; (c) yukaridaki polling karariyla cozuldu. Mimari cizgi: uc dogruluk kaynagi (uploadStore/assetStore/react-query) su an LibraryPanel\u0027in dto\u0027dan render etmesi ve activeAssetIds filtresiyle idare ediyor, ancak assetStore\u0027a yazilan upload progress\u0027i hicbir yerde okunmuyor ve bayat poll cevabi \u0027uploaded\u0027 kaydi \u0027uploading\u0027e geriletebiliyor (LibraryPanel.tsx:99 koruma yalnizca uploading/uploading ciftini kapsar) — M2\u0027de player/timeline assetStore\u0027u okumaya baslamadan tek ingest noktasi + status-oncelik kurali sart, aksi halde bu sessiz tutarsizlik gorunur bug\u0027a donusur."
+              }
+}

@@ -5,10 +5,19 @@
  * polling while the server is processing — SignalR replaces this in M1-B).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { DragEvent, ReactNode } from 'react';
+import type { DragEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { useProjectAssets, type AssetDto } from '../../entities/assets';
-import { useAssetStore, type AssetSummary } from '../../state/assetStore';
 import { useEditorStore } from '../../state/editorStore';
+import { syncServerAssets, toAssetKind } from './assetSync';
+import { IMAGE_DEFAULT_DURATION_US } from '../../state/timelineOps';
+import {
+  cancelLibraryDrag,
+  endLibraryDrag,
+  startLibraryDrag,
+  updateLibraryDrag,
+  useLibraryDndStore,
+  type LibraryDragPayload,
+} from '../timeline/libraryDnd';
 import { formatBytes, formatDurationUs, formatEta, formatSpeed } from './format';
 import { uploadApi } from './upload/uploadApi';
 import {
@@ -107,13 +116,9 @@ function LibraryContent({ projectId }: { projectId: string }) {
   useEffect(() => {
     const items = assetsQuery.data?.items;
     if (!items) return;
-    const store = useAssetStore.getState();
-    for (const dto of items) {
-      const existing = store.assets.get(dto.id);
-      // While a local upload is running, its progress is fresher than the poll.
-      if (existing?.status === 'uploading' && dto.status === 'uploading') continue;
-      store.upsertAsset(toAssetSummary(dto));
-    }
+    // MERGE into the store — presigned URL fields are owned by the media-urls
+    // sync and must survive the 3 s poll (see assetSync.ts).
+    syncServerAssets(items);
   }, [assetsQuery.data]);
 
   const serverAssets = useMemo(
@@ -180,6 +185,87 @@ function LibraryContent({ projectId }: { projectId: string }) {
           </ul>
         </section>
       </div>
+
+      <LibraryDragGhost />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pointer drag source: ready assets are draggable onto the canvas timeline
+// (custom pointer DnD — HTML5 DnD does not play with canvas, design 01 §3.3).
+// ---------------------------------------------------------------------------
+
+function useAssetDragSource(dto: AssetDto) {
+  const stateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    dragging: boolean;
+    payload: LibraryDragPayload;
+  } | null>(null);
+
+  const onPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0 || dto.status !== 'ready') return;
+      const durationUs =
+        dto.kind === 'image' ? IMAGE_DEFAULT_DURATION_US : dto.durationMicros;
+      if (durationUs === undefined || durationUs <= 0) return;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      stateRef.current = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        dragging: false,
+        payload: {
+          assetId: dto.id,
+          kind: toAssetKind(dto.kind),
+          name: dto.fileName,
+          durationUs,
+        },
+      };
+    },
+    [dto],
+  );
+
+  const onPointerMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const s = stateRef.current;
+    if (!s || s.pointerId !== e.pointerId) return;
+    if (!s.dragging) {
+      if (Math.hypot(e.clientX - s.startX, e.clientY - s.startY) < 5) return;
+      s.dragging = true;
+      startLibraryDrag(s.payload, e.clientX, e.clientY);
+    } else {
+      updateLibraryDrag(e.clientX, e.clientY);
+    }
+  }, []);
+
+  const onPointerUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const s = stateRef.current;
+    stateRef.current = null;
+    if (s?.dragging) endLibraryDrag(e.clientX, e.clientY);
+  }, []);
+
+  const onPointerCancel = useCallback(() => {
+    const s = stateRef.current;
+    stateRef.current = null;
+    if (s?.dragging) cancelLibraryDrag();
+  }, []);
+
+  return { onPointerDown, onPointerMove, onPointerUp, onPointerCancel };
+}
+
+/** Floating card following the cursor while dragging an asset. */
+function LibraryDragGhost() {
+  const drag = useLibraryDndStore((s) => s.drag);
+  if (!drag) return null;
+  return (
+    <div
+      className="pointer-events-none fixed z-50 rounded border border-accent bg-surface-2/95 px-2 py-1 text-xs text-fg shadow-lg"
+      style={{ left: drag.clientX + 10, top: drag.clientY + 8, maxWidth: 220 }}
+    >
+      <span className="truncate">{drag.name}</span>
+      <span className="ml-1.5 text-[10px] text-fg-muted">{formatDurationUs(drag.durationUs)}</span>
     </div>
   );
 }
@@ -403,20 +489,6 @@ function CardButton({ onClick, children }: { onClick: () => void; children: stri
 // Asset list
 // ---------------------------------------------------------------------------
 
-function toAssetSummary(dto: AssetDto): AssetSummary {
-  return {
-    id: dto.id,
-    kind: dto.kind === 'audio' || dto.kind === 'image' ? dto.kind : 'video',
-    name: dto.fileName,
-    status: dto.status,
-    progress: dto.progress,
-    durationUs: dto.durationMicros,
-    width: dto.width,
-    height: dto.height,
-    errorCode: dto.errorCode,
-  };
-}
-
 const KIND_LABELS: Record<string, string> = {
   video: 'VID',
   audio: 'AUD',
@@ -424,6 +496,7 @@ const KIND_LABELS: Record<string, string> = {
 };
 
 function AssetRow({ dto }: { dto: AssetDto }) {
+  const dragHandlers = useAssetDragSource(dto);
   const meta: string[] = [];
   if (dto.status === 'ready') {
     if (dto.durationMicros !== undefined) meta.push(formatDurationUs(dto.durationMicros));
@@ -433,7 +506,13 @@ function AssetRow({ dto }: { dto: AssetDto }) {
   if (dto.status === 'failed' && dto.errorCode) meta.push(dto.errorCode);
 
   return (
-    <div className="flex items-center gap-2 rounded border border-edge bg-surface-2 px-2 py-1.5 hover:bg-surface-3">
+    <div
+      className={`flex items-center gap-2 rounded border border-edge bg-surface-2 px-2 py-1.5 hover:bg-surface-3 ${
+        dto.status === 'ready' ? 'cursor-grab touch-none select-none' : ''
+      }`}
+      {...dragHandlers}
+      title={dto.status === 'ready' ? 'Timeline\'a sürükleyin' : undefined}
+    >
       <span className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-surface-3 text-[9px] font-bold tracking-wider text-fg-muted">
         {KIND_LABELS[dto.kind] ?? 'MED'}
       </span>

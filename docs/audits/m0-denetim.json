@@ -1,0 +1,275 @@
+{
+    "toplam":  37,
+    "dagilim":  {
+                    "critical":  1,
+                    "high":  7,
+                    "medium":  15,
+                    "low":  14
+                },
+    "findings":  [
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "critical",
+                         "file":  "backend/src/VideoEdit.Api/Endpoints/ProjectEndpoints.cs:102-113",
+                         "sorun":  "Create endpoint\u0027inin ürettiği boş timeline ŞEMAYA GÖRE GEÇERSİZ. Kanıt: dokümanı validateTimelineDoc\u0027a verdim, 3 hata döndü: \u0027projectId: expected string, received undefined\u0027, \u0027settings.backgroundColor: expected string, received undefined\u0027, \u0027markers: expected array, received undefined\u0027. Frontend createEmptyDoc (apps/editor/src/state/docStore.ts:63-79) üçünü de içeriyor; backend anonymous object\u0027inde projectId, backgroundColor ve markers yok. Her yeni proje DB\u0027ye şema-ihlalli doküman yazıyor; checkpoint/restore bu dokümanı ProjectRevisions\u0027a da kopyalıyor. Editör M2\u0027de GET /projects/{id} sonucunu loadDoc\u0027a verdiği anda ya validasyon patlar ya da sessizce geçersiz doküman düzenlenir.",
+                         "oneri":  "Timeline\u0027ı project.Id atandıktan sonra kur: projectId=project.Id, settings.backgroundColor=\u0027#000000\u0027, markers=[]. Ayrıca contract testi ekle: backend\u0027in boş dokümanı fixture olarak paylaşılsın ve vitest tarafında validateTimelineDoc(fixture).success assert edilsin (cross-language boş-doküman paritesi)."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "high",
+                         "file":  "packages/timeline-schema/src/invariants.ts:47-115",
+                         "sorun":  "Geçiş handle invaryantı speed.rate\u0027i YOK SAYIYOR. Normatif formül (docs/rendering-semantics.md §5.2): sourceOut + roundHalfUp((D/2)*rateA) \u003c= assetA.durationUs ve sourceIn - roundHalfUp((D/2)*rateB) \u003e= 0. Kod ise half = Math.round(d/2) hesaplayıp rate çarpanı olmadan sourceInUs \u003c half / sourceOutUs + half \u003e assetDuration kontrol ediyor (satır 101-115). rate\u003e1 klipte eksik kontrol: şemadan geçen doküman export\u0027ta job failed + transition_handle üretir (doc §5.5 \u0027editör kaçırdıysa sessiz düzeltme YOK\u0027). rate\u003c1 klipte fazla kontrol: doc\u0027a göre geçerli doküman reddedilir. rendering-semantics.md kendini \u0027buradaki formüllerle çelişen her kod hatalıdır\u0027 diye tanımlıyor — bu doğrudan sözleşme ihlali. Testler de (invariants.test.ts) yalnız rate=1 senaryosu içerdiği için ihlal görünmez kalmış.",
+                         "oneri":  "checkTransitionEdge\u0027e incoming/outgoing kliplerin speed.rate\u0027ini dahil et: half_out = roundHalfUp((D/2)*outgoing.speed.rate), half_in = roundHalfUp((D/2)*incoming.speed.rate). rate≠1 içeren invariant testleri ve (C# compiler M3\u0027te yazılırken aynı formül için) paylaşılan test vektörü ekle."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "high",
+                         "file":  "backend/src/VideoEdit.Contracts/Generated/TimelineContracts.g.cs:741-744",
+                         "sorun":  "\u0027round-trips byte-for-byte\u0027 iddiası YANLIŞ ve ileride şema-ihlalli JSON üretecek. Üretilen DTO\u0027larda optional alanlar nullable property (Transition? TransitionIn, string? Name, List\u003cKeyframe\u003e? X, Stroke?, Background?, string? Label...). System.Text.Json varsayılan ayarlarla null property\u0027leri YAZAR; zod .optional() ise null KABUL ETMEZ. Kanıt: transitionIn:null, transitionOut:null, name:null içeren dokümanı validateTimelineDoc\u0027a verdim — 3 hata: \u0027expected object, received null\u0027 / \u0027expected string, received null\u0027. TimelineContractsSerializationTests round-trip testi yalnız kind/type alanlarını kontrol ediyor, null sızıntısını yakalamıyor. Bugün backend timeline\u0027ı opak JsonDocument olarak taşıdığı için canlı bug değil; ama M3\u0027te worker Job.TimelineSnapshot\u0027ı DTO\u0027ya deserialize edip yeniden serialize ettiği anda çıktı frontend şemasından geçmeyen dokümana dönüşür.",
+                         "oneri":  "VideoEdit.Contracts\u0027a kanonik JsonSerializerOptions ekle (DefaultIgnoreCondition=WhenWritingNull) ve tüm timeline serileştirmesini buna zorla; SchemaGen\u0027in başlık yorumunu düzelt; round-trip testine \u0027girdide olmayan alan çıktıda da yok\u0027 assert\u0027i ekle. Alternatif: zod tarafında bu alanları .nullish() yap — ama kararı rendering-semantics değişiklik kuralına göre tek yerde ver."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "high",
+                         "file":  "backend/src/VideoEdit.Api/Endpoints/ProjectEndpoints.cs:71,89-92",
+                         "sorun":  "audioSampleRate sözleşme uyuşmazlığı: API 8000-192000 arası her değeri kabul ediyor; şema (packages/timeline-schema/src/schema.ts:44) yalnız 44100|48000 literal union\u0027ı; rendering-semantics §8.5 ses hattını 48000\u0027e sabitliyor. audioSampleRate=96000 ile proje yaratmak mümkün ve bu projenin timeline\u0027ı hiçbir zaman şemadan geçemez (generated JSON Schema\u0027da da anyOf[const 44100, const 48000] var — doğruladım).",
+                         "oneri":  "Create validasyonunu audioSampleRate ∈ {44100, 48000} olarak daralt (MVP\u0027de tek değer 48000 bile savunulabilir). Aynı kontrolü CreateProjectRequest için test et."
+                     },
+                     {
+                         "lens":  "backend",
+                         "severity":  "high",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Endpoints\\ProjectEndpoints.cs",
+                         "sorun":  "SaveTimeline (satır 195-205) timeline JSON\u0027unu HİÇ doğrulamıyor: tek kontrol ValueKind==Object. Üretilen şema DTO\u0027ları (VideoEdit.Contracts/Generated/TimelineContracts.g.cs) API\u0027de hiçbir yerde referans edilmiyor (grep ile doğrulandı). Boyut limiti de yalnız Kestrel default\u0027u: MaxRequestBodySize hiçbir yerde ayarlanmamış → 30.000.000 bayt (~28,6 MB). Yani 100 MB çöp 413 ile reddedilir AMA ~28 MB\u0027lık çöp JSON kabul edilip Projects.Timeline jsonb\u0027ye yazılır; snapshot kuralı bu çöpü her ~20 revision\u0027da ProjectRevisions\u0027a TAM KOPYA olarak çoğaltır ve hiçbir retention/purge kodu yok (plandaki \u0027son 50 auto + inceltme\u0027 M0\u0027da yok). Rate limit yokluğuyla birleşince tek hesap, döngüde PUT atarak DB\u0027yi sınırsız şişirebilir.",
+                         "oneri":  "M1\u0027de zorunlu: (1) PUT .../timeline için endpoint-bazlı body limiti (ör. 2 MB, IHttpMaxRequestBodySizeFeature); (2) en azından yüzeysel doğrulama — schemaVersion, tracks dizisi, max track/clip tavanı (baş mimar raporundaki \u0027timeline karmaşıklık tavanları\u0027); ideali üretilen TimelineDoc DTO\u0027suna deserialize edip zorunlu alanları kontrol etmek; (3) revision retention job\u0027ı. Ayrıca plan \u0027tam doküman, gzip\u0027 diyor ama request decompression middleware yok — M2\u0027den önce eklenmeli, yoksa frontend gzip gönderemez."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "high",
+                         "file":  "backend/src/VideoEdit.Worker/Dockerfile:27-28",
+                         "sorun":  "Worker imajı hiç build OLMAZ: `apt-get install -y ffmpeg audiowaveform` — audiowaveform paketi Debian depolarında YOK (packages.debian.org trixie araması doğrulandı: \u0027Sorry, your search gave no results\u0027; bookworm\u0027da da yok, sadece Ubuntu PPA/GitHub release olarak dağıtılıyor). mcr dotnet/runtime:10.0 imajı Debian trixie tabanlı; bu RUN katmanı \u0027Unable to locate package audiowaveform\u0027 ile patlar. `docker compose build` VPS\u0027te ilk denemede başarısız olur — smoke test docker\u0027a hiç dokunmadığı için yakalanmamış.",
+                         "oneri":  "BBC audiowaveform\u0027un GitHub release .deb\u0027ini sürüm sabitleyerek indirip `dpkg -i` ile kur (checksum doğrulamasıyla) ya da ayrı bir build stage\u0027de kaynaktan derleyip COPY et. Dockerfile\u0027daki \u0027ileride statik binary\u0027 notunu bugüne çek — apt yolu MVP için bile mevcut değil. CI\u0027a en azından `docker compose build` duman testi ekle."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "high",
+                         "file":  "deploy/Caddyfile:21-25 (+ apps/editor/vite.config.ts:9-18)",
+                         "sorun":  "COOP/COEP prod\u0027da KİMSE tarafından verilmiyor. vite.config.ts başlıkları sadece dev sunucusunda (`server.headers`) set ediyor; Caddyfile\u0027ın statik SPA bloğunda hiçbir `header` direktifi yok. Sonuç: prod\u0027da `crossOriginIsolated=false` → SharedArrayBuffer/AudioWorklet (WebCodecs v2 motoru — vite.config\u0027in kendi yorumunun varlık sebebi) sessizce kullanılamaz; ayrıca COEP\u0027in tetiklediği R2 CORS sorunları yalnızca dev\u0027de görünür, dev/prod davranışı 1. günden ayrışır. Bonus: `vite preview` da başlıksız (`preview.headers` yok).",
+                         "oneri":  "Caddyfile SPA `handle` bloğuna `header { Cross-Origin-Opener-Policy same-origin\\n Cross-Origin-Embedder-Policy require-corp }` ekle (R2 CORS smoke testi başarısızsa iki ortamda BİRDEN credentialless\u0027a düş — tek kaynaklı tutmak için başlık değerlerini tek yerde dokümante et). vite.config\u0027e aynı başlıklarla `preview.headers` ekle. Hash\u0027li asset\u0027ler için `Cache-Control: immutable`, index.html için `no-cache` başlıklarını da aynı yere koy."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "high",
+                         "file":  "backend/ (.dockerignore YOK; Api Dockerfile:19, Worker Dockerfile:17 `COPY . .`)",
+                         "sorun":  "backend build context\u0027inde .dockerignore yok. `COPY . .` host\u0027taki bin/ ve obj/ klasörlerini (hepsi mevcut — Windows\u0027ta restore edilmiş, C:\\Users\\...\\.nuget yollu project.assets.json\u0027lar dahil) imaja kopyalayıp restore katmanının ürettiği obj/\u0027yi EZİYOR: iki aşamalı restore cache\u0027i tamamen boşa gidiyor, build context şişiyor, publish davranışı host\u0027un derleme durumuna göre nondeterministik hale geliyor. Ayrıca appsettings.Development.json (dev JWT secret\u0027ı ile) prod imajının içine taşınıyor.",
+                         "oneri":  "backend/.dockerignore ekle: `**/bin`, `**/obj`, `**/*.user`, `TestResults`, `.vs`. (İsteğe bağlı: appsettings.Development.json\u0027ı da hariç tut — ASPNETCORE_ENVIRONMENT=Production olduğundan yüklenmiyor ama imajda gezmesin.)"
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "medium",
+                         "file":  "packages/timeline-schema/src/schema.ts:153-158 + src/invariants.ts",
+                         "sorun":  "D çift-frame snap kuralı şemada/invariantta YOK. rendering-semantics §5.2 D\u0027yi proje frame grid\u0027ine ve ÇİFT frame sayısına snap\u0027liyor (D_frames = 2*max(1, roundHalfUp(frameFromUs(D)/2))), §5.5 \u0027şemaya D_eff yazılır\u0027 diyor. TransitionSchema ise durationUs için sadece pozitif tamsayı istiyor; invariants doc.settings.fps\u0027i hiç kullanmıyor. Grid-dışı/tek-frame\u0027lik D şemadan geçer; compiler onu yeniden snap\u0027leyeceği için preview (ham D penceresi) ile export (snap\u0027li D) 1 frame\u0027e kadar ayrışır — golden-frame testleri kurulduğunda kaynağı zor bulunan bir parity hatası.",
+                         "oneri":  "Invariant ekle: usToFrame(durationUs, settings.fps) çift ve \u003e=2 olmalı, ve durationUs === frameToUs(usToFrame(durationUs)) (grid üstünde). Ya da bilinçli olarak \u0027şema ham D taşır, iki taraf da snap\u0027ler\u0027 kararını rendering-semantics\u0027e yaz — ikisinden biri, sessiz kalma."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "medium",
+                         "file":  "packages/timeline-schema/src/invariants.ts:198-219",
+                         "sorun":  "Aynı kesim noktasının iki tarafa yazılan geçiş metadata\u0027sı tutarlılık kontrolünden geçmiyor. Test fixture\u0027ı (tests/invariants.test.ts:78,100) sözleşmenin niyetini gösteriyor: A.transitionOut ve B.transitionIn AYNI değerlerle çift yazılıyor. Ama invariant iki kenarı bağımsız doğruluyor; A.transitionOut={crossfade,1s} + B.transitionIn={dissolve,2s} (veya tek taraf mevcut) olan doküman GEÇERLİ sayılır. M4\u0027te compiler hangi kaydı esas alacak — tanımsız; sözleşmede tek kesime iki çelişik tanım sığıyor.",
+                         "oneri":  "Invariant ekle: A.transitionOut varsa bir sonraki klipte transitionIn var olmalı ve type+durationUs birebir eşit olmalı (ve tersi). Veya temsili tekle: geçiş yalnız transitionOut\u0027ta yaşar, transitionIn şemadan çıkar — karar rendering-semantics\u0027e yazılsın."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "medium",
+                         "file":  "packages/timeline-schema/src/invariants.ts:81-90",
+                         "sorun":  "\u0027D*2 \u003e shorter neighbor ise reddet\u0027 kuralı hiçbir normatif kaynakta yok: rendering-semantics §5\u0027te tek üst sınır kaynak payından türeyen D_max (§5.5), plan §36 ve 05-review §1.a\u0027da da yalnız D/2 handle var. Tek taraflı eklenmiş, dokümante edilmemiş bir kural — rendering-semantics\u0027in \u0027Ek: Sözleşme Değişiklik Kuralı\u0027 bölümünün tarif ettiği ihlalin ta kendisi. Doc\u0027a göre geçerli bir doküman (kısa klip + uzun geçiş ama kaynak payı yeterli) şemadan reddedilir; compiler M3\u0027te doc\u0027tan yazılırsa iki taraf farklı doküman kümesi kabul eder.",
+                         "oneri":  "Kural isteniyorsa (makul bir UX sınırı) önce rendering-semantics §5\u0027e gerekçesiyle yaz, sonra compiler validasyonuna aynı formülle ekle. İstenmiyorsa invariant\u0027tan çıkar."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "medium",
+                         "file":  "packages/timeline-schema/src/schema.ts:125-137",
+                         "sorun":  "Effect.params serbest z.record(string, number|string) — rendering-semantics §4\u0027ün parametre listesi/aralıkları hiç doğrulanmıyor: colorAdjust\u0027ta brightness=5 (doc: -1..1), tanınmayan anahtarlar, assetId\u0027siz/intensity\u0027siz lut, hatta lut\u0027ta brightness — hepsi şemadan geçer. Üretilen C# tarafında da EffectParams : Dictionary\u003cstring,object\u003e. Doc §3.1\u0027de \u0027zod + compiler doğrular\u0027 sözü easing için tutulmuş ama efekt paramları için tutulmamış.",
+                         "oneri":  "Effect\u0027i type üzerinden discriminated union yap: colorAdjust için 6 alanlı, her biri z.number().min(-1).max(1) (default 0) strict obje; lut için { assetId: uuid, intensity: z.number().min(0).max(1) }. C# üretimi mevcut union altyapısıyla (SchemaGen) çıkar."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "medium",
+                         "file":  "packages/timeline-schema/test-vectors/ + backend/tests/VideoEdit.UnitTests",
+                         "sorun":  "Vektör kapsamı boşlukları: (1) sampleKeyframes/easingProgress için PAYLAŞILAN vektör yok — easing-vectors.json yalnız cubicBezierAt eğrisini kapsıyor; C# SampleKeyframes testleri (EasingParityTests.cs:83-117) elle yazılmış lokal değerler, TS tarafındakilerle aynı dosyadan gelmiyor. (2) snapUsToFrameGrid\u0027in vektörü yok ve C#\u0027ta karşılığı HİÇ yok (Timecode\u0027da Snap fonksiyonu yok — compiler M3\u0027te kendi yazarsa parity garanti değil). (3) Geçiş D/2 + çift-frame snap matematiği için vektör yok. (4) rendering-semantics §1.2 \u0027kritik girdiler -0.5, 0.5, 1.5, 2.5 dahildir\u0027 diyor; time-vectors.json\u0027da negatif girdi hiç yok.",
+                         "oneri":  "time-vectors.json\u0027a snap bölümü ve negatif/midpoint girdiler; yeni keyframe-vectors.json (track tanımı + timeUs -\u003e beklenen değer, tolerans 1e-9) iki test paketinde koşulsun; Timecode\u0027a SnapUs ekle. M3\u0027ten önce yapılmazsa compiler kendi yorumunu yazar."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit (repo kökü — .github/workflows yok)",
+                         "sorun":  "CI yok ve üç üretilmiş artefakt commit\u0027li: packages/timeline-schema/generated/timeline.schema.json, backend/.../TimelineContracts.g.cs ve dist/ (package.json main dist\u0027i gösteriyor, editör dist üzerinden tüketiyor). schema.ts\u0027te yapılan bir değişiklik pnpm schema:generate / build unutulursa üç tüketici sessizce eski sözleşmeyle çalışır — testler yeşil kalır çünkü herkes kendi bayat kopyasını test eder. Cross-language sözleşmenin bel kemiği drift korumasız.",
+                         "oneri":  "CI işi: pnpm build + pnpm schema:generate + dotnet build/test + \u0027git diff --exit-code\u0027 (üretilenler temiz mi). dist\u0027i commit\u0027lemek yerine workspace\u0027te kaynaktan çözmek de değerlendirilebilir."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "medium",
+                         "file":  "backend/src/VideoEdit.Api/Endpoints/ProjectEndpoints.cs:189-255",
+                         "sorun":  "SaveTimeline gövdesindeki timeline için tek kontrol ValueKind==Object. schemaVersion, projectId\u0027nin route id ile eşleşmesi, boyut sınırı, şema doğrulaması — hiçbiri yok. Yanlış projenin dokümanını başka projeye kaydetmek, devasa/ilgisiz JSON gömmek mümkün; bozuk veri snapshot\u0027lara ve M3\u0027te Job.TimelineSnapshot üzerinden worker\u0027a taşınır ve ancak export\u0027ta patlar. Autosave sözleşmesinin kendisi (body {baseRevision,timeline}, tek UPDATE ile optimistic concurrency, 409\u0027da güncel doküman, snapshot kuralı yalnız sunucuda) karara uygun kurulmuş — sorun yalnız içerik doğrulaması.",
+                         "oneri":  "En azından ucuz kontroller: timeline.schemaVersion==1, timeline.projectId==route id, makul payload limiti. Tam JSON Schema doğrulaması (generated/timeline.schema.json ile) M2 autosave milestone\u0027unda sunucuya eklenmeli — kaynağı zaten üretiyorsunuz."
+                     },
+                     {
+                         "lens":  "backend",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Infrastructure\\Auth\\RefreshTokenService.cs",
+                         "sorun":  "RotateAsync (satır 74-98) read-then-write; hiçbir atomiklik/kilit yok. İki gerçek eşzamanlı refresh (iki sekme, uyanan iki tab) ikisi de RevokedAt==null görürse İKİ geçerli token zinciri doğar (biri sahipsiz, 30 gün yaşar). Daha olası senaryo: ikinci istek ilkinin commit\u0027inden SONRA gelir → RevokedAt!=null → theft detection tetiklenir → RevokeAllForUserAsync KULLANICININ TÜM oturumlarını iptal eder. Yani zararsız çift-refresh yarışı, meşru kullanıcıyı tüm cihazlardan atar. Bu klasik rotation tuzağı; testler (RefreshTokenServiceTests) yalnız sıralı senaryoları kapsıyor.",
+                         "oneri":  "Revoke işlemini atomik yap: \u0027UPDATE refresh_tokens SET revoked_at=@now, replaced_by=@id WHERE token_hash=@h AND revoked_at IS NULL\u0027 (ExecuteUpdate) — 0 satırsa yarış kaybedilmiş demektir; ardından kısa bir reuse-grace penceresi (ör. 30-60 sn içinde, ReplacedByTokenId zincirini takip edip aynı yanıtı/yeni tokeni döndür veya sessizce 401 ver ama tümünü iptal ETME). Timing-safe karşılaştırma ise GEREKMİYOR: karşılaştırma SHA-256 hash\u0027i üzerinden DB unique index lookup\u0027ı — saldırgan preimage üretemeden timing sinyali işe yaramaz; mevcut tasarım (32 bayt CSPRNG → base64url → SHA-256 hex) doğru."
+                     },
+                     {
+                         "lens":  "backend",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Endpoints\\ProjectEndpoints.cs",
+                         "sorun":  "Rename (satır 165) ve SoftDelete (satır 183) tracked SaveChanges kullanıyor; Project.RevisionNumber concurrency token olduğu için EF, UPDATE\u0027e \u0027WHERE RevisionNumber=@okunan\u0027 ekler. Editör açıkken autosave 2 sn debounce ile RevisionNumber\u0027ı ExecuteUpdate ile sürekli artırıyor → kullanıcı düzenleme sırasında projeyi yeniden adlandırır/silerse DbUpdateConcurrencyException fırlar; bunu yalnız Restore yakalıyor, Rename/SoftDelete\u0027te GlobalExceptionHandler\u0027a düşer → 500 Internal Server Error. Bu M2\u0027de (autosave devreye girince) gerçek kullanıcıların düzenli çarpacağı bir hata.",
+                         "oneri":  "Rename/SoftDelete\u0027i ExecuteUpdate\u0027e çevir (Name/DeletedAt güncellemesi revision yarışını umursamamalı — WHERE\u0027e RevisionNumber koyma) veya DbUpdateConcurrencyException\u0027ı yakalayıp retry/409 dön. Ek olarak aynı dosyadaki CreateCheckpoint (satır 327-343) ve Restore\u0027daki AnyAsync+insert (satır 373-379) check-then-insert deseni eşzamanlı istekte unique index (ProjectId,RevisionNumber) ihlaliyle 500 üretir — DbUpdateException(23505) yakalanıp 409\u0027a çevrilmeli."
+                     },
+                     {
+                         "lens":  "backend",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\appsettings.Development.json",
+                         "sorun":  "Dev JWT secret\u0027ı (\u0027dev-only-videoedit-jwt-secret-0123456789abcdef\u0027) repoda ve dotnet publish appsettings*.json\u0027ı kopyaladığı için PROD Docker imajının İÇİNDE (Dockerfile hiçbir exclude yapmıyor). Compose ASPNETCORE_ENVIRONMENT set etmediği için normalde Production\u0027dır; ama biri debug için Development\u0027a çekerse ve Jwt__Secret env\u0027i o an boşsa, herkesin bildiği secret ile token FORGE edilebilir. İkinci sorun: secret doğrulaması lazy — Program.cs\u0027teki kontrol (satır 45-49) AddJwtBearer options lambda\u0027sının içinde, yani İLK authenticated istekte çalışır; yanlış/kısa secret\u0027lı bir prod deploy başarılı ayağa kalkar ve ilk login\u0027de 500\u0027lemeye başlar (fail-fast değil).",
+                         "oneri":  "(1) csproj\u0027da appsettings.Development.json\u0027ı publish\u0027ten hariç tut (CopyToPublishDirectory=Never) veya dev secret\u0027ı user-secrets\u0027a taşı; (2) secret kontrolünü builder.Build() öncesine, düz startup koduna al — kısa/boş secret\u0027ta süreç hiç ayağa kalkmasın; (3) .env.example\u0027daki \u0027change-me-256-bit-random\u0027 (24 karakter) mevcut 32 karakter kontrolüne zaten takılır, iyi — ama kontrol karakter sayıyor, entropi değil; en az 32 BAYT rastgelelik notunu koda da yaz."
+                     },
+                     {
+                         "lens":  "backend",
+                         "severity":  "medium",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Endpoints\\AuthEndpoints.cs",
+                         "sorun":  "M0\u0027da rate limit kabulü verildi ama brute-force\u0027a karşı İKİNCİ savunma hattı da yok: AddIdentityCore lockout default\u0027ları duruyor fakat Login, UserManager.CheckPasswordAsync kullandığı için AccessFailedCount HİÇ artmıyor (o SignInManager\u0027ın işi) → sınırsız parola denemesi, üstelik PBKDF2 maliyetiyle CPU-DoS vektörü. Register\u0027da email enumeration: users.CreateAsync hataları (DuplicateUserName/DuplicateEmail kodlarıyla) aynen client\u0027a dönüyor (satır 60-64) → hangi email\u0027in kayıtlı olduğu sorgulanabilir. Login\u0027de de var olmayan kullanıcı anında 401 dönerken var olan kullanıcıda hash doğrulaması çalışıyor → timing ile enumeration.",
+                         "oneri":  "M1\u0027de MUTLAKA rate-limit\u0027lenecek endpoint listesi: POST /api/auth/login, /register, /refresh (IP bazlı, sıkı); PUT /api/projects/{id}/timeline (kullanıcı bazlı, ör. 1/sn); POST /api/projects, /{id}/revisions, /{id}/restore (kullanıcı bazlı); M1\u0027de gelecek upload init/presign/complete (plan zaten yazıyor). Ek: login\u0027e AccessFailedAsync/lockout entegre et; register hata mesajını jenerikleştir (veya enumeration\u0027ı bilinçli kabul edip karara bağla); login\u0027de kullanıcı yokken dummy hash doğrula."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "medium",
+                         "file":  "compose.yml:80 (migrator.command) + backend/src/VideoEdit.Api/Dockerfile:30",
+                         "sorun":  "Migrator ancak ŞANS ESERİ çalışıyor: Dockerfile ENTRYPOINT\u0027i `[\"dotnet\", \"VideoEdit.Api.dll\"]`, compose `command`\u0027ı ise CMD\u0027yi değiştirir — fiili argv `dotnet VideoEdit.Api.dll dotnet VideoEdit.Api.dll --migrate-only` olur. Uygulama args olarak [\"dotnet\", \"VideoEdit.Api.dll\", \"--migrate-only\"] alır; Program.cs:93\u0027teki `args.Contains(\"--migrate-only\")` tuttuğu ve CommandLine config provider öneksiz/değersiz token\u0027ları yuttuğu için tesadüfen doğru davranıyor. ENTRYPOINT değişse ya da arg parsing sıkılaşsa sessizce API moduna düşer (migrator \u0027başarıyla\u0027 sonsuza dek çalışır, api hiç ayağa kalkmaz).",
+                         "oneri":  "compose.yml\u0027de `command: [\"--migrate-only\"]` yap (ENTRYPOINT\u0027e eklenir). deploy/README.md:75\u0027teki `docker compose run --rm migrator` aynı düzeltmeden otomatik faydalanır. Not: migrator\u0027da Jwt__Secret yokluğu sorun değil — AddJwtBearer options\u0027ı ilk istekte lazy çözülüyor, doğrulandı."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "medium",
+                         "file":  "apps/editor/src/state/docStore.ts:111-138",
+                         "sorun":  "Transaction ile mutate/undo/loadDoc arasında reentrancy koruması yok — REPRO İLE DOĞRULANDI: açık bir transaction sırasında `mutate()` çağrılıp sonra `tx.abort()` yapılırsa abort doc\u0027u baseDoc\u0027a döndürür ama araya giren mutate\u0027in history entry\u0027si kalır → history \u0027Add marker\u0027 diyor (cursor=1), doc\u0027ta marker yok; sonraki `undo()` immer applyPatches\u0027te sessizce no-op olur, redo yanlış state diriltebilir. Aynı şekilde açık tx sırasında undo/redo veya loadDoc (autosave restore) çağrısı doc/history\u0027yi desenkronize eder. Immer/patch mekaniği kendisi doğru (patch sırası, ters patch prepend\u0027i, jumpTo yönü, abort\u0027un patch üretmemesi, limit-200 kırpması test + inceleme ile teyit; TimelineDoc\u0027ta Map/Set olmadığından enableMapSet gerekmez — editorStore/assetStore Set/Map\u0027i immer dışında manuel kopyayla yönetiyor, doğru).",
+                         "oneri":  "Store\u0027a `activeTransaction` bayrağı ekle: transaction açıkken mutate/undo/redo/jumpTo/beginTransaction çağrılırsa dev\u0027de throw (prod\u0027da otomatik abort + uyarı logu); loadDoc açık transaction\u0027ı zorla abort etsin. M1\u0027de drag + klavye kısayolu kombinasyonu bu yolu KESİN tetikleyecek — UI disiplinine bırakma, store seviyesinde kilitle."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "medium",
+                         "file":  "apps/editor/vite.config.ts:19-21",
+                         "sorun":  "Dev proxy sadece `/api` → localhost:5000; `/hubs` (SignalR) proxy\u0027lenmiyor, oysa prod Caddyfile /hubs\u0027ı proxy\u0027liyor. Dev\u0027de hub bağlantısı ya cross-origin direkt :5000\u0027e gitmek zorunda (frontend\u0027de ortama göre farklı base URL = prod\u0027daki same-origin varsayımından sapma) ya da hiç çalışmaz. M1\u0027de progress hub\u0027ı bağlanınca patlayacak, sebebini bulmak yarım gün yiyecek türden bir tuzak.",
+                         "oneri":  "Proxy\u0027ye `\u0027/hubs\u0027: { target: \u0027http://localhost:5000\u0027, ws: true }` ekle; frontend hub URL\u0027ini her iki ortamda da relative `/hubs/...` tut."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "medium",
+                         "file":  "compose.yml:24-72, 103-108",
+                         "sorun":  "Prod compose\u0027da api ve worker için healthcheck yok (Program.cs:114\u0027teki /health endpoint\u0027i kullanılmıyor); redis\u0027in prod\u0027da healthcheck\u0027i yok (compose.dev.yml:31-35\u0027te VAR — tutarsız) ve api redis\u0027e sadece `service_started` ile bağlı; caddy `depends_on: api`\u0027de condition\u0027sız. Açılış sıralaması tamamen istemci retry\u0027larına emanet; `docker compose ps` sağlık durumu hakkında hiçbir şey söylemez.",
+                         "oneri":  "redis\u0027e dev\u0027dekiyle aynı `redis-cli ping` healthcheck\u0027ini ekle ve api bağımlılığını `condition: service_healthy` yap; api\u0027ye /health\u0027e curl/wget healthcheck ekle (aspnet imajında curl yok — `wget -qO- http://localhost:8080/health` ya da dotnet tabanlı probe), caddy\u0027yi `api: condition: service_healthy`\u0027ye bağla."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "low",
+                         "file":  "backend/tools/SchemaGen/Program.cs:118-121,561-562,292-377,444-465",
+                         "sorun":  "SchemaGen post-processing kırılganlıkları (hepsi sessiz bozulma modu): (1) Enum tel değerleri, üretilmiş C# metni üzerinde regex ile yamalanıyor — NJsonSchema çıktı formatı değişirse regex eşleşmez, JsonStringEnumMemberName üretilmez ve enum\u0027lar tele PascalCase (\u0027Video\u0027) yazılır; hata ancak runtime\u0027da. (2) IsAnonymous \u0027__schema\u0027 önekini hardcode ediyor — zod toJSONSchema adlandırması değişirse (zod ^4.1.0, pin\u0027li değil) tip adlandırma bozulur. (3) Stroke/Stroke2 çifti dictionary iterasyon sırasına bağlı doğdu (RenameAnonymousDefinitions çakışmada ikinciyi atlıyor); stroke taşıyan üçüncü bir clip tipi eklemek mevcut tip adlarını değiştirebilir. (4) DiscriminatorPropertyOf \u0027const değeri olan İLK property\u0027yi seçiyor — ileride union üyelerine ortak bir const alanı eklenirse yanlış discriminator sessizce seçilir.",
+                         "oneri":  "SchemaGen sonuna assertion\u0027lar ekle: üretilen kodda JsonStringEnumMemberName sayısı == EnumMember sayısı; beklenen tip adları listesi (golden list) diff\u0027lensin. zod\u0027u tam sürüme pinle. Serialization testlerine TrackType/EffectType/TransitionType/Align/ShapeType tel-değer round-trip\u0027leri ekle (şu an yalnız MediaClipKind ve Easing test ediliyor)."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "low",
+                         "file":  "packages/timeline-schema/src/time.ts:40-51 + backend/src/VideoEdit.Contracts/Timecode.cs:80",
+                         "sorun":  "rendering-semantics §1.2 time.ts\u0027te \u0027export const roundHalfUp = floor(x+0.5)\u0027 yardımcısını ZORUNLU kılıyor; time.ts bunu export etmiyor, inline Math.round kullanıyor (invariants.ts:48 de çıplak Math.round ile D/2\u0027yi ayrıca hesaplıyor). JS Math.round spec\u0027i floor(x+0.5) ile double kenarında birebir aynı değil (ör. Math.round(0.49999999999999994)=0, floor(x+0.5)=1) — µs grid\u0027inde pratikte erişilmez ama doc\u0027un \u0027birebir aynı\u0027 iddiası teknik olarak yanlış. C# tarafında da doc \u0027VideoEdit.Media/TimeMath.cs\u0027 derken RoundHalfUp Timecode.cs içinde PRIVATE — M3\u0027te Media\u0027daki compiler D/2 ve sendcmd matematiği için ona erişemeyecek, kopyalama riski.",
+                         "oneri":  "time.ts\u0027e roundHalfUp\u0027ı export edip iç kullanım ona geçsin; C#\u0027ta RoundHalfUp\u0027ı public yap ya da doc\u0027taki konuma (Media/TimeMath) taşı; doc\u0027taki \u0027Math.round ile birebir\u0027 cümlesini nüansla güncelle."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "low",
+                         "file":  "backend/src/VideoEdit.Contracts/Generated/TimelineContracts.g.cs:627,475,46-52",
+                         "sorun":  "Üretim sadakati pürüzleri: TimelineDoc.SchemaVersion double (zod const 1 -\u003e number; tamsayı olmalı, const da korunmuyor); TextClip/ShapeClip/StickerClip.Kind düz string (literal zorlanmıyor — C# tarafında Kind set edilmeden serialize edilirse \u0027kind\u0027: null üretilir ve hem zod hem ClipJsonConverter reddeder); Rational.Num/Den long iken Timecode API\u0027si int fpsNum/fpsDen alıyor (her çağrıda checked cast yükü).",
+                         "oneri":  "SchemaGen\u0027e küçük iyileştirmeler: integer const\u0027ları int\u0027e sabitle; sabit-kind sınıflarına ctor default\u0027u (\u0027kind\u0027=\u0027text\u0027) enjekte et; Rational için int\u0027e daraltma (num/den zaten pozitif int aralığında) veya Timecode imzasını long\u0027a genişlet."
+                     },
+                     {
+                         "lens":  "sözleşme",
+                         "severity":  "low",
+                         "file":  "apps/editor/src/state/docStore.ts:63-85 + docStore.test.ts",
+                         "sorun":  "createEmptyDoc/defaultProjectSettings çıktısı BUGÜN şemadan geçiyor (validateTimelineDoc ile çalıştırıp doğruladım: nil-UUID placeholder dahil success=true) ama bunu sabitleyen hiçbir test yok — apps/ altında validateTimelineDoc\u0027a tek referans dahi yok. Şemaya zorunlu bir alan eklendiğinde editörün boş dokümanı sessizce geçersizleşir. Ayrıca loadDoc sunucudan gelen dokümanı hiç doğrulamadan kabul ediyor — 1 no\u0027lu bulguyla birleşince ilk gerçek proje açılışında geçersiz doküman fark edilmeden state\u0027e girer.",
+                         "oneri":  "docStore.test.ts\u0027e \u0027validateTimelineDoc(createEmptyDoc(...)).success === true\u0027 testi; loadDoc\u0027ta (en azından dev build\u0027de) validateTimelineDoc çağırıp hatayı yüzeye çıkar."
+                     },
+                     {
+                         "lens":  "backend",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Endpoints\\ProjectEndpoints.cs",
+                         "sorun":  "Sayfalama overflow → 500: List (satır 51) ve ListRevisions (satır 276) Skip((page-1)*pageSize) int aritmetiğiyle taşar. Somut: GET /api/projects?page=2147483647\u0026pageSize=100 → (2147483646*100) unchecked → Skip(-200) → PostgreSQL \u0027OFFSET must not be negative\u0027 → PostgresException → 500. page yalnız alttan clamp\u0027leniyor (Math.Max(page,1)), üstten sınırsız.",
+                         "oneri":  "page\u0027i üstten de sınırla (ör. Math.Clamp(page, 1, 1_000_000)) veya offset\u0027i long hesapla. Yetkilendirme tarafı temiz çıktı: tüm endpoint\u0027ler OwnerId + DeletedAt==null filtresi uyguluyor (FindOwnedAsync/OwnsProjectAsync), revision endpoint\u0027leri önce sahiplik kontrolü yapıyor, IDOR bulunamadı; soft-deleted projeye ve revision\u0027larına erişim her yerde kapalı."
+                     },
+                     {
+                         "lens":  "backend",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Endpoints\\ProjectEndpoints.cs",
+                         "sorun":  "SaveTimeline\u0027da ExecuteUpdate (satır 208-216) tek statement olarak gerçekten atomik ve doğru; ama sonraki snapshot okuma+insert (satır 233-252) AYRI transaction. İki sonucu var: (1) süreç ikisi arasında ölürse snapshot kaybolur (kabul edilebilir); (2) snapshot SaveChanges\u0027i herhangi bir sebeple patlarsa client 500 alır ama autosave ASLINDA commit olmuştur — client eski baseRevision ile retry eder ve kendi yazdığı içerikle 409 \u0027başka sekmede değişti\u0027 diyaloğu görür (yanıltıcı UX). Ayrıca 28 MB\u0027a kadar dokümanlarda request.Timeline.GetRawText() + JsonDocument.Parse İKİ kez çalışıyor (satır 205 ve 249) — gereksiz LOH baskısı; JsonDocument\u0027ler hiç Dispose edilmiyor.",
+                         "oneri":  "ExecuteUpdate + snapshot insert\u0027i tek explicit transaction\u0027a sar (db.Database.BeginTransactionAsync) — snapshot hatası autosave\u0027i geri alsın ya da snapshot hatasını yut/logla ama 200 dön (autosave başarılıydı). Parse\u0027ı bir kez yap, ikinci kopya için aynı instance\u0027ı kullanma yerine tek seferlik raw text sakla; request-scoped JsonDocument\u0027leri using ile kapat."
+                     },
+                     {
+                         "lens":  "backend",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Endpoints\\AuthEndpoints.cs",
+                         "sorun":  "Logout (satır 121-133) access token\u0027la kimliği bulunan kullanıcının TÜM refresh token\u0027larını iptal ediyor — tek cihazdan çıkış, telefondaki oturumu da öldürüyor. Cookie Path=/api/auth/refresh olduğu için logout mevcut cihazın token\u0027ını seçemiyor; yorum bunu kabul etmiş ama bu bir ürün kararı olarak kayda geçmemiş. Ek: her refresh 30 günlük ömrü sıfırlıyor (RefreshTokenService.Lifetime sliding) — çalınan ve düzenli refresh\u0027lenen zincir SONSUZA kadar yaşar, mutlak oturum tavanı yok. Ve RefreshTokens tablosu hiç temizlenmiyor: aktif kullanıcı 15 dk\u0027da bir satır üretir (~2.900 satır/ay/kullanıcı), expired/revoked satırlar ilelebet kalır.",
+                         "oneri":  "Karar dokümanına \u0027logout = tüm cihazlar\u0027 bilinçli tercih olarak yazılsın ya da cookie\u0027deki token logout body/path\u0027iyle erişilebilir yapılıp yalnız o zincir iptal edilsin. Zincire absolute-expiry ekle (ör. ilk IssueAsync\u0027ten itibaren max 90 gün — CreatedAt zaten var, ilk atanın Id\u0027sini taşımak yeter). M1/M6\u0027ya expired token purge job\u0027ı ekle. Cookie bayrakları (HttpOnly+Secure+SameSite=Strict+dar Path) ve CSRF duruşu (state-changing endpoint\u0027ler Bearer ile) doğru."
+                     },
+                     {
+                         "lens":  "backend",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Program.cs",
+                         "sorun":  "Satır 28-29: ConnectionStrings__Postgres yoksa hardcoded \u0027Host=localhost;...;Password=devpassword\u0027 fallback\u0027ine SESSİZCE düşülüyor (aynı string DesignTimeDbContextFactory.cs:15\u0027te de var). Prod\u0027da env adı yanlış yazılırsa (compose\u0027ta typo) API açık bir hata yerine localhost\u0027a bağlanmaya çalışıp geç ve kafa karıştırıcı biçimde ölür; dev makinesinde çalışan bir prod build ise yanlışlıkla dev DB\u0027ye bağlanır. Dockerfile\u0027da USER yok — container root olarak koşuyor.",
+                         "oneri":  "Fallback\u0027i yalnız Development ortamına koşulla; Production\u0027da connection string yoksa startup\u0027ta InvalidOperationException fırlat. Dockerfile\u0027a non-root USER app ekle (aspnet imajı APP_UID destekliyor). Migration\u0027ın kendisi temiz: şema, entity\u0027lerle ve plandaki index\u0027lerle birebir (unique(ProjectId,RevisionNumber), unique TokenHash, OwnerId index\u0027leri, jsonb kolonlar, Job\u0027da gömülü TimelineSnapshot) — tuhaflık bulunamadı."
+                     },
+                     {
+                         "lens":  "backend",
+                         "severity":  "low",
+                         "file":  "D:\\Temp\\VideoEdit\\backend\\src\\VideoEdit.Api\\Endpoints\\ProjectEndpoints.cs",
+                         "sorun":  "Duman testinde görülen \u0027restore sonrası PreRestore satırı yok\u0027 davranışı VERİ KAYBI DEĞİL — kanıt: Restore satır 373-380, mevcut revision\u0027da zaten snapshot varsa PreRestore\u0027u atlıyor; sistemdeki invaryant \u0027rev R\u0027deki ProjectRevision içeriği == projenin rev R anındaki içeriği\u0027 her yazar tarafından korunuyor (autosave aynı isteğin timeline\u0027ını aynı revision\u0027a yazar; checkpoint project.Timeline\u0027ı kopyalar; restore önce mevcut durumu snapshot\u0027lar sonra revision\u0027ı artırır). Yani atlanan PreRestore\u0027un içeriği zaten mevcut Checkpoint/Auto satırında duruyor. Kaybolan tek şey RESTORE OLAYININ İZİ: geçmişte \u0027burada restore yapıldı\u0027 işareti kalmıyor ve restore SONRASI yeni revision\u0027ın (N+1) snapshot\u0027ı yok (içerik hedef revision\u0027da mevcut olduğu için yine kayıpsız). Restore\u0027un kendi yarış koruması doğru: PreRestore insert\u0027i concurrency-token\u0027lı SaveChanges ile aynı transaction\u0027da, çakışmada 409 (satır 387-396). Olmayan/negatif revision → 404; current\u0027a restore → zararsız no-op + revision artışı.",
+                         "oneri":  "Davranışı rendering-semantics/API dokümanına açıkça yaz ve bir unit/integration testiyle sabitle (backend testlerinde autosave/restore endpoint testi HİÇ yok; 154 test şema/policy/token servis seviyesinde — SaveTimeline/Restore yalnız duman testiyle korunuyor, bu M0\u0027ın en zayıf test boşluğu). Restore izini korumak istenirse: snapshot zaten varsa Kind\u0027ı değiştirmeden ayrı bir audit alanı/log kaydı yeterli."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "low",
+                         "file":  "deploy/README.md:43-53",
+                         "sorun":  "R2 CORS örneğinde AllowedHeaders [content-type, content-length] — \u0027range\u0027 yok. COEP + \u003cvideo crossorigin=\"anonymous\"\u003e dünyasında medya istekleri CORS modunda gider; Safari\u0027nin Range içeren medya istekleri (ve filmstrip/waveform kısmi GET\u0027leri) preflight\u0027ta Range başlığı izinli olmadığı için reddedilebilir. ExposeHeaders\u0027ta Content-Range/Accept-Ranges var ama istek tarafı eksik — yarım kalmış bir düşünce.",
+                         "oneri":  "AllowedHeaders\u0027a \u0027range\u0027 ekle (S3/R2 medya CORS\u0027unda standart pratik). M0 R2 CORS smoke testini Safari\u0027de de koştur."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "low",
+                         "file":  "backend/src/VideoEdit.Api/Dockerfile:10-17 (Worker aynı desen)",
+                         "sorun":  "Restore aşaması VideoEdit.sln\u0027i kopyalıyor ama sln\u0027in üyesi SchemaGen.csproj ve VideoEdit.UnitTests.csproj\u0027u KOPYALAMIYOR. Bugün zararsız — restore/publish csproj-scoped (`dotnet restore src/VideoEdit.Api/...`), sln hiç okunmuyor; ama sln kopyası ölü ağırlık ve tuzak: biri restore\u0027u sln-scoped yaparsa \u0027project not found\u0027 ile patlar, SchemaGen sorusu da tam bu riski işaret ediyor.",
+                         "oneri":  "Ya `COPY VideoEdit.sln ./` satırını sil (csproj-scoped akışta gereksiz) ya da sln üyelerinin TAMAMININ csproj\u0027larını kopyala. Yorum satırıyla hangi sözleşmenin geçerli olduğunu sabitle."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "low",
+                         "file":  "backend/src/VideoEdit.Api/Dockerfile:23-30, VideoEdit.Worker/Dockerfile:22-37",
+                         "sorun":  "İmaj seçimi doğru (api→aspnet, worker→runtime; worker HTTP sunmuyor) ama iki container da root olarak çalışıyor; .NET 8+ imajlarında hazır non-root `app` kullanıcısı var. Worker root + ffmpeg + kullanıcı medyası işleme = gereksiz geniş saldırı yüzeyi.",
+                         "oneri":  "Her iki final stage\u0027e `USER app` ekle (worker\u0027da /data volume izinlerini `chown` ile ayarla). Api\u0027de ASPNETCORE_URLS 8080 zaten non-root uyumlu."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "low",
+                         "file":  "apps/editor/tsconfig.json + package.json:8",
+                         "sorun":  "`build: tsc -b \u0026\u0026 vite build` yalnızca tsconfig.json\u0027ı derliyor; tsconfig.node.json hiçbir yerden referans edilmiyor → vite.config.ts hiçbir zaman tip-denetlenmiyor. Ayrıca compose R2__* env adları backend\u0027de henüz karşılıksız (backend/src\u0027de R2 options binding sınıfı yok, grep sadece yorumları buluyor) — adlar şimdilik sözleşme vaadi; R2Options eklendiğinde section adı birebir \u0027R2\u0027 ve property\u0027ler AccountId/AccessKeyId/SecretAccessKey/Bucket/ExportsBucket olmak zorunda.",
+                         "oneri":  "tsconfig.json\u0027a `references: [{ path: \"./tsconfig.node.json\" }]` + node config\u0027e `composite: true` ekle (standart Vite şablonu). R2Options M1\u0027de yazılırken compose.yml\u0027deki adlarla birebir eşleştiğini doğrulayan bir config-binding testi ekle."
+                     },
+                     {
+                         "lens":  "altyapı",
+                         "severity":  "low",
+                         "file":  ".gitignore + packages/timeline-schema/package.json:8-15",
+                         "sorun":  ".gitignore \u0027üretilen dosyalar commit\u0027lenir\u0027 kararıyla TUTARLI (git check-ignore ile doğrulandı: generated/timeline.schema.json ve Contracts/Generated/TimelineContracts.g.cs ignore DEĞİL; dist/ ve *.tsbuildinfo ignore). İki not: (1) repo\u0027da henüz SIFIR commit var — her şey untracked, karar fiilen hiç sınanmamış; (2) timeline-schema exports\u0027u dist/\u0027e işaret ediyor ve dist ignore\u0027da → taze klonda `pnpm dev` veya editor testi, önce `pnpm -r build` koşulmadan modül bulunamadı hatasıyla düşer; README/onboarding\u0027de bu adım görünmüyor.",
+                         "oneri":  "İlk commit\u0027i at ve `git status --ignored` ile karar listesini teyit et. Kök README\u0027ye \u0027klon sonrası: pnpm install \u0026\u0026 pnpm -r build\u0027 adımını yaz ya da editor\u0027ün dev/test scriptlerine schema build\u0027ini predev hook\u0027uyla bağla."
+                     }
+                 ],
+    "genel":  {
+                  "sözleşme":  "M0 iskeleti genel olarak ciddiyetle kurulmuş: easing C# portu gerçekten satır satır ve sadık (32 iterasyonlu bisection, aynı sınır semantiği; easing/time vektörleri iki test paketinde de koşuyor ve half-up\u0027ı banker\u0027s\u0027tan ayıran midpoint vakaları mevcut), Timecode.cs formülleri time.ts ile aynı işlem sırasında, üretilen DTO\u0027larda union dispatch/enum tel değerleri/long µs alanları doğru, autosave sözleşmesi (body {baseRevision,timeline}, tek-UPDATE optimistic concurrency, 409\u0027da güncel doküman, snapshot kuralı yalnız sunucuda, Job\u0027da gömülü TimelineSnapshot) baş mimar kararlarına uygun. ANCAK sözleşme tutarlılığı merceğinde üç kanıtlı kırık var ve üçü de tam olarak \u0027iki dil arasındaki dikiş\u0027 yerlerinde: (1) backend\u0027in create-project boş timeline\u0027ı şemadan GEÇMİYOR (projectId, backgroundColor, markers eksik — çalıştırıp kanıtladım); her yeni proje DB\u0027ye geçersiz doküman yazıyor ve bu, sözleşmeyi kurmak için var olan milestone\u0027da sözleşmenin kendisinin ihlali. (2) Geçiş handle invaryantı normatif formüldeki speed.rate çarpanını atlıyor — rate≠1 kliplerde şema ile compiler farklı doküman kümesi kabul edecek; rendering-semantics\u0027in \u0027çelişen her kod hatalıdır\u0027 hükmüne doğrudan aykırı. (3) Üretilen C# DTO\u0027larının \u0027byte-for-byte round-trip\u0027 iddiası yanlış: varsayılan STJ ayarlarıyla optional alanlar null yazılıyor ve zod null\u0027u reddediyor (kanıtladım) — bugün uykuda, M3\u0027te worker snapshot\u0027ı elleçlediği anda patlayacak bir mayın. Bunlara ek olarak şema, normatif dokümandaki iki kuralı hiç taşımıyor (D çift-frame snap; efekt parametre aralıkları), bir kuralı da doc\u0027ta olmadığı halde tek taraflı eklemiş (D ≤ komşunun yarısı) ve aynı kesime iki çelişik geçiş metadata\u0027sı yazılabiliyor. Süreç tarafında en riskli boşluk CI yokluğu: sözleşmenin üç üretilmiş kopyası (JSON Schema, C# DTO, dist) commit\u0027li ve drift\u0027e karşı korumasız — cross-language sözleşme disiplini insan hafızasına emanet. Tavsiyem: M1\u0027e geçmeden 1-4 no\u0027lu bulgular kapatılsın (dördü de küçük, lokalize düzeltmeler), 5-11 için ise en geç M2/M3 kapılarına bağlanmış açık kayıt tutulsun; aksi halde golden-frame CI M3\u0027te kurulduğunda kaynağı bugünden belli parity hatalarını ayıklamakla vakit kaybedilecek.",
+                  "backend":  "M0 iskeleti beklediğimden temiz: sözleşme kararlarının tamamı koda sadakatle taşınmış (body\u0027de baseRevision + 409\u0027da güncel doküman, snapshot kuralı yalnız sunucuda ISnapshotPolicy\u0027de, Job\u0027da gömülü TimelineSnapshot, asset kullanıcı-scoped + ProjectAsset join, her yerde UUIDv7, RevisionNumber concurrency token) ve IDOR taramasından temiz çıktı — tüm proje endpoint\u0027leri sahiplik + soft-delete filtresi uyguluyor. ExecuteUpdate deseni gerçekten atomik ve doğru kurulmuş; refresh token üretimi (32B CSPRNG → SHA-256) sağlam, timing-safe karşılaştırma gereksinimi YOK (hash üzerinden index lookup). 154 backend testini yeniden koştum, yeşil. Duman testindeki \u0027PreRestore yok\u0027 gözlemi veri kaybı değil; invaryant korunuyor (bulgu 10\u0027da kanıtı var). Buna karşılık ilerlemeden önce bilinmesi gereken üç gerçek borç var: (1) EN ÖNEMLİSİ — timeline JSON\u0027u sunucuda hiç doğrulanmıyor ve tek boyut freni Kestrel\u0027in 30 MB default\u0027u; snapshot mekanizması bu doğrulanmamış gövdeyi çoğaltıyor ve retention yok — M1\u0027de body limiti + kaba şema/karmaşıklık doğrulaması + retention şart (rate-limit listesi bulgu 5\u0027te). (2) Rotation\u0027daki çift-refresh yarışı theft detection\u0027ı yanlış tetikleyip meşru kullanıcıyı tüm cihazlardan atacak — M2\u0027de frontend refresh\u0027e başlamadan önce atomik revoke + grace penceresi eklenmeli. (3) RevisionNumber concurrency token\u0027ı Rename/SoftDelete\u0027i autosave ile yarıştırıp 500\u0027letiyor — M2\u0027de kesin çarpılacak. Ayrıca backend\u0027de autosave/restore/checkpoint akışlarının endpoint seviyesinde otomatik testi yok (yalnız duman testi); bu boşluk M1 başında Testcontainers ile kapatılmadan autosave üzerine kat çıkılmamalı. Kritik seviyede bulgu yok; medium\u0027lar bilinçli sıralanmış milestone\u0027larda ucuz düzeltmeler — şimdi bilinip planlanırsa pahalıya patlamaz.",
+                  "altyapı":  "M0 iskeletinin ÇEKİRDEĞİ sağlam: docStore\u0027un patch tabanlı undo/transaction mekaniği doğru kurulmuş (ileri patch sırası, ters patch\u0027lerin prepend\u0027i, jumpTo\u0027nun çift yönlü yürüyüşü, abort\u0027un iz bırakmaması, limit-200 kırpması — 9/9 test yeşil, kod incelemesiyle teyit), enableMapSet gereksizliği doğru bir tasarım sonucu (TimelineDoc düz obje/dizi; Set/Map kullanan store\u0027lar immer dışında), launchSettings:5000 ↔ vite proxy uyumlu, Tailwind v4 kurulumu eksiksiz (@tailwindcss/vite + @import + @theme), pnpm filter/README komutları çalışıyor, .gitignore üretilen-dosya kararıyla tutarlı. ANCAK dağıtım katmanı hiç prova edilmemiş ve orada üç ağır bulgu var: (1) worker imajı audiowaveform Debian\u0027da olmadığı için HİÇ build olamaz — prod deploy ilk denemede duvara çarpar; (2) COOP/COEP prod\u0027da kimse tarafından verilmiyor — SharedArrayBuffer\u0027a dayalı v2 motor planı sessizce çöker ve dev/prod ortam davranışı 1. günden ayrışır; (3) .dockerignore yokluğu host bin/obj\u0027sini imaja taşıyıp build\u0027i nondeterministik yapıyor. Bunlara migrator\u0027ın ENTRYPOINT+command çakışması yüzünden yalnızca tesadüfen çalışması ve docStore\u0027daki reentrancy açığı (repro ile kanıtlandı — M1 drag+kısayol kombinasyonunda kesin tetiklenir) ekleniyor. Hüküm: frontend/state tarafı M1\u0027e hazır; deploy tarafı \u0027yazıldı ama hiç koşulmadı\u0027 durumunda ve high bulgular kapatılıp bir kez uçtan uca `docker compose build \u0026\u0026 up` provası yapılmadan M1\u0027e GEÇİLMEMELİ. Ayrıca smoke test kapsamına compose build\u0027i ekleyin — bu denetimdeki en pahalı bulguların hepsi \u0027test edilmeyen katman\u0027 kaynaklı."
+              }
+}

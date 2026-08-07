@@ -27,8 +27,12 @@ export interface AssetSummary {
   /** Presigned URLs (batch media-urls endpoint), present once status === 'ready'. */
   proxyUrl?: string;
   posterUrl?: string;
+  /** First filmstrip sprite (single-sprite fallback when `sprites` is absent). */
+  filmstripUrl?: string;
   filmstripManifestUrl?: string;
   waveformUrl?: string;
+  /** Filmstrip sprite file name -> presigned URL (matches manifest sprites[]). */
+  sprites?: Record<string, string>;
   /** Set when status === 'failed' (e.g. 'expired', 'probe_failed'). */
   errorCode?: string;
 }

@@ -17,6 +17,7 @@ function snapshot(): unknown {
 }
 
 beforeEach(() => {
+  useDocStore.getState().setLocked(false);
   useDocStore.getState().loadDoc(freshDoc());
 });
 
@@ -100,7 +101,7 @@ describe('docStore transactions', () => {
     expect(useDocStore.getState().history).toHaveLength(0);
   });
 
-  it('rejects mutate/undo/redo/jumpTo/loadDoc/beginTransaction while a transaction is open', () => {
+  it('rejects mutate/undo/redo/jumpTo/beginTransaction while a transaction is open', () => {
     const store = useDocStore.getState();
     const tx = store.beginTransaction('trim', 'Clip trimmed');
     tx.update((d) => void (d.settings.width = 800));
@@ -112,7 +113,6 @@ describe('docStore transactions', () => {
     expect(() => store.undo()).toThrow(reentrant);
     expect(() => store.redo()).toThrow(reentrant);
     expect(() => store.jumpTo(-1)).toThrow(reentrant);
-    expect(() => store.loadDoc(freshDoc())).toThrow(reentrant);
     expect(() => store.beginTransaction('x', 'X')).toThrow(reentrant);
 
     // The rejected calls must not have corrupted the open transaction.
@@ -121,6 +121,45 @@ describe('docStore transactions', () => {
     const s = useDocStore.getState();
     expect(s.doc.settings.width).toBe(900);
     expect(s.history).toHaveLength(1);
+  });
+
+  it('QUEUES loadDoc while a transaction is open and applies it on commit (finding 1d)', () => {
+    const store = useDocStore.getState();
+    const incoming = freshDoc();
+    incoming.settings.width = 4096;
+
+    const tx = store.beginTransaction('trim', 'Clip trimmed');
+    tx.update((d) => void (d.settings.width = 800));
+    expect(useDocStore.getState().transactionOpen).toBe(true);
+
+    expect(() => store.loadDoc(incoming)).not.toThrow();
+    // Not applied yet — the gesture still owns the document.
+    expect(useDocStore.getState().doc.settings.width).toBe(800);
+
+    const loadSeqBefore = useDocStore.getState().loadSeq;
+    tx.commit();
+    const s = useDocStore.getState();
+    expect(s.transactionOpen).toBe(false);
+    expect(s.doc.settings.width).toBe(4096); // queued load replaced the doc
+    expect(s.history).toHaveLength(0); // and cleared the history
+    expect(s.cursor).toBe(0);
+    expect(s.loadSeq).toBe(loadSeqBefore + 1);
+  });
+
+  it('QUEUES loadDoc while a transaction is open and applies it on abort too', () => {
+    const store = useDocStore.getState();
+    const incoming = freshDoc();
+    incoming.settings.width = 2048;
+
+    const tx = store.beginTransaction('move', 'Clips moved');
+    tx.update((d) => void (d.settings.width = 640));
+    store.loadDoc(incoming);
+    tx.abort();
+
+    const s = useDocStore.getState();
+    expect(s.doc.settings.width).toBe(2048);
+    expect(s.history).toHaveLength(0);
+    expect(s.transactionOpen).toBe(false);
   });
 
   it('resumes normal operation after abort', () => {
@@ -142,6 +181,44 @@ describe('docStore transactions', () => {
       /Transaction is already closed/,
     );
     tx2.commit();
+  });
+});
+
+describe('docStore lock (project-loading window, finding 1c)', () => {
+  it('refuses mutate while locked: throws in dev, document and history untouched', () => {
+    const store = useDocStore.getState();
+    store.setLocked(true);
+    const widthBefore = useDocStore.getState().doc.settings.width;
+
+    // vitest runs with import.meta.env.DEV === true -> loud failure.
+    expect(() =>
+      store.mutate('w', 'Width', (d) => void (d.settings.width = 123)),
+    ).toThrow(/locked/);
+    expect(useDocStore.getState().doc.settings.width).toBe(widthBefore);
+    expect(useDocStore.getState().history).toHaveLength(0);
+
+    // Unlock -> mutations work again.
+    store.setLocked(false);
+    store.mutate('w', 'Width', (d) => void (d.settings.width = 123));
+    expect(useDocStore.getState().doc.settings.width).toBe(123);
+  });
+
+  it('refuses beginTransaction while locked', () => {
+    const store = useDocStore.getState();
+    store.setLocked(true);
+    expect(() => store.beginTransaction('trim', 'Clip trimmed')).toThrow(/locked/);
+    expect(useDocStore.getState().transactionOpen).toBe(false);
+    store.setLocked(false);
+  });
+
+  it('loadDoc is ALLOWED while locked (it is the loading path itself)', () => {
+    const store = useDocStore.getState();
+    store.setLocked(true);
+    const incoming = freshDoc();
+    incoming.settings.width = 999;
+    expect(() => store.loadDoc(incoming)).not.toThrow();
+    expect(useDocStore.getState().doc.settings.width).toBe(999);
+    store.setLocked(false);
   });
 });
 
