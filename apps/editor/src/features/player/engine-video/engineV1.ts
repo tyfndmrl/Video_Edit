@@ -13,12 +13,20 @@
  */
 import type { MediaClip, MicroSec, TimelineDoc, Track, Uuid } from '@videoedit/timeline-schema';
 import { isMediaClip } from '@videoedit/timeline-schema';
-import type { AssetResolver, PlaybackEngine, SeekOptions, Subject } from '../engine';
+import type {
+  AssetResolver,
+  PlaybackEngine,
+  PreviewStatus,
+  SeekOptions,
+  SourceSize,
+  Subject,
+} from '../engine';
 import { createSubject } from '../engine';
 import { setIsPlayingSafe } from '../editorBridge';
 import { forceRefreshMediaUrls } from '../mediaUrls';
 import { Compositor, type DrawItem } from '../compositor/compositor';
 import {
+  type ActiveClip,
   clipAudioOf,
   colorAdjustOf,
   effectiveOpacity,
@@ -29,7 +37,14 @@ import {
   resolveVisualStack,
   sourceTimeUs,
 } from '../core/resolve';
-import { computeSlotRequests, planPool, POOL_SIZE, type PoolAssignment } from '../core/scheduler';
+import {
+  computeSlotRequests,
+  countPreviewLayers,
+  planPool,
+  POOL_SIZE,
+  samePreviewCapacity,
+  type PoolAssignment,
+} from '../core/scheduler';
 import { buildGainCurve, shouldMicroFadeIn, shouldMicroFadeOut } from '../core/gain';
 import { AudioGraph } from '../audio/audioGraph';
 import { VideoPool, type PoolSlot } from './videoPool';
@@ -54,6 +69,12 @@ const GAIN_SAMPLES_PER_SEC = 100;
 const AUTOPLAY_BLOCK_TIMEOUT_MS = 300;
 /** Min interval between media-error-driven forceRefreshMediaUrls() calls. */
 const MEDIA_ERROR_REFRESH_MIN_MS = 10_000;
+/**
+ * Min interval between retries of a FAILED image decode. renderFrame runs every
+ * rAF, so without this an expired image URL would fire ~60 requests per second.
+ * Mirrors videoPool's per-slot MEDIA_ERROR_RETRY_MIN_MS.
+ */
+const IMAGE_ERROR_RETRY_MIN_MS = 5_000;
 
 interface LoadedModel {
   doc: TimelineDoc;
@@ -66,6 +87,10 @@ interface ImageEntry {
   width: number;
   height: number;
   ready: boolean;
+  /** URL this entry was loaded from — a refreshed presign retries immediately. */
+  url: string;
+  /** Timestamp of the last decode failure (0 = none) — retry throttle. */
+  failedAt: number;
 }
 
 function clampElementRate(rate: number): number {
@@ -77,6 +102,8 @@ export class VideoPlaybackEngine implements PlaybackEngine {
   readonly playState$: Subject<boolean> = createSubject<boolean>();
   /** True after an autoplay-blocked rollback; cleared on the next play(). */
   readonly blocked$: Subject<boolean> = createSubject<boolean>();
+  /** Visual layers active vs composited — emits ONLY when the pair changes. */
+  readonly previewStatus$: Subject<PreviewStatus> = createSubject<PreviewStatus>();
 
   private model: LoadedModel | null = null;
   private compositor: Compositor;
@@ -111,6 +138,14 @@ export class VideoPlaybackEngine implements PlaybackEngine {
   /** Last uploaded video time per slot — skips redundant uploads while paused. */
   private slotUploadedAt = new Map<number, number>();
   private imageTextures = new Map<Uuid, ImageEntry>();
+  /** Last emitted previewStatus$ value — the change filter for the note. */
+  private previewStatus: PreviewStatus = {
+    totalLayers: 0,
+    shownLayers: 0,
+    totalAudio: 0,
+    shownAudio: 0,
+    dropped: [],
+  };
 
   /** Clip ids with a scheduled audio envelope (rebuilt on play/seek/cuts). */
   private scheduledAudio = new Set<Uuid>();
@@ -294,6 +329,7 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     this.clock$.clear();
     this.playState$.clear();
     this.blocked$.clear();
+    this.previewStatus$.clear();
   }
 
   // -------------------------------------------------------------------------
@@ -619,7 +655,11 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     const model = this.model;
     if (!model) return;
     const items: DrawItem[] = [];
-    for (const { clip } of resolveVisualStack(model.doc, tUs)) {
+    // BOTTOM first — the compositor blends in array order (§6.3 draw order).
+    // Every visible layer with an element gets composited: the pool feeds ALL
+    // of them at once, not just the top one.
+    const stack = resolveVisualStack(model.doc, tUs);
+    for (const { clip } of stack) {
       if (isMediaClip(clip)) {
         if (clip.kind === 'video') {
           const item = this.videoDrawItem(clip, tUs);
@@ -630,9 +670,57 @@ export class VideoPlaybackEngine implements PlaybackEngine {
         }
         // 'audio' never draws.
       }
-      // text/shape/sticker rendering arrives in M3.
+      // text/shape/sticker layers arrive in M4 wave 2 (docs/backlog.md).
     }
     this.compositor.render(items, model.doc.settings.backgroundColor);
+    this.reportPreviewStatus(stack, resolveAudible(model.doc, tUs));
+  }
+
+  /**
+   * Tell the UI how much of the composition is really coming through — layers
+   * AND sound. Capacity based (does the clip own a pool element?), NOT
+   * readiness based: a clip whose decoder is still warming up is a transient,
+   * not a limitation, and flashing "3/4 layers" during every seek would train
+   * users to ignore the note. Emits only on change.
+   */
+  private reportPreviewStatus(
+    stack: readonly ActiveClip[],
+    audible: readonly ActiveClip<MediaClip>[],
+  ): void {
+    const next = countPreviewLayers(
+      stack,
+      audible,
+      (clipId) => this.pool.slotForClip(clipId) !== null,
+    );
+    if (samePreviewCapacity(next, this.previewStatus)) return;
+    this.previewStatus = next;
+    this.previewStatus$.emit(next);
+  }
+
+  /**
+   * Size the compositor is really drawing this clip at (§2.1 `w_s, h_s`).
+   * Video: the decoder's autorotated frame size. Image: the decoded bitmap.
+   * null while nothing is decoded yet — the caller falls back to asset
+   * metadata and finally to the composition size.
+   */
+  getClipSourceSize(clipId: Uuid): SourceSize | null {
+    const model = this.model;
+    if (!model) return null;
+    const slot = this.pool.slotForClip(clipId);
+    if (slot && slot.video.videoWidth > 0 && slot.video.videoHeight > 0) {
+      return { width: slot.video.videoWidth, height: slot.video.videoHeight };
+    }
+    for (const track of model.doc.tracks) {
+      for (const clip of track.clips) {
+        if (clip.id !== clipId) continue;
+        if (!isMediaClip(clip) || clip.kind !== 'image') return null;
+        const entry = this.imageTextures.get(clip.assetId);
+        return entry?.ready && entry.width > 0
+          ? { width: entry.width, height: entry.height }
+          : null;
+      }
+    }
+    return null;
   }
 
   private videoDrawItem(clip: MediaClip, tUs: MicroSec): DrawItem | null {
@@ -668,25 +756,56 @@ export class VideoPlaybackEngine implements PlaybackEngine {
   private imageDrawItem(clip: MediaClip, tUs: MicroSec): DrawItem | null {
     const model = this.model;
     if (!model) return null;
+    const url = model.resolver(clip.assetId)?.url ?? null;
     let entry = this.imageTextures.get(clip.assetId);
+
+    // A previous decode failed (expired presigned URL, network, corrupt file).
+    // Retry once the URL was refreshed, or after the cooldown — never on the
+    // next rAF, which would be a 60 fps request storm against a dead URL.
+    if (entry && entry.failedAt !== 0) {
+      const refreshed = url !== null && url !== entry.url;
+      const cooled = Date.now() - entry.failedAt >= IMAGE_ERROR_RETRY_MIN_MS;
+      if (!refreshed && !cooled) return null;
+      this.compositor.deleteTexture(entry.texture);
+      this.imageTextures.delete(clip.assetId);
+      entry = undefined;
+    }
+
     if (!entry) {
-      const asset = model.resolver(clip.assetId);
-      if (!asset?.url) return null;
+      if (!url) return null;
       const texture = this.compositor.createTexture();
-      entry = { texture, width: 0, height: 0, ready: false };
+      entry = { texture, width: 0, height: 0, ready: false, url, failedAt: 0 };
       this.imageTextures.set(clip.assetId, entry);
       const img = new Image();
       img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        if (this.disposed) return;
+      // Stale guard: a retry may have replaced the entry while this load was in
+      // flight — only the entry that owns THIS texture may be written.
+      const owned = (): ImageEntry | null => {
+        if (this.disposed) return null;
         const e = this.imageTextures.get(clip.assetId);
+        return e && e.texture === texture ? e : null;
+      };
+      img.onload = () => {
+        const e = owned();
         if (!e) return;
         this.compositor.upload(e.texture, img);
         e.width = img.naturalWidth;
         e.height = img.naturalHeight;
         e.ready = true;
+        e.failedAt = 0;
       };
-      img.src = asset.url;
+      // Without this the image silently never appears and the preview looks
+      // like a rendering bug. Same recovery path as a <video> media error:
+      // ask the media-urls sync for fresh presigned URLs (throttled
+      // engine-wide) and let the retry above pick the new URL up.
+      img.onerror = () => {
+        const e = owned();
+        if (!e) return;
+        e.ready = false;
+        e.failedAt = Date.now();
+        this.handleMediaError();
+      };
+      img.src = url;
       return null;
     }
     if (!entry.ready || entry.width <= 0) return null;

@@ -34,6 +34,33 @@ export interface PlayerAsset {
  */
 export type AssetResolver = (assetId: Uuid) => PlayerAsset | null;
 
+/**
+ * Preview capacity snapshot (see PlaybackEngine.previewStatus$).
+ *
+ * Covers PICTURE AND SOUND on purpose: the decoder budget is shared, and audio
+ * clips sit on the bottom tracks, so they are the first thing a scarce pool
+ * drops. A report that only counted visual layers let a music bed disappear in
+ * silence — see core/scheduler.countPreviewLayers.
+ */
+export interface PreviewStatus {
+  /** Visual layers active at the current position (visible tracks only). */
+  totalLayers: number;
+  /** How many of them are actually being composited. */
+  shownLayers: number;
+  /** Clips that should be audible at the current position (unmuted). */
+  totalAudio: number;
+  /** How many of them actually reach the audio graph (the rest are silent). */
+  shownAudio: number;
+  /** Labels of the tracks that had to be dropped, top track first. */
+  dropped: readonly string[];
+}
+
+/** Natural (autorotated) source size of a clip's media, in px. */
+export interface SourceSize {
+  width: number;
+  height: number;
+}
+
 export interface SeekOptions {
   /**
    * true  -> frame-accurate seek (used when paused; verified against
@@ -75,11 +102,33 @@ export interface PlaybackEngine {
    * hint and retries on the next real user gesture.
    */
   readonly blocked$?: Observable<boolean>;
+  /**
+   * Optional: how much of the composition the engine can actually deliver at
+   * this instant — visual layers AND audible clips. Emits ONLY on change.
+   *
+   * CONTRACT: an engine that has to drop anything (finite decoder/element
+   * budget) MUST report it here, PICTURE AND SOUND ALIKE. The preview may
+   * legitimately be a degraded view of the export, but the user has to be able
+   * to SEE that it is degraded — a silently missing layer (or a silently
+   * missing music bed) is indistinguishable from a broken one.
+   */
+  readonly previewStatus$?: Observable<PreviewStatus>;
   setPlaybackRate(r: number): void;
   /** Current playback rate multiplier (1 = realtime). */
   getPlaybackRate(): number;
   /** Current playhead position of the engine, in timeline microseconds. */
   getPositionUs(): MicroSec;
+  /**
+   * Optional: the size the engine is ACTUALLY drawing this clip's media at
+   * (video.videoWidth/Height, decoded image size) — the `w_s, h_s` of
+   * rendering-semantics §2.1, already autorotated by the decoder. null when the
+   * media is not decoded yet.
+   *
+   * The transform gizmo draws its box from this so the handles sit exactly on
+   * the pixels on screen; asset metadata is only a fallback (it can disagree
+   * with the decoder on rotated phone footage).
+   */
+  getClipSourceSize?(clipId: Uuid): SourceSize | null;
   isPlaying(): boolean;
   dispose(): void;
 }

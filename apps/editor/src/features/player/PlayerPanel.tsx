@@ -20,10 +20,18 @@ import { formatTimecode, snapUsToFrameGrid } from '@videoedit/timeline-schema';
 import { useDocStore } from '../../state/docStore';
 import { useEditorStore } from '../../state/editorStore';
 import { useAssetStore } from '../../state/assetStore';
-import { getPlaybackEngine, registerPlaybackEngine, type AssetResolver } from './engine';
+import {
+  getPlaybackEngine,
+  registerPlaybackEngine,
+  type AssetResolver,
+  type PreviewStatus,
+  type SourceSize,
+} from './engine';
 import { VideoPlaybackEngine } from './engine-video/engineV1';
 import { projectDurationUs } from './core/resolve';
+import { previewShortfallNote } from './core/scheduler';
 import { readIsPlaying, readUserSeekSeq } from './editorBridge';
+import { TransformGizmo } from './TransformGizmo';
 
 /** AssetResolver backed by assetStore (proxy presigned URLs, media-urls sync). */
 function resolveAsset(assetId: string): ReturnType<AssetResolver> {
@@ -43,6 +51,8 @@ const PRECISE_SEEK_SETTLE_MS = 150;
 
 export function PlayerPanel() {
   const rootRef = useRef<HTMLDivElement>(null);
+  /** The letterboxed stage that holds the canvas — gizmo coordinate origin. */
+  const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<VideoPlaybackEngine | null>(null);
 
@@ -55,6 +65,21 @@ export function PlayerPanel() {
   const [isPlaying, setIsPlayingLocal] = useState(false);
   // Autoplay-policy rollback (engine blocked$): show a hint + retry on gesture.
   const [blocked, setBlocked] = useState(false);
+  // Preview capacity (engine previewStatus$): how much of the composition —
+  // picture AND sound — the finite <video> pool can actually feed right now.
+  const [previewStatus, setPreviewStatus] = useState<PreviewStatus>({
+    totalLayers: 0,
+    shownLayers: 0,
+    totalAudio: 0,
+    shownAudio: 0,
+    dropped: [],
+  });
+  /**
+   * Flush the engine's DEBOUNCED doc reload on demand. Assigned by the mount
+   * effect below; the gizmo calls it after every drag step so the picture keeps
+   * up with the box instead of trailing it by the debounce.
+   */
+  const flushLoadRef = useRef<() => void>(() => {});
 
   // ---- engine lifecycle + store wiring (single mount effect) ----
   useEffect(() => {
@@ -84,6 +109,7 @@ export function PlayerPanel() {
     });
 
     const unsubBlocked = engine.blocked$.subscribe(setBlocked);
+    const unsubPreview = engine.previewStatus$.subscribe(setPreviewStatus);
 
     // doc/asset changes -> engine.load (debounced 100 ms).
     let loadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -106,6 +132,7 @@ export function PlayerPanel() {
         doLoad();
       }
     };
+    flushLoadRef.current = flushPendingLoad;
     doLoad();
     const unsubDoc = useDocStore.subscribe((state, prev) => {
       if (state.doc !== prev.doc) scheduleLoad();
@@ -156,9 +183,11 @@ export function PlayerPanel() {
       unsubClock();
       unsubPlayState();
       unsubBlocked();
+      unsubPreview();
       unsubDoc();
       unsubAssets();
       unsubEditor();
+      flushLoadRef.current = () => {};
       if (getPlaybackEngine() === engine) registerPlaybackEngine(null);
       engineRef.current = null;
       engine.dispose();
@@ -188,9 +217,21 @@ export function PlayerPanel() {
     else engine.play();
   }, []);
 
+  /** Natural media size straight from the engine (decoder truth) for the gizmo. */
+  const getSourceSize = useCallback(
+    (clipId: string): SourceSize | null => engineRef.current?.getClipSourceSize(clipId) ?? null,
+    [],
+  );
+  const flushPreviewLoad = useCallback(() => flushLoadRef.current(), []);
+
+  // Honest degradation, computed by a PURE function (core/scheduler) so the
+  // exact wording is unit-tested rather than eyeballed.
+  const shortfall = previewShortfallNote(previewStatus);
+
   return (
     <div ref={rootRef} className="flex h-full flex-col">
       <div
+        ref={stageRef}
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black p-2"
         onClick={togglePlayback}
         title={isPlaying ? 'Duraklat (Space)' : 'Oynat (Space)'}
@@ -200,11 +241,32 @@ export function PlayerPanel() {
           className="max-h-full max-w-full object-contain"
           style={{ aspectRatio: `${settings.width} / ${settings.height}` }}
         />
+        <TransformGizmo
+          containerRef={stageRef}
+          canvasRef={canvasRef}
+          getSourceSize={getSourceSize}
+          flushPreviewLoad={flushPreviewLoad}
+          isPlaying={isPlaying}
+        />
         {blocked && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <span className="rounded bg-black/70 px-3 py-1.5 text-xs text-white">
               Oynatmak için tıklayın
             </span>
+          </div>
+        )}
+        {/* Honest degradation: the <video> pool is finite, so a composition with
+            more simultaneous element-hungry clips than slots drops some of them
+            — video layers AND audio beds alike. Silence here would look like a
+            rendering bug (or, for the music bed, like a broken mixer). */}
+        {shortfall && (
+          <div
+            data-testid="preview-layer-note"
+            role="status"
+            className="pointer-events-none absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px] text-white"
+            title={shortfall.detail}
+          >
+            {shortfall.text}
           </div>
         )}
       </div>

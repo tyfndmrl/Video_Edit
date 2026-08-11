@@ -1,7 +1,13 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { validateTimelineDoc } from '../src/index.js';
+import {
+  MAX_LAYER_DIMENSION,
+  TRANSFORM_SCALE_DECIMALS,
+  TRANSFORM_SCALE_MIN,
+  maxScaleFor,
+  validateTimelineDoc,
+} from '../src/index.js';
 import type { Effect, MediaClip, TextClip, TimelineDoc, Track, Transform } from '../src/schema.js';
 
 // Deterministic UUIDv7-shaped ids for fixtures.
@@ -494,6 +500,127 @@ describe('effect params (rendering-semantics §4)', () => {
       params: { assetId: uid(500), intensity: 1, strength: 0.5 },
     });
     expectIssue(doc, "unrecognized lut param 'strength'");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rule 8 — audio fades (mirrors ExportCompiler.ValidateMediaClip)
+// ---------------------------------------------------------------------------
+
+describe('audio fades (rule 8)', () => {
+  const withAudio = (fadeInUs: number, fadeOutUs: number, durationUs = 2_000_000): TimelineDoc => {
+    const doc = validDoc();
+    doc.tracks[1].clips = [
+      mediaClip({
+        timelineStartUs: 0,
+        timelineDurationUs: durationUs,
+        sourceOutUs: durationUs,
+        audio: { volume: 1, fadeInUs, fadeOutUs, muted: false },
+      }),
+    ];
+    return doc;
+  };
+
+  it('accepts fades that exactly fill the clip', () => {
+    expect(validateTimelineDoc(withAudio(1_200_000, 800_000)).success).toBe(true);
+  });
+
+  it('rejects fadeIn + fadeOut longer than the clip', () => {
+    expectIssue(withAudio(1_200_000, 900_000), 'exceed the clip duration');
+  });
+
+  it('rejects a single fade longer than the clip (the trim regression)', () => {
+    // 10 s clip with a 5 s fade-in trimmed down to 2 s WITHOUT re-clamping is
+    // exactly the document the export compiler answers with HTTP 422.
+    expectIssue(withAudio(5_000_000, 0), 'exceed the clip duration');
+  });
+
+  it('ignores clips whose audio was detached (audio === null)', () => {
+    const doc = validDoc();
+    (doc.tracks[1].clips[0] as MediaClip).audio = null;
+    expect(validateTimelineDoc(doc).success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rule 9 + shared transform bounds (mirrors ExportCompiler.ValidateGeometry)
+// ---------------------------------------------------------------------------
+
+describe('transform scale bounds (rule 9)', () => {
+  it('rejects scale 0 on a drawn clip — the compiler requires scale > 0', () => {
+    const doc = validDoc();
+    (doc.tracks[1].clips[0] as MediaClip).transform.scale = 0;
+    expectIssue(doc, 'transform.scale must be greater than 0');
+  });
+
+  it('rejects a negative scale', () => {
+    const doc = validDoc();
+    (doc.tracks[1].clips[0] as MediaClip).transform.scale = -1;
+    expectIssue(doc, 'transform.scale must be greater than 0');
+  });
+
+  it('accepts scale 0 on an AUDIO clip (no visual layer, compiler skips it)', () => {
+    const doc = validDoc();
+    const audioOnly = mediaClip({ timelineStartUs: 0, timelineDurationUs: 1_000_000 });
+    audioOnly.kind = 'audio';
+    audioOnly.transform.scale = 0;
+    doc.tracks.push({
+      id: uid(4),
+      type: 'audio',
+      muted: false,
+      hidden: false,
+      locked: false,
+      clips: [audioOnly],
+    });
+    expect(validateTimelineDoc(doc).success).toBe(true);
+  });
+
+  it('accepts a large-but-renderable scale (the ceiling is NOT a doc invariant)', () => {
+    // Changing the project resolution can legitimately push an existing clip
+    // past maxScaleFor(); the write-time clamp handles that, the document
+    // validator must not brick every later op over it.
+    const doc = validDoc();
+    (doc.tracks[1].clips[0] as MediaClip).transform.scale = 9;
+    expect(validateTimelineDoc(doc).success).toBe(true);
+  });
+});
+
+describe('maxScaleFor (shared with the export compiler)', () => {
+  const roundHalfUpPx = (v: number): number => Math.floor(v + 0.5);
+
+  it('mirrors the backend LayerGeometry.MaxLayerDimension constant', () => {
+    expect(MAX_LAYER_DIMENSION).toBe(8192);
+  });
+
+  it('derives the ceiling from the longest composition side', () => {
+    expect(maxScaleFor({ width: 1920, height: 1080 })).toBe(4.266);
+    expect(maxScaleFor({ width: 3840, height: 2160 })).toBe(2.133);
+    // Portrait: the LONGEST side binds, not the width.
+    expect(maxScaleFor({ width: 1080, height: 1920 })).toBe(4.266);
+  });
+
+  it('floors at the stored precision so the compiler bound is never crossed', () => {
+    for (const settings of [
+      { width: 1920, height: 1080 },
+      { width: 3840, height: 2160 },
+      { width: 1080, height: 1920 },
+      { width: 1280, height: 720 },
+      { width: 720, height: 1280 },
+    ]) {
+      const scale = maxScaleFor(settings);
+      // The compiler computes roundHalfUp(dimension * scale) and rejects > MAX.
+      expect(roundHalfUpPx(settings.width * scale)).toBeLessThanOrEqual(MAX_LAYER_DIMENSION);
+      expect(roundHalfUpPx(settings.height * scale)).toBeLessThanOrEqual(MAX_LAYER_DIMENSION);
+      // One step above the ceiling MUST cross it, or the bound is too loose.
+      const overshoot = scale + 10 ** -TRANSFORM_SCALE_DECIMALS;
+      const longest = Math.max(settings.width, settings.height);
+      expect(roundHalfUpPx(longest * overshoot)).toBeGreaterThan(MAX_LAYER_DIMENSION);
+    }
+  });
+
+  it('never returns a ceiling below the floor', () => {
+    expect(maxScaleFor({ width: 10_000_000, height: 10_000_000 })).toBe(TRANSFORM_SCALE_MIN);
+    expect(maxScaleFor({ width: 0, height: 0 })).toBe(TRANSFORM_SCALE_MIN);
   });
 });
 

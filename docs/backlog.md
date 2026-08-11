@@ -2,6 +2,35 @@
 
 M0 denetiminde (2026-08-06, 37 bulgu) tespit edilip **bilinçli olarak ertelenen** maddeler. Her madde hedef milestone'a eşlendi. Kritik + yüksek bulguların tamamı ve ucuz orta bulgular M0'da düzeltildi (bkz. git geçmişi).
 
+---
+
+## KAPSAM DURUMU — kullanıcının MVP listesi (review-gate kural 4)
+
+M4 dalga 1 denetimi, seçilen MVP özelliklerinden altısının "eksik **ve kayıtsız**" olduğunu
+tespit etti. Aşağıdaki tablo bundan sonra her teslim notunun kaynağıdır; buraya yazılmadan
+hiçbir özellik ertelenmiş sayılmaz.
+
+| MVP özelliği (kullanıcı seçimi) | Durum | Hedef |
+|---|---|---|
+| Çoklu katman timeline | ✅ tam | — |
+| Kırpma/kesme/ayırma/taşıma/katman | ✅ tam | — |
+| Frame, zoom, timecode, player, kısayollar | ✅ tam | — |
+| Undo/Redo + işlem geçmişi | ✅ tam | — |
+| Hesap + proje yönetimi, autosave | ✅ tam (versiyon geçmişi UI'ı hariç) | UI → M6 |
+| **Ses katmanları** (waveform, seviye, fade, detach) | ✅ tam (M4 dalga 1) | — |
+| **Çoklu katman export + transform** | ✅ tam (M4 dalga 1) | — |
+| **Yazı & overlay** (metin, sticker, şekil) | ❌ yok | **M4 dalga 2** |
+| **Geçişler** (xfade/acrossfade) | ❌ yok | **M4 dalga 2** |
+| Pis-dosya korpusu (iPhone HDR/VFR/döndürülmüş) testleri | ❌ yok | **M4 dalga 3** |
+| **Renk düzeltme / filtreler** | ⚠️ motor hazır, UI yok | **M5** |
+| **Hız değiştirme** (slow-mo/timelapse) | ❌ UI yok | **M5** |
+| **Keyframe animasyonları** | ❌ editör yok | **M5** |
+
+### M4 dalga planı (denetim #18/#23 gereği yazıldı)
+- **Dalga 1** (tamam): çok katman overlay export, transform gizmo, klip özellikleri paneli, detach audio.
+- **Dalga 2**: metin/şekil/sticker katmanları (SkiaSharp sunucu raster + client önizleme, font manifesti) + geçişler (xfade/acrossfade, D/2 handle sözleşmesi).
+- **Dalga 3**: pis-dosya korpusu (iPhone HLG, WhatsApp re-encode, OBS VFR, dikey/döndürülmüş MOV) uçtan uca testleri + parity sertleştirme.
+
 ## M1 (Upload + işleme)
 - **Waveform üretimi .NET içinde**: `audiowaveform` Debian'da paket olarak yok (denetim bulgusu #6); karar — worker ffmpeg ile PCM çekip C#'ta min/max pencereleme yapacak (tasarım `docs/design/02` §3.5'teki alternatif). Dockerfile'dan bağımlılık kaldırıldı.
 - **Rate limiting**: auth (login/register) ve asset presign/init endpoint'leri (`AddRateLimiter`); denetim #5/#19 bağlamı.

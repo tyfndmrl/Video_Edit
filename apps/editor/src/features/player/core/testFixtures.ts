@@ -72,11 +72,12 @@ export function mkMediaClip(spec: MediaClipSpec): MediaClip {
 export function mkTrack(
   id: string,
   clips: Track['clips'],
-  overrides: Partial<Pick<Track, 'type' | 'muted' | 'hidden' | 'locked'>> = {},
+  overrides: Partial<Pick<Track, 'type' | 'name' | 'muted' | 'hidden' | 'locked'>> = {},
 ): Track {
   return {
     id,
     type: overrides.type ?? 'video',
+    ...(overrides.name === undefined ? {} : { name: overrides.name }),
     muted: overrides.muted ?? false,
     hidden: overrides.hidden ?? false,
     locked: overrides.locked ?? false,

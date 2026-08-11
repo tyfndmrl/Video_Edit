@@ -3,13 +3,44 @@
  * <video>/WebGL integration is verified E2E).
  */
 import { describe, expect, it } from 'vitest';
-import { computeSlotRequests, planPool, type SlotRequest } from './scheduler';
+import {
+  computeSlotRequests,
+  countPreviewLayers,
+  planPool,
+  POOL_SIZE,
+  previewShortfallNote,
+  samePreviewCapacity,
+  trackLabel,
+  type SlotRequest,
+} from './scheduler';
+import { isClipMuted, resolveAudible, resolveVisualStack } from './resolve';
 import { mkDoc, mkMediaClip, mkTrack } from './testFixtures';
 
 const SEC = 1_000_000;
 
-function req(clipId: string, priority: number): SlotRequest {
-  return { clipId, assetId: `asset-${clipId}`, priority, sourceTimeUs: 0, rate: 1 };
+function req(clipId: string, priority: number, trackIndex = 0, hidden = false): SlotRequest {
+  return {
+    clipId,
+    assetId: `asset-${clipId}`,
+    priority,
+    hidden,
+    trackIndex,
+    sourceTimeUs: 0,
+    rate: 1,
+  };
+}
+
+/** countPreviewLayers over a whole doc — the way the engine calls it. */
+function capacityOf(
+  doc: Parameters<typeof resolveVisualStack>[0],
+  tUs: number,
+  hasElement: (clipId: string) => boolean,
+) {
+  return countPreviewLayers(
+    resolveVisualStack(doc, tUs),
+    resolveAudible(doc, tUs),
+    hasElement,
+  );
 }
 
 describe('computeSlotRequests', () => {
@@ -158,5 +189,326 @@ describe('planPool', () => {
     const current = [{ slot: 5, clipId: 'a', assetId: 'asset-a' }];
     const plan = planPool(current, [req('a', 0)], 4);
     expect(plan).toEqual([{ slot: 0, clipId: 'a', assetId: 'asset-a' }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-layer compositions (M4): who wins a scarce pool, and what the user is
+// told about it.
+// ---------------------------------------------------------------------------
+
+describe('multi-layer scheduling', () => {
+  /** n video tracks, each with one clip active over [0, 10 s). */
+  function stackedDoc(n: number) {
+    return mkDoc(
+      Array.from({ length: n }, (_, i) =>
+        mkTrack(`t${i}`, [
+          mkMediaClip({ id: `c${i}`, assetId: `A${i}`, startUs: 0, durationUs: 10 * SEC }),
+        ]),
+      ),
+    );
+  }
+
+  it('every simultaneously active clip asks for its own element', () => {
+    // The whole point of a multi-layer preview: 3 layers -> 3 elements, not 1.
+    const requests = computeSlotRequests(stackedDoc(3), 2 * SEC, SEC);
+    expect(requests).toHaveLength(3);
+    expect(requests.every((r) => r.priority === 0)).toBe(true);
+    expect(requests.map((r) => r.clipId)).toEqual(['c0', 'c1', 'c2']);
+  });
+
+  it('requests carry their track index (tracks[0] = top layer)', () => {
+    const requests = computeSlotRequests(stackedDoc(3), 2 * SEC, SEC);
+    expect(requests.map((r) => r.trackIndex)).toEqual([0, 1, 2]);
+  });
+
+  it('over-subscribed pool: the TOP layers keep their elements, the bottom is dropped', () => {
+    // 6 active layers, 4 slots -> tracks 0..3 win, tracks 4..5 starve.
+    const wanted = computeSlotRequests(stackedDoc(6), 2 * SEC, SEC);
+    const plan = planPool([], wanted, 4);
+    expect(plan.map((p) => p.clipId).sort()).toEqual(['c0', 'c1', 'c2', 'c3']);
+  });
+
+  it('layer order beats document order, not the other way round', () => {
+    // Same urgency, deliberately shuffled input: the comparator (not the array
+    // order it happened to arrive in) must decide.
+    const shuffled = [req('bottom', 0, 3), req('top', 0, 0), req('mid', 0, 1)];
+    expect(planPool([], shuffled, 2).map((p) => p.clipId).sort()).toEqual(['mid', 'top']);
+  });
+
+  it('an active BOTTOM layer still beats a preload of a top layer', () => {
+    // Urgency dominates the layer tie-break: what is on screen now wins over
+    // what will be on screen in 300 ms.
+    const wanted = [req('preload-top', 1 + 300_000, 0), req('active-bottom', 0, 9)];
+    expect(planPool([], wanted, 1).map((p) => p.clipId)).toEqual(['active-bottom']);
+  });
+
+  it('a hidden track YIELDS its element to the visible layer below it', () => {
+    // Behaviour change (M4 audit): the scheduler used to be hidden-agnostic, so
+    // the hidden track — sitting on the SMALLER index — won the trackIndex
+    // tie-break and starved the visible track underneath. Hiding the surplus is
+    // the user's most natural remedy for a crowded preview; it must free
+    // capacity, never consume it.
+    const doc = mkDoc([
+      mkTrack('hidden', [mkMediaClip({ id: 'h', startUs: 0, durationUs: 10 * SEC })], {
+        hidden: true,
+      }),
+      mkTrack('shown', [mkMediaClip({ id: 's', startUs: 0, durationUs: 10 * SEC })]),
+    ]);
+    const requests = computeSlotRequests(doc, SEC, SEC);
+    // Both are still REQUESTED (a track can be unhidden at any moment and must
+    // not stall on a cold decoder) — but the visible one is ranked first...
+    expect(requests.map((r) => r.clipId)).toEqual(['s', 'h']);
+    expect(requests.map((r) => r.hidden)).toEqual([false, true]);
+    // ...so with a single slot the VISIBLE layer is the one that survives.
+    expect(planPool([], requests, 1).map((p) => p.clipId)).toEqual(['s']);
+    expect(resolveVisualStack(doc, SEC).map((a) => a.clip.id)).toEqual(['s']);
+  });
+
+  it('hiding the top layers is a working remedy for an over-subscribed pool', () => {
+    // 6 layers, 4 slots. The user hides the two TOP ones to see the rest.
+    const tracks = Array.from({ length: 6 }, (_, i) =>
+      mkTrack(`t${i}`, [mkMediaClip({ id: `c${i}`, assetId: `A${i}`, startUs: 0, durationUs: 10 * SEC })], {
+        hidden: i < 2,
+      }),
+    );
+    const doc = mkDoc(tracks);
+    const plan = planPool([], computeSlotRequests(doc, 2 * SEC, SEC), 4);
+    expect(plan.map((p) => p.clipId).sort()).toEqual(['c2', 'c3', 'c4', 'c5']);
+    // Every layer that is actually drawn now has an element — preview restored.
+    const drawn = resolveVisualStack(doc, 2 * SEC).map((a) => a.clip.id);
+    const fed = new Set(plan.map((p) => p.clipId));
+    expect(drawn.every((id) => fed.has(id))).toBe(true);
+  });
+
+  it('urgency still outranks visibility (an active hidden clip beats a preload)', () => {
+    // The visibility rung sits BELOW priority: a cold decoder for a clip that is
+    // one frame away from being unhidden must not outrank what is playing now.
+    const wanted = [req('preload-visible', 1 + 100_000, 0, false), req('active-hidden', 0, 5, true)];
+    expect(planPool([], wanted, 1).map((p) => p.clipId)).toEqual(['active-hidden']);
+  });
+
+  it('the visual stack is BOTTOM first (compositor draw order) across many layers', () => {
+    // tracks[0] is the top layer, so it must be drawn LAST.
+    expect(resolveVisualStack(stackedDoc(4), SEC).map((a) => a.clip.id)).toEqual([
+      'c3',
+      'c2',
+      'c1',
+      'c0',
+    ]);
+  });
+
+  it('a muted track stays audible-resolved but silent (isClipMuted decides)', () => {
+    const doc = mkDoc([
+      mkTrack('m', [mkMediaClip({ id: 'q', startUs: 0, durationUs: 10 * SEC })], { muted: true }),
+    ]);
+    const [audible] = resolveAudible(doc, SEC);
+    expect(audible!.clip.id).toBe('q');
+    expect(isClipMuted(doc.tracks[0]!, audible!.clip)).toBe(true);
+  });
+});
+
+describe('countPreviewLayers', () => {
+  const doc6 = mkDoc(
+    Array.from({ length: 6 }, (_, i) =>
+      mkTrack(`t${i}`, [
+        mkMediaClip({ id: `c${i}`, assetId: `A${i}`, startUs: 0, durationUs: 10 * SEC }),
+      ]),
+    ),
+  );
+
+  it('reports the shortfall when the pool cannot feed every visual layer', () => {
+    const winners = new Set(planPool([], computeSlotRequests(doc6, SEC, SEC), 4).map((p) => p.clipId));
+    const capacity = capacityOf(doc6, SEC, (id) => winners.has(id));
+    expect(capacity.totalLayers).toBe(6);
+    expect(capacity.shownLayers).toBe(4);
+    // ...and it NAMES the starved tracks, top track first.
+    expect(capacity.dropped).toEqual(['Katman 5', 'Katman 6']);
+  });
+
+  it('reports no shortfall when everything fits', () => {
+    const doc = mkDoc([
+      mkTrack('t0', [mkMediaClip({ id: 'a', startUs: 0, durationUs: 10 * SEC })]),
+      mkTrack('t1', [mkMediaClip({ id: 'b', startUs: 0, durationUs: 10 * SEC })]),
+    ]);
+    expect(capacityOf(doc, SEC, () => true)).toEqual({
+      totalLayers: 2,
+      shownLayers: 2,
+      totalAudio: 2,
+      shownAudio: 2,
+      dropped: [],
+    });
+  });
+
+  it('images count as shown without an element (plain textures)', () => {
+    const doc = mkDoc([
+      mkTrack('t0', [
+        mkMediaClip({ id: 'img', kind: 'image', startUs: 0, durationUs: 10 * SEC, audio: null }),
+      ]),
+      mkTrack('t1', [mkMediaClip({ id: 'vid', startUs: 0, durationUs: 10 * SEC })]),
+    ]);
+    // Nothing owns an element: the video is starved, the image is not.
+    const capacity = capacityOf(doc, SEC, () => false);
+    expect(capacity.totalLayers).toBe(2);
+    expect(capacity.shownLayers).toBe(1);
+    expect(capacity.dropped).toEqual(['Katman 2']);
+  });
+
+  it('hidden tracks and audio clips are not visual layers', () => {
+    const doc = mkDoc([
+      mkTrack('hidden', [mkMediaClip({ id: 'h', startUs: 0, durationUs: 10 * SEC })], {
+        hidden: true,
+      }),
+      mkTrack('audio', [mkMediaClip({ id: 'a', kind: 'audio', startUs: 0, durationUs: 10 * SEC })], {
+        type: 'audio',
+      }),
+      mkTrack('video', [mkMediaClip({ id: 'v', startUs: 0, durationUs: 10 * SEC })]),
+    ]);
+    const capacity = capacityOf(doc, SEC, () => true);
+    expect(capacity.totalLayers).toBe(1);
+    expect(capacity.shownLayers).toBe(1);
+  });
+
+  it('an empty timeline reports nothing (no note is shown)', () => {
+    expect(countPreviewLayers([], [], () => true)).toEqual({
+      totalLayers: 0,
+      shownLayers: 0,
+      totalAudio: 0,
+      shownAudio: 0,
+      dropped: [],
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Audio capacity (M4 audit: the pool is shared, and audio starves FIRST)
+  // -------------------------------------------------------------------------
+
+  it('the music bed that lost its element is REPORTED, not silently dropped', () => {
+    // The scenario from the audit: 4 video layers + 1 music track on the
+    // bottom. The pool holds 4, and the music sits on the LARGEST track index,
+    // so it is the first thing evicted — and it used to disappear in silence
+    // because the note only ever counted visual layers.
+    const doc = mkDoc([
+      ...Array.from({ length: 4 }, (_, i) =>
+        mkTrack(`v${i}`, [
+          mkMediaClip({ id: `c${i}`, assetId: `A${i}`, startUs: 0, durationUs: 10 * SEC }),
+        ]),
+      ),
+      mkTrack(
+        'music',
+        [mkMediaClip({ id: 'music', kind: 'audio', startUs: 0, durationUs: 10 * SEC })],
+        { type: 'audio', name: 'Müzik' },
+      ),
+    ]);
+    const winners = new Set(planPool([], computeSlotRequests(doc, SEC, SEC), POOL_SIZE).map((p) => p.clipId));
+    expect(winners.has('music')).toBe(false); // the pool really does drop it
+
+    const capacity = capacityOf(doc, SEC, (id) => winners.has(id));
+    expect(capacity.totalLayers).toBe(4);
+    expect(capacity.shownLayers).toBe(4); // picture is intact...
+    expect(capacity.totalAudio).toBe(5); // ...4 video sound tracks + the bed
+    expect(capacity.shownAudio).toBe(4); // ...but the bed is silent
+    expect(capacity.dropped).toEqual(['Müzik']); // named by its track name
+
+    const note = previewShortfallNote(capacity);
+    expect(note, 'A dropped music bed MUST produce a note.').not.toBeNull();
+    expect(note!.text).toContain('4 / 5 ses klibi');
+    expect(note!.text).not.toContain('katman'); // no false alarm about video
+    expect(note!.detail).toContain('Müzik');
+  });
+
+  it('muted tracks/clips are not counted as dropped audio (silent by intent)', () => {
+    const doc = mkDoc([
+      mkTrack('m', [mkMediaClip({ id: 'muted-track', startUs: 0, durationUs: 10 * SEC })], {
+        muted: true,
+      }),
+      mkTrack('c', [
+        mkMediaClip({
+          id: 'muted-clip',
+          startUs: 0,
+          durationUs: 10 * SEC,
+          audio: { volume: 1, fadeInUs: 0, fadeOutUs: 0, muted: true },
+        }),
+      ]),
+      mkTrack('d', [
+        mkMediaClip({ id: 'detached', startUs: 0, durationUs: 10 * SEC, audio: null }),
+      ]),
+    ]);
+    const capacity = capacityOf(doc, SEC, () => false);
+    expect(capacity.totalAudio, 'Nothing here should be audible.').toBe(0);
+    expect(capacity.shownAudio).toBe(0);
+    expect(previewShortfallNote(capacity)?.text).toContain('katman'); // only video
+  });
+
+  it('one starved track is named once even when both its picture and sound go', () => {
+    const doc = mkDoc([
+      mkTrack('t0', [mkMediaClip({ id: 'a', startUs: 0, durationUs: 10 * SEC })], { name: 'Ana' }),
+    ]);
+    const capacity = capacityOf(doc, SEC, () => false);
+    expect(capacity).toEqual({
+      totalLayers: 1,
+      shownLayers: 0,
+      totalAudio: 1,
+      shownAudio: 0,
+      dropped: ['Ana'],
+    });
+  });
+
+  it('trackLabel falls back to a 1-based layer number per track type', () => {
+    expect(trackLabel(mkTrack('x', []), 0)).toBe('Katman 1');
+    expect(trackLabel(mkTrack('x', [], { type: 'audio' }), 3)).toBe('Ses 4');
+    expect(trackLabel(mkTrack('x', [], { name: '  B-roll  ' }), 2)).toBe('B-roll');
+  });
+});
+
+describe('previewShortfallNote', () => {
+  const full = {
+    totalLayers: 3,
+    shownLayers: 3,
+    totalAudio: 2,
+    shownAudio: 2,
+    dropped: [] as string[],
+  };
+
+  it('says nothing when everything comes through', () => {
+    expect(previewShortfallNote(full)).toBeNull();
+  });
+
+  it('mentions BOTH shortfalls when picture and sound are degraded', () => {
+    const note = previewShortfallNote({
+      totalLayers: 6,
+      shownLayers: 3,
+      totalAudio: 3,
+      shownAudio: 1,
+      dropped: ['Katman 5', 'Müzik'],
+    });
+    expect(note!.text).toBe('Önizlemede 3 / 6 katman gösteriliyor, 1 / 3 ses klibi çalıyor');
+    expect(note!.detail).toContain('Şu an düşen: Katman 5, Müzik.');
+    // The note must not let the user think the EXPORT is degraded too.
+    expect(note!.detail).toContain('Dışa aktarımda TÜM katmanlar ve sesler işlenir.');
+  });
+
+  it('states the real decoder budget', () => {
+    const note = previewShortfallNote({ ...full, shownLayers: 1 }, 4);
+    expect(note!.detail).toContain('en fazla 4 medya çözücü');
+  });
+});
+
+describe('samePreviewCapacity', () => {
+  const base = {
+    totalLayers: 2,
+    shownLayers: 1,
+    totalAudio: 1,
+    shownAudio: 1,
+    dropped: ['Katman 2'],
+  };
+
+  it('is true only for an identical snapshot (the previewStatus$ change filter)', () => {
+    expect(samePreviewCapacity(base, { ...base, dropped: ['Katman 2'] })).toBe(true);
+    expect(samePreviewCapacity(base, { ...base, shownAudio: 0 })).toBe(false);
+    // Same counts, DIFFERENT track starved: the note text changes, so this is
+    // a change — an equality check on the numbers alone would suppress it.
+    expect(samePreviewCapacity(base, { ...base, dropped: ['Katman 1'] })).toBe(false);
+    expect(samePreviewCapacity(base, { ...base, dropped: [] })).toBe(false);
   });
 });

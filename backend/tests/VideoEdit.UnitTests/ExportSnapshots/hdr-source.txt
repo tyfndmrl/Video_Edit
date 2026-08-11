@@ -2,9 +2,11 @@
 -ss 0.000000 -t 2.000000 -i assets/hdr.mov
 
 # filter_complex_script
-[0:v]zscale=t=linear:npl=100,format=gbrpf32le,tonemap=tonemap=hable:desat=0,zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p,fps=30/1,trim=end_frame=60,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x000000,setsar=1,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[v0];
+color=c=0x000000:s=1920x1080:r=30/1:d=2.033333,trim=end_frame=60,format=rgba,setsar=1,settb=AVTB,setpts=PTS-STARTPTS[base];
+[0:v]zscale=t=linear:npl=100,format=gbrpf32le,tonemap=tonemap=hable:desat=0,zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,fps=30/1,trim=end_frame=60,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,setsar=1,format=rgba,settb=AVTB,setpts=PTS-STARTPTS[v0];
+[base][v0]overlay=x=960-0.5*w:y=540-0.5*h:enable='between(t,0.000000,1.983334)':eval=frame:format=rgb[c0];
+[c0]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv[vout];
 [0:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000,afade=t=in:st=0:d=0.005000:curve=tri,afade=t=out:st=1.995000:d=0.005000:curve=tri[a0];
-[v0]concat=n=1:v=1:a=0,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv[vout];
 [a0]amix=inputs=1:duration=longest:normalize=0,alimiter=limit=0.98[aout]
 
 # output

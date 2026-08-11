@@ -76,10 +76,30 @@ export async function installAppBridge(page: Page): Promise<void> {
     //  document URL'sine göre çözülür.)
     const imp = (specifier: string): Promise<Record<string, unknown>> =>
       import(/* @vite-ignore */ specifier) as Promise<Record<string, unknown>>;
+
+    /**
+     * Vite'ın HMR damgası (`?t=...`) tarayıcı için modül KİMLİĞİNİN parçasıdır.
+     * Dev sunucusu ayaktayken bir kaynak dosya düzenlenirse uygulama
+     * `/src/state/docStore.ts?t=1786…` yükler; damgasız
+     * `import('/src/state/docStore.ts')` ise AYRI bir modül örneği — yani AYRI
+     * bir zustand store'u — döndürür. Köprü o zaman bomboş bir store okur ve
+     * her test "proje hazır olmadı" diye düşer (uygulama ekranda gayet
+     * çalışıyorken). Bu yüzden uygulamanın GERÇEKTEN yüklediği URL performance
+     * kayıtlarından bulunur; bulunamazsa düz yola dönülür.
+     */
+    const loadedUrl = (path: string): string => {
+      const entries = performance.getEntriesByType('resource');
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const name = entries[i].name;
+        if (name.split('?')[0].endsWith(path)) return name;
+      }
+      return path;
+    };
+
     const [doc, editor, session] = await Promise.all([
-      imp('/src/state/docStore.ts'),
-      imp('/src/state/editorStore.ts'),
-      imp('/src/state/projectSession.ts'),
+      imp(loadedUrl('/src/state/docStore.ts')),
+      imp(loadedUrl('/src/state/editorStore.ts')),
+      imp(loadedUrl('/src/state/projectSession.ts')),
     ]);
     w.__ve = { doc, editor, session };
     return true;

@@ -16,16 +16,20 @@
 import {
   clipTimelineDurationUs,
   frameToUs,
+  maxScaleFor,
   roundHalfUp,
   sampleKeyframes,
   snapUsToFrameGrid,
   validateTimelineDoc,
   isMediaClip,
+  TRANSFORM_SCALE_DECIMALS,
+  TRANSFORM_SCALE_MIN,
   type Clip,
   type Keyframe,
   type KeyframeTracks,
   type MediaClip,
   type MicroSec,
+  type ProjectSettings,
   type Rational,
   type TimelineDoc,
   type Track,
@@ -176,6 +180,39 @@ function reconcileTransitions(track: Track): void {
       if (!(n && isMediaClip(n) && n.transitionIn)) delete c.transitionOut;
     }
   }
+}
+
+/**
+ * Re-fits a media clip's audio fades inside its CURRENT duration.
+ *
+ * The export compiler refuses `fadeInUs + fadeOutUs > timelineDurationUs`
+ * (ExportCompiler.ValidateMediaClip, mirrored as invariant rule 8). Every op
+ * that SHORTENS a clip therefore has to re-clamp fades it never touched —
+ * otherwise a 10 s clip with a 5 s fade-in trimmed down to 2 s produces a
+ * document the export rejects with HTTP 422, and the editor never says so.
+ *
+ * Policy when the two fades no longer fit together: shrink them
+ * PROPORTIONALLY. Both sides are FLOORED at the same ratio, so the result is
+ * symmetric for symmetric input and the sum can never exceed the duration
+ * (floor(a·d/t) + floor(b·d/t) <= (a+b)·d/t = d). Proportional keeps the shape
+ * the user built and, unlike "trim one side first", has no arbitrary winner.
+ *
+ * Call this next to EVERY write of `timelineDurationUs`. Operates on a DRAFT
+ * clip (inside mutate/transaction) — store documents are frozen.
+ */
+export function clampAudioFadesToDuration(clip: Clip): void {
+  if (!isMediaClip(clip) || clip.audio === null) return;
+  const durationUs = Math.max(0, clip.timelineDurationUs);
+  const audio = clip.audio;
+  let fadeIn = Math.max(0, roundHalfUp(audio.fadeInUs));
+  let fadeOut = Math.max(0, roundHalfUp(audio.fadeOutUs));
+  const total = fadeIn + fadeOut;
+  if (total > durationUs) {
+    fadeIn = Math.floor((fadeIn * durationUs) / total);
+    fadeOut = Math.floor((fadeOut * durationUs) / total);
+  }
+  audio.fadeInUs = fadeIn;
+  audio.fadeOutUs = fadeOut;
 }
 
 /**
@@ -531,6 +568,7 @@ function trimMediaRight(
   clip.sourceOutUs = newOut;
   clip.timelineDurationUs = newDur;
   remapKeyframes(clip, 0, newDur);
+  clampAudioFadesToDuration(clip);
   return start + newDur;
 }
 
@@ -569,6 +607,7 @@ function trimMediaLeft(
   clip.timelineDurationUs = newDur;
   if (anchor === 'end') clip.timelineStartUs = end - newDur;
   remapKeyframes(clip, newDur - oldDur, newDur);
+  clampAudioFadesToDuration(clip);
   return { newStartUs: clip.timelineStartUs, durationDeltaUs: newDur - oldDur };
 }
 
@@ -636,6 +675,8 @@ export function applyTrimToDraft(
       b.timelineDurationUs = clipTimelineDurationUs(b.sourceInUs, b.sourceOutUs, b.speed.rate);
       b.timelineStartUs = bEnd - b.timelineDurationUs;
     }
+    // The rounding walk above shortened B again after trimMediaLeft clamped it.
+    clampAudioFadesToDuration(b);
     if (b.timelineStartUs < clipEndUs(a)) return fail('roll rounding failed');
     reconcileTransitions(track);
     return OK;
@@ -662,6 +703,7 @@ export function applyTrimToDraft(
     } else {
       clip.timelineDurationUs = target - start;
       remapKeyframes(clip, 0, clip.timelineDurationUs);
+      clampAudioFadesToDuration(clip);
       newEnd = target;
     }
     if (effectiveMode === 'ripple') {
@@ -702,6 +744,7 @@ export function applyTrimToDraft(
       const newDur = end - target;
       clip.timelineDurationUs = newDur;
       remapKeyframes(clip, newDur - oldDur, newDur);
+      clampAudioFadesToDuration(clip);
       for (let i = clipIndex + 1; i < track.clips.length; i++) {
         track.clips[i].timelineStartUs += newDur - oldDur;
       }
@@ -709,6 +752,7 @@ export function applyTrimToDraft(
       clip.timelineStartUs = target;
       clip.timelineDurationUs = end - target;
       remapKeyframes(clip, clip.timelineDurationUs - oldDur, clip.timelineDurationUs);
+      clampAudioFadesToDuration(clip);
     }
   }
   reconcileTransitions(track);
@@ -835,6 +879,10 @@ export function applySplitToDraft(d: TimelineDoc, clipId: Uuid, timeUs: MicroSec
     clip.timelineDurationUs = durA;
     if (clip.audio) clip.audio.fadeOutUs = 0;
     delete clip.transitionOut;
+    // A keeps its fade-in, B keeps its fade-out — but each half is SHORTER than
+    // the original, so the surviving fade has to be re-fitted (rule 8).
+    clampAudioFadesToDuration(clip);
+    clampAudioFadesToDuration(b);
     second = b;
   } else {
     durA = t - start;
@@ -850,6 +898,8 @@ export function applySplitToDraft(d: TimelineDoc, clipId: Uuid, timeUs: MicroSec
       transform: { ...clip.transform },
     } as Clip;
     clip.timelineDurationUs = durA;
+    clampAudioFadesToDuration(clip);
+    clampAudioFadesToDuration(second);
   }
 
   // Divide keyframe tracks (boundary value interpolated into both parts).
@@ -1122,6 +1172,386 @@ export function duplicateClips(clipIds: readonly Uuid[]): OpResult {
     return { clip, trackId: s.trackId };
   });
   return insertBatch('duplicate', `${batch.length} klip çoğaltıldı`, batch);
+}
+
+// ---------------------------------------------------------------------------
+// Clip properties (Inspector): audio / transform / opacity
+//
+// Every setter takes a clip id LIST: the inspector edits the whole selection at
+// once and one call must stay ONE history entry. The `apply*ToDraft` halves are
+// exported for slider/scrub gestures — the panel runs them inside a docStore
+// transaction so a drag coalesces into a single undo step, exactly like the
+// timeline's trim/move drags.
+//
+// Clamping happens HERE, never in the UI: a numeric input, a slider and a
+// keyboard arrow must all land on the same value, and the document must stay
+// schema-valid whatever the panel sends (rendering-semantics §2 for the
+// normalized transform, §8 for linear gain / linear fades).
+// ---------------------------------------------------------------------------
+
+/** Linear gain bounds (rendering-semantics §8.1: 0..2, 1 = untouched, 2 = +6.02 dB). */
+export const VOLUME_MIN = 0;
+export const VOLUME_MAX = 2;
+/** Normalized position bound: |x|,|y| <= 2 compositions away (a slip cannot lose a clip). */
+export const POSITION_LIMIT = 2;
+/**
+ * scale = 1 means "fit" (rendering-semantics §2.2).
+ *
+ * The floor is POSITIVE and shared with the preview gizmo
+ * (timeline-schema.TRANSFORM_SCALE_MIN): the export compiler rejects
+ * `transform.scale <= 0` outright, so an editor that let a user park a clip at
+ * 0 was building documents that could never be exported.
+ */
+export const SCALE_MIN = TRANSFORM_SCALE_MIN;
+
+/**
+ * Resolution-independent sanity cap. The EFFECTIVE ceiling is always
+ * `maxClipScale(settings)` — see there; this only stops absurd values in
+ * compositions small enough that the layer-size bound is loose.
+ */
+export const SCALE_MAX = 10;
+
+/**
+ * Largest scale THIS project may store: the compiler measures the scaled layer
+ * box against LayerGeometry.MaxLayerDimension (8192 px), so the real ceiling
+ * falls out of the project resolution — ~4.266 at 1080p, ~2.133 at 4K.
+ * The inspector's field max AND the clamp both go through here.
+ */
+export function maxClipScale(settings: Pick<ProjectSettings, 'width' | 'height'>): number {
+  return Math.min(SCALE_MAX, maxScaleFor(settings));
+}
+
+export const ROTATION_LIMIT = 360;
+
+/** Transform/opacity values are stored rounded so undo patches stay clean. */
+export const POSITION_DECIMALS = 4;
+export const SCALE_DECIMALS = TRANSFORM_SCALE_DECIMALS;
+export const ROTATION_DECIMALS = 2;
+export const OPACITY_DECIMALS = 3;
+
+function roundTo(value: number, decimals: number): number {
+  const f = 10 ** decimals;
+  return roundHalfUp(value * f) / f;
+}
+
+function clampFinite(value: number, lo: number, hi: number, decimals: number): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return roundTo(clamp(value, lo, hi), decimals);
+}
+
+/** Default transform (rendering-semantics §2: centered, fit, unrotated). */
+export const DEFAULT_TRANSFORM = {
+  x: 0,
+  y: 0,
+  scale: 1,
+  rotationDeg: 0,
+  anchorX: 0.5,
+  anchorY: 0.5,
+} as const;
+
+/** Audio properties live on video/audio clips; image clips carry `audio: null`. */
+export function clipHasAudio(clip: Clip): clip is MediaClip {
+  return isMediaClip(clip) && clip.audio !== null;
+}
+
+/** Everything except an audio clip is drawn, so everything else has a transform. */
+export function isVisualClip(clip: Clip): boolean {
+  return clip.kind !== 'audio';
+}
+
+export interface ClipAudioPatch {
+  volume?: number;
+  fadeInUs?: MicroSec;
+  fadeOutUs?: MicroSec;
+  muted?: boolean;
+}
+
+/**
+ * Fade clamp: a fade can never exceed the clip, and in+out can never overlap
+ * (an overlap would make the §8.2 linear ramps contradict each other). Only the
+ * field being written is trimmed — the untouched side is never "helpfully"
+ * changed behind the user's back.
+ */
+function clampFadeUs(valueUs: MicroSec, durationUs: MicroSec, otherFadeUs: MicroSec): MicroSec {
+  if (typeof valueUs !== 'number' || !Number.isFinite(valueUs)) return 0;
+  const room = Math.max(0, durationUs - Math.max(0, otherFadeUs));
+  return clamp(roundHalfUp(valueUs), 0, room);
+}
+
+/**
+ * Applies an audio patch to every selected clip that HAS audio. Clips on locked
+ * tracks, image clips and clips whose audio was detached are skipped silently
+ * (the inspector only offers the section when at least one clip qualifies).
+ */
+export function applyClipAudioToDraft(
+  d: TimelineDoc,
+  clipIds: readonly Uuid[],
+  patch: ClipAudioPatch,
+): OpResult {
+  let touched = 0;
+  for (const clipId of clipIds) {
+    const loc = locateClip(d, clipId);
+    if (!loc || loc.track.locked) continue;
+    const clip = loc.clip;
+    if (!clipHasAudio(clip) || clip.audio === null) continue;
+    const audio = clip.audio;
+    if (patch.volume !== undefined) {
+      const v = clampFinite(patch.volume, VOLUME_MIN, VOLUME_MAX, 4);
+      if (v !== null) audio.volume = v;
+    }
+    if (patch.muted !== undefined) audio.muted = patch.muted === true;
+    if (patch.fadeInUs !== undefined) {
+      audio.fadeInUs = clampFadeUs(patch.fadeInUs, clip.timelineDurationUs, audio.fadeOutUs);
+    }
+    if (patch.fadeOutUs !== undefined) {
+      audio.fadeOutUs = clampFadeUs(patch.fadeOutUs, clip.timelineDurationUs, audio.fadeInUs);
+    }
+    touched++;
+  }
+  return touched > 0 ? OK : fail('no audio clip in selection');
+}
+
+function audioLabel(patch: ClipAudioPatch): string {
+  const keys = Object.keys(patch);
+  if (keys.length !== 1) return 'Ses ayarları değiştirildi';
+  if (patch.volume !== undefined) return 'Ses seviyesi değiştirildi';
+  if (patch.fadeInUs !== undefined) return 'Ses açılması (fade in) değiştirildi';
+  if (patch.fadeOutUs !== undefined) return 'Ses kapanması (fade out) değiştirildi';
+  return patch.muted === true ? 'Klip sessize alındı' : 'Klip sesi açıldı';
+}
+
+export function setClipAudio(clipIds: readonly Uuid[], patch: ClipAudioPatch): OpResult {
+  let result: OpResult = fail('no audio clip in selection');
+  useDocStore.getState().mutate('clipAudio', audioLabel(patch), (d) => {
+    result = applyClipAudioToDraft(d, clipIds, patch);
+  });
+  assertDocValidDev('setClipAudio');
+  return result;
+}
+
+export interface ClipTransformPatch {
+  x?: number;
+  y?: number;
+  scale?: number;
+  rotationDeg?: number;
+}
+
+export function applyClipTransformToDraft(
+  d: TimelineDoc,
+  clipIds: readonly Uuid[],
+  patch: ClipTransformPatch,
+): OpResult {
+  let touched = 0;
+  for (const clipId of clipIds) {
+    const loc = locateClip(d, clipId);
+    if (!loc || loc.track.locked) continue;
+    const clip = loc.clip;
+    if (!isVisualClip(clip)) continue;
+    const t = clip.transform;
+    if (patch.x !== undefined) {
+      const v = clampFinite(patch.x, -POSITION_LIMIT, POSITION_LIMIT, POSITION_DECIMALS);
+      if (v !== null) t.x = v;
+    }
+    if (patch.y !== undefined) {
+      const v = clampFinite(patch.y, -POSITION_LIMIT, POSITION_LIMIT, POSITION_DECIMALS);
+      if (v !== null) t.y = v;
+    }
+    if (patch.scale !== undefined) {
+      // Ceiling is per-project (layer box <= 8192 px), not a constant.
+      const v = clampFinite(patch.scale, SCALE_MIN, maxClipScale(d.settings), SCALE_DECIMALS);
+      if (v !== null) t.scale = v;
+    }
+    if (patch.rotationDeg !== undefined) {
+      const v = clampFinite(patch.rotationDeg, -ROTATION_LIMIT, ROTATION_LIMIT, ROTATION_DECIMALS);
+      if (v !== null) t.rotationDeg = v;
+    }
+    touched++;
+  }
+  return touched > 0 ? OK : fail('no visual clip in selection');
+}
+
+function transformLabel(patch: ClipTransformPatch): string {
+  const keys = Object.keys(patch);
+  if (keys.length !== 1) return 'Dönüşüm değiştirildi';
+  if (patch.scale !== undefined) return 'Ölçek değiştirildi';
+  if (patch.rotationDeg !== undefined) return 'Döndürme değiştirildi';
+  return 'Konum değiştirildi';
+}
+
+export function setClipTransform(
+  clipIds: readonly Uuid[],
+  patch: ClipTransformPatch,
+): OpResult {
+  let result: OpResult = fail('no visual clip in selection');
+  useDocStore.getState().mutate('clipTransform', transformLabel(patch), (d) => {
+    result = applyClipTransformToDraft(d, clipIds, patch);
+  });
+  assertDocValidDev('setClipTransform');
+  return result;
+}
+
+export function applyClipOpacityToDraft(
+  d: TimelineDoc,
+  clipIds: readonly Uuid[],
+  opacity: number,
+): OpResult {
+  const value = clampFinite(opacity, 0, 1, OPACITY_DECIMALS);
+  if (value === null) return fail('invalid opacity');
+  let touched = 0;
+  for (const clipId of clipIds) {
+    const loc = locateClip(d, clipId);
+    if (!loc || loc.track.locked) continue;
+    if (!isVisualClip(loc.clip)) continue;
+    loc.clip.opacity = value;
+    touched++;
+  }
+  return touched > 0 ? OK : fail('no visual clip in selection');
+}
+
+export function setClipOpacity(clipIds: readonly Uuid[], opacity: number): OpResult {
+  let result: OpResult = fail('no visual clip in selection');
+  useDocStore.getState().mutate('clipOpacity', 'Opaklık değiştirildi', (d) => {
+    result = applyClipOpacityToDraft(d, clipIds, opacity);
+  });
+  assertDocValidDev('setClipOpacity');
+  return result;
+}
+
+/** "Sıfırla": transform + opacity back to their defaults, ONE history entry. */
+export function resetClipTransform(clipIds: readonly Uuid[]): OpResult {
+  let result: OpResult = fail('no visual clip in selection');
+  useDocStore.getState().mutate('clipTransform', 'Dönüşüm sıfırlandı', (d) => {
+    let touched = 0;
+    for (const clipId of clipIds) {
+      const loc = locateClip(d, clipId);
+      if (!loc || loc.track.locked) continue;
+      if (!isVisualClip(loc.clip)) continue;
+      loc.clip.transform = { ...DEFAULT_TRANSFORM };
+      loc.clip.opacity = 1;
+      touched++;
+    }
+    result = touched > 0 ? OK : fail('no visual clip in selection');
+  });
+  assertDocValidDev('resetClipTransform');
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// detachAudio
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the detached audio would land, or the reason it cannot land anywhere.
+ *
+ * With no audio track in the document at all, one is created (`null` target).
+ * When audio tracks exist but none is both unlocked and free at that range the
+ * op REFUSES rather than silently spawning tracks.
+ */
+function detachAudioTarget(
+  d: TimelineDoc,
+  source: MediaClip,
+): { track: Track | null } | { reason: string } {
+  const audioTracks = d.tracks.filter((t) => t.type === 'audio');
+  if (audioTracks.length === 0) return { track: null };
+  const target = audioTracks.find(
+    (t) => !t.locked && fitsInTrack(t, source.timelineStartUs, source.timelineDurationUs),
+  );
+  if (target) return { track: target };
+  return {
+    reason: audioTracks.every((t) => t.locked)
+      ? 'target track is locked'
+      : 'overlaps an existing clip',
+  };
+}
+
+/**
+ * Why `clipId`'s audio cannot be detached, or null when it can.
+ *
+ * Exported so the timeline context menu greys "Sesi ayır" out with EXACTLY the
+ * rule detachAudio enforces (same contract as trackDeleteBlockReason). This
+ * covers the FULL refusal set — clip preconditions AND the placement conflict
+ * ("no unlocked audio track with room"). It used to stop at the clip
+ * preconditions, so the menu happily offered an action the op then rejected
+ * with a warning bubble; a menu must never offer what the op refuses.
+ */
+export function detachAudioBlockReason(d: TimelineDoc, clipId: Uuid): string | null {
+  const loc = locateClip(d, clipId);
+  if (!loc) return 'clip not found';
+  if (loc.track.locked) return 'track is locked';
+  const clip = loc.clip;
+  if (!isMediaClip(clip) || clip.kind !== 'video') return 'only a video clip has detachable audio';
+  if (clip.audio === null) return 'clip has no embedded audio';
+  const target = detachAudioTarget(d, clip);
+  return 'reason' in target ? target.reason : null;
+}
+
+/**
+ * Splits a video clip's embedded audio into its own audio clip.
+ *
+ * The video clip keeps its picture and loses `audio` (plus its volume keyframe
+ * track, which follows the sound). The new audio clip is an EXACT audio twin:
+ * same assetId / sourceIn / sourceOut / speed / timeline range, so the export
+ * compiler renders bit-identical sound (source continuity is what makes the
+ * §8.4 seamless-splice rule keep working).
+ *
+ * Placement: the first UNLOCKED audio track with room at that range. With no
+ * audio track in the document at all one is created. When audio tracks exist
+ * but none has room the op REFUSES (reason -> warning bubble) instead of
+ * silently spawning tracks — the user's remedy is the timeline's "+ Ses" button
+ * or moving the blocking clip.
+ *
+ * One `mutate` = one undo entry for the whole thing.
+ */
+export function detachAudio(clipId: Uuid): OpResult {
+  const d = doc();
+  const blocked = detachAudioBlockReason(d, clipId);
+  if (blocked !== null) return fail(blocked);
+  const source = locateClip(d, clipId)!.clip as MediaClip;
+  const audioSettings = source.audio!;
+  const startUs = source.timelineStartUs;
+  const durationUs = source.timelineDurationUs;
+
+  // Same resolution the block reason used — it already proved a target exists.
+  const placement = detachAudioTarget(d, source);
+  if ('reason' in placement) return fail(placement.reason);
+  const target = placement.track;
+
+  const volumeKeyframes = source.keyframes.volume;
+  const audioClip: MediaClip = {
+    id: uuidv7(),
+    kind: 'audio',
+    assetId: source.assetId,
+    timelineStartUs: startUs,
+    timelineDurationUs: durationUs,
+    sourceInUs: source.sourceInUs,
+    sourceOutUs: source.sourceOutUs,
+    speed: { ...source.speed },
+    audio: { ...audioSettings },
+    transform: { ...DEFAULT_TRANSFORM },
+    keyframes:
+      volumeKeyframes && volumeKeyframes.length > 0
+        ? { volume: JSON.parse(JSON.stringify(volumeKeyframes)) as Keyframe[] }
+        : {},
+    effects: [],
+    opacity: 1,
+  };
+  const newTrack = target ? null : makeTrack('audio', 'Ses');
+
+  useDocStore.getState().mutate('detachAudio', 'Ses ayrıldı', (dd) => {
+    const loc = locateClip(dd, clipId);
+    if (!loc || !isMediaClip(loc.clip)) return;
+    loc.clip.audio = null;
+    delete loc.clip.keyframes.volume;
+    if (newTrack !== null) {
+      newTrack.clips.push(audioClip);
+      dd.tracks.push(newTrack);
+      return;
+    }
+    const t = dd.tracks.find((x) => x.id === target!.id);
+    if (t) insertClipSorted(t, audioClip);
+  });
+  assertDocValidDev('detachAudio');
+  return OK;
 }
 
 // ---------------------------------------------------------------------------

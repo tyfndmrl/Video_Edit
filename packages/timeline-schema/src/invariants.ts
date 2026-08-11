@@ -30,10 +30,69 @@
  *    in [0..1]) and nothing else.
  * 7. All *Us fields are non-negative integers (enforced structurally by the
  *    zod schema).
+ * 8. Audio fades cannot overlap or outrun the clip:
+ *    fadeInUs + fadeOutUs <= timelineDurationUs. This is the SAME rule the
+ *    export compiler enforces (ExportCompiler.ValidateMediaClip) — a document
+ *    that breaks it is rejected with HTTP 422 at export time, so the editor
+ *    must never be able to produce one.
+ * 9. A drawn clip's transform.scale is strictly positive (compiler:
+ *    ExportCompiler.ValidateGeometry). Audio clips produce no visual layer and
+ *    are skipped, exactly like the compiler skips them.
  */
 
 import { clipTimelineDurationUs, frameToUs, roundHalfUp, usToFrame, type MicroSec, type Rational } from './time.js';
-import { isMediaClip, type Clip, type Effect, type MediaClip, type TimelineDoc, type Track, type Transition } from './schema.js';
+import { isMediaClip, type Clip, type Effect, type MediaClip, type ProjectSettings, type TimelineDoc, type Track, type Transition } from './schema.js';
+
+// ---------------------------------------------------------------------------
+// Transform bounds shared with the export compiler
+//
+// These live in the schema package because BOTH sides need the same numbers:
+// the editor clamps writes against them, the C# compiler validates against its
+// own copy. Whenever a value here changes, the backend constant named next to
+// it must change in the same commit.
+// ---------------------------------------------------------------------------
+
+/**
+ * Upper bound (px) for a single rendered layer box.
+ * MIRRORS backend `LayerGeometry.MaxLayerDimension` (8192) — the compiler
+ * rejects a clip whose scaled box exceeds it (UnsupportedFeatureException
+ * "transform-scale"). The two values MUST stay equal.
+ */
+export const MAX_LAYER_DIMENSION = 8192;
+
+/** Decimals a transform.scale is stored with (undo patches stay clean). */
+export const TRANSFORM_SCALE_DECIMALS = 3;
+
+/**
+ * Smallest scale the editor may write. The compiler only requires scale > 0,
+ * but 0 is not a usable editing value: a zero-scale clip draws nothing and
+ * leaves no gizmo box to drag back, so the floor is a positive one instead.
+ * The preview gizmo uses this SAME constant — a control must never propose a
+ * value the op would silently clamp.
+ */
+export const TRANSFORM_SCALE_MIN = 0.01;
+
+/**
+ * Largest scale a clip may take in THIS project (rendering-semantics §2.2).
+ *
+ * The real ceiling is not a constant: the compiler measures the scaled layer
+ * box, so max(width, height) * scale <= MAX_LAYER_DIMENSION. At 1080p that is
+ * ~4.266, at 4K ~2.133.
+ *
+ * Floored — never rounded — to the stored precision: the compiler computes
+ * roundHalfUp(dimension * scale), so a value rounded UP at the third decimal
+ * (e.g. 4.267 at 1920 px -> 8193) would land one pixel past the bound and be
+ * rejected at export.
+ */
+export function maxScaleFor(settings: Pick<ProjectSettings, 'width' | 'height'>): number {
+  const longest = Math.max(settings.width, settings.height);
+  if (!Number.isFinite(longest) || longest <= 0) return TRANSFORM_SCALE_MIN;
+  const factor = 10 ** TRANSFORM_SCALE_DECIMALS;
+  const floored = Math.floor((MAX_LAYER_DIMENSION / longest) * factor) / factor;
+  // A composition larger than 819200 px would drive the ceiling under the
+  // floor; keep max >= min so a UI range control never inverts.
+  return Math.max(TRANSFORM_SCALE_MIN, floored);
+}
 
 /** Known asset durations (us), keyed by assetId. */
 export type AssetDurations = ReadonlyMap<string, MicroSec> | Readonly<Record<string, MicroSec>>;
@@ -231,6 +290,33 @@ function checkClip(
 ): void {
   const clip = clips[clipIndex];
   const path = ['tracks', trackIndex, 'clips', clipIndex];
+
+  // 8. Audio fades must fit inside the clip and never overlap each other.
+  // Duration-shrinking ops (trim, split, roll) have to re-clamp the fades they
+  // did not touch, or the document silently becomes unexportable.
+  if (isMediaClip(clip) && clip.audio !== null) {
+    const { fadeInUs, fadeOutUs } = clip.audio;
+    if (fadeInUs + fadeOutUs > clip.timelineDurationUs) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `audio fades (${fadeInUs}+${fadeOutUs}us) exceed the clip duration (${clip.timelineDurationUs}us)`,
+        path: [...path, 'audio'],
+      });
+    }
+  }
+
+  // 9. A drawn clip must have a positive scale (the compiler rejects <= 0).
+  // The MAX_LAYER_DIMENSION ceiling is deliberately NOT a document invariant:
+  // changing the project resolution can legitimately push existing clips past
+  // it, and failing every later op would be worse than the compiler's
+  // actionable 422. maxScaleFor() clamps that side at write time instead.
+  if (clip.kind !== 'audio' && !(clip.transform.scale > 0)) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `transform.scale must be greater than 0 (a zero/negative scale draws nothing and the export compiler rejects it), got ${clip.transform.scale}`,
+      path: [...path, 'transform', 'scale'],
+    });
+  }
 
   // 1. Ordering + no overlap with the previous clip.
   if (clipIndex > 0) {

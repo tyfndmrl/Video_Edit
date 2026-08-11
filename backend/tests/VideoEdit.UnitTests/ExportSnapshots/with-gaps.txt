@@ -3,11 +3,12 @@
 -ss 2.000000 -t 2.000000 -i assets/b.mp4
 
 # filter_complex_script
-color=c=0x000000:s=1920x1080:r=30/1:d=1.033333,trim=end_frame=30,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[g0];
-[0:v]fps=30/1,trim=end_frame=60,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x000000,setsar=1,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[v0];
-color=c=0x000000:s=1920x1080:r=30/1:d=1.033333,trim=end_frame=30,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[g1];
-[1:v]fps=30/1,trim=end_frame=60,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x000000,setsar=1,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[v1];
-[g0][v0][g1][v1]concat=n=4:v=1:a=0,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv[vout];
+color=c=0x000000:s=1920x1080:r=30/1:d=6.033333,trim=end_frame=180,format=rgba,setsar=1,settb=AVTB,setpts=PTS-STARTPTS[base];
+[0:v]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,fps=30/1,trim=end_frame=60,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,setsar=1,format=rgba,settb=AVTB,setpts=PTS-STARTPTS+1.000000/TB[v0];
+[base][v0]overlay=x=960-0.5*w:y=540-0.5*h:enable='between(t,1.000000,2.983334)':eval=frame:format=rgb[c0];
+[1:v]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,fps=30/1,trim=end_frame=60,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,setsar=1,format=rgba,settb=AVTB,setpts=PTS-STARTPTS+4.000000/TB[v1];
+[c0][v1]overlay=x=960-0.5*w:y=540-0.5*h:enable='between(t,4.000000,5.983334)':eval=frame:format=rgb[c1];
+[c1]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv[vout];
 anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=6.000000[aout]
 
 # output

@@ -120,6 +120,30 @@ public sealed class FfmpegTestMediaFixture : IDisposable
         "-shortest",
     ]);
 
+    /// <summary>
+    /// 2 sn, 320×240 @30fps DÜZ RENK (0x804020 — testsrc2 paletinde bulunmayan kahverengi),
+    /// SESSİZ. Çok katman golden testlerinin "üst katman" kaynağı: düz renk olduğu için
+    /// bindirilen dikdörtgenin sınırları piksel-kesin ölçülebilir.
+    /// </summary>
+    public string VideoSolid320x240NoAudio() => GetOrCreate("solid2s.mp4",
+    [
+        "-y",
+        "-f", "lavfi", "-i", "color=c=0x804020:size=320x240:rate=30:duration=2",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+    ]);
+
+    /// <summary>
+    /// 2 sn, 320×240 @30fps SMPTE renk çubukları, SESSİZ. DOYGUN renkler + SERT dikey kenarlar
+    /// taşır: kompozisyon zincirinde RGB↔YUV gidiş-dönüşü olursa (M4 denetim #1) hata burada
+    /// en büyük genliğe ulaşır — düz renk kaynak bu sınıf hatayı zayıf gösterir.
+    /// </summary>
+    public string VideoBars320x240NoAudio() => GetOrCreate("bars2s.mp4",
+    [
+        "-y",
+        "-f", "lavfi", "-i", "smptebars=size=320x240:rate=30:duration=2",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+    ]);
+
     /// <summary>3 sn 440 Hz sinüs WAV (audio-only asset senaryosu).</summary>
     public string AudioWav() => GetOrCreate("tone.wav",
     [

@@ -64,23 +64,61 @@ Trim'i **input seviyesinde** yap (`-ss X -t D -i file`), filtergraph'ta değil:
 
 ### 2.2 Çoklu katman kompozisyonu (overlay zinciri)
 
-Kural: **Track 0 (en alttaki) taban katmandır; üst track'ler sırayla overlay edilir.** Taban track çıktı tuvalini tam kaplamıyorsa önce sabit renk tuval üretilir:
+> **DÜZELTME (M4 dalga 1 denetimi, bulgu #5).** Bu bölüm önceden *"Track 0 (en alttaki) taban
+> katmandır"* diyordu; bu **yanlıştı** ve şema sözleşmesiyle ÇELİŞİYORDU. Bağlayıcı sözleşme
+> `docs/design/01-frontend-editor.md §1.2` ve `packages/timeline-schema/src/schema.ts`
+> (`TimelineDocSchema.tracks`: *"Index 0 = top layer (render order: last to first)"*):
+> **`tracks[0]` EN ÜST katmandır**, dizi yukarıdan aşağıya sıralıdır (editör katman listesiyle
+> aynı okuma yönü). Uygulama da bu sözleşmeye göre çalışır (`ExportCompiler.Validate`
+> track'leri SONDAN BAŞA planlar). Metin aşağıda düzeltildi; **şema sözleşmesi kazanır** —
+> iki normatif doküman bir daha ters yönde okunmasın.
+
+Kural: **`tracks[^1]` (dizinin SONU = en alttaki katman) taban katmandır; ondan başlayarak
+dizide geriye doğru gidilir, `tracks[0]` (EN ÜST katman) en son overlay edilir.** Taban track
+çıktı tuvalini tam kaplamıyorsa önce sabit renk tuval üretilir:
 
 ```
 color=c=black:s=1920x1080:r=30:d=16[canvas]
 ```
 
+Render sırası (üç track'li örnek):
+
+```
+tracks[0]  ── EN ÜST  ─┐  (en son overlay edilir → çakışmada KAZANIR)
+tracks[1]              │
+tracks[2]  ── EN ALT  ─┘  (tuvale İLK bindirilir)
+
+[canvas][tracks[2]]overlay[c0]; [c0][tracks[1]]overlay[c1]; [c1][tracks[0]]overlay[c2]
+```
+
 Her üst klip:
 
 ```
-[N:v]fps=30,setpts=PTS-STARTPTS+<timelineStart>/TB,
-     scale=w:h,format=yuva444p (veya rgba)[clipN];
-[prev][clipN]overlay=x=..:y=..:enable='between(t,start,end)':eval=frame[next]
+[N:v]setparams=colorspace=bt709:...:range=tv,fps=30,scale=w:h,format=rgba,
+     settb=AVTB,setpts=PTS-STARTPTS+<timelineStart>/TB[clipN];
+[prev][clipN]overlay=x=..:y=..:enable='between(t,start,end)':eval=frame:format=rgb[next]
 ```
 
 - `setpts=...+start/TB` klibi timeline'daki yerine kaydırır; `enable=between(t,...)` görünürlük penceresini kısıtlar. İkisi birlikte kullanılmalı: setpts olmadan overlay ilk frame'den itibaren gösterir, enable olmadan overlay pencere dışında son frame'i dondurur.
 - Overlay zinciri lineer: `[base][c1]overlay[t1]; [t1][c2]overlay[t2]; ...`. 10+ katmanda decode/filter bellek kullanımı artar ama mimari değişmez.
-- Kompozisyon renk uzayı: parity için (Bölüm 7) alpha içeren katmanları `format=rgba` (veya `yuva444p`) üzerinden bindirin; overlay'in `format=auto` ile yuv420'de blend etmesi tarayıcı kompozisyonundan gözle görülür farklı sonuç verir (özellikle yarı saydam kenarlar).
+- **Kompozisyon renk modu GRAFİK BAŞINADIR, katman başına DEĞİL** (M4 dalga 1 denetimi, bulgu #1
+  + #15 — normatif tanım `rendering-semantics §6.3`). Taban tuval dahil tüm katmanlar `format=rgba`
+  ile girer, **her** overlay `:format=rgb` ile blend eder. Katman başına seçmek iki somut hataya
+  yol açar:
+  1. Alpha'lı katmanın ÜSTÜNE opak katman gelince ffmpeg birikmiş RGB kompozisyonu zincirin
+     ortasında yuv'a çevirir → alttaki katmanların renkleri kayar (gerçek render ölçümü: üstteki
+     katmanın **örtmediği** bölgede MSE 89.07, doygun renklerde 24 birim sapma; grafik başına
+     modda aynı ölçüm 0.05).
+  2. 4:2:0 tuval overlay konumunu **temsil edemez**: ffmpeg `overlay` x/y'yi `normalize_xy` ile
+     chroma adımına kırpar (ölçüm: `overlay=x=201` → yuv420'de 200, rgb'de 201). Opak katman çift
+     piksele snap olurken alpha'lı katman olmazdı; yani **aynı transform, opaklığa göre 1 px
+     farklı** yere otururdu. Alt örneklemesiz tuval bunu kökten kaldırır.
+- Kaynak katmanların renk varsayımı (`§6.1`: untagged SDR = BT.709/tv) **RGB'ye geçişten ÖNCE**
+  `setparams` ile beyan edilir; sonra beyan etmek dönüşümü etkilemez, yalnız etiketi düzeltir
+  (ölçüm: beyansız RGB kompozisyonu SD kaynakta 68 birime varan sapma üretiyor).
+- Bedeli ölçüldü ve kabul edildi: 1080p/150 kare/2 katman filtre hattı **~0.86 s → ~1.20 s**
+  (%35-40). Alternatifi yok — 4:2:0 kompozisyon tek piksellik konumu temsil edemediği için
+  "hızlı yol" doğru sonucu üretemez.
 
 ### 2.3 Geçişler — xfade/acrossfade ve zincirde offset matematiği
 
@@ -309,7 +347,7 @@ Fark kaynakları ve stratejiler:
 
 1. **Renk uzayı / gamma.** Tarayıcı videoyu BT.709→sRGB display pipeline'ından geçirir; ffmpeg untagged kaynaklarda tahmin yürütür. Strateji: (i) ingest'te ffprobe ile renk metadata'sını kaydet; untagged 1080p+ kaynağı BT.709 varsay; (ii) proxy üretiminde ve exportta **aynı varsayımı** uygula ve çıktıyı daima açıkça tag'le (`-color_primaries/-color_trc/-colorspace bt709 -color_range tv`); (iii) HDR (BT.2020/PQ/HLG) kaynakları MVP'de `zscale=t=bt709:tin=smpte2084:npl=100,tonemap=hable` ile tone-map edip SDR'a indir — hem proxy hem export aynı zincirden geçsin ki preview'de gördüğü exportta çıksın.
 2. **Font rendering.** Bölüm 3'teki karar bunu çözer: metin tek yerde (SkiaSharp) rasterize edilir, her iki taraf aynı bitmap'i transform eder. drawtext hiç kullanılmadığı için freetype-vs-Canvas metrik farkı diye bir problem sınıfı yok.
-3. **Kompozisyon matematiği.** Canvas/CSS sRGB'de non-linear blend yapar; ffmpeg overlay yuv420'de blend ederse farklı görünür → alpha'lı katmanlarda `format=rgba` zorla (2.2). Premultiplied alpha'ya dikkat: SkiaSharp çıktı PNG'leri straight alpha ile kaydedilmeli (PNG zaten straight'tir; Skia surface'tan `Unpremul` ile encode et).
+3. **Kompozisyon matematiği.** Canvas/CSS sRGB'de non-linear blend yapar; ffmpeg overlay yuv420'de blend ederse farklı görünür → **grafiğin tamamında** `format=rgba` + `overlay:format=rgb` zorla (2.2; katman başına seçmek yasak — orada ölçümleriyle anlatıldı). Premultiplied alpha'ya dikkat: SkiaSharp çıktı PNG'leri straight alpha ile kaydedilmeli (PNG zaten straight'tir; Skia surface'tan `Unpremul` ile encode et).
 4. **Renk düzeltme parity.** eq/curves'ün tarayıcıdaki karşılığı (CSS filter/WebGL shader) formül olarak birebir değildir. MVP: preview'de WebGL shader'ları **ffmpeg eq formülünü aynen implemente ederek** yaz (formüller basit ve dokümante). Faz 3: her ikisi de aynı 3D LUT'u uygular (2.6) → tam eşitlik.
 5. **Zamanlama.** Tamsayı µs + frame-snap pass (Bölüm 1) + geçiş overlap kuralının iki tarafta aynı formülle uygulanması. Preview player'ı da frame index üzerinden konuşmalı (`currentFrame`), saniye üzerinden değil.
 6. **Proxy farkı.** Preview proxy'den (örn. 960×540) çalışır; keskinlik/detay farkı kaçınılmaz ve kabul edilir — kullanıcıya "önizleme düşük çözünürlüklüdür" bilgisi. Proxy üretiminde renk zinciri exportla aynı olmalı (aynı tonemap/tag), yoksa fark keskinlik değil renk olur ve şikayet üretir.

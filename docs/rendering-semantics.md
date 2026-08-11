@@ -183,46 +183,93 @@ ndc.x =  2 * p_screen.x / W - 1
 ndc.y =  1 - 2 * p_screen.y / H
 ```
 
-### 2.5 ffmpeg karşılığı (scale + rotate + overlay)
+### 2.5 ffmpeg karşılığı (scale + çapa pad'i + rotate + overlay)
 
 ffmpeg `rotate` filtresi **daima görüntü merkezinde döner ve anchor desteklemez**; telafi
-overlay pozisyonuna taşınır. Compiler adımları:
+şeffaf bir pad'e ve overlay pozisyonuna taşınır.
 
-**Adım 1 — scale:** çizim boyutuna ölçekle (rgba ara format; çift-sayı şartı yalnız son
-yuv420p çıktıdadır, overlay girişinde gerekmez ama determinism için yine de yuvarlanır):
+> **SÖZLEŞME GÜNCELLEMESİ (M4 dalga 1 denetimi, bulgu #4).** Bu bölüm önceden çapa telafisini
+> kapalı formda (`a'x/a'y` ile) tarif ediyordu ve o reçete **kaynağın doğal boyutunu (`w_s,h_s`)
+> bilmeyi zorunlu kılıyordu**. Uygulama bilinçli olarak kaynak boyutundan BAĞIMSIZ kurulur:
+> ölçek hedefi yalnız proje tuvali × `scale`'dir, aspect'i ffmpeg'in kendi
+> `force_original_aspect_ratio=decrease` kuralı korur. Böylece hatalı/eksik bir probe
+> geometriyi kaydıramaz ve `fit=contain × scale` TEK resample'da birleşir. Aşağıdaki dört adım
+> artık **normatif reçetedir**; eski kapalı form §2.5.1'de *bilgilendirici* olarak durur.
+> İki taraf da §2.4'ün açık piksel formülüne uyar — bağlayıcı olan odur.
+
+**Adım 1 — scale (kaynak boyutundan bağımsız):** hedef kutu proje tuvalinin `scale` katıdır:
 
 ```
-w_px = roundHalfUp(w_d);  h_px = roundHalfUp(h_d)
-scale=w=<w_px>:h=<h_px>:flags=bicubic,format=rgba
+boxW = roundHalfUp(W * scale);  boxH = roundHalfUp(H * scale)
+scale=w=<boxW>:h=<boxH>:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic
 ```
 
-**Adım 2 — rotate (yalnız θ ≠ 0 ise):** genişletilmiş şeffaf tuvale döndür. Tuval boyutu
-compiler tarafından önceden hesaplanır (ffmpeg expression'ına bırakılmaz — determinism):
+`decrease` aspect'i koruyup kutuya sığdırdığı için sonuç tam olarak `w_fit*scale × h_fit*scale`
+(= §2.2'nin `w_d × h_d`'si) olur. Filtre çıkışındaki gerçek boyut `w_px × h_px` ile gösterilir
+(`w_px ≤ boxW`, `h_px ≤ boxH`).
+
+**Adım 2 — çapa pad'i (yalnız θ ≠ 0 **ve** çapa merkezde değilse):** görüntü, ÇAPASI padded
+tuvalin tam merkezine gelecek şekilde şeffaf tuvale yerleştirilir:
 
 ```
-Dg = ceil(hypot(w_px, h_px))                  // dönen kutuyu her açıda kapsar
-rotate=a=<θ_rad>:c=none:ow=<Dg>:oh=<Dg>
+mx = max(anchorX, 1-anchorX);   my = max(anchorY, 1-anchorY)
+pad=w=iw*<2*mx>:h=ih*<2*my>:x=iw*<mx-anchorX>:y=ih*<my-anchorY>:color=#00000000
+padW = w_px * 2*mx;   padH = h_px * 2*my
 ```
 
-`rotate` çıkışında görüntü merkezi tuval merkezindedir (`Dg/2, Dg/2`).
+Çapa `0.5` iken `2*mx = 1` ve offset `0`'dır → pad **üretilmez** (no-op).
 
-**Adım 3 — overlay pozisyonu (telafi formülü):** çapanın döndürülmüş tuval içindeki yeri:
+**Adım 3 — rotate (yalnız θ ≠ 0 ise):** merkez etrafında dönme, çapa merkeze taşındığı için
+fiilen **çapa etrafında** dönmedir:
+
+```
+Dg = ceil(hypot(padW, padH))                  // dönen kutuyu her açıda kapsar
+rotate=a=<θ_rad>:c=none:ow=hypot(iw\,ih):oh=ow
+```
+
+`ow/oh` ffmpeg ifadesiyle yazılır çünkü compiler `w_px/h_px`'i bilmez; ifade **config anında bir
+kez** değerlendirilir (frame başına değil) → determinism korunur. `Dg` yine de compiler
+tarafından kutudan (üst sınır olarak) hesaplanır — **bellek tavanı bu değerden doğrulanır**:
+
+```
+MaxLayerDimension = 8192       // ara tuval kenarı; 8192² rgba ≈ 256 MB/kare
+Dg ≤ MaxLayerDimension  (θ = 0 iken boxW, boxH ≤ MaxLayerDimension)
+```
+
+Tavanı **scale kutusuna** uygulamak yetmez: pad 2x, rotate ~1.41x büyütür; kutudan doğrulamak
+gerçek tavanı ≈23170 piksele (rgba'da ~2.1 GB/kare → worker OOM) taşır (denetim bulgusu #2).
+
+**Adım 4 — overlay pozisyonu:** çapa, dönen katmanda tuvalin tam ortasındadır; dönmeyende kendi
+kutusundaki oranındadır:
+
+```
+θ ≠ 0:   overlay_x = P.x - 0.5 * w        overlay_y = P.y - 0.5 * h
+θ = 0:   overlay_x = P.x - anchorX * w    overlay_y = P.y - anchorY * h
+```
+
+(`w/h` = overlay girişinin ffmpeg değişkenleridir; adım 3'ten sonra ikisi de `Dg`'dir.)
+
+**Konum kuantalanması (NORMATİF):** overlay konumu **alt örneklenmemiş** bir kompozisyon
+tuvalinde değerlendirilmelidir. ffmpeg `overlay`, 4:2:0 tuvalde `x/y`'yi chroma adımına kırpar
+(`normalize_xy`) — `overlay=x=201` yuv420'de **200**'e oturur, rgb'de 201'de kalır. Bu yüzden
+kompozisyon tuvali daima RGB'dir (§6.3); aksi halde aynı transform, katmanın opaklığına göre
+1 px farklı yere düşerdi.
+
+#### 2.5.1 Eşdeğer kapalı form (bilgilendirici)
+
+Kaynak boyutu biliniyorsa aynı sonuç pad'siz de yazılabilir — iki hat aritmetik olarak eşdeğerdir:
 
 ```
 cx = w_px / 2;  cy = h_px / 2                          // çizim merkezi
 ax = anchorX * w_px;  ay = anchorY * h_px              // çapa
-a'x = Dg/2 + cos(θ)*(ax - cx) - sin(θ)*(ay - cy)
-a'y = Dg/2 + sin(θ)*(ax - cx) + cos(θ)*(ay - cy)
-overlay_x = P.x - a'x
-overlay_y = P.y - a'y
+D  = ceil(hypot(w_px, h_px))
+a'x = D/2 + cos(θ)*(ax - cx) - sin(θ)*(ay - cy)
+a'y = D/2 + sin(θ)*(ax - cx) + cos(θ)*(ay - cy)
+overlay_x = P.x - a'x ;   overlay_y = P.y - a'y
 ```
 
-θ = 0 iken rotate atlanır ve doğrudan:
-
-```
-overlay_x = P.x - anchorX * w_px
-overlay_y = P.y - anchorY * h_px
-```
+Bu form daha küçük bir ara tuval kullanır (`D ≤ Dg`) ama kaynak boyutuna bağımlıdır; MVP'de
+tercih edilmemiştir. Geçilirse §2.5'in tavan kuralı `D` üzerinden uygulanır.
 
 Doğrulama invaryantı (unit test): her iki hattın formülüne aynı `(x, y, scale, rotationDeg,
 anchor)` girildiğinde **çapa pikselinin ekran koordinatı birebir aynı çıkmalı**; köşe
@@ -546,8 +593,26 @@ out.rgb = src.rgb * src.a + dst.rgb * (1 - src.a)
 out.a   = src.a + dst.a * (1 - src.a)
 ```
 
-- ffmpeg tarafında alpha içeren her katman `format=rgba` ile overlay'e girer — `format=auto`
-  ile yuv420 blend **YASAK** (yarı saydam kenarlarda tarayıcıdan görünür fark üretir).
+- **Kompozisyon renk modu GRAFİK BAŞINADIR, katman başına DEĞİL (NORMATİF).** Bir grafikteki
+  taban tuval ve TÜM katmanlar `format=rgba` ile girer, **her** overlay `:format=rgb` ile blend
+  eder. `format=auto`/yuv420 blend **YASAK**. Gerekçe iki ölçülmüş hatadır (M4 dalga 1 denetimi):
+  1. **Zincir ortasında renk uzayı değişimi.** Katman başına seçildiğinde alpha'lı katmanın
+     overlay'i RGB'de, üstündeki opak katmanın overlay'i 4:2:0'da çalışır; ffmpeg birikmiş RGB
+     kompozisyonu araya sıkışan dönüşümle yuv'a çevirir ve **alttaki katmanların renkleri kayar**.
+     Gerçek render ölçümü: üstteki katmanın *örtmediği* bölgede MSE 89.07 (doygun renklerde 24
+     birim); grafik başına RGB modunda aynı ölçüm 0.05.
+  2. **Konum kuantalanması.** 4:2:0 tuval tek piksellik overlay konumunu temsil edemez
+     (`normalize_xy`, §2.5): opak katman çift piksele snap olur, alpha'lı katman olmaz → *aynı*
+     transform opaklığa göre 1 px farklı yere oturur. Alt örneklemesiz tuval bunu kaldırır.
+
+  Bedeli ölçüldü ve kabul edildi: 1080p/150 kare/2 katman filtre hattı ~0.86 s → ~1.20 s.
+  "Hızlı yol" (yalnız alpha varken RGB'ye geçmek) doğru sonucu üretemez, çünkü 2. madde
+  alpha'dan bağımsızdır.
+- **Kaynak renk beyanı dönüşümden ÖNCE gelir.** §6.1'in "untagged SDR = BT.709/tv" varsayımı,
+  katman zincirinin BAŞINDA (`setparams=colorspace=bt709:...:range=tv`) beyan edilmelidir.
+  Sonra beyan etmek pikselleri değiştirmez, yalnız etiketi düzeltir: RGB'ye geçişi swscale kendi
+  varsayılanıyla (SD çözünürlükte BT.601) yapar ve kompozisyon renkleri kayar (ölçüm: 68 birime
+  varan sapma). Varsayımın **hesaba girmesi** bu beyanla sağlanır.
 - Klip `opacity`'si (statik veya keyframe'li) `src.a` çarpanıdır: `src.a *= opacity`.
   ffmpeg'de `format=rgba,colorchannelmixer=aa=<opacity>` (statik) veya fade/sendcmd (animasyonlu,
   design 04 §2.5).

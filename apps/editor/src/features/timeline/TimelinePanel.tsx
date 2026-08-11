@@ -36,6 +36,7 @@ import {
   cutClips,
   deleteClips,
   deleteTrack,
+  detachAudio,
   duplicateClips,
   hasClipboardContent,
   knownAssetDurations,
@@ -901,6 +902,9 @@ export function TimelinePanel() {
           return;
         case 'trimEndToPlayhead':
           reportOp(trimSelectedToPlayhead('right'));
+          return;
+        case 'detachAudio':
+          if (target.kind === 'clip') reportOp(detachAudio(target.clipId));
           return;
         case 'paste':
           reportOp(pasteAtPlayhead());

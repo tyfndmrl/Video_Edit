@@ -18,9 +18,11 @@ const US = 1_000_000;
 const PROJECT_ID = '01890000-0000-7000-8000-000000000001';
 const ASSET_A = '01890000-0000-7000-8000-00000000000a';
 const CLIP_A = '01890000-0000-7000-8000-000000000201';
+const CLIP_B = '01890000-0000-7000-8000-000000000202';
 const V1 = '01890000-0000-7000-8000-000000000101';
 const V2 = '01890000-0000-7000-8000-000000000102';
 const A1 = '01890000-0000-7000-8000-000000000103';
+const A2 = '01890000-0000-7000-8000-000000000104';
 
 function clip(id: string, startUs: number, durationUs: number): MediaClip {
   return {
@@ -97,10 +99,13 @@ describe('buildTimelineMenu — klip bağlamı', () => {
       'rippleDelete',
       'trimStartToPlayhead',
       'trimEndToPlayhead',
+      'detachAudio',
     ]);
-    expect(entries.filter((e) => e.kind === 'separator')).toHaveLength(1);
+    expect(entries.filter((e) => e.kind === 'separator')).toHaveLength(2);
     // Ayraç ripple sil ile kırpma çifti arasında.
     expect(entries.findIndex((e) => e.kind === 'separator')).toBe(6);
+    // İkinci ayraç kırpma çifti ile "Sesi ayır" arasında.
+    expect(entries.map((e) => e.kind).lastIndexOf('separator')).toBe(9);
   });
 
   it('carries the shortcut hints of the existing keyboard actions', () => {
@@ -149,9 +154,76 @@ describe('buildTimelineMenu — klip bağlamı', () => {
       'rippleDelete',
       'trimStartToPlayhead',
       'trimEndToPlayhead',
+      'detachAudio',
     ] as const) {
       expect(find(entries, id).disabled, id).toBe(true);
     }
+  });
+
+  describe('"Sesi ayır"', () => {
+    it('is enabled only on a video clip that still owns its audio', () => {
+      expect(find(buildTimelineMenu(ctx()), 'detachAudio').disabled).toBe(false);
+    });
+
+    it('is disabled once the audio has already been detached', () => {
+      const detached = clip(CLIP_A, 0, 10 * US);
+      detached.audio = null;
+      const doc = docWith([track(V1, 'video', [detached])]);
+      expect(find(buildTimelineMenu(ctx({ doc })), 'detachAudio').disabled).toBe(true);
+    });
+
+    it('is disabled on an audio clip (nothing to separate)', () => {
+      const audioClip = clip(CLIP_A, 0, 10 * US);
+      audioClip.kind = 'audio';
+      const doc = docWith([track(A1, 'audio', [audioClip])]);
+      expect(find(buildTimelineMenu(ctx({ doc })), 'detachAudio').disabled).toBe(true);
+    });
+
+    it('is disabled on an image clip (no embedded audio)', () => {
+      const imageClip = clip(CLIP_A, 0, 10 * US);
+      imageClip.kind = 'image';
+      imageClip.audio = null;
+      const doc = docWith([track(V1, 'video', [imageClip])]);
+      expect(find(buildTimelineMenu(ctx({ doc })), 'detachAudio').disabled).toBe(true);
+    });
+
+    /**
+     * The op refuses when no unlocked audio track has room at that range; the
+     * menu used to offer the item anyway and the user got a warning bubble
+     * instead of a greyed-out row. Disabled state = the op's FULL refusal set.
+     */
+    it('is disabled when every audio track is blocked by an overlapping clip', () => {
+      const blocker = clip(CLIP_B, 5 * US, 10 * US);
+      blocker.kind = 'audio';
+      const doc = docWith([
+        track(V1, 'video', [clip(CLIP_A, 0, 10 * US)]),
+        track(A1, 'audio', [blocker]),
+      ]);
+      expect(find(buildTimelineMenu(ctx({ doc })), 'detachAudio').disabled).toBe(true);
+    });
+
+    it('is disabled when the only audio track is locked', () => {
+      const doc = docWith([
+        track(V1, 'video', [clip(CLIP_A, 0, 10 * US)]),
+        track(A1, 'audio', [], { locked: true }),
+      ]);
+      expect(find(buildTimelineMenu(ctx({ doc })), 'detachAudio').disabled).toBe(true);
+    });
+
+    it('stays ENABLED when a blocked audio track is followed by a free one', () => {
+      const blocker = clip(CLIP_B, 5 * US, 10 * US);
+      blocker.kind = 'audio';
+      const doc = docWith([
+        track(V1, 'video', [clip(CLIP_A, 0, 10 * US)]),
+        track(A1, 'audio', [blocker]),
+        track(A2, 'audio', []),
+      ]);
+      expect(find(buildTimelineMenu(ctx({ doc })), 'detachAudio').disabled).toBe(false);
+    });
+
+    it('stays ENABLED with no audio track at all (the op creates one)', () => {
+      expect(find(buildTimelineMenu(ctx()), 'detachAudio').disabled).toBe(false);
+    });
   });
 
   it('greys everything out when document mutation is not allowed (project loading)', () => {

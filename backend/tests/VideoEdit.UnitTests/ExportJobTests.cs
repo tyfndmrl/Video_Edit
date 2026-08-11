@@ -78,13 +78,26 @@ public sealed class ExportJobTests : IDisposable
     [Fact]
     public async Task Run_UnsupportedFeatureSnapshot_FailsWithoutRetry()
     {
+        // Çok katman ARTIK desteklenir (M4 dalga 1); kapsam dışı kalan metin klibiyle test edilir.
         var doc = ExportTestDocs.Doc(clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000));
         doc.Tracks.Add(new VideoEdit.Contracts.Timeline.Track
         {
             Id = Guid.CreateVersion7(),
             Type = VideoEdit.Contracts.Timeline.TrackType.Overlay,
-            // Dolu ikinci track — boş track'ler artık yok sayılır (editör kapsam düzeltmesi).
-            Clips = [ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 1_000_000)],
+            Clips =
+            [
+                new VideoEdit.Contracts.Timeline.TextClip
+                {
+                    Id = Guid.CreateVersion7(),
+                    Kind = "text",
+                    TimelineStartUs = 0,
+                    TimelineDurationUs = 1_000_000,
+                    Transform = ExportTestDocs.DefaultTransform(),
+                    Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks(),
+                    Effects = [],
+                    Opacity = 1,
+                },
+            ],
         });
         var job = await SeedExportJobAsync(ExportTestDocs.ToJson(doc));
 
@@ -92,7 +105,7 @@ public sealed class ExportJobTests : IDisposable
 
         var reloaded = Reload(job.Id);
         Assert.Equal(JobStatus.Failed, reloaded.Status);
-        Assert.Contains("unsupported-feature:multiple-tracks", reloaded.ErrorMessage);
+        Assert.Contains("unsupported-feature:text-clip", reloaded.ErrorMessage);
         Assert.NotNull(reloaded.CompletedAt);
     }
 

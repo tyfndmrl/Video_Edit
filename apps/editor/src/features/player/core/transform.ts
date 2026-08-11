@@ -80,6 +80,25 @@ export function sourceToScreen(p: Placement, sx: number, sy: number): { x: numbe
   };
 }
 
+/**
+ * Exact inverse of sourceToScreen(): which SOURCE pixel lands on this
+ * composition-space point? Used by the preview gizmo to hit-test the (rotated)
+ * clip quad — inside the quad iff 0 <= sx <= srcW and 0 <= sy <= srcH.
+ *
+ *   dx = x - P.x ; dy = y - P.y
+ *   u  =  cos*dx + sin*dy      (inverse rotation)
+ *   v  = -sin*dx + cos*dy
+ *   sx = (u + a.x) / s ; sy = (v + a.y) / s
+ */
+export function screenToSource(p: Placement, x: number, y: number): { x: number; y: number } {
+  if (p.s === 0) return { x: Number.NaN, y: Number.NaN };
+  const dx = x - p.px;
+  const dy = y - p.py;
+  const u = p.cos * dx + p.sin * dy;
+  const v = -p.sin * dx + p.cos * dy;
+  return { x: (u + p.ax) / p.s, y: (v + p.ay) / p.s };
+}
+
 /** Screen px -> NDC (§2.4): ndc.x = 2x/W - 1, ndc.y = 1 - 2y/H. */
 export function screenToNdc(compW: number, compH: number, x: number, y: number): { x: number; y: number } {
   return { x: (2 * x) / compW - 1, y: 1 - (2 * y) / compH };

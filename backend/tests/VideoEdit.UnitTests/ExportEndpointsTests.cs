@@ -156,23 +156,48 @@ public sealed class ExportEndpointsTests : IDisposable
     [Fact]
     public async Task StartExport_UnsupportedFeature_Returns422_WithoutQueueingGarbage()
     {
-        // İki DOLU track'li doküman — compiler ön-doğrulaması API'de koşar, kuyruğa hiç girmez.
-        var doc = ExportTestDocs.Doc(clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000));
-        doc.Tracks.Add(new VideoEdit.Contracts.Timeline.Track
+        // Kapsam dışı özellik (geçiş) — compiler ön-doğrulaması API'de koşar, kuyruğa hiç girmez.
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.TransitionOut = new VideoEdit.Contracts.Timeline.Transition
         {
-            Id = Guid.CreateVersion7(),
-            Type = VideoEdit.Contracts.Timeline.TrackType.Overlay,
-            Clips = [ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 1_000_000)],
-        });
-        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(doc));
+            Type = VideoEdit.Contracts.Timeline.TransitionType.Crossfade,
+            DurationUs = 250_000,
+        };
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
 
         var result = await CallStartAsync(project.Id);
 
         var problem = Assert.IsType<ProblemHttpResult>(result);
         Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
-        Assert.Contains("track", problem.ProblemDetails.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("geçiş", problem.ProblemDetails.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(_db.Jobs.ToList()); // job satırı yazılmadı
         Assert.Equal(0, _jobs.CreateCount); // kuyruğa çöp atılmadı
+    }
+
+    [Fact]
+    public async Task StartExport_MultipleLayers_Accepted()
+    {
+        // M4 dalga 1: editör artık çok katman üretiyor — ön-doğrulama bunu REDDETMEMELİ.
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 1_000_000,
+                    transform: ExportTestDocs.Transform(x: 0.25, scale: 0.4), opacity: 0.75),
+            ]),
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000)]),
+            ExportTestDocs.AudioTrack(clips:
+                [ExportTestDocs.AudioClip(ExportTestDocs.AssetC, 0, 0, 2_000_000)]),
+        ]);
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(doc));
+
+        var result = await CallStartAsync(project.Id);
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(result);
+        Assert.Single(_db.Jobs.ToList());
+        Assert.Equal(1, _jobs.CreateCount);
     }
 
     [Fact]

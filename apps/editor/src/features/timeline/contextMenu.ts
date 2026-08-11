@@ -8,7 +8,7 @@
  * op'un reddedeceği bir eylemi asla teklif etmemeli).
  */
 import type { MicroSec, TimelineDoc, Track, Uuid } from '@videoedit/timeline-schema';
-import { clipEndUs, trackDeleteBlockReason } from '../../state/timelineOps';
+import { clipEndUs, detachAudioBlockReason, trackDeleteBlockReason } from '../../state/timelineOps';
 
 export type TimelineMenuActionId =
   | 'splitAtPlayhead'
@@ -19,6 +19,7 @@ export type TimelineMenuActionId =
   | 'rippleDelete'
   | 'trimStartToPlayhead'
   | 'trimEndToPlayhead'
+  | 'detachAudio'
   | 'paste'
   | 'toggleMuted'
   | 'toggleHidden'
@@ -128,6 +129,16 @@ function clipMenu(ctx: TimelineMenuContext, clipId: Uuid): TimelineMenuEntry[] {
     SEPARATOR,
     item('trimStartToPlayhead', "Klip başını playhead'e kırp", 'Q', !editable || !playheadInside),
     item('trimEndToPlayhead', "Klip sonunu playhead'e kırp", 'W', !editable || !playheadInside),
+    SEPARATOR,
+    // Yalnız KENDİ sesi olan video klipte aktif — disabled kuralı op'un ret
+    // koşulunun ta kendisi (detachAudioBlockReason), menü hiç reddedilecek bir
+    // eylem teklif etmez.
+    item(
+      'detachAudio',
+      'Sesi ayır',
+      undefined,
+      !ctx.mutationAllowed || detachAudioBlockReason(ctx.doc, clipId) !== null,
+    ),
   ];
 }
 
