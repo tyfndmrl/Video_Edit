@@ -21,6 +21,19 @@ export interface PlacementInput {
   compW: number;
   compH: number;
   transform: Transform;
+  /**
+   * Source px -> composition px factor at `transform.scale === 1`, REPLACING
+   * the fit=contain factor. Omitted (the normal case) means §2.2 fit=contain.
+   *
+   * Why it exists: §2.2's "scale = 1 means fit" is a rule about MEDIA, whose
+   * natural size carries no meaning in composition space. An overlay raster
+   * (text/shape, §7) is the opposite: it is rasterized AT a known project-space
+   * size (`rasterPx = bboxPx * 2`) and must be drawn at `bboxPx * scale`, i.e.
+   * with a fixed factor of 1/2 — fitting it to the composition would blow a
+   * 400 px caption up to full frame. Both sides (preview compositor, gizmo and
+   * the future SkiaSharp/export path) use this same single number.
+   */
+  baseScale?: number;
 }
 
 /** Precomputed placement factors for one clip at one instant. */
@@ -48,7 +61,11 @@ export function fitScale(srcW: number, srcH: number, compW: number, compH: numbe
 
 export function computePlacement(input: PlacementInput): Placement {
   const { srcW, srcH, compW, compH, transform } = input;
-  const s = fitScale(srcW, srcH, compW, compH) * transform.scale;
+  const base =
+    input.baseScale !== undefined && Number.isFinite(input.baseScale) && input.baseScale > 0
+      ? input.baseScale
+      : fitScale(srcW, srcH, compW, compH);
+  const s = base * transform.scale;
   const wDraw = srcW * s;
   const hDraw = srcH * s;
   const theta = (transform.rotationDeg * Math.PI) / 180;

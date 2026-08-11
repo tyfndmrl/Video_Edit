@@ -24,6 +24,8 @@ import {
   type ClipAudio,
   type MicroSec,
   type Rational,
+  type ShapeClip,
+  type TextClip,
   type TimelineDoc,
   type Track,
   type Uuid,
@@ -38,6 +40,7 @@ export const FADE_SLIDER_MAX_US = 5_000_000;
 /** A number every selected clip agrees on, or null when they differ. */
 export type CommonNumber = number | null;
 export type CommonBoolean = boolean | null;
+export type CommonString = string | null;
 
 export interface ClipIdentity {
   clipId: Uuid;
@@ -73,6 +76,43 @@ export interface VisualSection {
   opacity: CommonNumber;
 }
 
+/**
+ * Text style section (M4 wave 2). Optional schema objects (`stroke`,
+ * `background`) are flattened into an `*Enabled` toggle plus their fields, so a
+ * mixed selection can say "some have an outline" without the panel having to
+ * reason about undefined vs missing.
+ */
+export interface TextSection {
+  /** Clips this section writes to (text clips only). */
+  clipIds: Uuid[];
+  content: CommonString;
+  fontId: CommonString;
+  fontSizePx: CommonNumber;
+  fontWeight: CommonNumber;
+  italic: CommonBoolean;
+  fill: CommonString;
+  align: CommonString;
+  lineHeight: CommonNumber;
+  strokeEnabled: CommonBoolean;
+  strokeColor: CommonString;
+  strokeWidthPx: CommonNumber;
+  backgroundEnabled: CommonBoolean;
+  backgroundColor: CommonString;
+  backgroundPaddingPx: CommonNumber;
+  backgroundRadiusPx: CommonNumber;
+}
+
+export interface ShapeSection {
+  /** Clips this section writes to (shape clips only). */
+  clipIds: Uuid[];
+  type: CommonString;
+  fill: CommonString;
+  strokeEnabled: CommonBoolean;
+  strokeColor: CommonString;
+  strokeWidthPx: CommonNumber;
+  radiusPx: CommonNumber;
+}
+
 export interface ClipInspectorModel {
   /** Selected clips that still exist in the document. */
   count: number;
@@ -82,6 +122,8 @@ export interface ClipInspectorModel {
   identity: ClipIdentity | null;
   audio: AudioSection | null;
   visual: VisualSection | null;
+  text: TextSection | null;
+  shape: ShapeSection | null;
 }
 
 export interface AssetNameSource {
@@ -112,6 +154,12 @@ export function commonNumber(values: readonly number[]): CommonNumber {
 }
 
 export function commonBoolean(values: readonly boolean[]): CommonBoolean {
+  if (values.length === 0) return null;
+  const first = values[0];
+  return values.every((v) => v === first) ? first : null;
+}
+
+export function commonString(values: readonly string[]): CommonString {
   if (values.length === 0) return null;
   const first = values[0];
   return values.every((v) => v === first) ? first : null;
@@ -180,7 +228,15 @@ export function buildClipInspectorModel(
 ): ClipInspectorModel {
   const located = locate(doc, selection);
   if (located.length === 0) {
-    return { count: 0, editable: false, identity: null, audio: null, visual: null };
+    return {
+      count: 0,
+      editable: false,
+      identity: null,
+      audio: null,
+      visual: null,
+      text: null,
+      shape: null,
+    };
   }
 
   const editable = located.every((l) => !l.track.locked);
@@ -224,7 +280,73 @@ export function buildClipInspectorModel(
           opacity: commonNumber(visualClips.map((c) => c.opacity)),
         };
 
-  return { count: located.length, editable, identity, audio, visual };
+  // Text / shape styles (M4 wave 2). A selection can legitimately mix kinds
+  // (a caption and its background box): each section appears when at least one
+  // clip of its kind is selected and writes ONLY to those clips.
+  const textClips = located.map((l) => l.clip).filter((c): c is TextClip => c.kind === 'text');
+  const text: TextSection | null =
+    textClips.length === 0
+      ? null
+      : {
+          clipIds: textClips.map((c) => c.id),
+          content: commonString(textClips.map((c) => c.text.content)),
+          fontId: commonString(textClips.map((c) => c.text.fontId)),
+          fontSizePx: commonNumber(textClips.map((c) => c.text.fontSizePx)),
+          fontWeight: commonNumber(textClips.map((c) => c.text.fontWeight)),
+          italic: commonBoolean(textClips.map((c) => c.text.italic)),
+          fill: commonString(textClips.map((c) => c.text.fill)),
+          align: commonString(textClips.map((c) => c.text.align)),
+          lineHeight: commonNumber(textClips.map((c) => c.text.lineHeight)),
+          strokeEnabled: commonBoolean(textClips.map((c) => c.text.stroke !== undefined)),
+          strokeColor: commonString(
+            textClips.map((c) => c.text.stroke?.color).filter((v): v is string => v !== undefined),
+          ),
+          strokeWidthPx: commonNumber(
+            textClips
+              .map((c) => c.text.stroke?.widthPx)
+              .filter((v): v is number => v !== undefined),
+          ),
+          backgroundEnabled: commonBoolean(textClips.map((c) => c.text.background !== undefined)),
+          backgroundColor: commonString(
+            textClips
+              .map((c) => c.text.background?.color)
+              .filter((v): v is string => v !== undefined),
+          ),
+          backgroundPaddingPx: commonNumber(
+            textClips
+              .map((c) => c.text.background?.paddingPx)
+              .filter((v): v is number => v !== undefined),
+          ),
+          backgroundRadiusPx: commonNumber(
+            textClips
+              .map((c) => c.text.background?.radiusPx)
+              .filter((v): v is number => v !== undefined),
+          ),
+        };
+
+  const shapeClips = located.map((l) => l.clip).filter((c): c is ShapeClip => c.kind === 'shape');
+  const shape: ShapeSection | null =
+    shapeClips.length === 0
+      ? null
+      : {
+          clipIds: shapeClips.map((c) => c.id),
+          type: commonString(shapeClips.map((c) => c.shape.type)),
+          fill: commonString(shapeClips.map((c) => c.shape.fill)),
+          strokeEnabled: commonBoolean(shapeClips.map((c) => c.shape.stroke !== undefined)),
+          strokeColor: commonString(
+            shapeClips.map((c) => c.shape.stroke?.color).filter((v): v is string => v !== undefined),
+          ),
+          strokeWidthPx: commonNumber(
+            shapeClips
+              .map((c) => c.shape.stroke?.widthPx)
+              .filter((v): v is number => v !== undefined),
+          ),
+          radiusPx: commonNumber(
+            shapeClips.map((c) => c.shape.radiusPx ?? 0),
+          ),
+        };
+
+  return { count: located.length, editable, identity, audio, visual, text, shape };
 }
 
 // ---------------------------------------------------------------------------

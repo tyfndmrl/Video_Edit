@@ -141,6 +141,65 @@ describe('computeGizmoGeometry', () => {
     expect(g.anchor).toEqual({ x: 480, y: 540 });
   });
 
+  /**
+   * Overlay clips (text/shape, §7) are drawn at bbox * scale, not fit to the
+   * composition. The box the user grabs must follow the SAME rule or every
+   * handle would sit off the glyphs — this is the gizmo half of the
+   * baseScale contract (core/transform.ts).
+   */
+  it('an overlay raster box uses baseScale, not fit=contain', () => {
+    // 800x200 raster = 400x100 project px at the 2x raster factor.
+    const g = computeGizmoGeometry({
+      srcW: 800,
+      srcH: 200,
+      compW: COMP_W,
+      compH: COMP_H,
+      transform: tf(),
+      mapping: HALF,
+      baseScale: 0.5,
+    });
+    // Centred: 400x100 around (960, 540) in composition px, halved on screen.
+    expect(g.corners.nw).toEqual({ x: (960 - 200) / 2, y: (540 - 50) / 2 });
+    expect(g.corners.se).toEqual({ x: (960 + 200) / 2, y: (540 + 50) / 2 });
+
+    // Without the override the same raster would be fit to the frame (x2.4).
+    const fitted = computeGizmoGeometry({
+      srcW: 800,
+      srcH: 200,
+      compW: COMP_W,
+      compH: COMP_H,
+      transform: tf(),
+      mapping: HALF,
+    });
+    expect(fitted.corners.se.x).toBeGreaterThan(g.corners.se.x);
+  });
+
+  it('the overlay quad equals the COMPOSITOR overlay quad (baseScale both sides)', () => {
+    const transform = tf({ x: 0.1, scale: 1.5, rotationDeg: 15 });
+    const srcW = 800;
+    const srcH = 200;
+    const baseScale = 0.5;
+    const g = computeGizmoGeometry({
+      srcW,
+      srcH,
+      compW: COMP_W,
+      compH: COMP_H,
+      transform,
+      mapping: HALF,
+      baseScale,
+    });
+    const m = unitQuadToNdcMatrix(
+      computePlacement({ srcW, srcH, compW: COMP_W, compH: COMP_H, transform, baseScale }),
+      srcW,
+      srcH,
+      COMP_W,
+      COMP_H,
+    );
+    const ndc = applyMat3(m, 1, 1);
+    expect(g.corners.se.x).toBeCloseTo((((ndc.x + 1) * COMP_W) / 2) * HALF.scale, 3);
+    expect(g.corners.se.y).toBeCloseTo((((1 - ndc.y) * COMP_H) / 2) * HALF.scale, 3);
+  });
+
   it('the gizmo quad equals the COMPOSITOR quad (same §2 matrix, no drift)', () => {
     const transform = tf({ x: 0.13, y: -0.07, scale: 1.4, rotationDeg: 23, anchorX: 0.2, anchorY: 0.8 });
     const srcW = 1280;

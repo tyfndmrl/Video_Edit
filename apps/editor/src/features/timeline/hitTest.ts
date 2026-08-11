@@ -6,7 +6,15 @@
  */
 import type { Uuid } from '@videoedit/timeline-schema';
 
-export type HitRegion = 'body' | 'trimL' | 'trimR';
+/**
+ * `transition` = the small badge painted on a cut between two adjacent media
+ * clips. Its `clipId` is the OUTGOING clip of that cut (so the pointer code
+ * addresses the cut as `(clipId, 'out')`), and it deliberately sits in the
+ * BOTTOM strip of the lane: the trim handles own the full lane height around
+ * the same x, and a badge covering the vertical middle would swallow the
+ * roll-trim grab that lives exactly there.
+ */
+export type HitRegion = 'body' | 'trimL' | 'trimR' | 'transition';
 
 export interface ClipHitRect {
   clipId: Uuid;

@@ -20,6 +20,7 @@ import type { MicroSec, Uuid } from '@videoedit/timeline-schema';
 import { useEditorStore } from '../../state/editorStore';
 import {
   addMarkerAtPlayhead,
+  addTransitionAtEdge,
   copyClips,
   cutClips,
   deleteClips,
@@ -27,6 +28,7 @@ import {
   detachAudio,
   duplicateClips,
   pasteAtPlayhead,
+  removeTransition,
   splitAtPlayhead,
   toggleTrackHidden,
   toggleTrackLocked,
@@ -34,7 +36,10 @@ import {
   trimSelectedToPlayhead,
   type OpResult,
 } from '../../state/timelineOps';
+import { useDocStore } from '../../state/docStore';
+import { addTextAtPlayhead } from '../text/overlayActions';
 import type { TimelineMenuActionId, TimelineMenuTarget } from './contextMenu';
+import { DEFAULT_TRANSITION_TYPE, resolveTransitionEdge } from './transitions';
 
 export interface TimelineMenuActionInput {
   target: TimelineMenuTarget;
@@ -77,6 +82,28 @@ export function runTimelineMenuAction(
       return trimSelectedToPlayhead('right', playheadUs);
     case 'detachAudio':
       return target.kind === 'clip' ? detachAudio(target.clipId) : fail('no clip target');
+    // Geçiş öğeleri: kenar seçimi buildTimelineMenu ile AYNI çözücüden gelir
+    // (aynı doküman + aynı tık zamanı), yani etiketteki kesim ile değişen kesim
+    // birebir aynıdır. Tip varsayılan (çapraz geçiş); kullanıcı kesim rozetine
+    // tıklayarak tipi ve süreyi değiştirir.
+    case 'addTransition': {
+      if (target.kind !== 'clip') return fail('no clip target');
+      const d = useDocStore.getState().doc;
+      const edge = resolveTransitionEdge(d, target.clipId, {
+        timeUs: target.timeUs,
+        require: 'cut',
+      });
+      return addTransitionAtEdge(target.clipId, edge, DEFAULT_TRANSITION_TYPE);
+    }
+    case 'removeTransition': {
+      if (target.kind !== 'clip') return fail('no clip target');
+      const d = useDocStore.getState().doc;
+      const edge = resolveTransitionEdge(d, target.clipId, {
+        timeUs: target.timeUs,
+        require: 'transition',
+      });
+      return removeTransition(target.clipId, edge);
+    }
     case 'paste':
       return pasteAtPlayhead(playheadUs);
     case 'toggleMuted':
@@ -87,6 +114,12 @@ export function runTimelineMenuAction(
       return target.kind === 'track' ? toggleTrackLocked(target.trackId) : fail('no track target');
     case 'deleteTrack':
       return target.kind === 'track' ? deleteTrack(target.trackId) : fail('no track target');
+    case 'addText': {
+      // Donmuş playhead burada da geçerli: menü hangi kareyi gösterdiyse metin
+      // oraya düşer (canlı playhead oynatmayla kaymış olabilir).
+      const result = addTextAtPlayhead({ timeUs: playheadUs });
+      return result.ok ? OK : fail(result.reason);
+    }
     case 'addMarker':
       if (target.kind !== 'ruler') return fail('no ruler target');
       // "Buraya": playhead tıklanan kareye gider, marker AYNI kareye eklenir.

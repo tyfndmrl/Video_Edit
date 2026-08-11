@@ -1,0 +1,7 @@
+# Font ikilileri depoya GİRMEZ (lisans dosyalarıyla birlikte ~9.5 MB; her klon/CI kendi
+# indirir). Sürüm kimliği manifest.json + manifest.lock.json'da yaşar — bkz. README.md.
+*.ttf
+*.otf
+*.ttc
+*.woff
+*.woff2

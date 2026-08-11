@@ -4,10 +4,33 @@
     <ProjectReference Include="..\VideoEdit.Contracts\VideoEdit.Contracts.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      Metin/şekil rasterleri (rendering-semantics §7: layout ve bbox'ın TEK doğruluk kaynağı
+      SkiaSharp'tır; export daima SkiaSharp çıktısını kullanır).
+      SÜRÜM PİNLİ: Skia sürümü değişince antialias/hinting çıktısı bit düzeyinde değişebilir —
+      golden PNG eşikleri bu sürüme göre kalibredir. Yükseltme = golden'ları yeniden doğrula.
+      HarfBuzz shaping (SKShaper) §7 gereği TEK yoldur: "shaping var/yok" iki kod yolu
+      preview↔export parity'sini bozar, o yüzden fallback YOK.
+      NativeAssets: Windows (geliştirme + testler) ve Linux/NoDependencies (worker imajı,
+      Debian runtime; 'nodependencies' varyantı libfontconfig gerektirmez — fontları biz
+      manifest'ten dosya olarak yüklüyoruz, sistem font veritabanı kullanılmıyor).
+    -->
+    <PackageReference Include="SkiaSharp" Version="3.116.1" />
+    <PackageReference Include="SkiaSharp.HarfBuzz" Version="3.116.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.116.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.116.1" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Testler internal yüzeye erişir (FontManifest.PickStyle gibi saf kural fonksiyonları). -->
+    <InternalsVisibleTo Include="VideoEdit.UnitTests" />
+  </ItemGroup>
 
 </Project>

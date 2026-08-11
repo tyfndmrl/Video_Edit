@@ -22,6 +22,8 @@ import { useDocStore, type Transaction } from '../../state/docStore';
 import { assertDocValidDev } from '../../state/timelineOps';
 
 let active: Transaction | null = null;
+/** Cleanup for an open TYPING burst (see beginBurstEdit). */
+let burstCleanup: (() => void) | null = null;
 /**
  * True from pointerdown to pointerup on a panel control, EVEN IF no transaction
  * could be opened. The two states are different questions:
@@ -61,6 +63,9 @@ export function isLiveEditBlocked(): boolean {
  * store) — the gesture is still marked active so the caller can stand down.
  */
 export function beginLiveEdit(actionType: string, label: string): boolean {
+  // A burst edit may still own the store (the user clicked a slider straight
+  // from the textarea); close it first or the store refuses this gesture.
+  endBurstEdit();
   if (gestureOpen) endLiveEdit();
   const store = useDocStore.getState();
   gestureOpen = true;
@@ -93,4 +98,92 @@ export function endLiveEdit(): void {
   if (tx === null) return;
   tx.commit();
   assertDocValidDev('inspector live edit');
+}
+
+// ---------------------------------------------------------------------------
+// Bursts: a stream of NON-pointer edits that must collapse into one entry
+// (typing into the text content field, dragging inside the OS colour picker)
+// ---------------------------------------------------------------------------
+
+/**
+ * How long a typing burst may stay open with no keystrokes. Also the upper
+ * bound on how long autosave is deferred by typing (autosave watches
+ * docStore.transactionOpen).
+ */
+export const BURST_EDIT_IDLE_MS = 1200;
+
+/** True while a burst edit owns the store. */
+export function isBurstEditOpen(): boolean {
+  return burstCleanup !== null;
+}
+
+/**
+ * Opens a coalescing transaction for a TYPING burst: many keystrokes, ONE
+ * history entry ("Metin içeriği değiştirildi"), one autosave PUT.
+ *
+ * Why this is not `beginLiveEdit`: that one is bounded by a POINTER gesture and
+ * its window `pointerup` safety net would close a typing burst on the very
+ * click that focused the field. A typing burst instead ends on:
+ * - blur / Enter-out (`endBurstEdit`, the normal path),
+ * - `BURST_EDIT_IDLE_MS` without a keystroke,
+ * - ANY pointerdown outside the field — capture phase, so it lands BEFORE a
+ *   timeline/gizmo drag calls `docStore.beginTransaction`, which THROWS while
+ *   another transaction is open. That listener is the load-bearing one: without
+ *   it, typing then dragging a clip crashes the editor.
+ */
+export function beginBurstEdit(
+  actionType: string,
+  label: string,
+  isInsideField: (target: EventTarget | null) => boolean,
+): boolean {
+  endBurstEdit();
+  if (gestureOpen) endLiveEdit();
+  const store = useDocStore.getState();
+  if (store.locked || store.transactionOpen) return false;
+  active = store.beginTransaction(actionType, label);
+
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const onPointerDown = (e: PointerEvent): void => {
+    if (isInsideField(e.target)) return;
+    endBurstEdit();
+  };
+  const arm = (): void => {
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => endBurstEdit(), BURST_EDIT_IDLE_MS);
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pointerdown', onPointerDown, true);
+  }
+  arm();
+  rearmBurst = arm;
+  burstCleanup = () => {
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    idleTimer = null;
+    rearmBurst = null;
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pointerdown', onPointerDown, true);
+    }
+  };
+  return true;
+}
+
+let rearmBurst: (() => void) | null = null;
+
+/** Feeds one keystroke into the open burst and restarts the idle timer. */
+export function updateBurstEdit(recipe: (draft: TimelineDoc) => void): void {
+  if (burstCleanup === null) return;
+  active?.update(recipe);
+  rearmBurst?.();
+}
+
+/** Closes a typing burst (idempotent): ONE history entry + invariant assert. */
+export function endBurstEdit(): void {
+  if (burstCleanup === null) return;
+  burstCleanup();
+  burstCleanup = null;
+  const tx = active;
+  active = null;
+  if (tx === null) return;
+  tx.commit();
+  assertDocValidDev('inspector text edit');
 }

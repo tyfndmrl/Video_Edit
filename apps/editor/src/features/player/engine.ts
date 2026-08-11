@@ -59,6 +59,15 @@ export interface PreviewStatus {
 export interface SourceSize {
   width: number;
   height: number;
+  /**
+   * Source px -> composition px factor at `transform.scale === 1`, when the
+   * clip is NOT fit to the composition. Present for overlay rasters
+   * (text/shape: `bboxPx / rasterPx`, normally 0.5 — rendering-semantics §7),
+   * absent for media frames (§2.2 fit=contain). Whoever draws a box for the
+   * clip must pass it to computePlacement or the box will not sit on the
+   * pixels.
+   */
+  baseScale?: number;
 }
 
 export interface SeekOptions {

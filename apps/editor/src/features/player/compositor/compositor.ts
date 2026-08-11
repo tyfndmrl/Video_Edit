@@ -24,6 +24,11 @@ export interface DrawItem {
   srcH: number;
   /** Effective transform (keyframes already applied). */
   transform: Transform;
+  /**
+   * Overlay rasters (text/shape, §7) are drawn at `bboxPx * scale`, not fit to
+   * the composition — see PlacementInput.baseScale. Omitted for media frames.
+   */
+  baseScale?: number;
   /** Effective opacity 0..1 (keyframes already applied). */
   opacity: number;
   /** null = no color adjust (identity — uniforms all 0 fall through as no-op). */
@@ -206,6 +211,7 @@ export class Compositor {
         compW: this.width,
         compH: this.height,
         transform: item.transform,
+        baseScale: item.baseScale,
       });
       const matrix = unitQuadToNdcMatrix(placement, item.srcW, item.srcH, this.width, this.height);
       gl.uniformMatrix3fv(this.uniforms.uMatrix, false, matrix);

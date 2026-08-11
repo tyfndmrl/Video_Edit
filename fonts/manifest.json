@@ -1,0 +1,104 @@
+{
+  "manifestVersion": 1,
+  "allowSystemFallback": false,
+
+  "//": [
+    "Küratörlü font seti — rendering-semantics §7 'fontId manifest sözleşmesi'.",
+    "TextClip.text.fontId BU DOSYANIN anahtarlarından biridir; şemada serbest fontFamily YOKTUR.",
+    "AYNI dosya hem tarayıcı @font-face'ine hem SkiaSharp'a gider (preview↔export parity'sinin şartı).",
+    "",
+    "SÜRÜM PİNLEME (§7): bir fontId'nin 'files' haritası ASLA değişmez. Font güncellemesi YENİ",
+    "fontId açar (ör. 'roboto' -> 'roboto-2026') ve eskisi 'deprecated: true' işaretlenir; böylece",
+    "eski projelerin layout'u (satır kırılımı, bbox) değişmez. Dosya içeriğinin sessizce değişmesini",
+    "manifest.lock.json'daki sha256 pinleri yakalar (fetch-fonts scripti üretir).",
+    "",
+    "TTF DOSYALARI DEPOYA GİRMEZ (bkz. .gitignore) — kurulum için fonts/README.md.",
+    "",
+    "NOT (SkiaSharp 3.116.1): değişken (variable) fontlar DESTEKLENMEZ — bu SkiaSharp sürümünde",
+    "eksen (wght) sabitleme API'si (SKFontArguments) yoktur, değişken dosya daima VARSAYILAN",
+    "örneğiyle açılır ve fontWeight=700 sessizce Regular çizerdi. Bu yüzden set STATİK TTF'lerden",
+    "kuruludur ve her ağırlık kendi dosyasıdır."
+  ],
+
+  "fonts": {
+    "roboto": {
+      "family": "Roboto",
+      "version": "classic-hinted",
+      "license": "Apache-2.0",
+      "source": "https://github.com/googlefonts/Roboto",
+      "files": {
+        "400": "roboto/Roboto-Regular.ttf",
+        "400i": "roboto/Roboto-Italic.ttf",
+        "700": "roboto/Roboto-Bold.ttf",
+        "700i": "roboto/Roboto-BoldItalic.ttf"
+      },
+      "urls": {
+        "400": "https://raw.githubusercontent.com/googlefonts/Roboto/main/src/hinted/Roboto-Regular.ttf",
+        "400i": "https://raw.githubusercontent.com/googlefonts/Roboto/main/src/hinted/Roboto-Italic.ttf",
+        "700": "https://raw.githubusercontent.com/googlefonts/Roboto/main/src/hinted/Roboto-Bold.ttf",
+        "700i": "https://raw.githubusercontent.com/googlefonts/Roboto/main/src/hinted/Roboto-BoldItalic.ttf"
+      },
+      "sha256": {}
+    },
+
+    "open-sans": {
+      "family": "Open Sans",
+      "version": "gf-static",
+      "license": "OFL-1.1",
+      "source": "https://github.com/googlefonts/opensans",
+      "files": {
+        "400": "open-sans/OpenSans-Regular.ttf",
+        "400i": "open-sans/OpenSans-Italic.ttf",
+        "700": "open-sans/OpenSans-Bold.ttf",
+        "700i": "open-sans/OpenSans-BoldItalic.ttf"
+      },
+      "urls": {
+        "400": "https://raw.githubusercontent.com/googlefonts/opensans/main/fonts/ttf/OpenSans-Regular.ttf",
+        "400i": "https://raw.githubusercontent.com/googlefonts/opensans/main/fonts/ttf/OpenSans-Italic.ttf",
+        "700": "https://raw.githubusercontent.com/googlefonts/opensans/main/fonts/ttf/OpenSans-Bold.ttf",
+        "700i": "https://raw.githubusercontent.com/googlefonts/opensans/main/fonts/ttf/OpenSans-BoldItalic.ttf"
+      },
+      "sha256": {}
+    },
+
+    "noto-sans": {
+      "family": "Noto Sans",
+      "version": "notofonts-hinted",
+      "license": "OFL-1.1",
+      "source": "https://github.com/notofonts/notofonts.github.io",
+      "files": {
+        "400": "noto-sans/NotoSans-Regular.ttf",
+        "400i": "noto-sans/NotoSans-Italic.ttf",
+        "700": "noto-sans/NotoSans-Bold.ttf",
+        "700i": "noto-sans/NotoSans-BoldItalic.ttf"
+      },
+      "urls": {
+        "400": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf",
+        "400i": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSans/hinted/ttf/NotoSans-Italic.ttf",
+        "700": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSans/hinted/ttf/NotoSans-Bold.ttf",
+        "700i": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSans/hinted/ttf/NotoSans-BoldItalic.ttf"
+      },
+      "sha256": {}
+    },
+
+    "noto-serif": {
+      "family": "Noto Serif",
+      "version": "notofonts-hinted",
+      "license": "OFL-1.1",
+      "source": "https://github.com/notofonts/notofonts.github.io",
+      "files": {
+        "400": "noto-serif/NotoSerif-Regular.ttf",
+        "400i": "noto-serif/NotoSerif-Italic.ttf",
+        "700": "noto-serif/NotoSerif-Bold.ttf",
+        "700i": "noto-serif/NotoSerif-BoldItalic.ttf"
+      },
+      "urls": {
+        "400": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSerif/hinted/ttf/NotoSerif-Regular.ttf",
+        "400i": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSerif/hinted/ttf/NotoSerif-Italic.ttf",
+        "700": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSerif/hinted/ttf/NotoSerif-Bold.ttf",
+        "700i": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSerif/hinted/ttf/NotoSerif-BoldItalic.ttf"
+      },
+      "sha256": {}
+    }
+  }
+}

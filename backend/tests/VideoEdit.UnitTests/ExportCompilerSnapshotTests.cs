@@ -229,6 +229,94 @@ public sealed class ExportCompilerSnapshotTests
         ]),
     ]);
 
+    // ---------- M4 dalga 2: geçişler (rendering-semantics §5) ----------
+
+    /// <summary>
+    /// §5.2 sözleşmesinin taşıyıcısı: klipler timeline'da BİTİŞİK (0-2 sn, 2-4 sn), geçiş
+    /// kesime iliştirilmiş metadata'dır. D = 400 ms = 12 frame @30 (ÇİFT frame → D/2 = 6 frame
+    /// tam sayı); kaynaklar 1 sn'den başlar, yani her iki tarafta D/2 = 200 ms pay VAR.
+    /// Toplam süre geçişten ETKİLENMEZ: 4 sn.
+    /// </summary>
+    private static TimelineDoc TransitionSingle(
+        TransitionType type = TransitionType.Crossfade, ClipAudio? audio = null)
+    {
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000, audio);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000, audio);
+        ExportTestDocs.Link(a, b, 400_000, type);
+        return ExportTestDocs.Doc(clips: [a, b]);
+    }
+
+    /// <summary>Zincirleme: 3 klip, 2 geçiş (farklı tipler) — kümülatif offset §5.3'ten gelir.</summary>
+    private static TimelineDoc TransitionChain()
+    {
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            ExportTestDocs.Audio());
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            ExportTestDocs.Audio());
+        var c = ExportTestDocs.VideoClip(ExportTestDocs.AssetC, 4_000_000, 1_000_000, 3_000_000,
+            ExportTestDocs.Audio());
+        ExportTestDocs.Link(a, b, 400_000);
+        ExportTestDocs.Link(b, c, 200_000, TransitionType.WipeLeft); // 6 frame @30
+        return ExportTestDocs.Doc(clips: [a, b, c]);
+    }
+
+    /// <summary>
+    /// Geçişli track ÇOK KATMANLI kompozisyonla birlikte: alt track kendi içinde tek birleşik
+    /// akışa (xfade) derlenir, sonra üst katman PiP'iyle tuvale biner (tasarım 04 §2.3).
+    /// </summary>
+    private static TimelineDoc TransitionWithPipLayer()
+    {
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            ExportTestDocs.Audio());
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            ExportTestDocs.Audio());
+        ExportTestDocs.Link(a, b, 400_000, TransitionType.FadeToBlack);
+        return ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetC, 1_000_000, 0, 2_000_000,
+                    transform: ExportTestDocs.Transform(x: 0.25, y: -0.25, scale: 0.35)),
+            ]),
+            ExportTestDocs.VideoTrack(clips: [a, b]),
+        ]);
+    }
+
+    // ---------- M4 dalga 2: overlay varlıkları (metin / şekil / çıkartma) ----------
+
+    /// <summary>Metin katmanı video tabanın üstünde: raster PNG -loop 1 -t ile girer, ses ÜRETMEZ.</summary>
+    private static TimelineDoc TextOverVideo() => ExportTestDocs.MultiTrackDoc(
+    [
+        ExportTestDocs.OverlayTrack(clips:
+        [
+            ExportTestDocs.TextClip(1_000_000, 2_000_000,
+                transform: ExportTestDocs.Transform(y: 0.3)),
+        ]),
+        ExportTestDocs.VideoTrack(clips:
+        [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 4_000_000, ExportTestDocs.Audio()),
+        ]),
+    ]);
+
+    /// <summary>Şekil (yarı saydam) + çıkartma (asset PNG) katmanları — ikisi de sessizdir.</summary>
+    private static TimelineDoc ShapeAndSticker() => ExportTestDocs.MultiTrackDoc(
+    [
+        ExportTestDocs.OverlayTrack(clips:
+        [
+            ExportTestDocs.StickerClip(ExportTestDocs.AssetC, 0, 2_000_000,
+                transform: ExportTestDocs.Transform(x: -0.25, y: 0.25, scale: 0.25)),
+        ]),
+        ExportTestDocs.OverlayTrack(clips:
+        [
+            ExportTestDocs.ShapeClip(0, 2_000_000,
+                transform: ExportTestDocs.Transform(scale: 0.5), opacity: 0.4),
+        ]),
+        ExportTestDocs.VideoTrack(clips:
+        [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000, ExportTestDocs.Audio()),
+        ]),
+    ]);
+
     /// <summary>Video track + audio track miksi: ses klibi görsel katman ÜRETMEZ.</summary>
     private static TimelineDoc AudioTrackMix() => ExportTestDocs.MultiTrackDoc(
     [
@@ -262,11 +350,19 @@ public sealed class ExportCompilerSnapshotTests
         "two-video-layers", "pip-transform", "layer-opacity",
         "hidden-muted-tracks", "audio-track-mix", "opaque-over-alpha",
         "layer-run-concat", "image-clip", "image-over-video",
+        "transition-single", "transition-audio", "transition-chain",
+        "transition-pip-layer", "text-over-video", "shape-and-sticker",
     ];
 
     private static (TimelineDoc Doc, Dictionary<Guid, ExportAssetSource> Sources) Fixture(string name) =>
         name switch
         {
+            "transition-single" => (TransitionSingle(), SdrSources(hasAudio: false)),
+            "transition-audio" => (TransitionSingle(audio: ExportTestDocs.Audio(volume: 0.8)), SdrSources()),
+            "transition-chain" => (TransitionChain(), SdrSources()),
+            "transition-pip-layer" => (TransitionWithPipLayer(), SdrSources()),
+            "text-over-video" => (TextOverVideo(), SdrSources()),
+            "shape-and-sticker" => (ShapeAndSticker(), ImageSources()),
             "single-clip" => (SingleClip(), SdrSources(hasAudio: false)),
             "multi-clip-contiguous" => (MultiClipContiguous(), SdrSources()),
             "with-gaps" => (WithGaps(), SdrSources(hasAudio: false)),
@@ -292,17 +388,62 @@ public sealed class ExportCompilerSnapshotTests
     private static Dictionary<Guid, ExportAssetSource> ImageSources() => new()
     {
         [ExportTestDocs.AssetA] = new ExportAssetSource("assets/a.mp4", true, "bt709", "bt709"),
+        [ExportTestDocs.AssetB] = new ExportAssetSource("assets/b.mp4", true, "bt709", "bt709"),
         [ExportTestDocs.AssetC] = new ExportAssetSource("assets/photo.png", false, "bt709", "bt709"),
     };
 
+    /// <summary>Metin bbox'ı — raster hattının bildirdiği PROJE PİKSELİ boyutu (§7).</summary>
+    private const double TextBboxWidth = 640;
+
+    private const double TextBboxHeight = 160;
+
+    /// <summary>
+    /// Worker'ın raster hattından üreteceği defterin taklidi: dokümandaki metin/şekil klipleri
+    /// için deterministik yol + doğal (bbox) boyut. Şeklin şemada içsel boyutu YOKTUR → bbox'ı
+    /// proje tuvalidir (scale=1 = tam kare).
+    /// </summary>
+    private static Dictionary<Guid, ExportRasterSource> RastersFor(TimelineDoc doc)
+    {
+        var map = new Dictionary<Guid, ExportRasterSource>();
+        var index = 0;
+        foreach (var track in doc.Tracks)
+        {
+            foreach (var clip in track.Clips)
+            {
+                var n = index.ToString(CultureInfo.InvariantCulture);
+                switch (clip)
+                {
+                    case TextClip text:
+                        map[text.Id] = new ExportRasterSource(
+                            $"rasters/text-{n}.png", TextBboxWidth, TextBboxHeight);
+                        index++;
+                        break;
+                    case ShapeClip shape:
+                        map[shape.Id] = new ExportRasterSource(
+                            $"rasters/shape-{n}.png", doc.Settings.Width, doc.Settings.Height);
+                        index++;
+                        break;
+                }
+            }
+        }
+
+        return map;
+    }
+
     // ---------- Snapshot testleri ----------
+
+    /// <summary>Fixture'ı worker ile aynı şekilde derler (kaynak defteri + raster defteri).</summary>
+    private static CompiledExport CompileFixture(string name)
+    {
+        var (doc, sources) = Fixture(name);
+        return ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p, RastersFor(doc));
+    }
 
     [Theory]
     [MemberData(nameof(FixtureNames))]
     public void Compile_MatchesSnapshot(string name)
     {
-        var (doc, sources) = Fixture(name);
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = CompileFixture(name);
         var actual = Render(compiled);
 
         Directory.CreateDirectory(SnapshotDir);
@@ -503,10 +644,10 @@ public sealed class ExportCompilerSnapshotTests
                  {
                      "opaque-over-alpha", "layer-opacity", "pip-transform", "two-video-layers",
                      "with-gaps", "hidden-muted-tracks", "layer-run-concat", "image-over-video",
+                     "transition-pip-layer", "text-over-video", "shape-and-sticker",
                  })
         {
-            var (doc, sources) = Fixture(name);
-            var script = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p).FilterGraphScript;
+            var script = CompileFixture(name).FilterGraphScript;
             var overlays = script.Split(";\n").Where(l => l.Contains("]overlay=")).ToList();
             Assert.NotEmpty(overlays);
             Assert.All(overlays, line =>
@@ -526,8 +667,7 @@ public sealed class ExportCompilerSnapshotTests
     {
         // §6.1 "untagged SDR = BT.709/tv" varsayımı RGB'ye geçişten ÖNCE beyan edilmezse
         // swscale kendi varsayılanını kullanır (SD'de BT.601) ve kompozisyon renkleri kayar.
-        var (doc, sources) = Fixture("opaque-over-alpha");
-        var script = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p).FilterGraphScript;
+        var script = CompileFixture("opaque-over-alpha").FilterGraphScript;
 
         foreach (var line in script.Split(";\n").Where(l => l.Contains(":v]")))
         {
@@ -953,17 +1093,6 @@ public sealed class ExportCompilerSnapshotTests
     }
 
     [Fact]
-    public void Validate_Transition_Throws()
-    {
-        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
-        clip.TransitionOut = new Transition { Type = TransitionType.Crossfade, DurationUs = 500_000 };
-        var doc = ExportTestDocs.Doc(clips: clip);
-
-        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
-        Assert.Equal("transition", ex.Feature);
-    }
-
-    [Fact]
     public void Validate_Keyframes_Throws()
     {
         var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
@@ -1006,24 +1135,456 @@ public sealed class ExportCompilerSnapshotTests
         Assert.Equal("speed", ex.Feature);
     }
 
-    [Fact]
-    public void Validate_TextClip_Throws()
-    {
-        var doc = ExportTestDocs.Doc(clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000));
-        doc.Tracks[0].Clips.Add(new TextClip
-        {
-            Id = Guid.CreateVersion7(),
-            Kind = "text",
-            TimelineStartUs = 1_000_000,
-            TimelineDurationUs = 1_000_000,
-            Transform = ExportTestDocs.DefaultTransform(),
-            Keyframes = new KeyframeTracks(),
-            Effects = [],
-            Opacity = 1,
-        });
+    // ---------- M4 dalga 2: geçişler (rendering-semantics §5) ----------
 
-        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
-        Assert.Equal("text-clip", ex.Feature);
+    [Fact]
+    public void Compile_SingleTransition_UsesXfadeWithTheNormativeOffset()
+    {
+        // §5.2 + §5.3. Klipler BİTİŞİK (0-2 sn, 2-4 sn); D = 400 ms = 12 frame; D/2 = 6 frame.
+        //  - girişler D/2 kadar UZAR: A kaynakta 200 ms fazla okur (1.0→3.2), B 200 ms erken
+        //    başlar (0.8→3.0) — ikisi de 2.2 sn;
+        //  - segment defterleri 66 frame (60 + 6);
+        //  - offset = acc - D = 66 - 12 = 54 frame = 1.8 sn; kapalı form d_0 - D/2 = 2.0 - 0.2 ✓;
+        //  - toplam süre 4 sn KALIR → sonraki kliplerin timeline pozisyonları kaymaz.
+        var compiled = CompileFixture("transition-single");
+
+        Assert.Equal(["-ss", "1.000000", "-t", "2.200000", "-i", "assets/a.mp4"],
+            compiled.Inputs[0].ToArgs());
+        Assert.Equal(["-ss", "0.800000", "-t", "2.200000", "-i", "assets/b.mp4"],
+            compiled.Inputs[1].ToArgs());
+        Assert.Contains("fps=30/1,trim=end_frame=66,", compiled.FilterGraphScript);
+        Assert.Contains("[s0_0][s0_1]xfade=transition=fade:duration=0.400000:offset=1.800000[v0]",
+            compiled.FilterGraphScript);
+        Assert.DoesNotContain("concat=", compiled.FilterGraphScript);
+        Assert.Equal(4_000_000, compiled.ExpectedDurationUs);
+    }
+
+    [Fact]
+    public void Compile_TransitionChain_AccumulatesOffsetsPerDesign04()
+    {
+        // 3 klip, 2 geçiş (400 ms + 200 ms). §5.3: offset_i = (Σ_{j<=i} d_j) - D_i/2.
+        //   offset_1 = 2.0 - 0.2 = 1.8 ;  offset_2 = 4.0 - 0.1 = 3.9
+        // Segment defterleri: 66 / 69 / 63 frame → 66+69-12 = 123, 123+63-6 = 180 = 6 sn.
+        var compiled = CompileFixture("transition-chain");
+
+        Assert.Contains("xfade=transition=fade:duration=0.400000:offset=1.800000[x0_1]",
+            compiled.FilterGraphScript);
+        Assert.Contains("xfade=transition=wipeleft:duration=0.200000:offset=3.900000[v0]",
+            compiled.FilterGraphScript);
+        Assert.Contains("trim=end_frame=69,", compiled.FilterGraphScript); // ortadaki klip: 6+60+3
+        Assert.Contains("trim=end_frame=63,", compiled.FilterGraphScript); // son klip: 3+60
+        Assert.Equal(6_000_000, compiled.ExpectedDurationUs);
+    }
+
+    [Fact]
+    public void Compile_TransitionAudio_UsesAcrossfade_AndDropsMicroFadesOnThatEdge()
+    {
+        // §5.4: acrossfade=d=D (offset yok — uçtan bindirir), c1/c2=tri (§8.2 ile tutarlı).
+        // Segmentler videoyla AYNI D/2 payını aldığı için pencere xfade ile örtüşür ve toplam
+        // ses süresi Σd kalır (2.2 + 2.2 - 0.4 = 4.0) → A/V senkron.
+        // §8.4: geçişin olduğu kenarda micro-fade ÜRETİLMEZ (acrossfade zaten sıfıra indirir).
+        var compiled = CompileFixture("transition-audio");
+
+        Assert.Contains("[g0_0][g0_1]acrossfade=d=0.400000:c1=tri:c2=tri[a0]",
+            compiled.FilterGraphScript);
+        var lines = compiled.FilterGraphScript.Split(";\n");
+        var first = Assert.Single(lines, l => l.StartsWith("[0:a]"));
+        Assert.Contains("afade=t=in:st=0:d=0.005000:curve=tri", first);   // dış kenar
+        Assert.DoesNotContain("afade=t=out", first);                       // geçiş kenarı
+        var second = Assert.Single(lines, l => l.StartsWith("[1:a]"));
+        Assert.DoesNotContain("afade=t=in", second);                       // geçiş kenarı
+        Assert.Contains("afade=t=out:st=2.195000:d=0.005000:curve=tri", second);
+        // Ses de geçiş payıyla okur; kırpmaya (atrim) gerek yoktur.
+        Assert.DoesNotContain("atrim=start", compiled.FilterGraphScript);
+        Assert.Contains("amix=inputs=1:", compiled.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Compile_TransitionUnderALayerComposition_CompilesTheTrackToOneStreamFirst()
+    {
+        // Tasarım 04 §2.3: geçişli track ÖNCE kendi içinde birleşik akışa derlenir, sonra üst
+        // katman kompozisyonuna girer. Burada alt track xfade'lenir, üstteki PiP tuvale ayrı
+        // overlay olarak biner — iki overlay, tek xfade.
+        var compiled = CompileFixture("transition-pip-layer");
+        var script = compiled.FilterGraphScript;
+
+        Assert.Equal(2, script.Split(";\n").Count(l => l.Contains("]overlay=")));
+        Assert.Contains("xfade=transition=fadeblack:duration=0.400000:offset=1.800000[v0]", script);
+        Assert.Contains("[base][v0]overlay=", script);
+        Assert.Contains("[c0][v1]overlay=", script);
+        // Kompozisyon yolunda segmentler kutuya şeffaf pad'lenir (xfade AYNI boyut ister).
+        Assert.Contains("format=rgba,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=#00000000", script);
+        Assert.Equal(4_000_000, compiled.ExpectedDurationUs);
+    }
+
+    [Theory]
+    [InlineData(TransitionType.Crossfade, "fade")]
+    [InlineData(TransitionType.FadeToBlack, "fadeblack")]
+    [InlineData(TransitionType.WipeLeft, "wipeleft")]
+    [InlineData(TransitionType.WipeRight, "wiperight")]
+    [InlineData(TransitionType.SlideUp, "slideup")]
+    [InlineData(TransitionType.Dissolve, "dissolve")]
+    public void Compile_TransitionTypes_MapToTheNormativeXfadeNames(TransitionType type, string expected)
+    {
+        // rendering-semantics §5.3 tablosu — tam altı tip, birebir.
+        Assert.Equal(expected, ExportCompiler.XfadeName(type));
+        var compiled = ExportCompiler.Compile(
+            TransitionSingle(type), SdrSources(hasAudio: false), ExportProfile.Hd1080p);
+        Assert.Contains($"xfade=transition={expected}:", compiled.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Validate_AsymmetricTransition_ThrowsInvalidTimeline()
+    {
+        // §5.2 simetri invariant'ı: geçiş kesimin İKİ tarafına da yazılır ve derin-eşittir.
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000);
+        a.TransitionOut = new Transition { Type = TransitionType.Crossfade, DurationUs = 400_000 };
+        var oneSided = ExportTestDocs.Doc(clips: [a, b]);
+        var ex = Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(oneSided));
+        Assert.Contains("simetri", ex.Message);
+
+        // Tek taraflı transitionIn de yakalanır (kesimin öteki tarafı boş).
+        var c = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000);
+        var d = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000);
+        d.TransitionIn = new Transition { Type = TransitionType.Crossfade, DurationUs = 400_000 };
+        Assert.Throws<InvalidTimelineException>(
+            () => ExportCompiler.Validate(ExportTestDocs.Doc(clips: [c, d])));
+
+        // Derin-eşitlik: aynı kesimde farklı süre/tip sözleşme ihlalidir.
+        var e = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000);
+        var f = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000);
+        e.TransitionOut = new Transition { Type = TransitionType.Crossfade, DurationUs = 400_000 };
+        f.TransitionIn = new Transition { Type = TransitionType.Crossfade, DurationUs = 200_000 };
+        Assert.Throws<InvalidTimelineException>(
+            () => ExportCompiler.Validate(ExportTestDocs.Doc(clips: [e, f])));
+    }
+
+    [Fact]
+    public void Validate_TransitionDurationRules_ThrowInvalidTimeline()
+    {
+        // (a) grid dışı D: frame defterini bozar.
+        Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(Linked(410_000)));
+
+        // (b) TEK frame sayısı: D/2 tam frame olmaz → pencere kesime simetrik oturamaz.
+        var odd = Assert.Throws<InvalidTimelineException>(
+            () => ExportCompiler.Validate(Linked(366_667))); // 11 frame @30
+        Assert.Contains("ÇİFT frame", odd.Message);
+
+        // (c) üst sınır: D, kısa komşunun yarısını aşamaz (2 sn klipte D <= 1 sn).
+        var tooLong = Assert.Throws<InvalidTimelineException>(
+            () => ExportCompiler.Validate(Linked(1_200_000)));
+        Assert.Contains("çok uzun", tooLong.Message);
+
+        // (d) 2 frame'in altı yasak.
+        Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(Linked(33_333)));
+
+        static TimelineDoc Linked(long durationUs)
+        {
+            var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000);
+            var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000);
+            ExportTestDocs.Link(a, b, durationUs);
+            return ExportTestDocs.Doc(clips: [a, b]);
+        }
+    }
+
+    [Fact]
+    public void Validate_TransitionWithoutSourceHandle_ThrowsTypedFeatureError()
+    {
+        // §5.2/§5.5: B'nin BAŞ payı yetmiyorsa geçiş kurulamaz — sessiz kısaltma YOK.
+        // B kaynakta 0'dan başlıyor, D/2 = 200 ms geri gitmek imkânsız.
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 0, 2_000_000);
+        ExportTestDocs.Link(a, b, 400_000);
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(ExportTestDocs.Doc(clips: [a, b])));
+        Assert.Equal("transition-handle", ex.Feature);
+        Assert.Contains("geçiş payı yok", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_TransitionAcrossAGap_ThrowsInvalidTimeline()
+    {
+        // Geçiş BİTİŞİK kesime aittir (§5.1); araya boşluk girerse kesim yoktur.
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 3_000_000, 1_000_000, 3_000_000);
+        ExportTestDocs.Link(a, b, 400_000);
+
+        var ex = Assert.Throws<InvalidTimelineException>(
+            () => ExportCompiler.Validate(ExportTestDocs.Doc(clips: [a, b])));
+        Assert.Contains("BİTİŞİK", ex.Message);
+    }
+
+    [Fact]
+    public void Compile_TransitionBetweenDifferentPlacements_ThrowsInvalidTimeline()
+    {
+        // xfade iki girişin AYNI boyutta olmasını şart koşar; run bölünemeyeceği için farklı
+        // yerleşim sessizce kaydırmak yerine görünür sözleşme ihlalidir.
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.5));
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.25));
+        ExportTestDocs.Link(a, b, 400_000);
+        var doc = ExportTestDocs.Doc(clips: [a, b]);
+
+        ExportCompiler.Validate(doc); // doğrulama geçer — yerleşim çakışması DERLEME kararıdır
+        var ex = Assert.Throws<InvalidTimelineException>(
+            () => ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p));
+        Assert.Contains("yerleşimi", ex.Message);
+    }
+
+    [Fact]
+    public void Compile_TransitionRunStartingMidTimeline_ShiftsTheCombinedStreamAfterTheXfade()
+    {
+        // xfade GİRİŞLERİNİN PTS'i 0'dan başlamak ZORUNDADIR (offset birleşik akışın kendi
+        // zamanındadır). Timeline ofseti bu yüzden segmentlere değil, BİRLEŞTİRME SONRASINA
+        // uygulanır — segmentlere uygulansaydı offset yanlış eksene düşerdi.
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 1_000_000, 1_000_000, 3_000_000);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 3_000_000, 1_000_000, 3_000_000);
+        ExportTestDocs.Link(a, b, 400_000);
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips: [a, b]),
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetC, 0, 0, 6_000_000)]),
+        ]);
+        var script = ExportCompiler.Compile(
+            doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p).FilterGraphScript;
+
+        // Segmentler 0'dan başlar…
+        Assert.Contains("settb=AVTB,setpts=PTS-STARTPTS[s1_0]", script);
+        Assert.Contains("settb=AVTB,setpts=PTS-STARTPTS[s1_1]", script);
+        // …xfade offset'i akışın KENDİ zamanındadır (1.8 sn, timeline'daki 2.8 değil)…
+        Assert.Contains("xfade=transition=fade:duration=0.400000:offset=1.800000[x1_1]", script);
+        // …ve timeline ofseti xfade SONRASINDA uygulanır.
+        Assert.Contains("[x1_1]setpts=PTS-STARTPTS+1.000000/TB[v1]", script);
+        Assert.Contains("enable='between(t,1.000000,4.983334)'", script);
+    }
+
+    [Fact]
+    public void Compile_TransitionOnARotatedOffCenterAnchorLayer_ThrowsInvalidTimeline()
+    {
+        // Geçişte run BÖLÜNEMEZ → kutuya normalize pad ZORUNLUDUR. §2.5'in çapa telafisi pad'i
+        // gerçek görüntü boyutuna (iw/ih) göre ölçeklenir; normalize sonrası iw kutu boyutudur
+        // → çapa letterbox payı kadar KAYARDI. Sessiz kayma yerine tipli hata.
+        var rotated = ExportTestDocs.Transform(scale: 0.5, rotationDeg: 30, anchorX: 0, anchorY: 1);
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            transform: rotated);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            transform: rotated);
+        ExportTestDocs.Link(a, b, 400_000);
+        var doc = ExportTestDocs.Doc(clips: [a, b]);
+
+        var ex = Assert.Throws<InvalidTimelineException>(
+            () => ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p));
+        Assert.Contains("DÖNDÜRÜLMÜŞ", ex.Message);
+
+        // Aynı çapa, DÖNMESİZ → geçiş çalışır ve pad çapa ORANLI yazılır (geometri korunur).
+        var flat = ExportTestDocs.Transform(scale: 0.5, anchorX: 0, anchorY: 1);
+        var c = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000, transform: flat);
+        var d = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            transform: flat);
+        ExportTestDocs.Link(c, d, 400_000);
+        var ok = ExportCompiler.Compile(
+            ExportTestDocs.Doc(clips: [c, d]), SdrSources(hasAudio: false), ExportProfile.Hd1080p);
+        Assert.Contains("pad=960:540:0:(oh-ih)*1:color=#00000000", ok.FilterGraphScript);
+        Assert.Contains("xfade=transition=fade:", ok.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Compile_TransitionWhereOnlyOneSideIsAudible_TrimsTheExtendedAudioBack()
+    {
+        // Geçiş kesimi SESTE ancak İKİ taraf da duyulabilirse onurlandırılır. Tek taraf
+        // duyulabilirse giriş yine D/2 uzar (video xfade'i için ŞART) ama o klibin sesi
+        // komşunun timeline bölgesine TAŞMAMALIDIR → atrim ile geri kırpılır.
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            ExportTestDocs.Audio());
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            ExportTestDocs.Audio(muted: true));
+        ExportTestDocs.Link(a, b, 400_000);
+        var compiled = ExportCompiler.Compile(
+            ExportTestDocs.Doc(clips: [a, b]), SdrSources(), ExportProfile.Hd1080p);
+
+        // Video geçişi kurulur (iki klip de görsel).
+        Assert.Contains("xfade=transition=fade:duration=0.400000:offset=1.800000", compiled.FilterGraphScript);
+        // Ses tek zincirdir ve 2 sn'ye kırpılır (2.2 sn'lik giriş penceresinden).
+        Assert.Contains("[0:a]atrim=start=0.000000:end=2.000000,asetpts=PTS-STARTPTS",
+            compiled.FilterGraphScript);
+        Assert.DoesNotContain("acrossfade", compiled.FilterGraphScript);
+        Assert.Contains("amix=inputs=1:", compiled.FilterGraphScript);
+        // Kırpılmış kenar sert kesimdir → micro-fade orada ÜRETİLİR (§8.4).
+        Assert.Contains("afade=t=out:st=1.995000:d=0.005000:curve=tri", compiled.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Validate_TransitionExtendsTheSourceRangeLedger()
+    {
+        // Worker'ın kaynak-aralığı kapısı GENİŞLETİLMİŞ aralığı görmelidir: A kaynaktan D/2
+        // fazla okur. Kapı bunu görmezse yeterli kuyruk payı olmayan geçiş yakalanmaz ve
+        // ffmpeg sessizce donmuş kare üretirdi (§5.2 handle invariant'ının worker ayağı).
+        var plan = ExportCompiler.Validate(TransitionSingle());
+
+        var outgoing = plan.Clips.Single(c => c.AssetId == ExportTestDocs.AssetA);
+        Assert.Equal(3_200_000, outgoing.SourceOutUs);  // 3.0 + D/2
+        var incoming = plan.Clips.Single(c => c.AssetId == ExportTestDocs.AssetB);
+        Assert.Equal(800_000, incoming.SourceInUs);     // 1.0 - D/2
+
+        // Kaynak 3.1 sn ise kapı ARTIK tetiklenir (geçişsiz halde 3.0 yeterliydi).
+        Assert.NotNull(VideoEdit.Worker.Jobs.ExportJob.FindSourceOutOfRange(
+            plan.Clips, ExportTestDocs.AssetA, probeDurationUs: 3_100_000, plan.FpsNum, plan.FpsDen));
+    }
+
+    // ---------- M4 dalga 2: metin / şekil / çıkartma overlay'leri ----------
+
+    [Fact]
+    public void Compile_TextClip_UsesTheRasterAsALoopedInput_WithBboxSizedBox()
+    {
+        // Tasarım 04 §3 + rendering-semantics §7: metin klibi başına TEK şeffaf PNG; giriş
+        // -loop 1 -t (zaman ekseni yok). Ölçek kutusu TUVAL DEĞİL rasterin kendi bbox'ıdır —
+        // fit=contain uygulansaydı 640x160'lık metin 1920x480'e şişer, fontSizePx anlamını
+        // yitirirdi (her punto aynı ekran boyutunu verirdi).
+        var compiled = CompileFixture("text-over-video");
+
+        Assert.True(compiled.Inputs[1].Loop);
+        Assert.Equal(["-loop", "1", "-t", "2.033333", "-i", "rasters/text-0.png"],
+            compiled.Inputs[1].ToArgs());
+        Assert.Contains("scale=640:160:force_original_aspect_ratio=decrease", compiled.FilterGraphScript);
+        // P = (960, 540 + 0.3*1080) = (960, 864); çapa merkez.
+        Assert.Contains("overlay=x=960-0.5*w:y=864-0.5*h:", compiled.FilterGraphScript);
+        Assert.Contains("enable='between(t,1.000000,2.983334)'", compiled.FilterGraphScript);
+
+        // Metin SES ÜRETMEZ: mikse yalnız video klibi girer.
+        Assert.Contains("amix=inputs=1:", compiled.FilterGraphScript);
+        Assert.DoesNotContain("[1:a]", compiled.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Compile_ShapeAndSticker_ComposeLikeAnyOtherLayer()
+    {
+        // Şeklin şemada içsel boyutu YOKTUR → rasteri proje tuvalidir (scale=1 = tam kare),
+        // dolayısıyla scale 0.5 tam olarak medya klibindeki gibi 960x540 kutu verir.
+        // Çıkartma rasterlenmez: kendi asset dosyası GÖRSEL klip semantiğiyle girer.
+        var compiled = CompileFixture("shape-and-sticker");
+        var script = compiled.FilterGraphScript;
+
+        // Girişler render sırasında (sondan başa): video, şekil rasteri, çıkartma asset'i.
+        Assert.Equal("assets/a.mp4", compiled.Inputs[0].Path);
+        Assert.Equal("rasters/shape-0.png", compiled.Inputs[1].Path);
+        Assert.Equal("assets/photo.png", compiled.Inputs[2].Path);
+        Assert.True(compiled.Inputs[1].Loop);
+        Assert.True(compiled.Inputs[2].Loop);
+
+        Assert.Contains("scale=960:540:force_original_aspect_ratio=decrease", script); // şekil
+        Assert.Contains("colorchannelmixer=aa=0.4", script);
+        Assert.Contains("scale=480:270:force_original_aspect_ratio=decrease", script); // çıkartma
+        Assert.Contains("overlay=x=480-0.5*w:y=810-0.5*h:", script);                   // çıkartma P
+        Assert.Equal(3, script.Split(";\n").Count(l => l.Contains("]overlay=")));
+
+        // İkisi de sessiz: yalnız video klibinin sesi mikse girer.
+        Assert.Contains("amix=inputs=1:", script);
+        Assert.DoesNotContain("[1:a]", script);
+        Assert.DoesNotContain("[2:a]", script);
+    }
+
+    [Fact]
+    public void Validate_RasterClips_AreListedForTheRasterPipeline_ExceptInertOnes()
+    {
+        // Worker yalnız GERÇEKTEN render edilecek metin/şekil klipleri için SkiaSharp çalıştırır:
+        // gizli track'teki overlay klibi ne görüntü ne ses üretir → boşuna PNG üretilmez.
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.OverlayTrack(hidden: true, clips: [ExportTestDocs.TextClip(0, 1_000_000)]),
+            ExportTestDocs.OverlayTrack(clips: [ExportTestDocs.TextClip(0, 1_000_000)]),
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000)]),
+        ]);
+
+        var plan = ExportCompiler.Validate(doc);
+        var raster = Assert.Single(plan.RasterClips);
+        Assert.Equal(ExportClipKind.Text, raster.Kind);
+        Assert.Equal(doc.Tracks[1].Clips[0], raster.Source);
+        // Metin klibinin asset'i yoktur → indirme defterinde yalnız video vardır.
+        Assert.Equal([ExportTestDocs.AssetA], plan.AssetIds);
+        // Metin/şekil kaynak-aralığı kapısına GİRMEZ (dosyada zaman aralığı yok).
+        Assert.Single(plan.Clips);
+    }
+
+    [Fact]
+    public void Validate_RasterClipLedger_MatchesTheWorkerRasterPlanner()
+    {
+        // İKİ AJANIN KURALI AYNI OLMAK ZORUNDA: worker (OverlayRasterPlanner) hangi klipler
+        // için PNG üretiyorsa, compiler TAM o klipler için raster BEKLER. Ayrışırlarsa export
+        // ya "no raster provided" ile düşer ya da boşuna PNG üretilir.
+        // Kural: metin + şekil DAHİL; çıkartma HARİÇ (kendi asset'i); gizli track HARİÇ (atıl).
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.OverlayTrack(clips:
+            [
+                ExportTestDocs.TextClip(0, 1_000_000),
+                ExportTestDocs.ShapeClip(1_000_000, 1_000_000),
+                ExportTestDocs.StickerClip(ExportTestDocs.AssetC, 2_000_000, 1_000_000),
+            ]),
+            ExportTestDocs.OverlayTrack(hidden: true, clips: [ExportTestDocs.TextClip(0, 1_000_000)]),
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 3_000_000)]),
+        ]);
+
+        var plan = ExportCompiler.Validate(doc);
+        Assert.Equal(
+            plan.RasterClips.Select(c => c.Id).Order(),
+            VideoEdit.Media.Text.OverlayRasterPlanner.Collect(doc).Select(i => i.ClipId).Order());
+        Assert.Equal(2, plan.RasterClips.Count); // görünür metin + görünür şekil
+    }
+
+    [Fact]
+    public void Compile_RasterClipWithoutARaster_ThrowsArgumentException()
+    {
+        // Worker sözleşmesi: plan.RasterClips'teki her klip için raster ÜRETİLMİŞ olmalıdır.
+        var (doc, sources) = Fixture("text-over-video");
+        var ex = Assert.Throws<ArgumentException>(
+            () => ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p));
+        Assert.Contains("no raster provided", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_KeyframesAndEffectsOnOverlayClips_AreStillRejected()
+    {
+        // GÖREV 3: kapsam dışı özellikler overlay kliplerinde de tipli hata verir (M5).
+        var withKeyframes = ExportTestDocs.TextClip(0, 1_000_000);
+        withKeyframes.Keyframes = new KeyframeTracks
+        {
+            Opacity = [new Keyframe { TimeUs = 0, Value = 0, Easing = new EasingLinear { Type = "linear" } }],
+        };
+        var kfDoc = ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips: [withKeyframes])]);
+        Assert.Equal("keyframes",
+            Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(kfDoc)).Feature);
+
+        var withEffect = ExportTestDocs.ShapeClip(0, 1_000_000);
+        withEffect.Effects =
+            [new Effect { Id = Guid.CreateVersion7(), Type = EffectType.ColorAdjust, Enabled = true }];
+        var fxDoc = ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips: [withEffect])]);
+        Assert.Equal("effects",
+            Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(fxDoc)).Feature);
+    }
+
+    [Fact]
+    public void Compile_OversizedTextRaster_ThrowsTypedFeatureError()
+    {
+        // Metin kutusu RASTER boyutundan türer; tavan bu yüzden Validate'te değil Compile'da
+        // doğrulanır (Validate raster boyutunu bilmez).
+        var doc = ExportTestDocs.MultiTrackDoc(
+            [ExportTestDocs.OverlayTrack(clips: [ExportTestDocs.TextClip(0, 1_000_000)])]);
+        var textId = ((TextClip)doc.Tracks[0].Clips[0]).Id;
+        var rasters = new Dictionary<Guid, ExportRasterSource>
+        {
+            [textId] = new("rasters/huge.png", 9000, 400),
+        };
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Compile(doc, SdrSources(), ExportProfile.Hd1080p, rasters));
+        Assert.Equal("transform-scale", ex.Feature);
+        Assert.Contains("metin", ex.Message);
     }
 
     // ---------- Görsel (still image) klipler ----------

@@ -17,16 +17,19 @@
  */
 import type { MicroSec, TimelineDoc, Uuid } from '@videoedit/timeline-schema';
 import {
+  addTransitionBlockReason,
   copyBlockReason,
   cutBlockReason,
   deleteBlockReason,
   detachAudioBlockReason,
   duplicateBlockReason,
   pasteBlockReason,
+  removeTransitionBlockReason,
   splitBlockReason,
   trackDeleteBlockReason,
   trimToPlayheadBlockReason,
 } from '../../state/timelineOps';
+import { resolveTransitionEdge, transitionEdgeLabel } from './transitions';
 
 export type TimelineMenuActionId =
   | 'splitAtPlayhead'
@@ -38,16 +41,25 @@ export type TimelineMenuActionId =
   | 'trimStartToPlayhead'
   | 'trimEndToPlayhead'
   | 'detachAudio'
+  | 'addTransition'
+  | 'removeTransition'
   | 'paste'
   | 'toggleMuted'
   | 'toggleHidden'
   | 'toggleLocked'
   | 'deleteTrack'
-  | 'addMarker';
+  | 'addMarker'
+  | 'addText';
 
 /** Neye sağ tıklandı. */
 export type TimelineMenuTarget =
-  | { kind: 'clip'; clipId: Uuid }
+  /**
+   * `timeUs` = sağ tıklanan noktanın zamanı (opsiyonel; klavye/test yolları
+   * vermeyebilir). Geçiş öğeleri klibin İKİ kenarından hangisinin kastedildiğini
+   * bununla seçer: kesime yakın tıklamak o kesimi hedefler (bkz.
+   * transitions.ts `resolveTransitionEdge`). Verilmezse 'out' tercih edilir.
+   */
+  | { kind: 'clip'; clipId: Uuid; timeUs?: MicroSec }
   /** Track başlığı veya o track'in boş lane alanı. */
   | { kind: 'track'; trackId: Uuid }
   /** Cetvel (ruler). */
@@ -129,8 +141,18 @@ export function buildTimelineMenu(ctx: TimelineMenuContext): TimelineMenuEntry[]
     case 'ruler':
       return [item('addMarker', 'Buraya marker ekle', 'M', gated(ctx, () => null))];
     case 'empty':
-      return [pasteItem(ctx)];
+      return [pasteItem(ctx), SEPARATOR, addTextItem(ctx)];
   }
+}
+
+/**
+ * "Metin ekle" — boş alanın en doğal eylemi (kullanıcı zaten "buraya bir şey
+ * koy" demek için sağ tıkladı). Yerleşimi features/text/overlayActions yapar:
+ * playhead'de sığan ilk overlay track, yoksa yeni katman → op ASLA reddetmez,
+ * bu yüzden tek ret gerekçesi mutasyon kapısıdır.
+ */
+function addTextItem(ctx: TimelineMenuContext): TimelineMenuItem {
+  return item('addText', 'Metin ekle', undefined, gated(ctx, () => null));
 }
 
 function pasteItem(ctx: TimelineMenuContext): TimelineMenuItem {
@@ -143,6 +165,37 @@ function pasteItem(ctx: TimelineMenuContext): TimelineMenuItem {
     'Ctrl+V',
     gated(ctx, () => pasteBlockReason(ctx.doc, ctx.playheadUs)),
   );
+}
+
+/**
+ * Geçiş çifti: "Geçiş ekle" ve "Geçişi kaldır".
+ *
+ * Kenar seçimi (hangi kesim) `resolveTransitionEdge` ile yapılır ve etikete
+ * YAZILIR — menü "Geçiş ekle (sağ kesim)" diyip op'un sol kesime dokunması
+ * kullanıcı için sessiz bir yanlış uygulamadır. menuActions AYNI çözücüyü aynı
+ * bağlamla çağırır, dolayısıyla etiket ile eylem birebir aynı kesimi gösterir.
+ *
+ * İki öğe farklı kenarlarda olabilir: bir klibin solunda geçiş varken sağında
+ * boş bir kesim durabilir; o zaman "kaldır" sola, "ekle" sağa bakar.
+ */
+function transitionItems(ctx: TimelineMenuContext, clipId: Uuid): TimelineMenuEntry[] {
+  const timeUs = ctx.target.kind === 'clip' ? ctx.target.timeUs : undefined;
+  const addEdge = resolveTransitionEdge(ctx.doc, clipId, { timeUs, require: 'cut' });
+  const removeEdge = resolveTransitionEdge(ctx.doc, clipId, { timeUs, require: 'transition' });
+  return [
+    item(
+      'addTransition',
+      `Geçiş ekle (${transitionEdgeLabel(addEdge)})`,
+      undefined,
+      gated(ctx, () => addTransitionBlockReason(ctx.doc, clipId, addEdge)),
+    ),
+    item(
+      'removeTransition',
+      `Geçişi kaldır (${transitionEdgeLabel(removeEdge)})`,
+      undefined,
+      gated(ctx, () => removeTransitionBlockReason(ctx.doc, clipId, removeEdge)),
+    ),
+  ];
 }
 
 function clipMenu(ctx: TimelineMenuContext, clipId: Uuid): TimelineMenuEntry[] {
@@ -193,6 +246,8 @@ function clipMenu(ctx: TimelineMenuContext, clipId: Uuid): TimelineMenuEntry[] {
       'W',
       gated(ctx, () => trimToPlayheadBlockReason(ctx.doc, ctx.playheadUs, selection)),
     ),
+    SEPARATOR,
+    ...transitionItems(ctx, clipId),
     SEPARATOR,
     // Yalnız KENDİ sesi olan video klipte ve yerleştirilecek yer varsa aktif.
     item(

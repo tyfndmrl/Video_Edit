@@ -10,6 +10,7 @@ import { ExportDialog } from '../features/export/ExportDialog';
 import { useHistoryNavigationBlockReason } from '../features/history/historyLogic';
 import { returnToProjectPicker } from '../features/projects/projectPickerLogic';
 import { toggleShortcutsOverlay } from '../features/shortcuts/shortcutsHelp';
+import { OverlayAddButtons } from '../features/text/OverlayAddButtons';
 import { logout } from '../entities/auth';
 import { useDocStore } from '../state/docStore';
 import { useProjectSession } from '../state/projectSession';
@@ -57,6 +58,11 @@ export function TopBar() {
         >
           ↻
         </IconButton>
+      </div>
+
+      {/* Overlay katmanları (M4 dalga 2): metin/şekil ekleme playhead'e çalışır. */}
+      <div className="ml-3">
+        <OverlayAddButtons />
       </div>
 
       <div className="ml-auto flex items-center gap-2">

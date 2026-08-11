@@ -17,6 +17,28 @@ public sealed record ExportAssetSource(
 }
 
 /// <summary>
+/// Metin/şekil klibi için sunucuda üretilmiş overlay rasteri (SkiaSharp PNG — tasarım 04 §3,
+/// rendering-semantics §7). Compiler bunu GÖRSEL klip gibi <c>-loop 1 -t</c> ile açar.
+/// <para>
+/// <see cref="NaturalWidthPx"/>/<see cref="NaturalHeightPx"/> = rasterin PROJE ÇIKTI
+/// PİKSELİNDEKİ boyutu, yani <c>scale = 1</c> iken kaç piksel yer kaplayacağı. Raster hattının
+/// bildirdiği bbox'tır (<c>VideoEdit.Media.Text.RasterResult.BboxWidthPx/BboxHeightPx</c>);
+/// PNG dosyasının kendisi §7'nin @Nx kuralı gereği bunun <c>RasterScale</c> katıdır ve bu
+/// çarpan compiler'ı İLGİLENDİRMEZ — tek doğruluk kaynağı bbox'tır (raster hattı tavan
+/// nedeniyle çarpanı düşürebilir; sabit bir 2 varsayımı o durumda katmanı yanlış boyutlandırırdı).
+/// Yerleşim kuralının normatif tanımı <c>VideoEdit.Media.Text.OverlayRasterPlacement</c>'tadır:
+/// <c>w_d = bboxWidthPx * transform.scale</c>.
+/// </para>
+/// <para>
+/// Bu boyut ölçek kutusunun TABANIDIR (LayerGeometry'nin fit parametresi): metin katmanı tuvale
+/// fit=contain ile sığdırılSAYDI <c>fontSizePx</c> anlamsızlaşırdı — her punto aynı ekran
+/// boyutunu verirdi. Değerler KESİRLİDİR: kutu <c>roundHalfUp(bbox * scale)</c> ile TEK
+/// yuvarlamada üretilir (önce bbox'ı yuvarlamak raster hattının DrawBox'ıyla 1 px ayrışırdı).
+/// </para>
+/// </summary>
+public sealed record ExportRasterSource(string Path, double NaturalWidthPx, double NaturalHeightPx);
+
+/// <summary>
 /// Tek ffmpeg girişi: input-level trim (tasarım 04 §2.1 — daima -ss + -t, ASLA -to;
 /// aynı asset'ten N klip = N ayrı giriş). Saniye literal'leri TimeFormat.Sec ile
 /// InvariantCulture üretilir.

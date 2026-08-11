@@ -80,7 +80,27 @@ public static class LayerGeometry
     /// </summary>
     public const long MaxLayerDimension = 8192;
 
-    public static LayerPlacement Compute(Transform transform, int width, int height)
+    /// <summary>
+    /// Katman ölçek kutusu PROJE TUVALİNDEN türer (fit=contain, §2.2): medya/görsel/çıkartma
+    /// klipleri kompozisyona sığdırılır, <c>scale = 1</c> "fit boyutu" demektir.
+    /// </summary>
+    public static LayerPlacement Compute(Transform transform, int width, int height) =>
+        Compute(transform, width, height, width, height);
+
+    /// <summary>
+    /// Genel biçim: <paramref name="fitWidth"/>/<paramref name="fitHeight"/> katmanın
+    /// <c>scale = 1</c> boyutudur (ölçek kutusu bunun <c>scale</c> katıdır), tuval boyutu ise
+    /// yalnız hedef noktayı (<c>P = (W/2 + x*W, H/2 + y*H)</c>, §2.3 adım 4) belirler.
+    /// <para>
+    /// İkisinin AYRILMASI metin/şekil rasterleri içindir (rendering-semantics §7): metin PNG'si
+    /// elemanın KENDİ bbox'ıdır ve @2x rasterize edilir; doğal boyutu (rasterPx/2) proje
+    /// pikselindeki gerçek boyutudur. Bu katmanı fit=contain ile tuvale sığdırmak
+    /// <c>fontSizePx</c>'i tamamen anlamsızlaştırırdı (her punto aynı ekran boyutunu verirdi).
+    /// Medya/görsel/çıkartma kliplerinde iki boyut aynıdır → §2.2 davranışı BİREBİR korunur.
+    /// </para>
+    /// </summary>
+    public static LayerPlacement Compute(
+        Transform transform, int width, int height, double fitWidth, double fitHeight)
     {
         ArgumentNullException.ThrowIfNull(transform);
 
@@ -100,8 +120,8 @@ public static class LayerGeometry
         var mx = Math.Max(transform.AnchorX, 1d - transform.AnchorX);
         var my = Math.Max(transform.AnchorY, 1d - transform.AnchorY);
 
-        var boxWidth = RoundHalfUp(width * transform.Scale);
-        var boxHeight = RoundHalfUp(height * transform.Scale);
+        var boxWidth = RoundHalfUp(fitWidth * transform.Scale);
+        var boxHeight = RoundHalfUp(fitHeight * transform.Scale);
 
         // Ara tuval defteri (bellek tavanının doğrulandığı yer): pad yalnız DÖNEN + çapası
         // merkezde OLMAYAN katmanda üretilir; rotate ise ow=oh=hypot(iw,ih) ile kare tuval verir.

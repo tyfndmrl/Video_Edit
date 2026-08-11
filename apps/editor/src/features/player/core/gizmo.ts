@@ -79,6 +79,12 @@ export interface GizmoGeometryInput {
   compH: number;
   transform: Transform;
   mapping: ViewportMapping;
+  /**
+   * Overlay rasters are not fit to the composition — see
+   * core/transform.ts PlacementInput.baseScale. Passing it here is what keeps
+   * "the box is the SAME quad the compositor draws" true for text/shape clips.
+   */
+  baseScale?: number;
   /** Override for tests / denser layouts. */
   rotateHandleOffsetPx?: number;
 }
@@ -96,7 +102,14 @@ function unit(dx: number, dy: number, fallback: Point): Point {
  */
 export function computeGizmoGeometry(input: GizmoGeometryInput): GizmoGeometry {
   const { srcW, srcH, compW, compH, transform, mapping } = input;
-  const placement = computePlacement({ srcW, srcH, compW, compH, transform });
+  const placement = computePlacement({
+    srcW,
+    srcH,
+    compW,
+    compH,
+    transform,
+    baseScale: input.baseScale,
+  });
   const toScreen = (sx: number, sy: number): Point =>
     compToScreen(mapping, sourceToScreen(placement, sx, sy));
 

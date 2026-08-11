@@ -37,4 +37,11 @@ COPY --from=build /app/publish .
 # /data: scratch + asset LRU cache (compose'ta worker_data volume'u)
 VOLUME ["/data"]
 
+# Metin/şekil rasteri için küratörlü font seti (rendering-semantics §7). TTF'ler depoya girmez
+# ve build context'i ./backend olduğu icin imaja da gomulmez; kalici volume'a kurulur:
+#   OUTPUT_ROOT=/data/fonts ./fonts/fetch-fonts.sh
+# Fontlar yoksa worker acilista UYARIR (dusmez); yalniz metin klibi iceren export
+# 'font-missing' ile deterministik olarak basarisiz olur. Bkz. fonts/README.md.
+ENV VIDEOEDIT_FONT_ROOT=/data/fonts
+
 ENTRYPOINT ["dotnet", "VideoEdit.Worker.dll"]

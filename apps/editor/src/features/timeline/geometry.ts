@@ -11,6 +11,29 @@ export const TRACK_GAP = 6;
 export const NEW_TRACK_ZONE_H = 44;
 /** Trim handle hit width inside each clip edge, px. */
 export const TRIM_HANDLE_W = 8;
+
+/**
+ * Transition badge on a cut: width/height and the gap from the lane bottom.
+ *
+ * It lives in the BOTTOM strip on purpose — the trim handles cover the full
+ * lane height on both sides of the same cut, and the roll-trim gesture grabs
+ * the vertical MIDDLE of the edge. A centred badge would steal that grab.
+ */
+export const TRANSITION_BADGE_W = 20;
+export const TRANSITION_BADGE_H = 14;
+export const TRANSITION_BADGE_BOTTOM_GAP = 3;
+
+/** Content-space top of the transition badge in track row `index`. */
+export function transitionBadgeTop(index: number): number {
+  return trackTop(index) + TRACK_H - TRANSITION_BADGE_H - TRANSITION_BADGE_BOTTOM_GAP;
+}
+
+/**
+ * A cut only gets a badge when BOTH neighbours are wide enough to still be
+ * grabbable next to it; otherwise the badge would cover whole clips at low
+ * zoom and make trimming impossible.
+ */
+export const TRANSITION_BADGE_MIN_CLIP_W = 26;
 /** Snap threshold in screen px (design 01 §3.3). */
 export const SNAP_THRESHOLD_PX = 8;
 

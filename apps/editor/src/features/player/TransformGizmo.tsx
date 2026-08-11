@@ -133,7 +133,8 @@ export function TransformGizmo({
     if (clipId === undefined) return null;
     const found = resolveVisualStack(doc, playheadUs).find((a) => a.clip.id === clipId);
     if (!found || found.track.locked) return null;
-    if (!isMediaClip(found.clip)) return null; // text/shape/sticker: M3+ shapes
+    // Every DRAWN clip gets a box — media frames and overlay rasters alike
+    // (M4 wave 2). resolveVisualStack already dropped audio and hidden tracks.
     return found;
   }, [doc, selection, playheadUs, isPlaying]);
 
@@ -178,7 +179,8 @@ export function TransformGizmo({
       const size = getSourceSize(clipId);
       setSrcSize((prev) =>
         (prev?.width ?? null) === (size?.width ?? null) &&
-        (prev?.height ?? null) === (size?.height ?? null)
+        (prev?.height ?? null) === (size?.height ?? null) &&
+        (prev?.baseScale ?? null) === (size?.baseScale ?? null)
           ? prev
           : size,
       );
@@ -247,7 +249,9 @@ export function TransformGizmo({
    */
   const source: SourceSize = useMemo(() => {
     if (srcSize && srcSize.width > 0 && srcSize.height > 0) return srcSize;
-    const assetId = target && isMediaClip(target.clip) ? target.clip.assetId : null;
+    const clip = target?.clip;
+    const assetId =
+      clip && (isMediaClip(clip) || clip.kind === 'sticker') ? clip.assetId : null;
     const asset = assetId ? assets.get(assetId) : undefined;
     if (asset?.width && asset.height) return { width: asset.width, height: asset.height };
     return { width: compW, height: compH };
@@ -283,6 +287,10 @@ export function TransformGizmo({
       compH,
       transform: shownTransform,
       mapping,
+      // Overlay rasters are drawn at bbox * scale, not fit to the composition;
+      // without this the box would be the fit rectangle and every handle would
+      // sit somewhere the pixels are not (rendering-semantics §7).
+      baseScale: source.baseScale,
     });
   }, [rects, shownTransform, compW, compH, source]);
 

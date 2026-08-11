@@ -78,35 +78,39 @@ public sealed class ExportJobTests : IDisposable
     [Fact]
     public async Task Run_UnsupportedFeatureSnapshot_FailsWithoutRetry()
     {
-        // Çok katman ARTIK desteklenir (M4 dalga 1); kapsam dışı kalan metin klibiyle test edilir.
-        var doc = ExportTestDocs.Doc(clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000));
-        doc.Tracks.Add(new VideoEdit.Contracts.Timeline.Track
-        {
-            Id = Guid.CreateVersion7(),
-            Type = VideoEdit.Contracts.Timeline.TrackType.Overlay,
-            Clips =
-            [
-                new VideoEdit.Contracts.Timeline.TextClip
-                {
-                    Id = Guid.CreateVersion7(),
-                    Kind = "text",
-                    TimelineStartUs = 0,
-                    TimelineDurationUs = 1_000_000,
-                    Transform = ExportTestDocs.DefaultTransform(),
-                    Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks(),
-                    Effects = [],
-                    Opacity = 1,
-                },
-            ],
-        });
+        // Çok katman (M4 dalga 1), metin/şekil/çıkartma ve geçişler (M4 dalga 2) ARTIK
+        // desteklenir; kapsam dışı kalan HIZ değişimiyle test edilir (M5).
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.Speed = new VideoEdit.Contracts.Timeline.MediaClipSpeed { Rate = 2 };
+        clip.TimelineDurationUs = 500_000;
+        var job = await SeedExportJobAsync(ExportTestDocs.ToJson(ExportTestDocs.Doc(clips: clip)));
+
+        await CreateJobRunner().Run(job.Id, CancellationToken.None); // fırlatmamalı
+
+        var reloaded = Reload(job.Id);
+        Assert.Equal(JobStatus.Failed, reloaded.Status);
+        Assert.Contains("unsupported-feature:speed", reloaded.ErrorMessage);
+        Assert.NotNull(reloaded.CompletedAt);
+    }
+
+    [Fact]
+    public async Task Run_OverlayClipWithoutTheRasterService_FailsDeterministically()
+    {
+        // M4 dalga 2: metin/şekil klibi SkiaSharp rasteri ister. Servis DI'a kayıtlı değilse
+        // ExportCompiler.Compile "no raster provided" ile ArgumentException atardı ve iş
+        // TRANSIENT sayılıp 3 kez retry edilirdi (aynı sonuç, boşuna). Kurulum hatası
+        // deterministik olarak kapatılır.
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.OverlayTrack(clips: [ExportTestDocs.TextClip(0, 1_000_000)]),
+        ]);
         var job = await SeedExportJobAsync(ExportTestDocs.ToJson(doc));
 
         await CreateJobRunner().Run(job.Id, CancellationToken.None); // fırlatmamalı
 
         var reloaded = Reload(job.Id);
         Assert.Equal(JobStatus.Failed, reloaded.Status);
-        Assert.Contains("unsupported-feature:text-clip", reloaded.ErrorMessage);
-        Assert.NotNull(reloaded.CompletedAt);
+        Assert.Contains("overlay-raster-unavailable", reloaded.ErrorMessage);
     }
 
     [Fact]

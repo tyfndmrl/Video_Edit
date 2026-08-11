@@ -8,6 +8,7 @@ using VideoEdit.Infrastructure.Jobs;
 using VideoEdit.Infrastructure.Storage;
 using VideoEdit.Media;
 using VideoEdit.Media.Probing;
+using VideoEdit.Media.Text;
 using VideoEdit.Media.Waveform;
 using VideoEdit.Worker.Jobs;
 
@@ -56,6 +57,13 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<FfmpegOptions
 builder.Services.AddSingleton<FfprobeService>();
 builder.Services.AddSingleton<FfmpegRunner>();
 builder.Services.AddSingleton<WaveformGenerator>();
+
+// Overlay raster hattı (metin/şekil PNG'leri — rendering-semantics §7). Singleton: typeface
+// cache'i süreç ömrü boyunca yaşasın (her export'ta TTF yeniden parse edilmesin).
+builder.Services.Configure<TextRasterOptions>(builder.Configuration.GetSection(TextRasterOptions.SectionName));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<TextRasterOptions>>().Value);
+builder.Services.AddSingleton<ITextRasterService>(sp =>
+    new SkiaOverlayRasterService(sp.GetRequiredService<TextRasterOptions>()));
 
 // İşleme sınırları (süre gate'i vb.).
 builder.Services.Configure<ProcessingOptions>(builder.Configuration.GetSection(ProcessingOptions.SectionName));
@@ -117,6 +125,29 @@ var host = builder.Build();
 var ffmpegOptions = host.Services.GetRequiredService<FfmpegOptions>();
 EnsureMediaToolAvailable(ffmpegOptions.FfmpegPath, "ffmpeg");
 EnsureMediaToolAvailable(ffmpegOptions.FfprobePath, "ffprobe");
+
+// Font manifesti açılışta DOĞRULANIR ama eksikliği ÖLÜMCÜL DEĞİLDİR: metin klibi olmayan
+// projeler fontsuz da export edilir. Yalnız metin klibi içeren bir iş geldiğinde
+// 'font-missing' ile deterministik olarak düşer (bkz. fonts/README.md).
+{
+    var textOptions = host.Services.GetRequiredService<TextRasterOptions>();
+    var fontRoot = FontRootLocator.Locate(textOptions.FontRoot);
+    var bootLogger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Fonts");
+    try
+    {
+        var loaded = FontManifest.Load(Path.Combine(fontRoot, TextRasterOptions.ManifestFileName));
+        bootLogger.LogInformation(
+            "Font manifesti yüklendi ({Count} fontId): {Fonts} — kök: {Root}",
+            loaded.Fonts.Count, string.Join(", ", loaded.Fonts.Keys.Order()), fontRoot);
+    }
+    catch (OverlayRasterException ex)
+    {
+        bootLogger.LogWarning(
+            "Font manifesti okunamadı ({Root}): {Message} Metin klibi içeren export'lar "
+            + "'font-missing' ile başarısız olacaktır — kurulum için fonts/README.md.",
+            fontRoot, ex.Message);
+    }
+}
 
 // Reaper: 15 dk'da bir (kuyruk seçimi AssetReaperJob.Run üzerindeki [Queue] attribute'undan).
 using (var scope = host.Services.CreateScope())

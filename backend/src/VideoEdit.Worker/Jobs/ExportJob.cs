@@ -13,6 +13,7 @@ using VideoEdit.Infrastructure.Storage;
 using VideoEdit.Media;
 using VideoEdit.Media.Export;
 using VideoEdit.Media.Probing;
+using VideoEdit.Media.Text;
 
 namespace VideoEdit.Worker.Jobs;
 
@@ -33,6 +34,10 @@ namespace VideoEdit.Worker.Jobs;
 ///
 /// Progress bantları: indirme %0-15, derleme %15, render %15-90 (ffmpeg out_time_us'ten),
 /// doğrulama+upload %90-100.
+///
+/// Overlay hazırlığı (tasarım 04 §4.2 adım 3): metin/şekil klipleri için PNG'ler derlemeden
+/// ÖNCE job temp dizinine üretilir (asset DEĞİL, iş artefaktı — her export'ta deterministik
+/// olarak yeniden üretilir ve iş bitince temp ile birlikte silinir).
 /// </summary>
 public sealed class ExportJob(
     AppDbContext db,
@@ -42,7 +47,8 @@ public sealed class ExportJob(
     OriginalCache cache,
     IBackgroundJobClient backgroundJobs,
     ILogger<ExportJob> logger,
-    TimeProvider clock) : IExportJob
+    TimeProvider clock,
+    ITextRasterService? textRaster = null) : IExportJob
 {
     /// <summary>Disk yetersizse en fazla bu kadar denemede Failed('disk-full').</summary>
     public const int MaxDiskFullAttempts = 3;
@@ -249,12 +255,70 @@ public sealed class ExportJob(
                     path, probe.HasAudio, probe.ColorTransfer, probe.ColorPrimaries);
             }
 
-            // ── 5) Derleme + graph.txt (job artefaktı — tam script loglanır). — %15
+            // ── 5a) Overlay hazırlığı: metin/şekil PNG'leri (tasarım 04 §4.2 adım 3). — %15
+            // Gizli track'lerin klipleri ATLANIR (ExportCompiler'ın atıl-klip kuralıyla aynı):
+            // görünmeyen bir metnin eksik fontu TÜM export'u düşürmemeli.
+            await progress.ReportAsync(15, "overlays", ct);
+            OverlayRasterSet overlays;
+            try
+            {
+                overlays = textRaster is null
+                    ? OverlayRasterSet.Empty
+                    : await OverlayRasterPlanner.RenderAllAsync(doc, textRaster, tempDir, cancelCts.Token);
+            }
+            catch (OverlayRasterException ex)
+            {
+                // Deterministik kurulum/içerik hatası (eksik font, geçersiz renk, aşırı büyük
+                // raster): retry aynı sonucu verir → doğrudan Failed.
+                await FailAsync(job, ex.Code, ex.Message);
+                return;
+            }
+
+            if (overlays.Count > 0)
+            {
+                logger.LogInformation(
+                    "ExportJob {JobId}: {Count} overlay rasteri üretildi ({Bytes} bayt) → {Directory}",
+                    job.Id, overlays.Count, overlays.TotalBytes, overlays.Directory);
+
+                if (overlays.ClipsWithMissingGlyphs.Count > 0)
+                {
+                    // İş DÜŞMEZ: eksik glif .notdef kutusu olarak çizilir (emoji tipik durum),
+                    // ama sessiz kalmaz — küratörlü sette emoji fontu yoktur (fonts/README.md).
+                    logger.LogWarning(
+                        "ExportJob {JobId}: {Count} metin klibinde fontta olmayan karakter var "
+                        + "(.notdef kutusu çizildi): {ClipIds}",
+                        job.Id, overlays.ClipsWithMissingGlyphs.Count,
+                        string.Join(", ", overlays.ClipsWithMissingGlyphs));
+                }
+            }
+
+            // Raster hattı yoksa (servis DI'a kayıtlı değil) ama doküman metin/şekil klibi
+            // İÇERİYORSA, Compile "no raster provided" ile ArgumentException atardı ve iş
+            // transient sayılıp 3 kez retry edilirdi. Deterministik kurulum hatası olarak
+            // burada kapatılır.
+            if (textRaster is null && plan.RasterClips.Count > 0)
+            {
+                await FailAsync(job, "overlay-raster-unavailable",
+                    "Timeline metin/şekil klibi içeriyor ama overlay raster hattı (ITextRasterService) "
+                    + "bu worker'da kayıtlı değil. Font kurulumunu tamamlayıp worker'ı yeniden başlatın.");
+                return;
+            }
+
+            // ── 5b) Derleme + graph.txt (job artefaktı — tam script loglanır). — %15
+            // Overlay defteri compiler'a raster KAYNAK defteri olarak geçer: yol + rasterin
+            // PROJE PİKSELİNDEKİ doğal boyutu (bbox). Ölçek kutusu bunun transform.scale
+            // katıdır — yerleşim kuralı OverlayRasterPlacement'ta normatiftir
+            // (fit = 1/rasterScale, rendering-semantics §7 @2x); compiler tarafındaki
+            // karşılığı ExportRasterSource + LayerGeometry'nin fit parametresidir.
+            var rasterSources = overlays.Rasters.ToDictionary(
+                kv => kv.Key,
+                kv => new ExportRasterSource(kv.Value.Path, kv.Value.BboxWidthPx, kv.Value.BboxHeightPx));
+
             await progress.ReportAsync(15, "compile", ct);
             CompiledExport compiled;
             try
             {
-                compiled = ExportCompiler.Compile(doc, sources, profile);
+                compiled = ExportCompiler.Compile(doc, sources, profile, rasterSources);
             }
             catch (ExportCompileException ex)
             {

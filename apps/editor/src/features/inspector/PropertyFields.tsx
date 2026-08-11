@@ -16,8 +16,11 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { MIXED_LABEL } from './clipInspectorModel';
 import {
+  beginBurstEdit,
   beginLiveEdit,
+  endBurstEdit,
   endLiveEdit,
+  isBurstEditOpen,
   isGestureActive,
   isLiveEditBlocked,
 } from './liveEdit';
@@ -310,6 +313,289 @@ export function NumberField({
       {unit !== undefined && (
         <span className="w-5 shrink-0 text-[10px] text-fg-muted">{unit}</span>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Multi-line text (the text clip's content)
+// ---------------------------------------------------------------------------
+
+export interface TextAreaFieldProps {
+  id: string;
+  label: string;
+  /** null = mixed selection (empty box with a "—" placeholder). */
+  value: string | null;
+  rows?: number;
+  placeholder?: string;
+  disabled?: boolean;
+  /** History label for the whole typing burst (see liveEdit.beginBurstEdit). */
+  burst: GestureLabel;
+  onChange(value: string): void;
+  testId?: string;
+}
+
+/**
+ * Typing writes to the document on EVERY keystroke (the preview raster is the
+ * feedback the user is typing for), but the whole burst collapses into ONE
+ * history entry and one autosave PUT — the field owns the burst lifecycle and
+ * the parent decides where the value goes, exactly like the slider/scrub split.
+ */
+export function TextAreaField({
+  id,
+  label,
+  value,
+  rows = 3,
+  placeholder,
+  disabled = false,
+  burst,
+  onChange,
+  testId,
+}: TextAreaFieldProps) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const [text, setText] = useState('');
+  const [editing, setEditing] = useState(false);
+
+  // While the user is not typing, the box mirrors the document (undo, a new
+  // selection, another client's edit).
+  useEffect(() => {
+    if (editing) return;
+    setText(value ?? '');
+  }, [value, editing]);
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className="text-[11px] text-fg-muted">
+        {label}
+      </label>
+      <textarea
+        ref={ref}
+        id={id}
+        rows={rows}
+        value={text}
+        placeholder={value === null ? MIXED_LABEL : placeholder}
+        disabled={disabled}
+        data-testid={testId}
+        spellCheck={false}
+        className="w-full resize-y rounded border border-edge bg-surface-2 px-2 py-1 text-[12px] leading-snug text-fg disabled:opacity-40"
+        onChange={(e) => {
+          if (disabled) return;
+          // Could not open a burst (project loading, or a timeline/gizmo drag
+          // owns the store): write NOTHING rather than one history entry per
+          // keystroke — same stance as isLiveEditBlocked() on the slider path.
+          if (!isBurstEditOpen() && !beginBurstEdit(burst.actionType, burst.label, (t) => t === ref.current)) {
+            return;
+          }
+          setEditing(true);
+          setText(e.target.value);
+          onChange(e.target.value);
+        }}
+        onBlur={() => {
+          setEditing(false);
+          endBurstEdit();
+        }}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Colour (hex text + native swatch)
+// ---------------------------------------------------------------------------
+
+const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+export interface ColorFieldProps {
+  id: string;
+  label: string;
+  /** null = mixed selection. */
+  value: string | null;
+  disabled?: boolean;
+  /** History label used while dragging inside the native picker. */
+  burst: GestureLabel;
+  onChange(value: string): void;
+  testId?: string;
+}
+
+/**
+ * Two inputs, one value. The swatch is the pleasant path (and its live drag is
+ * coalesced through a burst); the hex box is the EXACT path — and the only one
+ * a keyboard, a screen reader or a Playwright `page.keyboard.type()` can drive,
+ * which is why it is not optional decoration.
+ */
+export function ColorField({
+  id,
+  label,
+  value,
+  disabled = false,
+  burst,
+  onChange,
+  testId,
+}: ColorFieldProps) {
+  const swatchRef = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState('');
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (editing) return;
+    setText(value ?? '');
+  }, [value, editing]);
+
+  const commit = (raw: string): void => {
+    const trimmed = raw.trim();
+    if (!HEX_RE.test(trimmed)) {
+      setText(value ?? ''); // invalid: revert, never write a broken color
+      return;
+    }
+    onChange(trimmed);
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-16 shrink-0 text-[11px] text-fg-muted">{label}</span>
+      <input
+        ref={swatchRef}
+        id={`${id}-swatch`}
+        type="color"
+        value={value ?? '#000000'}
+        disabled={disabled}
+        data-testid={testId !== undefined ? `${testId}-swatch` : undefined}
+        aria-label={`${label} (renk seçici)`}
+        className="h-6 w-8 shrink-0 cursor-pointer rounded border border-edge bg-surface-2 disabled:opacity-40"
+        onChange={(e) => {
+          if (disabled) return;
+          if (
+            !isBurstEditOpen() &&
+            !beginBurstEdit(burst.actionType, burst.label, (t) => t === swatchRef.current)
+          ) {
+            return;
+          }
+          onChange(e.target.value);
+        }}
+        onBlur={() => endBurstEdit()}
+      />
+      <input
+        id={id}
+        type="text"
+        value={text}
+        placeholder={value === null ? MIXED_LABEL : '#rrggbb'}
+        disabled={disabled}
+        data-testid={testId}
+        spellCheck={false}
+        className="min-w-0 flex-1 rounded border border-edge bg-surface-2 px-2 py-1 text-right font-mono text-[11px] text-fg disabled:opacity-40"
+        onChange={(e) => {
+          setEditing(true);
+          setText(e.target.value);
+        }}
+        onBlur={(e) => {
+          setEditing(false);
+          commit(e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            setEditing(false);
+            commit((e.target as HTMLInputElement).value);
+          } else if (e.key === 'Escape') {
+            setEditing(false);
+            setText(value ?? '');
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Select / segmented choice
+// ---------------------------------------------------------------------------
+
+export interface SelectFieldProps<T extends string> {
+  id: string;
+  label: string;
+  /** null = mixed selection (renders an extra, non-selectable "—" option). */
+  value: T | null;
+  options: readonly { value: T; label: string }[];
+  disabled?: boolean;
+  onChange(value: T): void;
+  testId?: string;
+}
+
+export function SelectField<T extends string>({
+  id,
+  label,
+  value,
+  options,
+  disabled = false,
+  onChange,
+  testId,
+}: SelectFieldProps<T>) {
+  return (
+    <div className="flex items-center gap-2">
+      <label htmlFor={id} className="w-16 shrink-0 text-[11px] text-fg-muted">
+        {label}
+      </label>
+      <select
+        id={id}
+        value={value ?? ''}
+        disabled={disabled}
+        data-testid={testId}
+        className="min-w-0 flex-1 rounded border border-edge bg-surface-2 px-1.5 py-1 text-[11px] text-fg disabled:opacity-40"
+        onChange={(e) => onChange(e.target.value as T)}
+      >
+        {value === null && (
+          <option value="" disabled>
+            {MIXED_LABEL}
+          </option>
+        )}
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+/** Small button row for 2-4 exclusive choices (alignment, shape type). */
+export function SegmentedField<T extends string>({
+  label,
+  value,
+  options,
+  disabled = false,
+  onChange,
+  testId,
+}: {
+  label: string;
+  value: T | null;
+  options: readonly { value: T; label: string; title?: string }[];
+  disabled?: boolean;
+  onChange(value: T): void;
+  testId?: string;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-16 shrink-0 text-[11px] text-fg-muted">{label}</span>
+      <div className="flex min-w-0 flex-1 gap-1" role="group" aria-label={label} data-testid={testId}>
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            title={o.title ?? o.label}
+            disabled={disabled}
+            aria-pressed={value === o.value}
+            data-testid={testId !== undefined ? `${testId}-${o.value}` : undefined}
+            className={`min-w-0 flex-1 rounded border px-1 py-1 text-[11px] disabled:pointer-events-none disabled:opacity-40 ${
+              value === o.value
+                ? 'border-accent/60 bg-accent/10 text-fg'
+                : 'border-edge bg-surface-2 text-fg-muted hover:text-fg'
+            }`}
+            onClick={() => onChange(o.value)}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

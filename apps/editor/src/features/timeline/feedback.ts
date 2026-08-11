@@ -34,10 +34,38 @@ const REASONS: Record<string, string> = {
   'clip not found': 'Klip bulunamadı',
   'track not found': 'Track bulunamadı',
   'cannot delete the last video track': 'Son video track silinemez',
+  // Geçişler (rendering-semantics §5).
+  'no adjacent clip at this cut': 'Geçiş yalnız bitişik iki klip arasına eklenir',
+  'clips are not adjacent': 'Geçiş yalnız bitişik iki klip arasına eklenir',
+  'a transition is already here': 'Bu kesimde zaten bir geçiş var',
+  'no transition at this cut': 'Bu kesimde geçiş yok',
+  'no room for a transition':
+    'Geçiş için yer yok — kaynak payı ya da klip süresi 2 kareye yetmiyor',
+};
+
+/**
+ * Başarılı ama KULLANICININ İSTEMEDİĞİ bir düzeltme yapan op'ların bildirimi
+ * (OpResult.notice). Geçiş süresinin sessizce kısalması / geçişin sessizce
+ * kaybolması "kendi kendine bir şeyler yapıyor" şikayetinin ta kendisidir;
+ * rendering-semantics §5.5 kısaltmayı ZORUNLU kılar, bu tablo da onu GÖRÜNÜR
+ * kılar.
+ */
+const NOTICES: Record<string, string> = {
+  'transition shortened by source handle':
+    'Geçiş süresi kaynak payına göre kısaltıldı',
+  'transition shortened by clip length':
+    'Geçiş süresi komşu klip süresine göre kısaltıldı',
+  'transition removed by edit': 'Kesim bozulduğu için geçiş kaldırıldı',
 };
 
 /** timelineOps `reason` -> kullanıcıya gösterilecek Türkçe uyarı. */
 export function opFailureMessage(reason: string | null | undefined): string {
   if (!reason) return 'İşlem uygulanamadı';
   return REASONS[reason] ?? 'İşlem uygulanamadı';
+}
+
+/** timelineOps `notice` -> Türkçe bilgilendirme (null = gösterilecek bir şey yok). */
+export function opNoticeMessage(notice: string | null | undefined): string | null {
+  if (!notice) return null;
+  return NOTICES[notice] ?? null;
 }

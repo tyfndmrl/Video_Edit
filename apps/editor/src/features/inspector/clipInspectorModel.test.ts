@@ -10,6 +10,7 @@ import {
   clipTimelineDurationUs,
   type Clip,
   type MediaClip,
+  type ShapeClip,
   type TextClip,
   type TimelineDoc,
   type Track,
@@ -19,6 +20,7 @@ import {
   buildClipInspectorModel,
   commonBoolean,
   commonNumber,
+  commonString,
   dbToLinear,
   formatDb,
   formatGain,
@@ -51,6 +53,43 @@ function videoClip(id: string, startUs: number, durationUs: number): MediaClip {
     keyframes: {},
     effects: [],
     opacity: 1,
+  };
+}
+
+function textClip(id: string, startUs = 0, durationUs = 3 * US): TextClip {
+  return {
+    id,
+    kind: 'text',
+    timelineStartUs: startUs,
+    timelineDurationUs: durationUs,
+    transform: { x: 0, y: 0.2, scale: 1, rotationDeg: 0, anchorX: 0.5, anchorY: 0.5 },
+    keyframes: {},
+    effects: [],
+    opacity: 1,
+    text: {
+      content: 'Merhaba',
+      fontId: 'inter',
+      fontSizePx: 48,
+      fontWeight: 600,
+      italic: false,
+      fill: '#ffffff',
+      align: 'center',
+      lineHeight: 1.2,
+    },
+  };
+}
+
+function shapeClip(id: string, startUs = 0, durationUs = 3 * US): ShapeClip {
+  return {
+    id,
+    kind: 'shape',
+    timelineStartUs: startUs,
+    timelineDurationUs: durationUs,
+    transform: { x: 0, y: 0, scale: 1, rotationDeg: 0, anchorX: 0.5, anchorY: 0.5 },
+    keyframes: {},
+    effects: [],
+    opacity: 1,
+    shape: { type: 'rect', fill: '#5a8cff', radiusPx: 16 },
   };
 }
 
@@ -241,6 +280,70 @@ describe('buildClipInspectorModel — visual section', () => {
   });
 });
 
+describe('buildClipInspectorModel — text / shape sections (M4 dalga 2)', () => {
+  it('exposes the whole text style of a single clip, stroke/background flattened', () => {
+    const clip = textClip(CLIP_A);
+    clip.text.stroke = { color: '#101010', widthPx: 6 };
+    const model = build(docWith([track(A1, 'overlay', [clip])]), [CLIP_A]);
+    expect(model.text).toMatchObject({
+      clipIds: [CLIP_A],
+      content: 'Merhaba',
+      fontId: 'inter',
+      fontSizePx: 48,
+      fontWeight: 600,
+      italic: false,
+      fill: '#ffffff',
+      align: 'center',
+      lineHeight: 1.2,
+      strokeEnabled: true,
+      strokeColor: '#101010',
+      strokeWidthPx: 6,
+      // No background object -> the toggle is OFF, and the (absent) colour is
+      // null rather than a made-up default.
+      backgroundEnabled: false,
+      backgroundColor: null,
+    });
+    expect(model.shape).toBeNull();
+    // A text clip is drawn, so it still gets the transform section.
+    expect(model.visual?.clipIds).toEqual([CLIP_A]);
+  });
+
+  it('collapses differing values of a multi-selection to null (mixed)', () => {
+    const a = textClip(CLIP_A);
+    const b = textClip(CLIP_B, 4 * US);
+    b.text.content = 'Başka';
+    b.text.fill = '#ff0000';
+    b.text.fontSizePx = 48; // agrees on purpose
+    const model = build(docWith([track(A1, 'overlay', [a, b])]), [CLIP_A, CLIP_B]);
+    expect(model.text?.clipIds).toEqual([CLIP_A, CLIP_B]);
+    expect(model.text?.content).toBeNull();
+    expect(model.text?.fill).toBeNull();
+    expect(model.text?.fontSizePx).toBe(48);
+  });
+
+  it('keeps the two sections independent in a mixed text+shape selection', () => {
+    const t = textClip(CLIP_A);
+    const s = shapeClip(CLIP_B, 4 * US);
+    const model = build(docWith([track(A1, 'overlay', [t, s])]), [CLIP_A, CLIP_B]);
+    expect(model.text?.clipIds).toEqual([CLIP_A]);
+    expect(model.shape).toMatchObject({
+      clipIds: [CLIP_B],
+      type: 'rect',
+      fill: '#5a8cff',
+      strokeEnabled: false,
+      radiusPx: 16,
+    });
+    // Both are drawn -> both are in the transform section.
+    expect(model.visual?.clipIds).toEqual([CLIP_A, CLIP_B]);
+  });
+
+  it('has no text/shape section for a media selection', () => {
+    const model = build(docWith([track(V1, 'video', [videoClip(CLIP_A, 0, 5 * US)])]), [CLIP_A]);
+    expect(model.text).toBeNull();
+    expect(model.shape).toBeNull();
+  });
+});
+
 describe('common value helpers', () => {
   it('returns the shared value or null', () => {
     expect(commonNumber([2, 2, 2])).toBe(2);
@@ -248,6 +351,9 @@ describe('common value helpers', () => {
     expect(commonNumber([])).toBeNull();
     expect(commonBoolean([true, true])).toBe(true);
     expect(commonBoolean([true, false])).toBeNull();
+    expect(commonString(['a', 'a'])).toBe('a');
+    expect(commonString(['a', 'b'])).toBeNull();
+    expect(commonString([])).toBeNull();
   });
 });
 

@@ -28,16 +28,23 @@ import { useProjectSession } from '../../state/projectSession';
 import {
   addClipFromAsset,
   addTrack,
+  addTransitionAtEdge,
   applyTrimToDraft,
   assertDocValidDev,
   clipEndUs,
+  findTransitionCut,
   knownAssetDurations,
   moveClips,
   planMoveClips,
   projectEndUs,
+  removeTransition,
+  setTransitionDuration,
+  setTransitionType,
   toggleTrackHidden,
   toggleTrackLocked,
   toggleTrackMuted,
+  transitionAt,
+  addTransitionBlockReason,
   type OpResult,
   type TrimEdge,
   type TrimMode,
@@ -49,8 +56,9 @@ import {
   type TimelineMenuActionId,
   type TimelineMenuTarget,
 } from './contextMenu';
-import { MOVE_CONFLICT_MESSAGE, WARNING_TTL_MS, opFailureMessage } from './feedback';
+import { MOVE_CONFLICT_MESSAGE, WARNING_TTL_MS, opFailureMessage, opNoticeMessage } from './feedback';
 import { runTimelineMenuAction } from './menuActions';
+import { TransitionEditor } from './TransitionEditor';
 import { clampScrollUs, maxPanScrollUs, panScrollUs, panScrollY } from './pan';
 import { TimelineContextMenu } from './TimelineContextMenu';
 import {
@@ -120,6 +128,12 @@ type PointerState =
       trimMode: TrimMode;
       candidates: MicroSec[];
       durations: Map<string, MicroSec>;
+      /**
+       * Sürükleme SIRASINDA geçiş kısaltıldıysa/kaldırıldıysa bildirim kodu.
+       * Uyarı balonu bırakma anında gösterilir: her pointermove'da göstermek
+       * balonu titretirdi, hiç göstermemek ise sessiz düzeltme olurdu.
+       */
+      transitionNotice: string | null;
     }
   | {
       mode: 'marquee';
@@ -128,6 +142,18 @@ type PointerState =
       startY: number;
       additive: boolean;
       baseSelection: Uuid[];
+    }
+  /**
+   * Kesim rozetine basıldı. Düzenleyici BIRAKMA anında açılır: basma anında
+   * açmak, TransitionEditor'ın "dışarı tıklayınca kapan" dinleyicisiyle aynı
+   * jestin bırakma/tıklama zincirine denk gelir ve panel bir açıp bir kapatır.
+   */
+  | {
+      mode: 'transitionBadge';
+      pointerId: number;
+      clipId: Uuid;
+      startX: number;
+      startY: number;
     }
   /** Orta fare tuşuyla kaydırma (pan) — doküman değişmez, yalnız görünüm. */
   | {
@@ -153,6 +179,18 @@ interface MenuState {
   y: number;
   target: TimelineMenuTarget;
   playheadUs: MicroSec;
+}
+
+/**
+ * Açık geçiş düzenleyicisi. Kesim, DAİMA `(clipId, 'out')` ile adreslenir —
+ * yani kesimin SOLUNDAKİ (giden) klip. Kesimin kimliği bu; bir taraf silinir
+ * ya da kesim bozulursa `findTransitionCut` null döner ve düzenleyici kapanır
+ * (bayat bir düzeltici artık var olmayan bir kesime yazamaz).
+ */
+interface TransitionEditorState {
+  x: number;
+  y: number;
+  clipId: Uuid;
 }
 
 export function TimelinePanel() {
@@ -193,6 +231,9 @@ export function TimelinePanel() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
 
+  const [transitionEditor, setTransitionEditor] = useState<TransitionEditorState | null>(null);
+  const closeTransitionEditor = useCallback(() => setTransitionEditor(null), []);
+
   // Kısa süreli inline uyarı (çakışan taşıma, reddedilen menü eylemi …).
   // Sessiz ret kullanıcıya "çalışmıyor" hissi veriyordu.
   const [warning, setWarning] = useState<string | null>(null);
@@ -211,10 +252,52 @@ export function TimelinePanel() {
     },
     [],
   );
-  /** Op sonucu başarısızsa uyarı balonunu göster. */
+  /**
+   * Op sonucunu balona çevir. Başarısızlıkta ret gerekçesi, BAŞARIDA da
+   * `notice` varsa bilgilendirme gösterilir: "geçiş süresi kısaltıldı" gibi
+   * istenmemiş düzeltmeler sessiz kalırsa kullanıcı ürünün kendi kendine
+   * bir şeyler değiştirdiğini düşünür (rendering-semantics §5.5 kısaltmayı
+   * zorunlu kılıyor, görünürlük bizim borcumuz).
+   */
   const reportOp = useCallback(
     (result: OpResult) => {
-      if (!result.ok) warn(opFailureMessage(result.reason));
+      if (!result.ok) {
+        warn(opFailureMessage(result.reason));
+        return;
+      }
+      const notice = opNoticeMessage(result.notice);
+      if (notice !== null) warn(notice);
+    },
+    [warn],
+  );
+
+  /**
+   * Kesim rozetine tıklandığında geçiş düzenleyicisini açar.
+   *
+   * BOŞ bir kesimde düzenleyici ancak geçiş EKLENEBİLİYORSA açılır; aksi halde
+   * op'un kendi gerekçesi balona düşer. Kaynak payı olmayan bir kesimde altı
+   * tip düğmesini gösterip her birinde ret vermek, kullanıcıya "tıklıyorum bir
+   * şey olmuyor" dedirtirdi — gerekçe tıklamadan ÖNCE söylenir.
+   */
+  const openTransitionEditorAt = useCallback(
+    (clipId: Uuid, clientX: number, clientY: number) => {
+      if (useProjectSession.getState().status !== 'ready') return;
+      const d = useDocStore.getState().doc;
+      const cut = findTransitionCut(d, clipId, 'out');
+      if (!cut) return;
+      if (cut.track.locked) {
+        warn(opFailureMessage('track is locked'));
+        return;
+      }
+      if (transitionAt(cut) === undefined) {
+        const blocked = addTransitionBlockReason(d, clipId, 'out');
+        if (blocked !== null) {
+          warn(opFailureMessage(blocked));
+          return;
+        }
+      }
+      setMenu(null);
+      setTransitionEditor({ x: clientX, y: clientY, clipId });
     },
     [warn],
   );
@@ -548,6 +631,17 @@ export function TimelinePanel() {
       const hit = hitTestClips(hitsRef.current, x, contentY);
       if (hit) {
         const track: (typeof d.tracks)[number] | undefined = d.tracks[hit.trackIndex];
+        // Kesim rozeti: sürükleme YOK, bırakınca düzenleyici açılır.
+        if (hit.region === 'transition') {
+          pointerRef.current = {
+            mode: 'transitionBadge',
+            pointerId: e.pointerId,
+            clipId: hit.clipId,
+            startX: x,
+            startY: contentY,
+          };
+          return;
+        }
         if (track && !track.locked && (hit.region === 'trimL' || hit.region === 'trimR')) {
           // Selection follows the trimmed clip.
           if (!st.selection.has(hit.clipId)) st.setSelection([hit.clipId]);
@@ -579,6 +673,7 @@ export function TimelinePanel() {
               playheadUs: st.playheadUs,
             }),
             durations: knownAssetDurations(),
+            transitionNotice: null,
           };
           return;
         }
@@ -629,7 +724,11 @@ export function TimelinePanel() {
         if (wrap) {
           const hover = hitTestClips(hitsRef.current, x, contentY);
           wrap.style.cursor =
-            hover?.region === 'trimL' || hover?.region === 'trimR' ? 'ew-resize' : 'default';
+            hover?.region === 'transition'
+              ? 'pointer'
+              : hover?.region === 'trimL' || hover?.region === 'trimR'
+                ? 'ew-resize'
+                : 'default';
         }
         return;
       }
@@ -744,12 +843,27 @@ export function TimelinePanel() {
           st.snappingEnabled,
         );
         state.tx.update((draft) => {
-          applyTrimToDraft(draft, state.clipId, state.edge, snap.timeUs, state.trimMode, state.durations);
+          const result = applyTrimToDraft(
+            draft,
+            state.clipId,
+            state.edge,
+            snap.timeUs,
+            state.trimMode,
+            state.durations,
+          );
+          // Kırpma geçişli bir kenarı bozduysa op bunu `notice` ile söyler.
+          // İlk bildirimi SAKLA: aynı sürüklemede sonraki adımlar (geçiş artık
+          // kısalmış olduğu için) sessiz döner ve bilgi kaybolurdu.
+          if (result.ok && result.notice !== undefined && state.transitionNotice === null) {
+            state.transitionNotice = result.notice;
+          }
         });
         dragVisualRef.current = { kind: 'trim', guideUs: snap.snappedTo };
         requestDraw();
         return;
       }
+
+      if (state.mode === 'transitionBadge') return; // rozet sürüklenmez
 
       if (state.mode === 'pendingMarquee') {
         const dist = Math.hypot(x - state.startX, contentY - state.startY);
@@ -797,13 +911,17 @@ export function TimelinePanel() {
       } else if (state.mode === 'trim') {
         state.tx.commit();
         assertDocValidDev('trim drag');
+        const notice = opNoticeMessage(state.transitionNotice);
+        if (notice !== null) warn(notice);
+      } else if (state.mode === 'transitionBadge') {
+        openTransitionEditorAt(state.clipId, e.clientX, e.clientY);
       } else if (state.mode === 'pan') {
         const wrap = wrapRef.current;
         if (wrap) wrap.style.cursor = 'default';
       }
       finishInteraction();
     },
-    [finishInteraction, reportOp, warn],
+    [finishInteraction, openTransitionEditorAt, reportOp, warn],
   );
 
   const cancelInteraction = useCallback(() => {
@@ -832,9 +950,12 @@ export function TimelinePanel() {
   // Sağ tık menüsü + çift tık
   // ---------------------------------------------------------------------
 
-  // Proje yeniden yüklenirken menü açık kalmasın (hedef kaybolabilir).
+  // Proje yeniden yüklenirken menü/düzenleyici açık kalmasın (hedef kaybolabilir).
   useEffect(() => {
-    if (sessionLoading) setMenu(null);
+    if (sessionLoading) {
+      setMenu(null);
+      setTransitionEditor(null);
+    }
   }, [sessionLoading]);
 
   const onContextMenu = useCallback(
@@ -869,7 +990,13 @@ export function TimelinePanel() {
           x: e.clientX,
           y: e.clientY,
           playheadUs,
-          target: { kind: 'clip', clipId: hit.clipId },
+          // Tıklanan zaman menüye taşınır: geçiş öğeleri klibin hangi kesimini
+          // kastettiğimizi bundan çıkarır (kesime yakın sağ tık = o kesim).
+          target: {
+            kind: 'clip',
+            clipId: hit.clipId,
+            timeUs: xToTime(x, st.scrollUs, st.pxPerUs),
+          },
         });
         return;
       }
@@ -1043,6 +1170,25 @@ export function TimelinePanel() {
           mutationAllowed: sessionStatus === 'ready',
         })
       : [];
+
+  // Geçiş düzenleyicisinin CANLI bağlamı. `doc` değiştikçe yeniden türetilir,
+  // böylece op'un yazdığı (ve gerekirse KISALTTIĞI) değer alanlara anında
+  // yansır. Kesim ortadan kalktıysa (undo, silme, taşıma) null döner ve
+  // düzenleyici kapanır — bayat bir düzenleyici var olmayan kesime yazamaz.
+  const transitionCut =
+    transitionEditor !== null ? findTransitionCut(doc, transitionEditor.clipId, 'out') : null;
+  useEffect(() => {
+    if (transitionEditor !== null && transitionCut === null) setTransitionEditor(null);
+  }, [transitionEditor, transitionCut]);
+
+  const runTransitionOp = useCallback(
+    (op: () => OpResult, closeAfter = false) => {
+      if (useProjectSession.getState().status !== 'ready') return;
+      reportOp(op());
+      if (closeAfter) setTransitionEditor(null);
+    },
+    [reportOp],
+  );
 
   // Timecode readout: imperative textContent updates (no React re-render per
   // playback frame — finding 12). Re-synced when fps/doc changes.
@@ -1241,6 +1387,36 @@ export function TimelinePanel() {
           entries={menuEntries}
           onSelect={runMenuAction}
           onClose={closeMenu}
+        />
+      )}
+
+      {transitionEditor !== null && transitionCut !== null && (
+        <TransitionEditor
+          x={transitionEditor.x}
+          y={transitionEditor.y}
+          cutUs={clipEndUs(transitionCut.a)}
+          fps={fps}
+          current={transitionAt(transitionCut)}
+          mutationAllowed={sessionStatus === 'ready'}
+          onPickType={(type) => {
+            const clipId = transitionEditor.clipId;
+            // Boş kesimde tip seçmek EKLEME, dolu kesimde tip DEĞİŞTİRMEdir;
+            // ikisi de tek history girdisi.
+            runTransitionOp(() =>
+              transitionAt(transitionCut) === undefined
+                ? addTransitionAtEdge(clipId, 'out', type)
+                : setTransitionType(clipId, 'out', type),
+            );
+          }}
+          onSetDuration={(durationUs) => {
+            const clipId = transitionEditor.clipId;
+            runTransitionOp(() => setTransitionDuration(clipId, 'out', durationUs));
+          }}
+          onRemove={() => {
+            const clipId = transitionEditor.clipId;
+            runTransitionOp(() => removeTransition(clipId, 'out'), true);
+          }}
+          onClose={closeTransitionEditor}
         />
       )}
 

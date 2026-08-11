@@ -165,3 +165,75 @@ describe('unitQuadToNdcMatrix (vertex shader input)', () => {
     expect(applyMat3(m, 1, 1).y).toBeCloseTo(-1, 6);
   });
 });
+
+/**
+ * Overlay rasters (rendering-semantics §7): the raster is produced at 2x its
+ * project-space bbox and drawn at `bboxPx * scale`. `baseScale` REPLACES the
+ * fit=contain factor; without it a 400x100 caption would be blown up to fill
+ * the composition, which is what fit does to media.
+ */
+describe('baseScale override (§7 overlay rasters)', () => {
+  const OVERLAY_BASE = 0.5; // 1 / rasterScale(2)
+
+  it('draws the raster at bbox * scale, NOT at fit size', () => {
+    // 800x200 raster = a 400x100 project-space bbox at 2x.
+    const p = computePlacement({
+      srcW: 800,
+      srcH: 200,
+      compW: 1920,
+      compH: 1080,
+      transform: { ...IDENTITY_TRANSFORM },
+      baseScale: OVERLAY_BASE,
+    });
+    expect(p.s).toBe(0.5);
+    expect(p.wDraw).toBe(400);
+    expect(p.hDraw).toBe(100);
+    // Fit would have been min(1920/800, 1080/200) = 2.4 -> 1920x480.
+    expect(fitScale(800, 200, 1920, 1080)).toBe(2.4);
+  });
+
+  it('multiplies with transform.scale exactly like the fit factor does', () => {
+    const p = computePlacement({
+      srcW: 800,
+      srcH: 200,
+      compW: 1920,
+      compH: 1080,
+      transform: { ...IDENTITY_TRANSFORM, scale: 3 },
+      baseScale: OVERLAY_BASE,
+    });
+    expect(p.wDraw).toBe(1200);
+    expect(p.hDraw).toBe(300);
+  });
+
+  it('keeps the anchor on P and the quad centred (same §2.3 order)', () => {
+    const p = computePlacement({
+      srcW: 800,
+      srcH: 200,
+      compW: 1920,
+      compH: 1080,
+      transform: { ...IDENTITY_TRANSFORM, x: 0.25, y: -0.1 },
+      baseScale: OVERLAY_BASE,
+    });
+    // P = (W/2 + x*W, H/2 + y*H)
+    expect(p.px).toBe(1440);
+    expect(p.py).toBe(432);
+    const nw = sourceToScreen(p, 0, 0);
+    const se = sourceToScreen(p, 800, 200);
+    expect(nw).toEqual({ x: 1440 - 200, y: 432 - 50 });
+    expect(se).toEqual({ x: 1440 + 200, y: 432 + 50 });
+  });
+
+  it('ignores a degenerate override and falls back to fit (never draws nothing)', () => {
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const p = computePlacement({
+        srcW: 1280,
+        srcH: 720,
+        compW: 1920,
+        compH: 1080,
+        transform: { ...IDENTITY_TRANSFORM },
+        baseScale: bad,
+      });
+      expect(p.s).toBe(1.5);
+    }
+  });
+});

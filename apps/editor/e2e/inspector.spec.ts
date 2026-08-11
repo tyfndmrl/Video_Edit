@@ -411,3 +411,140 @@ test.describe('Inspector — seçili klip özellikleri', () => {
     expect((await readClip(editor.page, seed.clipAId)).audio).not.toBeNull();
   });
 });
+
+/**
+ * Çoklu seçim, kilitli track ve kapsam notu — panelin "birden fazla klip" ve
+ * "düzenlenemez" hallerinin GERÇEK girdiyle doğrulanması.
+ *
+ * Neden ayrı bir describe: yukarıdaki testler tek klip üzerinde çalışır ve
+ * beforeEach'te yalnız clipA'yı görünür kılar; burada iki klip birden ve track
+ * başlığındaki kilit düğmesi devreye girer.
+ */
+test.describe('Inspector — çoklu seçim, kilit ve kapsam', () => {
+  test.beforeEach(async ({ editor, seed }) => {
+    await editor.ensureContentVisible(seed.clipAId);
+  });
+
+  test('farklı değerli iki klip seçilince ortak alan "—" gösterir', async ({ editor, seed }) => {
+    // Önce clipA'nın sesini DEĞİŞTİR ki iki klip farklılaşsın (gerçek sürükleme).
+    await editor.timeline.click(await editor.timeline.clipCenter(seed.clipAId));
+    const slider = editor.page.getByTestId('clip-volume');
+    const box = await slider.boundingBox();
+    expect(box, 'Ses seviyesi slider\'ı görünmüyor.').not.toBeNull();
+    await dragHorizontally(
+      editor.page,
+      { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 },
+      box!.x + box!.width * 0.2,
+    );
+    const changed = (await readClip(editor.page, seed.clipAId)).audio!.volume;
+    expect(changed, 'Ön koşul: clipA sesi clipB\'den farklı olmalı.').toBeLessThan(1);
+    expect((await readClip(editor.page, seed.clipBId)).audio!.volume).toBe(1);
+
+    // Shift+tık ile clipB'yi seçime EKLE (gerçek klavye + gerçek fare).
+    await blurPanel(editor.page);
+    const target = await editor.timeline.clipCenter(seed.clipBId);
+    await editor.page.keyboard.down('Shift');
+    await editor.timeline.click(target);
+    await editor.page.keyboard.up('Shift');
+
+    expect(
+      [...(await editor.state()).selection].sort(),
+      'Shift+tık seçimi genişletmeli.',
+    ).toEqual([seed.clipAId, seed.clipBId].sort());
+
+    // Kimlik bölümü artık tek klip değil, sayı + açıklama gösterir.
+    const identity = editor.page.getByTestId('clip-inspector-identity');
+    await expect(identity).toContainText('2 klip seçili');
+    await expect(identity).toContainText('—');
+
+    // Farklı değerli alan "—" okur ve slider "mixed" işaretli olur.
+    await expect(editor.page.getByTestId('clip-inspector-audio')).toContainText('—');
+    await expect(slider).toHaveAttribute('data-mixed', 'true');
+    // Aynı değerli alan (fade in: her ikisinde 0) KARIŞIK değildir.
+    await expect(editor.page.getByTestId('clip-fade-in')).not.toHaveAttribute('data-mixed', 'true');
+  });
+
+  test('çoklu seçimde yapılan değişiklik TÜM seçili kliplere uygulanır (tek geçmiş girdisi)', async ({
+    editor,
+    seed,
+  }) => {
+    await editor.timeline.click(await editor.timeline.clipCenter(seed.clipAId));
+    await editor.page.keyboard.down('Shift');
+    await editor.timeline.click(await editor.timeline.clipCenter(seed.clipBId));
+    await editor.page.keyboard.up('Shift');
+    expect((await editor.state()).selection).toHaveLength(2);
+
+    const before = await editor.state();
+    const toggle = editor.page.getByTestId('clip-muted');
+    const box = await toggle.boundingBox();
+    expect(box, '"Sessize al" düğmesi görünmüyor.').not.toBeNull();
+    await editor.page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await editor.page.mouse.down();
+    await editor.page.mouse.up();
+    await editor.page.waitForTimeout(150);
+
+    expect((await readClip(editor.page, seed.clipAId)).audio?.muted).toBe(true);
+    expect((await readClip(editor.page, seed.clipBId)).audio?.muted).toBe(true);
+    expect(
+      (await editor.state()).historyLabels.length,
+      'İki klibe uygulanan tek jest TEK geçmiş girdisi bırakmalı.',
+    ).toBe(before.historyLabels.length + 1);
+  });
+
+  test('kilitli track\'teki seçim SALT OKUNUR olur (alanlar devre dışı)', async ({
+    editor,
+    seed,
+  }) => {
+    await editor.timeline.click(await editor.timeline.clipCenter(seed.clipAId));
+    await expect(editor.page.getByTestId('clip-volume')).toBeEnabled();
+
+    // Track başlığındaki "L" (Kilitle) düğmesine GERÇEK tık.
+    const lock = editor.page.getByRole('button', { name: 'L', exact: true }).first();
+    const lockBox = await lock.boundingBox();
+    expect(lockBox, 'Track başlığındaki kilit düğmesi görünmüyor.').not.toBeNull();
+    await editor.page.mouse.move(lockBox!.x + lockBox!.width / 2, lockBox!.y + lockBox!.height / 2);
+    await editor.page.mouse.down();
+    await editor.page.mouse.up();
+    await editor.page.waitForTimeout(150);
+
+    expect(
+      (await editor.state()).tracks.find((t) => t.id === seed.trackTopId)?.locked,
+      'Kilit düğmesi track\'i kilitlemeli.',
+    ).toBe(true);
+
+    await expect(editor.page.getByTestId('clip-inspector-identity')).toContainText(
+      'Seçim kilitli bir track üzerinde — salt okunur.',
+    );
+    await expect(editor.page.getByTestId('clip-volume')).toBeDisabled();
+    await expect(editor.page.getByTestId('clip-muted')).toBeDisabled();
+    await expect(editor.page.getByTestId('clip-scale')).toBeDisabled();
+    await expect(editor.page.getByTestId('clip-transform-reset')).toBeDisabled();
+
+    // Kilit açılınca düzenlenebilirlik geri gelir (tek yönlü bir kapı değil).
+    await editor.page.mouse.down();
+    await editor.page.mouse.up();
+    await editor.page.waitForTimeout(150);
+    await expect(editor.page.getByTestId('clip-volume')).toBeEnabled();
+  });
+
+  test('kapsam notu, panelin KAPSAMADIĞI alanları hedef milestone\'uyla yazar', async ({
+    editor,
+    seed,
+  }) => {
+    await editor.timeline.click(await editor.timeline.clipCenter(seed.clipAId));
+    const scope = editor.page.getByTestId('clip-inspector-scope');
+    await expect(scope).toBeVisible();
+    // Sessiz eksik bırakma denetimde kapsam kayması bulgusuydu: eksikler
+    // isimleriyle VE hedef milestone'uyla yazılı olmalı.
+    //
+    // Neden yalnız M5 kalemleri iddia ediliyor: bu not ÖZELLİKLER İNDİKÇE
+    // kısalır (M4 dalga 2 metin/şekil/geçiş satırları teslim edildiklerinde
+    // notttan çıkar — bu koşum sırasında tam olarak bu oldu). Teslim edilmiş
+    // bir özelliği "hâlâ eksik yazıyor mu?" diye sınamak testi ürünün
+    // ilerlemesine düşman yapardı; sabit olan, M5'e itilmiş kalemlerdir.
+    await expect(scope).toContainText(/çapa|anchor/i);
+    await expect(scope).toContainText(/hız/i);
+    await expect(scope).toContainText(/keyframe/i);
+    await expect(scope).toContainText(/M5/);
+  });
+});

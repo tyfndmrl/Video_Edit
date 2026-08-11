@@ -8,13 +8,19 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { clipTimelineDurationUs, type MediaClip, type Track } from '@videoedit/timeline-schema';
 import { createEmptyDoc, defaultProjectSettings, useDocStore } from '../../state/docStore';
 import { useAssetStore } from '../../state/assetStore';
-import { applyClipAudioToDraft } from '../../state/timelineOps';
+import { applyClipAudioToDraft, addTextClip, applyClipTextToDraft } from '../../state/timelineOps';
+import { defaultTextStyle } from '../text/overlayDefaults';
 import {
+  BURST_EDIT_IDLE_MS,
+  beginBurstEdit,
   beginLiveEdit,
+  endBurstEdit,
   endLiveEdit,
+  isBurstEditOpen,
   isGestureActive,
   isLiveEditBlocked,
   isLiveEditOpen,
+  updateBurstEdit,
   updateLiveEdit,
 } from './liveEdit';
 
@@ -48,6 +54,7 @@ function volume(): number {
 }
 
 beforeEach(() => {
+  endBurstEdit();
   endLiveEdit();
   const track: Track = {
     id: V1,
@@ -156,5 +163,138 @@ describe('liveEdit', () => {
     endLiveEdit();
     expect(useDocStore.getState().history).toHaveLength(2);
     expect(volume()).toBe(0.6);
+  });
+});
+
+
+/**
+ * Burst edits (typing into the text content field, dragging in the colour
+ * picker). The regression this guards is NOT cosmetic: an open transaction
+ * makes the next `docStore.beginTransaction` (every timeline/gizmo drag) THROW,
+ * so a burst that fails to close crashes the editor on the next clip drag.
+ */
+describe('burst edits (typing / colour picker)', () => {
+  const inField = () => true;
+
+  function seedTextClipId(): string {
+    const result = addTextClip(defaultTextStyle(defaultProjectSettings), { newTrack: true }, 0);
+    if (!result.ok) throw new Error(`seed failed: ${result.reason}`);
+    return result.clipId;
+  }
+
+  function textContentOf(clipId: string): string {
+    for (const t of useDocStore.getState().doc.tracks) {
+      for (const c of t.clips) if (c.id === clipId && c.kind === 'text') return c.text.content;
+    }
+    throw new Error('text clip not found');
+  }
+
+  /**
+   * The module listens on `window`; the vitest env is node, so the test
+   * installs the smallest possible stand-in and fires the listener itself.
+   * (A real browser press is covered by e2e/text.spec.ts — this only proves the
+   * wiring.)
+   */
+  function withFakeWindow(): { fire: (target: unknown) => void; restore: () => void } {
+    const listeners = new Set<(e: unknown) => void>();
+    const fake = {
+      addEventListener: (type: string, cb: (e: unknown) => void) => {
+        if (type === 'pointerdown') listeners.add(cb);
+      },
+      removeEventListener: (_type: string, cb: (e: unknown) => void) => {
+        listeners.delete(cb);
+      },
+    };
+    (globalThis as { window?: unknown }).window = fake;
+    return {
+      fire: (target) => {
+        for (const cb of [...listeners]) cb({ target });
+      },
+      restore: () => {
+        delete (globalThis as { window?: unknown }).window;
+      },
+    };
+  }
+
+  it('collapses a whole typed sentence into ONE history entry', () => {
+    const clipId = seedTextClipId();
+    const before = useDocStore.getState().history.length;
+    expect(beginBurstEdit('clipText', 'Metin içeriği değiştirildi', inField)).toBe(true);
+    expect(isBurstEditOpen()).toBe(true);
+    for (const text of ['M', 'Me', 'Mer', 'Merh', 'Merha', 'Merhab', 'Merhaba']) {
+      updateBurstEdit((d) => void applyClipTextToDraft(d, [clipId], { content: text }));
+    }
+    endBurstEdit();
+
+    expect(isBurstEditOpen()).toBe(false);
+    expect(textContentOf(clipId)).toBe('Merhaba');
+    expect(useDocStore.getState().history.length).toBe(before + 1);
+    expect(useDocStore.getState().history.at(-1)?.label).toBe('Metin içeriği değiştirildi');
+
+    useDocStore.getState().undo();
+    expect(textContentOf(clipId), 'tek Ctrl+Z tüm yazımı geri almalı').toBe('Metin');
+  });
+
+  it('is a no-op when it could not open (locked document / another transaction)', () => {
+    const clipId = seedTextClipId();
+    useDocStore.getState().setLocked(true);
+    expect(beginBurstEdit('clipText', 'Metin içeriği değiştirildi', inField)).toBe(false);
+    updateBurstEdit((d) => void applyClipTextToDraft(d, [clipId], { content: 'X' }));
+    useDocStore.getState().setLocked(false);
+    expect(textContentOf(clipId), 'kilitliyken yazı dokümana sızmamalı').toBe('Metin');
+
+    const tx = useDocStore.getState().beginTransaction('move', 'Klip taşındı');
+    expect(beginBurstEdit('clipText', 'Metin içeriği değiştirildi', inField)).toBe(false);
+    tx.commit();
+  });
+
+  /**
+   * The load-bearing terminator: a pointerdown OUTSIDE the field must close the
+   * burst BEFORE a timeline drag opens its own transaction.
+   */
+  it('closes on a pointerdown outside the field, so the next drag can begin', () => {
+    const clipId = seedTextClipId();
+    const win = withFakeWindow();
+    try {
+      const textarea: unknown = { tag: 'textarea' };
+      expect(
+        beginBurstEdit('clipText', 'Metin içeriği değiştirildi', (t) => (t as unknown) === textarea),
+      ).toBe(true);
+      updateBurstEdit((d) => void applyClipTextToDraft(d, [clipId], { content: 'yarım' }));
+
+      win.fire(textarea); // press inside the field: the burst survives
+      expect(isBurstEditOpen(), 'alanın İÇİNDEKİ tıklama yazımı bölmemeli').toBe(true);
+
+      win.fire({ tag: 'timeline-canvas' }); // press anywhere else: closed
+      expect(isBurstEditOpen()).toBe(false);
+    } finally {
+      win.restore();
+      endBurstEdit();
+    }
+
+    // The store is free again — this would THROW if the burst had leaked.
+    const tx = useDocStore.getState().beginTransaction('move', 'Klip taşındı');
+    tx.abort();
+    expect(textContentOf(clipId)).toBe('yarım');
+  });
+
+  it('yields to a pointer gesture: beginLiveEdit closes an open burst', () => {
+    const clipId = seedTextClipId();
+    beginBurstEdit('clipText', 'Metin içeriği değiştirildi', inField);
+    updateBurstEdit((d) => void applyClipTextToDraft(d, [clipId], { content: 'yarım' }));
+    expect(beginLiveEdit('clipTransform', 'Konum değiştirildi')).toBe(true);
+    expect(isBurstEditOpen()).toBe(false);
+    endLiveEdit();
+    expect(textContentOf(clipId)).toBe('yarım');
+  });
+
+  it('closes itself after the idle timeout (autosave must not stay deferred)', async () => {
+    const clipId = seedTextClipId();
+    beginBurstEdit('clipText', 'Metin içeriği değiştirildi', inField);
+    updateBurstEdit((d) => void applyClipTextToDraft(d, [clipId], { content: 'bekleyen' }));
+    await new Promise((resolve) => setTimeout(resolve, BURST_EDIT_IDLE_MS + 100));
+    expect(isBurstEditOpen(), 'boşta kalan burst kendi kendini kapatmalı').toBe(false);
+    expect(useDocStore.getState().transactionOpen).toBe(false);
+    expect(textContentOf(clipId)).toBe('bekleyen');
   });
 });

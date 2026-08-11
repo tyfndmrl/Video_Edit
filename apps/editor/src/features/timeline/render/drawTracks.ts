@@ -13,12 +13,17 @@ import {
   type Uuid,
 } from '@videoedit/timeline-schema';
 import type { AssetSummary } from '../../../state/assetStore';
+import { splitLines } from '../../text/textLayout';
 import {
   NEW_TRACK_ZONE_H,
   TRACK_H,
+  TRANSITION_BADGE_H,
+  TRANSITION_BADGE_MIN_CLIP_W,
+  TRANSITION_BADGE_W,
   TRIM_HANDLE_W,
   timeToX,
   trackTop,
+  transitionBadgeTop,
   visibleRangeUs,
 } from '../geometry';
 import type { ClipHitRect } from '../hitTest';
@@ -97,9 +102,41 @@ const COLORS = {
   marqueeStroke: '#5a8cff',
   lockedOverlay: 'rgba(0,0,0,0.35)',
   hiddenOverlay: 'rgba(10,12,16,0.55)',
+  transitionBand: 'rgba(232,131,58,0.30)',
+  transitionBandStroke: '#e8833a',
+  transitionBadge: '#e8833a',
+  transitionBadgeIdle: 'rgba(120,130,150,0.55)',
+  transitionBadgeGlyph: '#12141a',
 };
 
 const NAME_BAR_H = 15;
+
+/**
+ * Name-bar text. Overlay clips have no asset to name them after, and the raw
+ * schema kind ("text", "shape") is developer vocabulary — a caption track full
+ * of blocks reading "text" tells the user nothing about which caption is which.
+ */
+function clipLabel(clip: Clip, assets: ReadonlyMap<Uuid, AssetSummary>): string {
+  if (isMediaClip(clip) || clip.kind === 'sticker') {
+    const assetName = assets.get(clip.assetId)?.name;
+    if (assetName) return assetName;
+    return clip.kind === 'sticker' ? 'Çıkartma' : 'Klip';
+  }
+  if (clip.kind === 'text') {
+    // splitLines() is the SAME rule the raster uses (features/text/textLayout),
+    // so the label is literally the first line the user sees on the canvas.
+    const firstLine = splitLines(clip.text.content)[0]?.trim() ?? '';
+    return firstLine.length > 0 ? firstLine.slice(0, 60) : 'Metin';
+  }
+  return SHAPE_LABELS[clip.shape.type];
+}
+
+const SHAPE_LABELS: Record<'rect' | 'ellipse' | 'line' | 'arrow', string> = {
+  rect: 'Dikdörtgen',
+  ellipse: 'Elips',
+  line: 'Çizgi',
+  arrow: 'Ok',
+};
 
 function clipFill(kind: Clip['kind']): { fill: string; stroke: string } {
   switch (kind) {
@@ -253,12 +290,123 @@ function drawWaveform(
 }
 
 // ---------------------------------------------------------------------------
+// Transitions (rendering-semantics §5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Paints every cut of one track and returns the badge hit rects.
+ *
+ * Two marks per cut:
+ *  - the BLEND WINDOW `[T - D/2, T + D/2]` as a translucent band with the two
+ *    crossing ramps. That window is the normative one (§5.3: the transition
+ *    starts D/2 BEFORE the cut and ends D/2 after it), so the drawing tells the
+ *    truth about which frames are mixed — a bar drawn from T to T+D would be a
+ *    lie the user only discovers in the export.
+ *  - a small badge ON the cut, the click target that opens the editor. Painted
+ *    for bare cuts too (grey), because a cut with no affordance is a feature
+ *    nobody finds.
+ */
+function drawTransitions(
+  ctx: CanvasRenderingContext2D,
+  track: TimelineDoc['tracks'][number],
+  trackIndex: number,
+  laneY: number,
+  scrollUs: MicroSec,
+  pxPerUs: number,
+  widthPx: number,
+): ClipHitRect[] {
+  const hits: ClipHitRect[] = [];
+  const clips = track.clips;
+  const badgeTop = transitionBadgeTop(trackIndex);
+
+  for (let i = 0; i + 1 < clips.length; i++) {
+    const a = clips[i];
+    const b = clips[i + 1];
+    if (!isMediaClip(a) || !isMediaClip(b)) continue;
+    const cutUs = a.timelineStartUs + a.timelineDurationUs;
+    if (cutUs !== b.timelineStartUs) continue; // gap/overlap: no cut
+
+    const cutX = timeToX(cutUs, scrollUs, pxPerUs);
+    if (cutX < -TRANSITION_BADGE_W || cutX > widthPx + TRANSITION_BADGE_W) continue;
+    const aW = a.timelineDurationUs * pxPerUs;
+    const bW = b.timelineDurationUs * pxPerUs;
+    if (aW < TRANSITION_BADGE_MIN_CLIP_W || bW < TRANSITION_BADGE_MIN_CLIP_W) continue;
+
+    const transition = a.transitionOut;
+    if (transition !== undefined) {
+      const halfPx = (transition.durationUs / 2) * pxPerUs;
+      const x0 = cutX - halfPx;
+      const bandW = Math.max(4, halfPx * 2);
+      const y0 = laneY + 3;
+      const y1 = laneY + TRACK_H - 5;
+      ctx.save();
+      ctx.fillStyle = COLORS.transitionBand;
+      ctx.fillRect(x0, y0, bandW, y1 - y0);
+      // Crossing ramps: A fading out (top-left -> bottom-right) over B fading in.
+      ctx.strokeStyle = COLORS.transitionBandStroke;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x0, y1);
+      ctx.lineTo(x0 + bandW, y0);
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x0 + bandW, y1);
+      ctx.stroke();
+      ctx.strokeRect(x0 + 0.5, y0 + 0.5, bandW - 1, y1 - y0 - 1);
+      ctx.restore();
+    }
+
+    // Badge.
+    const bx = cutX - TRANSITION_BADGE_W / 2;
+    ctx.save();
+    roundRect(ctx, bx, badgeTop, TRANSITION_BADGE_W, TRANSITION_BADGE_H, 3);
+    ctx.fillStyle = transition !== undefined ? COLORS.transitionBadge : COLORS.transitionBadgeIdle;
+    ctx.fill();
+    ctx.strokeStyle = COLORS.transitionBadgeGlyph;
+    ctx.lineWidth = 1.5;
+    const cx = cutX;
+    const cy = badgeTop + TRANSITION_BADGE_H / 2;
+    ctx.beginPath();
+    if (transition !== undefined) {
+      // "X" = an applied transition.
+      ctx.moveTo(cx - 4, cy - 4);
+      ctx.lineTo(cx + 4, cy + 4);
+      ctx.moveTo(cx + 4, cy - 4);
+      ctx.lineTo(cx - 4, cy + 4);
+    } else {
+      // "+" = a bare cut that can take one.
+      ctx.moveTo(cx - 4, cy);
+      ctx.lineTo(cx + 4, cy);
+      ctx.moveTo(cx, cy - 4);
+      ctx.lineTo(cx, cy + 4);
+    }
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    ctx.restore();
+
+    hits.push({
+      clipId: a.id,
+      trackId: track.id,
+      trackIndex,
+      region: 'transition',
+      x: bx,
+      y: badgeTop,
+      w: TRANSITION_BADGE_W,
+      h: TRANSITION_BADGE_H,
+    });
+  }
+  return hits;
+}
+
+// ---------------------------------------------------------------------------
 // Main painter
 // ---------------------------------------------------------------------------
 
 export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState): ClipHitRect[] {
   const { doc, widthPx, heightPx, dpr, scrollUs, pxPerUs, scrollY, selection, assets, drag } = state;
   const hits: ClipHitRect[] = [];
+  // Appended AFTER every clip rect: hitTestClips scans from the end, so the
+  // badge wins over the clip body / trim handle it overlaps.
+  const transitionHits: ClipHitRect[] = [];
   const { startUs: visStartUs, endUs: visEndUs } = visibleRangeUs(scrollUs, pxPerUs, widthPx);
 
   ctx.save();
@@ -347,8 +495,7 @@ export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState
         ctx.fillStyle = COLORS.clipName;
         ctx.font = '10px system-ui, sans-serif';
         ctx.textBaseline = 'middle';
-        const name =
-          (isMediaClip(clip) ? assets.get(clip.assetId)?.name : undefined) ?? clip.kind;
+        const name = clipLabel(clip, assets);
         ctx.fillText(name, x + 5, y + 2 + NAME_BAR_H / 2, Math.max(10, w - 10));
         ctx.restore();
       }
@@ -374,6 +521,12 @@ export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState
         clipId: clip.id, trackId: track.id, trackIndex: ti, region: 'trimR',
         x: x + w - handleW, y, w: handleW, h: TRACK_H,
       });
+    }
+
+    // Cuts are painted ON TOP of the clips of this lane but UNDER the
+    // hidden/locked veils, so a locked lane's badges read as unavailable.
+    for (const hit of drawTransitions(ctx, track, ti, y, scrollUs, pxPerUs, widthPx)) {
+      transitionHits.push(hit);
     }
 
     if (track.hidden) {
@@ -444,5 +597,5 @@ export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState
   }
 
   ctx.restore();
-  return hits;
+  return hits.concat(transitionHits);
 }

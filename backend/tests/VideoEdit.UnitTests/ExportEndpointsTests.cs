@@ -156,12 +156,21 @@ public sealed class ExportEndpointsTests : IDisposable
     [Fact]
     public async Task StartExport_UnsupportedFeature_Returns422_WithoutQueueingGarbage()
     {
-        // Kapsam dışı özellik (geçiş) — compiler ön-doğrulaması API'de koşar, kuyruğa hiç girmez.
+        // Kapsam dışı özellik (keyframe — M5) — compiler ön-doğrulaması API'de koşar,
+        // kuyruğa hiç girmez. (Geçiş ve metin/şekil/çıkartma M4 dalga 2'de DESTEKLENİR;
+        // aşağıdaki StartExport_TransitionsAndOverlayClips_Accepted onları sabitler.)
         var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
-        clip.TransitionOut = new VideoEdit.Contracts.Timeline.Transition
+        clip.Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks
         {
-            Type = VideoEdit.Contracts.Timeline.TransitionType.Crossfade,
-            DurationUs = 250_000,
+            Opacity =
+            [
+                new VideoEdit.Contracts.Timeline.Keyframe
+                {
+                    TimeUs = 0,
+                    Value = 0,
+                    Easing = new VideoEdit.Contracts.Timeline.EasingLinear { Type = "linear" },
+                },
+            ],
         };
         var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
             ExportTestDocs.Doc(clips: clip)));
@@ -170,9 +179,33 @@ public sealed class ExportEndpointsTests : IDisposable
 
         var problem = Assert.IsType<ProblemHttpResult>(result);
         Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
-        Assert.Contains("geçiş", problem.ProblemDetails.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("keyframe", problem.ProblemDetails.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(_db.Jobs.ToList()); // job satırı yazılmadı
         Assert.Equal(0, _jobs.CreateCount); // kuyruğa çöp atılmadı
+    }
+
+    [Fact]
+    public async Task StartExport_TransitionsAndOverlayClips_Accepted()
+    {
+        // M4 dalga 2: editör artık geçiş + metin/şekil/çıkartma üretiyor — ön-doğrulama
+        // bunları REDDETMEMELİ (aksi halde kullanıcı emeğini kaybeder).
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000);
+        ExportTestDocs.Link(a, b, 400_000);
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.OverlayTrack(clips:
+            [
+                ExportTestDocs.TextClip(0, 1_000_000),
+                ExportTestDocs.StickerClip(ExportTestDocs.AssetC, 1_000_000, 1_000_000),
+            ]),
+            ExportTestDocs.VideoTrack(clips: [a, b]),
+        ]);
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(doc));
+
+        var result = await CallStartAsync(project.Id);
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(result);
     }
 
     [Fact]

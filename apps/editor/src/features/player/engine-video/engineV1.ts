@@ -11,8 +11,24 @@
  * - frame-accurate paused seeks verified via requestVideoFrameCallback
  * - Web Audio gain envelopes (volume + linear fades + 5 ms micro-fades)
  */
-import type { MediaClip, MicroSec, TimelineDoc, Track, Uuid } from '@videoedit/timeline-schema';
+import type {
+  MediaClip,
+  MicroSec,
+  ShapeClip,
+  StickerClip,
+  TextClip,
+  TimelineDoc,
+  Track,
+  Uuid,
+} from '@videoedit/timeline-schema';
 import { isMediaClip } from '@videoedit/timeline-schema';
+import { shapeBoxPx } from '../../text/overlayGeometry';
+import {
+  rasterizeShape,
+  rasterizeText,
+  shapeRasterKey,
+  textRasterKey,
+} from '../../text/overlayRaster';
 import type {
   AssetResolver,
   PlaybackEngine,
@@ -93,6 +109,25 @@ interface ImageEntry {
   failedAt: number;
 }
 
+/**
+ * A rasterized text/shape overlay (rendering-semantics §7). Keyed by CLIP id
+ * because the style lives on the clip, and re-rasterized whenever `key` (a hash
+ * of that style) changes — i.e. on every inspector edit, not every frame.
+ */
+interface OverlayEntry {
+  texture: WebGLTexture;
+  /** Style signature; a mismatch is what triggers a re-raster. */
+  key: string;
+  /** Raster size in px (the texture's own size). */
+  width: number;
+  height: number;
+  /** §7 bbox in project px -> what the gizmo box measures. */
+  bboxWidthPx: number;
+  bboxHeightPx: number;
+  /** Source px -> composition px at scale=1 (see PlacementInput.baseScale). */
+  baseScale: number;
+}
+
 function clampElementRate(rate: number): number {
   return Math.min(MAX_ELEMENT_RATE, Math.max(MIN_ELEMENT_RATE, rate));
 }
@@ -138,6 +173,8 @@ export class VideoPlaybackEngine implements PlaybackEngine {
   /** Last uploaded video time per slot — skips redundant uploads while paused. */
   private slotUploadedAt = new Map<number, number>();
   private imageTextures = new Map<Uuid, ImageEntry>();
+  /** Text/shape rasters, keyed by clip id (see OverlayEntry). */
+  private overlayTextures = new Map<Uuid, OverlayEntry>();
   /** Last emitted previewStatus$ value — the change filter for the note. */
   private previewStatus: PreviewStatus = {
     totalLayers: 0,
@@ -182,6 +219,27 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     this.refreshPool(this.positionUs);
     // Doc edits invalidate scheduled envelopes (volumes/fades may have changed).
     this.scheduledAudio.clear();
+    this.pruneOverlayTextures(doc);
+  }
+
+  /**
+   * Frees rasters of overlay clips that left the document (deleted, undone,
+   * project switched). Style CHANGES are handled by the key check in
+   * overlayDrawItem; this only stops the map from growing forever.
+   */
+  private pruneOverlayTextures(doc: TimelineDoc): void {
+    if (this.overlayTextures.size === 0) return;
+    const alive = new Set<Uuid>();
+    for (const track of doc.tracks) {
+      for (const clip of track.clips) {
+        if (clip.kind === 'text' || clip.kind === 'shape') alive.add(clip.id);
+      }
+    }
+    for (const [clipId, entry] of this.overlayTextures) {
+      if (alive.has(clipId)) continue;
+      this.compositor.deleteTexture(entry.texture);
+      this.overlayTextures.delete(clipId);
+    }
   }
 
   play(): void {
@@ -325,6 +383,8 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     this.slotTextures.clear();
     for (const [, entry] of this.imageTextures) this.compositor.deleteTexture(entry.texture);
     this.imageTextures.clear();
+    for (const [, entry] of this.overlayTextures) this.compositor.deleteTexture(entry.texture);
+    this.overlayTextures.clear();
     this.compositor.dispose();
     this.clock$.clear();
     this.playState$.clear();
@@ -669,8 +729,15 @@ export class VideoPlaybackEngine implements PlaybackEngine {
           if (item) items.push(item);
         }
         // 'audio' never draws.
+      } else if (clip.kind === 'sticker') {
+        // A sticker is an image asset on an overlay track — same texture path.
+        const item = this.imageDrawItem(clip, tUs);
+        if (item) items.push(item);
+      } else {
+        // text / shape: client Canvas2D raster (§7 live-editing half).
+        const item = this.overlayDrawItem(clip, tUs);
+        if (item) items.push(item);
       }
-      // text/shape/sticker layers arrive in M4 wave 2 (docs/backlog.md).
     }
     this.compositor.render(items, model.doc.settings.backgroundColor);
     this.reportPreviewStatus(stack, resolveAudible(model.doc, tUs));
@@ -710,17 +777,80 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     if (slot && slot.video.videoWidth > 0 && slot.video.videoHeight > 0) {
       return { width: slot.video.videoWidth, height: slot.video.videoHeight };
     }
+    // Overlay raster: the box the gizmo must draw is the RASTER, and it is not
+    // fit to the composition — baseScale travels with the size (§7).
+    const overlay = this.overlayTextures.get(clipId);
+    if (overlay) {
+      return { width: overlay.width, height: overlay.height, baseScale: overlay.baseScale };
+    }
     for (const track of model.doc.tracks) {
       for (const clip of track.clips) {
         if (clip.id !== clipId) continue;
-        if (!isMediaClip(clip) || clip.kind !== 'image') return null;
-        const entry = this.imageTextures.get(clip.assetId);
+        const assetId =
+          isMediaClip(clip) && clip.kind === 'image'
+            ? clip.assetId
+            : clip.kind === 'sticker'
+              ? clip.assetId
+              : null;
+        if (assetId === null) return null;
+        const entry = this.imageTextures.get(assetId);
         return entry?.ready && entry.width > 0
           ? { width: entry.width, height: entry.height }
           : null;
       }
     }
     return null;
+  }
+
+  /**
+   * Text/shape draw item, rasterizing on demand.
+   *
+   * The raster is CACHED against a signature of the style, so the expensive
+   * part (Canvas2D layout + fill + texImage2D) runs once per edit, not once per
+   * animation frame — while transform/opacity/keyframes stay per-frame values
+   * applied to the same bitmap, which is exactly what §7 promises ("aynı
+   * bitmap'i transform etmek = garanti parity").
+   */
+  private overlayDrawItem(clip: TextClip | ShapeClip, tUs: MicroSec): DrawItem | null {
+    const model = this.model;
+    if (!model) return null;
+    const box = shapeBoxPx(model.doc.settings);
+    const key =
+      clip.kind === 'text'
+        ? textRasterKey(clip.text)
+        : shapeRasterKey(clip.shape, box.width, box.height);
+
+    let entry = this.overlayTextures.get(clip.id);
+    if (!entry || entry.key !== key) {
+      const raster =
+        clip.kind === 'text'
+          ? rasterizeText(clip.text)
+          : rasterizeShape(clip.shape, box.width, box.height);
+      // No DOM / no 2D context: draw nothing rather than a wrong-sized quad.
+      if (!raster) return null;
+      const texture = entry?.texture ?? this.compositor.createTexture();
+      this.compositor.upload(texture, raster.canvas);
+      entry = {
+        texture,
+        key,
+        width: raster.width,
+        height: raster.height,
+        bboxWidthPx: raster.bboxWidthPx,
+        bboxHeightPx: raster.bboxHeightPx,
+        baseScale: raster.baseScale,
+      };
+      this.overlayTextures.set(clip.id, entry);
+    }
+
+    return {
+      texture: entry.texture,
+      srcW: entry.width,
+      srcH: entry.height,
+      baseScale: entry.baseScale,
+      transform: effectiveTransform(clip, tUs),
+      opacity: effectiveOpacity(clip, tUs),
+      colorAdjust: colorAdjustOf(clip),
+    };
   }
 
   private videoDrawItem(clip: MediaClip, tUs: MicroSec): DrawItem | null {
@@ -753,7 +883,12 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     };
   }
 
-  private imageDrawItem(clip: MediaClip, tUs: MicroSec): DrawItem | null {
+  /**
+   * Still-image texture path, shared by image clips and STICKERS: a sticker is
+   * schema-wise just an image asset on an overlay track, so it goes through the
+   * same decode/cache/refresh logic (including the expired-presign retry).
+   */
+  private imageDrawItem(clip: MediaClip | StickerClip, tUs: MicroSec): DrawItem | null {
     const model = this.model;
     if (!model) return null;
     const url = model.resolver(clip.assetId)?.url ?? null;

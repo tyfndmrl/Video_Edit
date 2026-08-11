@@ -20,6 +20,7 @@ import {
   roundHalfUp,
   sampleKeyframes,
   snapUsToFrameGrid,
+  usToFrame,
   validateTimelineDoc,
   isMediaClip,
   TRANSFORM_SCALE_DECIMALS,
@@ -31,9 +32,14 @@ import {
   type MicroSec,
   type ProjectSettings,
   type Rational,
+  type ShapeClip,
+  type StickerClip,
+  type TextClip,
   type TimelineDoc,
   type Track,
   type TrackType,
+  type Transition,
+  type TransitionType,
   type Uuid,
 } from '@videoedit/timeline-schema';
 import { uuidv7 } from '../lib/uuid';
@@ -45,9 +51,22 @@ import { useEditorStore } from './editorStore';
 // Shared bits
 // ---------------------------------------------------------------------------
 
-export type OpResult = { ok: true } | { ok: false; reason: string };
+/**
+ * Result of a document op.
+ *
+ * `notice` is the SUCCESS counterpart of `reason`: the op ran, but it had to
+ * adjust something the user did not ask for (a transition auto-shortened by a
+ * trim, a transition dropped because its cut disappeared). The rendering
+ * contract requires those corrections to happen (rendering-semantics §5.5) and
+ * the UI contract requires them to be VISIBLE — silent repair is exactly the
+ * "it does something else than what I did" complaint. Both fields carry stable
+ * English codes; features/timeline/feedback.ts turns them into Turkish.
+ */
+export type OpResult = { ok: true; notice?: string } | { ok: false; reason: string };
 const OK: OpResult = { ok: true };
 const fail = (reason: string): OpResult => ({ ok: false, reason });
+const okWith = (notice: string | undefined): OpResult =>
+  notice === undefined ? OK : { ok: true, notice };
 
 /** Still images have no intrinsic duration; default clip length (4 s). */
 export const IMAGE_DEFAULT_DURATION_US = 4_000_000;
@@ -131,55 +150,253 @@ function fitsInTrack(
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Transition math (rendering-semantics §5) — pure, no store access
+// ---------------------------------------------------------------------------
+
+/** Which cut of a clip a transition sits on: the one before it, or after it. */
+export type TransitionEdge = 'in' | 'out';
+
+/**
+ * Duration a freshly added transition ASKS for (1 s). The effective value is
+ * always the even-frame snap of `min(request, caps)` — see planTransitionDuration.
+ */
+export const DEFAULT_TRANSITION_DURATION_US = 1_000_000;
+
+/** Notice codes (see OpResult.notice). */
+export const TRANSITION_SHORTENED_HANDLE = 'transition shortened by source handle';
+export const TRANSITION_SHORTENED_LENGTH = 'transition shortened by clip length';
+export const TRANSITION_DROPPED = 'transition removed by edit';
+
+/**
+ * Largest EVEN frame count whose grid duration is `<= us` (0 when there is
+ * none). Used for CAPS: `usToFrame` rounds half-up and would happily hand back
+ * a frame whose duration is above the cap, which is how an "auto-shortened"
+ * transition ends up one frame over the invariant it was shortened to satisfy.
+ * The walk-down uses the shared grid helpers only (no local fps arithmetic).
+ */
+export function evenFramesAtMost(us: MicroSec, fps: Rational): number {
+  if (!(us > 0)) return 0;
+  let f = usToFrame(Math.floor(us), fps);
+  for (let guard = 0; guard < 4 && f > 0 && frameToUs(f, fps) > us; guard++) f -= 1;
+  return f - (f % 2);
+}
+
+/**
+ * Even-frame snap of a REQUESTED duration (rendering-semantics §5.2):
+ * `D_frames = 2 * max(1, roundHalfUp(frameFromUs(D) / 2))` — i.e. at least one
+ * whole frame per side so `D/2` is an integer frame count.
+ */
+export function evenFramesNearest(us: MicroSec, fps: Rational): number {
+  const frames = usToFrame(Math.max(0, Math.round(us)), fps);
+  return 2 * Math.max(1, roundHalfUp(frames / 2));
+}
+
+/** Source-domain handle for one side of a cut: roundHalfUp((D/2) * rate). */
+function transitionHandleUs(durationUs: MicroSec, rate: number): MicroSec {
+  return roundHalfUp((durationUs / 2) * rate);
+}
+
+/**
+ * The invariant's OWN handle check (invariants.ts checkTransitionEdge), byte
+ * for byte. `a` is the outgoing clip, `b` the incoming one. An unknown asset
+ * duration means "no tail constraint" — the same thing the invariant does, so
+ * the editor never writes a document its own validator would reject and never
+ * refuses one the validator would accept.
+ */
+function transitionHandleFits(
+  durationUs: MicroSec,
+  a: MediaClip,
+  b: MediaClip,
+  assetDurations: ReadonlyMap<string, MicroSec>,
+): boolean {
+  if (b.sourceInUs < transitionHandleUs(durationUs, b.speed.rate)) return false;
+  const assetDurationA = assetDurations.get(a.assetId);
+  return (
+    assetDurationA === undefined ||
+    a.sourceOutUs + transitionHandleUs(durationUs, a.speed.rate) <= assetDurationA
+  );
+}
+
+export interface TransitionPlan {
+  durationUs: MicroSec;
+  frames: number;
+  /** null = the request survived untouched; otherwise which cap cut it down. */
+  limitedBy: 'handle' | 'length' | null;
+}
+
+/**
+ * Effective transition duration for the cut `a|b` (rendering-semantics §5.2 +
+ * §5.5), or null when the cut cannot carry one at all.
+ *
+ * PRODUCT DECISION (§5.5 gives the choice; this is the branch we took and we
+ * take it EVERYWHERE — add, duration edit, and post-trim reconcile):
+ * when the request does not fit we SHORTEN to the largest legal even-frame
+ * duration and tell the user; only when even the 2-frame minimum does not fit
+ * do we refuse. Rejecting instead would mean a user who trims a clip loses the
+ * transition entirely for a one-frame shortage, and "add" would fail with a
+ * number the user has no way to guess.
+ *
+ * Two caps, both from the normative doc:
+ *  - length: `D * 2 <= min(A.timelineDurationUs, B.timelineDurationUs)`
+ *  - handle: `D <= 2 * min(availA / rateA, availB / rateB)` where
+ *    `availA = assetDurA - A.sourceOut` and `availB = B.sourceIn`
+ * The analytic caps only NARROW the search; the returned duration is always
+ * re-checked with the invariant's own predicate before it is handed back.
+ */
+export function planTransitionDuration(
+  a: MediaClip,
+  b: MediaClip,
+  requestedUs: MicroSec,
+  fps: Rational,
+  assetDurations: ReadonlyMap<string, MicroSec>,
+): TransitionPlan | null {
+  const lengthCapUs = Math.floor(Math.min(a.timelineDurationUs, b.timelineDurationUs) / 2);
+  const assetDurationA = assetDurations.get(a.assetId);
+  const availA =
+    assetDurationA === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, assetDurationA - a.sourceOutUs);
+  const handleCapUs = 2 * Math.min(availA / a.speed.rate, b.sourceInUs / b.speed.rate);
+
+  const wantedFrames = evenFramesNearest(requestedUs, fps);
+  const lengthFrames = evenFramesAtMost(lengthCapUs, fps);
+  const handleFrames = evenFramesAtMost(Math.min(handleCapUs, lengthCapUs), fps);
+
+  let frames = Math.min(wantedFrames, lengthFrames, handleFrames);
+  // Analytic caps come from the same formulas but carry a rounding tail; step
+  // down (2 frames = one whole frame per side) until the exact rules pass.
+  for (let guard = 0; guard < 8 && frames >= 2; guard++) {
+    const durationUs = frameToUs(frames, fps);
+    if (
+      durationUs * 2 <= Math.min(a.timelineDurationUs, b.timelineDurationUs) &&
+      transitionHandleFits(durationUs, a, b, assetDurations)
+    ) {
+      const limitedBy =
+        frames >= wantedFrames ? null : frames <= handleFrames && handleFrames < lengthFrames ? 'handle' : 'length';
+      return { durationUs, frames, limitedBy };
+    }
+    frames -= 2;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Transition reconciliation after edits
+// ---------------------------------------------------------------------------
+
+/** What reconcileTransitions had to do; `removed` counts CUTS, not edges. */
+export interface TransitionReconcileReport {
+  shortened: number;
+  removed: number;
+  /**
+   * Which cap forced the (last) shortening. Carried so the bubble can name the
+   * real cause — "kaynak payı" and "komşu klip süresi" send the user to two
+   * DIFFERENT fixes, and guessing one of them is worse than saying nothing.
+   */
+  shortenedBy: 'handle' | 'length' | null;
+}
+
+const NO_TRANSITION_CHANGE: TransitionReconcileReport = {
+  shortened: 0,
+  removed: 0,
+  shortenedBy: null,
+};
+
+/** Notice code for a report, or undefined when nothing changed. */
+export function transitionReconcileNotice(
+  report: TransitionReconcileReport,
+): string | undefined {
+  if (report.removed > 0) return TRANSITION_DROPPED;
+  if (report.shortened === 0) return undefined;
+  return report.shortenedBy === 'handle'
+    ? TRANSITION_SHORTENED_HANDLE
+    : TRANSITION_SHORTENED_LENGTH;
+}
+
+export function mergeTransitionReports(
+  a: TransitionReconcileReport,
+  b: TransitionReconcileReport,
+): TransitionReconcileReport {
+  return {
+    shortened: a.shortened + b.shortened,
+    removed: a.removed + b.removed,
+    shortenedBy: b.shortenedBy ?? a.shortenedBy,
+  };
+}
+
 /**
  * Transitions are metadata on a cut between two ADJACENT media clips and must
  * be symmetric (invariants rule 5). Any op that moves/trims/splits/deletes can
- * break adjacency or the D<=min/2 bound — after such ops we strip transition
- * metadata that no longer satisfies the contract (MVP: no auto-repair).
+ * break adjacency, shrink a neighbour below `2*D` or eat the source handle —
+ * after such an op this pass brings the track back onto the contract:
+ *
+ *  - cut still there, duration still legal  -> untouched
+ *  - cut still there, duration too long     -> SHORTENED to the legal maximum
+ *  - cut gone / no legal duration left      -> REMOVED from BOTH sides
+ *
+ * The returned report is what makes the repair visible: every caller turns it
+ * into an OpResult notice and the timeline shows a bubble. Silent repair was
+ * the old behaviour and it is exactly what a user reads as "it deleted my
+ * transition for no reason".
  */
-function reconcileTransitions(track: Track): void {
+function reconcileTransitions(
+  track: Track,
+  fps: Rational,
+  assetDurations: ReadonlyMap<string, MicroSec>,
+): TransitionReconcileReport {
+  const report: TransitionReconcileReport = { shortened: 0, removed: 0, shortenedBy: null };
   const cs = track.clips;
+  const keptOut = new Set<number>();
+  const keptIn = new Set<number>();
+
+  for (let i = 0; i + 1 < cs.length; i++) {
+    const a = cs[i];
+    const b = cs[i + 1];
+    if (!isMediaClip(a) || !isMediaClip(b)) continue;
+    if (clipEndUs(a) !== b.timelineStartUs) continue;
+    // A one-sided leftover still describes the cut the user made; the outgoing
+    // side wins when the two disagree (it is the side the UI writes first).
+    const wanted: Transition | undefined = a.transitionOut ?? b.transitionIn;
+    if (wanted === undefined) continue;
+
+    const plan = planTransitionDuration(a, b, wanted.durationUs, fps, assetDurations);
+    if (plan === null) {
+      delete a.transitionOut;
+      delete b.transitionIn;
+      report.removed++;
+      continue;
+    }
+    if (plan.durationUs !== wanted.durationUs) {
+      report.shortened++;
+      report.shortenedBy = plan.limitedBy ?? report.shortenedBy;
+    }
+    // Rewritten as two SEPARATE literals: sharing one object would make the two
+    // sides alias each other in the draft and produce misleading undo patches.
+    a.transitionOut = { type: wanted.type, durationUs: plan.durationUs };
+    b.transitionIn = { type: wanted.type, durationUs: plan.durationUs };
+    keptOut.add(i);
+    keptIn.add(i + 1);
+  }
+
+  // Anything not claimed by a live cut above is stale metadata.
   for (let i = 0; i < cs.length; i++) {
     const c = cs[i];
     if (!isMediaClip(c)) continue;
-    if (c.transitionIn) {
-      const p = i > 0 ? cs[i - 1] : undefined;
-      const ok =
-        p !== undefined &&
-        isMediaClip(p) &&
-        clipEndUs(p) === c.timelineStartUs &&
-        p.transitionOut !== undefined &&
-        p.transitionOut.type === c.transitionIn.type &&
-        p.transitionOut.durationUs === c.transitionIn.durationUs &&
-        c.transitionIn.durationUs * 2 <= Math.min(c.timelineDurationUs, p.timelineDurationUs);
-      if (!ok) delete c.transitionIn;
+    if (c.transitionOut !== undefined && !keptOut.has(i)) {
+      delete c.transitionOut;
+      report.removed++;
+      // The counterpart belongs to the SAME cut — drop it here so the loop
+      // below does not count the same removal twice.
+      const n = cs[i + 1];
+      if (n !== undefined && isMediaClip(n) && !keptIn.has(i + 1)) delete n.transitionIn;
     }
-    if (c.transitionOut) {
-      const n = i + 1 < cs.length ? cs[i + 1] : undefined;
-      const ok =
-        n !== undefined &&
-        isMediaClip(n) &&
-        clipEndUs(c) === n.timelineStartUs &&
-        n.transitionIn !== undefined &&
-        n.transitionIn.type === c.transitionOut.type &&
-        n.transitionIn.durationUs === c.transitionOut.durationUs &&
-        c.transitionOut.durationUs * 2 <= Math.min(c.timelineDurationUs, n.timelineDurationUs);
-      if (!ok) delete c.transitionOut;
+    if (c.transitionIn !== undefined && !keptIn.has(i)) {
+      delete c.transitionIn;
+      report.removed++;
     }
   }
-  // Removing one side can orphan the counterpart; a second pass settles it.
-  for (const c of cs) {
-    if (!isMediaClip(c)) continue;
-    const i = cs.indexOf(c);
-    if (c.transitionIn) {
-      const p = i > 0 ? cs[i - 1] : undefined;
-      if (!(p && isMediaClip(p) && p.transitionOut)) delete c.transitionIn;
-    }
-    if (c.transitionOut) {
-      const n = i + 1 < cs.length ? cs[i + 1] : undefined;
-      if (!(n && isMediaClip(n) && n.transitionIn)) delete c.transitionOut;
-    }
-  }
+  return report;
 }
 
 /**
@@ -496,6 +713,8 @@ export function moveClips(clipIds: readonly Uuid[], deltaUs: MicroSec, trackDelt
   if (noop) return OK;
 
   const label = clipIds.length === 1 ? 'Klip taşındı' : `${clipIds.length} klip taşındı`;
+  const durations = knownAssetDurations();
+  let report = NO_TRANSITION_CHANGE;
   useDocStore.getState().mutate('move', label, (dd) => {
     const moving = new Set(clipIds);
     const extracted = new Map<Uuid, Clip>();
@@ -520,10 +739,15 @@ export function moveClips(clipIds: readonly Uuid[], deltaUs: MicroSec, trackDelt
       insertClipSorted(dd.tracks[m.toTrackIndex], clip);
       touched.add(m.toTrackIndex);
     }
-    for (const ti of touched) reconcileTransitions(dd.tracks[ti]);
+    for (const ti of touched) {
+      report = mergeTransitionReports(
+        report,
+        reconcileTransitions(dd.tracks[ti], dd.settings.fps, durations),
+      );
+    }
   });
   assertDocValidDev('moveClips');
-  return OK;
+  return okWith(transitionReconcileNotice(report));
 }
 
 // ---------------------------------------------------------------------------
@@ -678,8 +902,9 @@ export function applyTrimToDraft(
     // The rounding walk above shortened B again after trimMediaLeft clamped it.
     clampAudioFadesToDuration(b);
     if (b.timelineStartUs < clipEndUs(a)) return fail('roll rounding failed');
-    reconcileTransitions(track);
-    return OK;
+    return okWith(
+      transitionReconcileNotice(reconcileTransitions(track, fps, assetDurations)),
+    );
   }
 
   if (edge === 'right') {
@@ -712,8 +937,9 @@ export function applyTrimToDraft(
         track.clips[i].timelineStartUs += delta;
       }
     }
-    reconcileTransitions(track);
-    return OK;
+    return okWith(
+      transitionReconcileNotice(reconcileTransitions(track, fps, assetDurations)),
+    );
   }
 
   // edge === 'left'
@@ -755,8 +981,7 @@ export function applyTrimToDraft(
       clampAudioFadesToDuration(clip);
     }
   }
-  reconcileTransitions(track);
-  return OK;
+  return okWith(transitionReconcileNotice(reconcileTransitions(track, fps, assetDurations)));
 }
 
 /** Single-step trim op (Q/W shortcuts, tests). Drags use applyTrimToDraft in a transaction. */
@@ -821,7 +1046,12 @@ export function splitKeyframes(
  * Media clips get exact source continuity (B.sourceIn === A.sourceOut);
  * keyframes are divided per the schema rule via splitKeyframes.
  */
-export function applySplitToDraft(d: TimelineDoc, clipId: Uuid, timeUs: MicroSec): OpResult {
+export function applySplitToDraft(
+  d: TimelineDoc,
+  clipId: Uuid,
+  timeUs: MicroSec,
+  assetDurations: ReadonlyMap<string, MicroSec> = knownAssetDurations(),
+): OpResult {
   const loc = locateClip(d, clipId);
   if (!loc) return fail('clip not found');
   if (loc.track.locked) return fail('track is locked');
@@ -917,18 +1147,22 @@ export function applySplitToDraft(d: TimelineDoc, clipId: Uuid, timeUs: MicroSec
   second.keyframes = bKfs;
 
   track.clips.splice(clipIndex + 1, 0, second);
-  reconcileTransitions(track);
+  // Split must not BREAK the outer cuts: A keeps its transitionIn, B inherits
+  // the transitionOut (both moved above), and the reconcile pass only shortens
+  // them if a half is now too short to host the old duration.
+  const report = reconcileTransitions(track, fps, assetDurations);
 
   // UX nicety: keep the selection covering both halves.
   const selection = useEditorStore.getState().selection;
   if (selection.has(clipId)) useEditorStore.getState().addToSelection(second.id);
-  return OK;
+  return okWith(transitionReconcileNotice(report));
 }
 
 export function splitClipAt(clipId: Uuid, timeUs: MicroSec): OpResult {
   let result: OpResult = fail('unchanged');
+  const durations = knownAssetDurations();
   useDocStore.getState().mutate('split', 'Klip bölündü', (d) => {
-    result = applySplitToDraft(d, clipId, timeUs);
+    result = applySplitToDraft(d, clipId, timeUs, durations);
   });
   assertDocValidDev('splitClipAt');
   return result;
@@ -1069,6 +1303,8 @@ export function deleteClips(clipIds: readonly Uuid[], opts: { ripple?: boolean }
   const ripple = opts.ripple === true;
 
   const label = `${deletable.length} klip silindi${ripple ? ' (ripple)' : ''}`;
+  const durations = knownAssetDurations();
+  let report = NO_TRANSITION_CHANGE;
   useDocStore.getState().mutate('delete', label, (dd) => {
     for (const track of dd.tracks) {
       const removed = track.clips.filter((c) => removing.has(c.id));
@@ -1090,7 +1326,10 @@ export function deleteClips(clipIds: readonly Uuid[], opts: { ripple?: boolean }
           c.timelineStartUs -= shift;
         }
       }
-      reconcileTransitions(track);
+      report = mergeTransitionReports(
+        report,
+        reconcileTransitions(track, dd.settings.fps, durations),
+      );
     }
   });
   assertDocValidDev('deleteClips');
@@ -1098,7 +1337,229 @@ export function deleteClips(clipIds: readonly Uuid[], opts: { ripple?: boolean }
   const editor = useEditorStore.getState();
   const nextSelection = [...editor.selection].filter((id) => !removing.has(id));
   editor.setSelection(nextSelection);
-  return OK;
+  return okWith(transitionReconcileNotice(report));
+}
+
+// ---------------------------------------------------------------------------
+// Transition ops (add / remove / retype / retime)
+// ---------------------------------------------------------------------------
+
+/** The two media clips that meet at a cut, plus where they live. */
+export interface TransitionCut {
+  track: Track;
+  trackIndex: number;
+  /** Index of the OUTGOING clip in track.clips (the cut is between it and +1). */
+  aIndex: number;
+  /** Outgoing clip (before the cut). */
+  a: MediaClip;
+  /** Incoming clip (after the cut). */
+  b: MediaClip;
+}
+
+/**
+ * The cut `(clipId, edge)` points at, or null when there is none: a transition
+ * only ever exists between two media clips that TOUCH (rendering-semantics
+ * §5.1 — no gap, no overlap, no text/shape clip involved).
+ */
+export function findTransitionCut(
+  d: TimelineDoc,
+  clipId: Uuid,
+  edge: TransitionEdge,
+): TransitionCut | null {
+  const loc = locateClip(d, clipId);
+  if (!loc) return null;
+  const aIndex = edge === 'out' ? loc.clipIndex : loc.clipIndex - 1;
+  if (aIndex < 0) return null;
+  const a = loc.track.clips[aIndex];
+  const b = loc.track.clips[aIndex + 1];
+  if (a === undefined || b === undefined) return null;
+  if (!isMediaClip(a) || !isMediaClip(b)) return null;
+  if (clipEndUs(a) !== b.timelineStartUs) return null;
+  return { track: loc.track, trackIndex: loc.trackIndex, aIndex, a, b };
+}
+
+/** The transition living on a cut (either side; they are kept deep-equal). */
+export function transitionAt(cut: TransitionCut): Transition | undefined {
+  return cut.a.transitionOut ?? cut.b.transitionIn;
+}
+
+/** Both edges of `clipId` that are real cuts, in `in`-then-`out` order. */
+export function transitionEdgesOf(d: TimelineDoc, clipId: Uuid): TransitionEdge[] {
+  return (['in', 'out'] as const).filter((edge) => findTransitionCut(d, clipId, edge) !== null);
+}
+
+/**
+ * Why a transition cannot be ADDED at `(clipId, edge)`, or null when it can.
+ *
+ * Same contract as the other `*BlockReason` helpers: the context menu greys the
+ * item out with EXACTLY the rule the op enforces, so the menu never offers an
+ * action that then fails with a bubble.
+ */
+export function addTransitionBlockReason(
+  d: TimelineDoc,
+  clipId: Uuid,
+  edge: TransitionEdge,
+  assetDurations: ReadonlyMap<string, MicroSec> = knownAssetDurations(),
+  requestedUs: MicroSec = DEFAULT_TRANSITION_DURATION_US,
+): string | null {
+  const loc = locateClip(d, clipId);
+  if (!loc) return 'clip not found';
+  if (loc.track.locked) return 'track is locked';
+  const cut = findTransitionCut(d, clipId, edge);
+  if (!cut) return 'no adjacent clip at this cut';
+  if (transitionAt(cut) !== undefined) return 'a transition is already here';
+  if (planTransitionDuration(cut.a, cut.b, requestedUs, d.settings.fps, assetDurations) === null) {
+    return 'no room for a transition';
+  }
+  return null;
+}
+
+/** Why a transition cannot be REMOVED at `(clipId, edge)`, or null. */
+export function removeTransitionBlockReason(
+  d: TimelineDoc,
+  clipId: Uuid,
+  edge: TransitionEdge,
+): string | null {
+  const loc = locateClip(d, clipId);
+  if (!loc) return 'clip not found';
+  if (loc.track.locked) return 'track is locked';
+  const cut = findTransitionCut(d, clipId, edge);
+  if (!cut || transitionAt(cut) === undefined) return 'no transition at this cut';
+  return null;
+}
+
+/** Notice code for a plan whose duration came out below the request. */
+function planNotice(plan: TransitionPlan): string | undefined {
+  if (plan.limitedBy === 'handle') return TRANSITION_SHORTENED_HANDLE;
+  if (plan.limitedBy === 'length') return TRANSITION_SHORTENED_LENGTH;
+  return undefined;
+}
+
+/**
+ * Writes a transition onto a cut, on BOTH sides (symmetry invariant, §5.2).
+ * Runs inside a draft recipe; the caller owns the history entry.
+ */
+function writeTransition(cut: TransitionCut, type: TransitionType, durationUs: MicroSec): void {
+  cut.a.transitionOut = { type, durationUs };
+  cut.b.transitionIn = { type, durationUs };
+}
+
+/**
+ * Adds a transition on the cut between two ADJACENT clips.
+ *
+ * `clipAId` is the outgoing clip, `clipBId` the incoming one; they must sit on
+ * the same track, in that order, touching. The stored duration is the
+ * even-frame snap of the request, shortened when the neighbours or the source
+ * handles cannot carry it (see planTransitionDuration for the branch we took);
+ * the shortening is reported through `notice`, never silently.
+ */
+export function addTransition(
+  clipAId: Uuid,
+  clipBId: Uuid,
+  type: TransitionType,
+  durationUs: MicroSec = DEFAULT_TRANSITION_DURATION_US,
+): OpResult {
+  const d0 = doc();
+  const cut = findTransitionCut(d0, clipAId, 'out');
+  if (!cut) return fail('no adjacent clip at this cut');
+  if (cut.b.id !== clipBId) return fail('clips are not adjacent');
+  const blocked = addTransitionBlockReason(d0, clipAId, 'out', knownAssetDurations(), durationUs);
+  if (blocked !== null) return fail(blocked);
+
+  const durations = knownAssetDurations();
+  let result: OpResult = fail('no room for a transition');
+  useDocStore.getState().mutate('transition', 'Geçiş eklendi', (dd) => {
+    const target = findTransitionCut(dd, clipAId, 'out');
+    if (!target) return;
+    const plan = planTransitionDuration(target.a, target.b, durationUs, dd.settings.fps, durations);
+    if (plan === null) return;
+    writeTransition(target, type, plan.durationUs);
+    result = okWith(planNotice(plan));
+  });
+  assertDocValidDev('addTransition');
+  return result;
+}
+
+/** Edge-addressed wrapper used by the timeline UI (badge + context menu). */
+export function addTransitionAtEdge(
+  clipId: Uuid,
+  edge: TransitionEdge,
+  type: TransitionType,
+  durationUs: MicroSec = DEFAULT_TRANSITION_DURATION_US,
+): OpResult {
+  const cut = findTransitionCut(doc(), clipId, edge);
+  if (!cut) return fail('no adjacent clip at this cut');
+  return addTransition(cut.a.id, cut.b.id, type, durationUs);
+}
+
+/** Removes the transition on `(clipId, edge)` from BOTH sides of the cut. */
+export function removeTransition(clipId: Uuid, edge: TransitionEdge): OpResult {
+  const d0 = doc();
+  const blocked = removeTransitionBlockReason(d0, clipId, edge);
+  if (blocked !== null) return fail(blocked);
+  let result: OpResult = fail('no transition at this cut');
+  useDocStore.getState().mutate('transition', 'Geçiş kaldırıldı', (dd) => {
+    const cut = findTransitionCut(dd, clipId, edge);
+    if (!cut) return;
+    delete cut.a.transitionOut;
+    delete cut.b.transitionIn;
+    result = OK;
+  });
+  assertDocValidDev('removeTransition');
+  return result;
+}
+
+/** Changes the transition TYPE on a cut, keeping its duration. */
+export function setTransitionType(
+  clipId: Uuid,
+  edge: TransitionEdge,
+  type: TransitionType,
+): OpResult {
+  const d0 = doc();
+  const blocked = removeTransitionBlockReason(d0, clipId, edge);
+  if (blocked !== null) return fail(blocked);
+  let result: OpResult = fail('no transition at this cut');
+  useDocStore.getState().mutate('transition', 'Geçiş türü değiştirildi', (dd) => {
+    const cut = findTransitionCut(dd, clipId, edge);
+    const existing = cut ? transitionAt(cut) : undefined;
+    if (!cut || existing === undefined) return;
+    writeTransition(cut, type, existing.durationUs);
+    result = OK;
+  });
+  assertDocValidDev('setTransitionType');
+  return result;
+}
+
+/**
+ * Changes the transition DURATION on a cut. The value is snapped to an even
+ * frame count and clamped by the same caps as `addTransition`; a clamp is
+ * reported through `notice`.
+ */
+export function setTransitionDuration(
+  clipId: Uuid,
+  edge: TransitionEdge,
+  durationUs: MicroSec,
+): OpResult {
+  const d0 = doc();
+  const blocked = removeTransitionBlockReason(d0, clipId, edge);
+  if (blocked !== null) return fail(blocked);
+  const durations = knownAssetDurations();
+  let result: OpResult = fail('no room for a transition');
+  useDocStore.getState().mutate('transition', 'Geçiş süresi değiştirildi', (dd) => {
+    const cut = findTransitionCut(dd, clipId, edge);
+    const existing = cut ? transitionAt(cut) : undefined;
+    if (!cut || existing === undefined) return;
+    const plan = planTransitionDuration(cut.a, cut.b, durationUs, dd.settings.fps, durations);
+    if (plan === null) {
+      // Cannot happen through the UI (a live transition proves 2 frames fit),
+      // but a 0/negative request must not silently delete the transition.
+      return;
+    }
+    writeTransition(cut, existing.type, plan.durationUs);
+    result = okWith(planNotice(plan));
+  });
+  assertDocValidDev('setTransitionDuration');
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1757,4 +2218,398 @@ export function selectAllClips(): void {
   const ids: Uuid[] = [];
   for (const track of doc().tracks) for (const clip of track.clips) ids.push(clip.id);
   useEditorStore.getState().setSelection(ids);
+}
+
+// ---------------------------------------------------------------------------
+// Overlay clips: text / shape / sticker (M4 wave 2)
+//
+// Same contract as addClipFromAsset: the op decides NOTHING about style (the
+// caller passes a fully-built, schema-shaped style object — defaults live in
+// features/text/overlayDefaults.ts) and everything about placement legality:
+// frame-grid snap, overlay-track type, locked tracks, overlap refusal, the
+// dev-mode invariant assert and the selection update all happen here.
+//
+// Placement POLICY ("which overlay track, and what if there is none") lives in
+// features/text/overlayActions.ts, exactly like features/library/addToTimeline
+// does for media assets.
+// ---------------------------------------------------------------------------
+
+/** Fallback length of a new overlay clip when the caller does not say. */
+export const OVERLAY_CLIP_DEFAULT_DURATION_US = 5_000_000;
+
+/** Track name used when an overlay clip has to create its own lane. */
+export const OVERLAY_TRACK_NAME = 'Katman';
+
+type OverlayClipBase = Pick<
+  Clip,
+  'id' | 'timelineStartUs' | 'timelineDurationUs' | 'transform' | 'keyframes' | 'effects' | 'opacity'
+>;
+
+function overlayClipBase(startUs: MicroSec, durationUs: MicroSec): OverlayClipBase {
+  return {
+    id: uuidv7(),
+    timelineStartUs: startUs,
+    timelineDurationUs: durationUs,
+    transform: { ...DEFAULT_TRANSFORM },
+    keyframes: {},
+    effects: [],
+    opacity: 1,
+  };
+}
+
+/**
+ * Shared insert path for every overlay kind. Duration is snapped to the project
+ * frame grid and floored at one frame (a sub-frame overlay would be invisible
+ * in the export, which is exactly the kind of silent no-op the review gate
+ * exists to prevent).
+ */
+function insertOverlayClip(
+  build: (startUs: MicroSec, durationUs: MicroSec) => Clip,
+  target: AddClipTarget,
+  timelineStartUs: MicroSec,
+  requestedDurationUs: MicroSec,
+  label: string,
+): AddClipResult {
+  const d = doc();
+  const fps = d.settings.fps;
+  const startUs = snapUsToFrameGrid(Math.max(0, Math.round(timelineStartUs)), fps);
+  const minDur = minClipDurationUs(fps);
+  const durationUs = Math.max(
+    minDur,
+    snapUsToFrameGrid(Math.max(minDur, Math.round(requestedDurationUs)), fps),
+  );
+  const clip = build(startUs, durationUs);
+
+  if ('trackId' in target) {
+    const track = d.tracks.find((t) => t.id === target.trackId);
+    if (!track) return { ok: false, reason: 'track not found' };
+    if (track.locked) return { ok: false, reason: 'track is locked' };
+    if (track.type !== 'overlay') return { ok: false, reason: 'track type mismatch' };
+    if (!fitsInTrack(track, startUs, durationUs)) {
+      return { ok: false, reason: 'overlaps an existing clip' };
+    }
+    useDocStore.getState().mutate('addOverlayClip', label, (dd) => {
+      const t = dd.tracks.find((x) => x.id === target.trackId);
+      if (t) insertClipSorted(t, clip);
+    });
+    assertDocValidDev('insertOverlayClip');
+    useEditorStore.getState().setSelection([clip.id]);
+    return { ok: true, clipId: clip.id, trackId: target.trackId };
+  }
+
+  const newTrack = makeTrack('overlay', OVERLAY_TRACK_NAME);
+  useDocStore.getState().mutate('addOverlayClip', label, (dd) => {
+    newTrack.clips.push(clip);
+    // TOP of the stack, not the bottom. tracks[0] is the top layer (schema
+    // contract, resolveVisualStack draws the array back-to-front), and an
+    // overlay appended like a media track would be drawn BEHIND the footage —
+    // the user would add a caption and see nothing, which is indistinguishable
+    // from "text does not work".
+    dd.tracks.unshift(newTrack);
+  });
+  assertDocValidDev('insertOverlayClip(newTrack)');
+  useEditorStore.getState().setSelection([clip.id]);
+  return { ok: true, clipId: clip.id, trackId: newTrack.id };
+}
+
+export function addTextClip(
+  text: TextClip['text'],
+  target: AddClipTarget,
+  timelineStartUs: MicroSec,
+  durationUs: MicroSec = OVERLAY_CLIP_DEFAULT_DURATION_US,
+): AddClipResult {
+  return insertOverlayClip(
+    (startUs, dur) =>
+      ({
+        ...overlayClipBase(startUs, dur),
+        kind: 'text',
+        text: { ...text, stroke: text.stroke ? { ...text.stroke } : undefined, background: text.background ? { ...text.background } : undefined },
+      }) as TextClip,
+    target,
+    timelineStartUs,
+    durationUs,
+    'Metin eklendi',
+  );
+}
+
+/**
+ * `initialScale` exists because a shape's NATURAL box is the whole frame
+ * (features/text/overlayGeometry + backend ShapeGeometry.cs): at `scale = 1` a
+ * new rectangle would cover the entire picture. The product default is passed
+ * in rather than baked here — the op stays free of product decisions, exactly
+ * like it takes the style as data.
+ */
+export function addShapeClip(
+  shape: ShapeClip['shape'],
+  target: AddClipTarget,
+  timelineStartUs: MicroSec,
+  durationUs: MicroSec = OVERLAY_CLIP_DEFAULT_DURATION_US,
+  initialScale = 1,
+): AddClipResult {
+  const scale = clampFinite(initialScale, SCALE_MIN, SCALE_MAX, SCALE_DECIMALS) ?? 1;
+  return insertOverlayClip(
+    (startUs, dur) => {
+      const base = overlayClipBase(startUs, dur);
+      return {
+        ...base,
+        transform: { ...base.transform, scale },
+        kind: 'shape',
+        shape: { ...shape, stroke: shape.stroke ? { ...shape.stroke } : undefined },
+      } as ShapeClip;
+    },
+    target,
+    timelineStartUs,
+    durationUs,
+    'Şekil eklendi',
+  );
+}
+
+/**
+ * Sticker = a READY image asset placed on an overlay track (schema:
+ * StickerClip carries only an assetId — no source range, so its length is a
+ * free product decision like an image clip's).
+ */
+export function addStickerClip(
+  assetId: Uuid,
+  target: AddClipTarget,
+  timelineStartUs: MicroSec,
+  durationUs: MicroSec = OVERLAY_CLIP_DEFAULT_DURATION_US,
+): AddClipResult {
+  const asset = useAssetStore.getState().getAsset(assetId);
+  if (!asset) return { ok: false, reason: 'asset not found' };
+  if (asset.status !== 'ready') return { ok: false, reason: 'asset is not ready' };
+  if (asset.kind !== 'image') return { ok: false, reason: 'only an image asset can be a sticker' };
+  return insertOverlayClip(
+    (startUs, dur) =>
+      ({
+        ...overlayClipBase(startUs, dur),
+        kind: 'sticker',
+        assetId,
+      }) as StickerClip,
+    target,
+    timelineStartUs,
+    durationUs,
+    `${asset.name} çıkartma olarak eklendi`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Overlay clip properties (Inspector): text style / shape style
+//
+// Same rules as the transform/audio setters above: clamping lives HERE so a
+// slider, a typed number and a keyboard arrow cannot disagree, and every write
+// keeps the document schema-valid (colors are hex, sizes are positive, weights
+// are integers in [1..1000]).
+// ---------------------------------------------------------------------------
+
+export const TEXT_SIZE_MIN = 4;
+export const TEXT_SIZE_MAX = 2000;
+export const TEXT_LINE_HEIGHT_MIN = 0.5;
+export const TEXT_LINE_HEIGHT_MAX = 4;
+export const TEXT_WEIGHT_MIN = 100;
+export const TEXT_WEIGHT_MAX = 1000;
+export const TEXT_STROKE_WIDTH_MAX = 200;
+export const TEXT_BACKGROUND_PADDING_MAX = 500;
+export const SHAPE_RADIUS_MAX = 1000;
+export const SHAPE_STROKE_WIDTH_MAX = 500;
+/** Guard against pathological documents (and pathological rasters). */
+export const TEXT_CONTENT_MAX_LENGTH = 5000;
+
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+/** A valid hex color, or null when the input is not one (write is skipped). */
+export function normalizeHexColor(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return HEX_COLOR_RE.test(trimmed) ? trimmed : null;
+}
+
+export interface ClipTextPatch {
+  content?: string;
+  fontId?: string;
+  fontSizePx?: number;
+  fontWeight?: number;
+  italic?: boolean;
+  fill?: string;
+  align?: TextClip['text']['align'];
+  lineHeight?: number;
+  /** Stroke/background are optional schema objects: the toggle adds/removes them. */
+  strokeEnabled?: boolean;
+  strokeColor?: string;
+  strokeWidthPx?: number;
+  backgroundEnabled?: boolean;
+  backgroundColor?: string;
+  backgroundPaddingPx?: number;
+  backgroundRadiusPx?: number;
+}
+
+const DEFAULT_TEXT_STROKE = { color: '#000000', widthPx: 4 };
+const DEFAULT_TEXT_BACKGROUND = { color: '#000000', paddingPx: 16, radiusPx: 8 };
+
+export function applyClipTextToDraft(
+  d: TimelineDoc,
+  clipIds: readonly Uuid[],
+  patch: ClipTextPatch,
+): OpResult {
+  let touched = 0;
+  for (const clipId of clipIds) {
+    const loc = locateClip(d, clipId);
+    if (!loc || loc.track.locked) continue;
+    const clip = loc.clip;
+    if (clip.kind !== 'text') continue;
+    const text = clip.text;
+
+    if (patch.content !== undefined && typeof patch.content === 'string') {
+      text.content = patch.content.slice(0, TEXT_CONTENT_MAX_LENGTH);
+    }
+    if (patch.fontId !== undefined && typeof patch.fontId === 'string' && patch.fontId.length > 0) {
+      text.fontId = patch.fontId;
+    }
+    if (patch.fontSizePx !== undefined) {
+      const v = clampFinite(patch.fontSizePx, TEXT_SIZE_MIN, TEXT_SIZE_MAX, 1);
+      if (v !== null) text.fontSizePx = v;
+    }
+    if (patch.fontWeight !== undefined) {
+      const v = clampFinite(patch.fontWeight, TEXT_WEIGHT_MIN, TEXT_WEIGHT_MAX, 0);
+      if (v !== null) text.fontWeight = Math.round(v);
+    }
+    if (patch.italic !== undefined) text.italic = patch.italic === true;
+    if (patch.fill !== undefined) {
+      const color = normalizeHexColor(patch.fill);
+      if (color !== null) text.fill = color;
+    }
+    if (patch.align !== undefined && ['left', 'center', 'right'].includes(patch.align)) {
+      text.align = patch.align;
+    }
+    if (patch.lineHeight !== undefined) {
+      const v = clampFinite(patch.lineHeight, TEXT_LINE_HEIGHT_MIN, TEXT_LINE_HEIGHT_MAX, 2);
+      if (v !== null) text.lineHeight = v;
+    }
+
+    if (patch.strokeEnabled !== undefined) {
+      text.stroke = patch.strokeEnabled ? (text.stroke ?? { ...DEFAULT_TEXT_STROKE }) : undefined;
+    }
+    if (text.stroke) {
+      if (patch.strokeColor !== undefined) {
+        const color = normalizeHexColor(patch.strokeColor);
+        if (color !== null) text.stroke.color = color;
+      }
+      if (patch.strokeWidthPx !== undefined) {
+        const v = clampFinite(patch.strokeWidthPx, 0, TEXT_STROKE_WIDTH_MAX, 1);
+        if (v !== null) text.stroke.widthPx = v;
+      }
+    }
+
+    if (patch.backgroundEnabled !== undefined) {
+      text.background = patch.backgroundEnabled
+        ? (text.background ?? { ...DEFAULT_TEXT_BACKGROUND })
+        : undefined;
+    }
+    if (text.background) {
+      if (patch.backgroundColor !== undefined) {
+        const color = normalizeHexColor(patch.backgroundColor);
+        if (color !== null) text.background.color = color;
+      }
+      if (patch.backgroundPaddingPx !== undefined) {
+        const v = clampFinite(patch.backgroundPaddingPx, 0, TEXT_BACKGROUND_PADDING_MAX, 1);
+        if (v !== null) text.background.paddingPx = v;
+      }
+      if (patch.backgroundRadiusPx !== undefined) {
+        const v = clampFinite(patch.backgroundRadiusPx, 0, TEXT_BACKGROUND_PADDING_MAX, 1);
+        if (v !== null) text.background.radiusPx = v;
+      }
+    }
+    touched++;
+  }
+  return touched > 0 ? OK : fail('no text clip in selection');
+}
+
+function textLabel(patch: ClipTextPatch): string {
+  const keys = Object.keys(patch);
+  if (keys.length !== 1) return 'Metin biçimi değiştirildi';
+  if (patch.content !== undefined) return 'Metin içeriği değiştirildi';
+  if (patch.fill !== undefined) return 'Metin rengi değiştirildi';
+  if (patch.fontSizePx !== undefined) return 'Metin boyutu değiştirildi';
+  if (patch.fontId !== undefined) return 'Yazı tipi değiştirildi';
+  if (patch.align !== undefined) return 'Metin hizalaması değiştirildi';
+  return 'Metin biçimi değiştirildi';
+}
+
+export function setClipText(clipIds: readonly Uuid[], patch: ClipTextPatch): OpResult {
+  let result: OpResult = fail('no text clip in selection');
+  useDocStore.getState().mutate('clipText', textLabel(patch), (d) => {
+    result = applyClipTextToDraft(d, clipIds, patch);
+  });
+  assertDocValidDev('setClipText');
+  return result;
+}
+
+export interface ClipShapePatch {
+  type?: ShapeClip['shape']['type'];
+  fill?: string;
+  strokeEnabled?: boolean;
+  strokeColor?: string;
+  strokeWidthPx?: number;
+  radiusPx?: number;
+}
+
+const DEFAULT_SHAPE_STROKE = { color: '#ffffff', widthPx: 8 };
+const SHAPE_TYPES: readonly ShapeClip['shape']['type'][] = ['rect', 'ellipse', 'line', 'arrow'];
+
+export function applyClipShapeToDraft(
+  d: TimelineDoc,
+  clipIds: readonly Uuid[],
+  patch: ClipShapePatch,
+): OpResult {
+  let touched = 0;
+  for (const clipId of clipIds) {
+    const loc = locateClip(d, clipId);
+    if (!loc || loc.track.locked) continue;
+    const clip = loc.clip;
+    if (clip.kind !== 'shape') continue;
+    const shape = clip.shape;
+
+    if (patch.type !== undefined && SHAPE_TYPES.includes(patch.type)) shape.type = patch.type;
+    if (patch.fill !== undefined) {
+      const color = normalizeHexColor(patch.fill);
+      if (color !== null) shape.fill = color;
+    }
+    if (patch.strokeEnabled !== undefined) {
+      shape.stroke = patch.strokeEnabled ? (shape.stroke ?? { ...DEFAULT_SHAPE_STROKE }) : undefined;
+    }
+    if (shape.stroke) {
+      if (patch.strokeColor !== undefined) {
+        const color = normalizeHexColor(patch.strokeColor);
+        if (color !== null) shape.stroke.color = color;
+      }
+      if (patch.strokeWidthPx !== undefined) {
+        const v = clampFinite(patch.strokeWidthPx, 0, SHAPE_STROKE_WIDTH_MAX, 1);
+        if (v !== null) shape.stroke.widthPx = v;
+      }
+    }
+    if (patch.radiusPx !== undefined) {
+      const v = clampFinite(patch.radiusPx, 0, SHAPE_RADIUS_MAX, 1);
+      if (v !== null) shape.radiusPx = v;
+    }
+    touched++;
+  }
+  return touched > 0 ? OK : fail('no shape clip in selection');
+}
+
+function shapeLabel(patch: ClipShapePatch): string {
+  const keys = Object.keys(patch);
+  if (keys.length !== 1) return 'Şekil biçimi değiştirildi';
+  if (patch.type !== undefined) return 'Şekil türü değiştirildi';
+  if (patch.fill !== undefined) return 'Şekil rengi değiştirildi';
+  if (patch.radiusPx !== undefined) return 'Köşe yarıçapı değiştirildi';
+  return 'Şekil biçimi değiştirildi';
+}
+
+export function setClipShape(clipIds: readonly Uuid[], patch: ClipShapePatch): OpResult {
+  let result: OpResult = fail('no shape clip in selection');
+  useDocStore.getState().mutate('clipShape', shapeLabel(patch), (d) => {
+    result = applyClipShapeToDraft(d, clipIds, patch);
+  });
+  assertDocValidDev('setClipShape');
+  return result;
 }

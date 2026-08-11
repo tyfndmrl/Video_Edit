@@ -10,6 +10,7 @@ import { useProjectAssets, type AssetDto } from '../../entities/assets';
 import { useEditorStore } from '../../state/editorStore';
 import { openProject, useProjectSession } from '../../state/projectSession';
 import { addAssetToTimelineAtPlayhead } from './addToTimeline';
+import { addStickerAtPlayhead } from '../text/overlayActions';
 import { FILE_ACCEPT, isSupportedMediaFile, unsupportedFileMessage } from './fileTypes';
 import { syncServerAssets, toAssetKind } from './assetSync';
 import { IMAGE_DEFAULT_DURATION_US } from '../../state/timelineOps';
@@ -554,6 +555,7 @@ const KIND_LABELS: Record<string, string> = {
 
 function AssetRow({ dto }: { dto: AssetDto }) {
   const dragHandlers = useAssetDragSource(dto);
+  const sessionReady = useProjectSession((s) => s.status) === 'ready';
   const meta: string[] = [];
   if (dto.status === 'ready') {
     if (dto.durationMicros !== undefined) meta.push(formatDurationUs(dto.durationMicros));
@@ -581,6 +583,30 @@ function AssetRow({ dto }: { dto: AssetDto }) {
         </div>
         <div className="truncate text-[11px] text-fg-muted">{meta.join(' · ')}</div>
       </div>
+      {/*
+        Sticker = aynı görsel asset, overlay track'e ve StickerClip olarak.
+        Görselin "video katmanı" mı yoksa "çıkartma" mı olduğunu dosya değil
+        KULLANICI belirler, o yüzden ayrı bir düğme (çift tık hâlâ video
+        track'ine ekler). pointerdown durdurulur: satırın sürükleme kaynağı bu
+        tıklamayı hayalet sürüklemeye çevirmesin.
+      */}
+      {dto.kind === 'image' && dto.status === 'ready' && (
+        <button
+          type="button"
+          data-testid="asset-add-sticker"
+          title="Çıkartma olarak overlay katmanına ekle"
+          disabled={!sessionReady}
+          className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[10px] text-fg-muted hover:bg-surface-3 hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+          onPointerDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            addStickerAtPlayhead(dto.id);
+          }}
+        >
+          Sticker
+        </button>
+      )}
       <StatusBadge dto={dto} />
     </div>
   );

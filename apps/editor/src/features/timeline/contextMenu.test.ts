@@ -21,6 +21,7 @@ import { createEmptyDoc, defaultProjectSettings, useDocStore } from '../../state
 import { useEditorStore } from '../../state/editorStore';
 import { useAssetStore } from '../../state/assetStore';
 import {
+  addTransitionBlockReason,
   clearClipboardForTests,
   copyBlockReason,
   copyClips,
@@ -29,10 +30,12 @@ import {
   detachAudioBlockReason,
   duplicateBlockReason,
   pasteBlockReason,
+  removeTransitionBlockReason,
   splitBlockReason,
   trackDeleteBlockReason,
   trimToPlayheadBlockReason,
 } from '../../state/timelineOps';
+import { resolveTransitionEdge } from './transitions';
 import {
   buildTimelineMenu,
   type TimelineMenuActionId,
@@ -142,13 +145,17 @@ describe('buildTimelineMenu — klip bağlamı', () => {
       'rippleDelete',
       'trimStartToPlayhead',
       'trimEndToPlayhead',
+      'addTransition',
+      'removeTransition',
       'detachAudio',
     ]);
-    expect(entries.filter((e) => e.kind === 'separator')).toHaveLength(2);
+    expect(entries.filter((e) => e.kind === 'separator')).toHaveLength(3);
     // Ayraç ripple sil ile kırpma çifti arasında.
     expect(entries.findIndex((e) => e.kind === 'separator')).toBe(6);
-    // İkinci ayraç kırpma çifti ile "Sesi ayır" arasında.
-    expect(entries.map((e) => e.kind).lastIndexOf('separator')).toBe(9);
+    // İkinci ayraç kırpma çifti ile geçiş çifti arasında.
+    expect(entries.map((e) => e.kind).indexOf('separator', 7)).toBe(9);
+    // Üçüncü ayraç geçiş çifti ile "Sesi ayır" arasında.
+    expect(entries.map((e) => e.kind).lastIndexOf('separator')).toBe(12);
   });
 
   it('carries the shortcut hints of the existing keyboard actions', () => {
@@ -163,8 +170,13 @@ describe('buildTimelineMenu — klip bağlamı', () => {
     expect(find(entries, 'trimEndToPlayhead').shortcut).toBe('W');
   });
 
-  it('enables everything when the playhead is inside the clip', () => {
-    expect(disabledIds(buildTimelineMenu(ctx()))).toEqual([]);
+  /**
+   * `baseDoc` TEK klipli: klibin hiçbir kenarında kesim yoktur, dolayısıyla
+   * geçiş çifti daima gri kalır. (Bitişik/paylı bir kesimde aktif olduklarını
+   * kanıtlayan testler "geçiş öğeleri" describe'ında.)
+   */
+  it('enables everything except the transition pair when the playhead is inside the clip', () => {
+    expect(disabledIds(buildTimelineMenu(ctx()))).toEqual(['addTransition', 'removeTransition']);
   });
 
   it('greys out playhead-relative actions when the playhead is outside the clip', () => {
@@ -173,6 +185,8 @@ describe('buildTimelineMenu — klip bağlamı', () => {
       'splitAtPlayhead',
       'trimStartToPlayhead',
       'trimEndToPlayhead',
+      'addTransition',
+      'removeTransition',
     ]);
     // Silme/kopyalama playhead'den bağımsız çalışmaya devam eder.
     expect(find(entries, 'delete').disabled).toBe(false);
@@ -197,6 +211,8 @@ describe('buildTimelineMenu — klip bağlamı', () => {
       'rippleDelete',
       'trimStartToPlayhead',
       'trimEndToPlayhead',
+      'addTransition',
+      'removeTransition',
       'detachAudio',
     ] as const) {
       expect(find(entries, id).disabled, id).toBe(true);
@@ -411,13 +427,22 @@ describe('buildTimelineMenu — ruler / boş alan', () => {
     expect(find(entries, 'addMarker').disabled).toBe(true);
   });
 
-  it('offers only paste outside the track rows', () => {
+  it('offers paste and "Metin ekle" outside the track rows', () => {
     const doc = docWith([track(V1, 'video', [clip(CLIP_A, 0, 10 * US)])]);
     loadIntoStore(doc, [CLIP_A]);
     copyClips([CLIP_A]);
     const entries = buildTimelineMenu(ctx({ target: { kind: 'empty' }, doc, playheadUs: 30 * US }));
-    expect(ids(entries)).toEqual(['paste']);
+    expect(ids(entries)).toEqual(['paste', 'addText']);
     expect(find(entries, 'paste').disabled).toBe(false);
+    // Metin yerleşimi asla reddedilmez (gerekirse yeni overlay track açar), bu
+    // yüzden tek ret gerekçesi mutasyon kapısıdır.
+    expect(find(entries, 'addText').disabled).toBe(false);
+    expect(
+      find(
+        buildTimelineMenu(ctx({ target: { kind: 'empty' }, doc, mutationAllowed: false })),
+        'addText',
+      ).disabled,
+    ).toBe(true);
 
     clearClipboardForTests();
     expect(
@@ -463,7 +488,30 @@ function reasonFromOps(id: TimelineMenuActionId, c: TimelineMenuContext): string
       return gate(trackId === null ? 'no track' : trackDeleteBlockReason(c.doc, trackId));
     case 'addMarker':
       return gate(null);
+    case 'addText':
+      // overlayActions: playhead'de sığan ilk overlay track, yoksa yeni katman
+      // -> yerleşim başarısız olamaz.
+      return gate(null);
+    // Geçiş çifti: kenar seçimi menüyle AYNI çözücüden gelmeli, yoksa test
+    // menünün gösterdiğinden başka bir kesimin kuralını doğrulardı.
+    case 'addTransition': {
+      if (clipId === null) return gate('no clip');
+      const edge = resolveTransitionEdge(c.doc, clipId, { timeUs: clipTimeUs(c), require: 'cut' });
+      return gate(addTransitionBlockReason(c.doc, clipId, edge));
+    }
+    case 'removeTransition': {
+      if (clipId === null) return gate('no clip');
+      const edge = resolveTransitionEdge(c.doc, clipId, {
+        timeUs: clipTimeUs(c),
+        require: 'transition',
+      });
+      return gate(removeTransitionBlockReason(c.doc, clipId, edge));
+    }
   }
+}
+
+function clipTimeUs(c: TimelineMenuContext): number | undefined {
+  return c.target.kind === 'clip' ? c.target.timeUs : undefined;
 }
 
 describe('menü disabled durumu === op ret gerekçesi (tablo testi)', () => {
