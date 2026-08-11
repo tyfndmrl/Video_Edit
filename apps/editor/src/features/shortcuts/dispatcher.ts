@@ -25,6 +25,7 @@ import {
   splitAtPlayhead,
   trimSelectedToPlayhead,
 } from '../../state/timelineOps';
+import { isTimelineMenuOpen } from '../timeline/contextMenuState';
 import { getTimelineViewControl } from '../timeline/viewControl';
 import { withEngine } from './playerBridge';
 import {
@@ -62,6 +63,11 @@ let forwardRate = 1;
  *   architect finding 1b: edits must not race openProject), or
  * - the autosave 409 conflict dialog is up (finding 5: editing a document
  *   that is about to be replaced by the server copy is meaningless).
+ *
+ * UNDO/REDO COUNT AS MUTATIONS. They rewrite the document from patches and
+ * mark autosave dirty exactly like an edit; a Ctrl+Z under the conflict dialog
+ * (or during a project load) mutated a document that was about to be replaced
+ * by the server copy, and autosave then tried to save it.
  */
 function docMutationAllowed(): boolean {
   if (useProjectSession.getState().status !== 'ready') return false;
@@ -124,11 +130,13 @@ function handleCtrlShortcut(e: KeyEventLike): boolean {
   const selection = useEditorStore.getState().selection;
   switch (e.key.toLowerCase()) {
     case 'z':
-      if (e.shiftKey) store.redo();
-      else store.undo();
+      if (docMutationAllowed()) {
+        if (e.shiftKey) store.redo();
+        else store.undo();
+      }
       return true;
     case 'y':
-      store.redo();
+      if (docMutationAllowed()) store.redo();
       return true;
     case 'a':
       selectAllClips();
@@ -157,6 +165,12 @@ function handleCtrlShortcut(e: KeyEventLike): boolean {
  */
 export function handleShortcut(e: KeyEventLike): boolean {
   if (isEditableTarget(e.target)) return false;
+  // Sağ tık menüsü açıkken klavyenin sahibi MENÜDÜR (aynı "modal açık" kuralı
+  // editable target'ta olduğu gibi PASİF geçer: preventDefault etmeyiz, menü
+  // kendi gezinmesini yapar, Escape'i de kendi capture listener'ı yutar).
+  // Bu kapı olmadan menü açıkken Delete klip siliyor, 'c' bölüyor ve ArrowDown
+  // playhead'i menünün gösterdiği hedefin dışına taşıyordu.
+  if (isTimelineMenuOpen()) return false;
   if (e.altKey) return false;
   if (e.ctrlKey || e.metaKey) return handleCtrlShortcut(e);
 

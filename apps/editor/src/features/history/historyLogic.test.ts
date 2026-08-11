@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   buildHistoryRows,
   formatHistoryTime,
+  historyNavigationBlockReason,
   historyRowHint,
   HISTORY_BASE_INDEX,
 } from './historyLogic';
@@ -170,5 +171,64 @@ describe('row index -> docStore.jumpTo contract', () => {
     rows = buildHistoryRows(useDocStore.getState().history, useDocStore.getState().cursor);
     expect(rows.find((r) => r.current)!.label).toBe('Genişlik 2');
     expect(rows.some((r) => r.undone)).toBe(false);
+  });
+});
+
+/**
+ * Geçmişte gezinme kapısı (denetim bulgusu 1). Panel satırları ve TopBar'ın
+ * Geri al/Yinele düğmeleri bu TEK kuralı paylaşır; kural docStore'un lock'u ve
+ * dispatcher'ın 409 kapısıyla aynı koşulları taşır — "düğme aktif ama tıklayınca
+ * doküman birazdan sunucu kopyasıyla değiştirilecek" durumu kalmasın.
+ */
+describe('historyNavigationBlockReason (undo/redo/jumpTo kapısı)', () => {
+  const free = { transactionOpen: false, locked: false, autosaveStatus: 'saved' };
+
+  it('allows navigation when nothing blocks it', () => {
+    expect(historyNavigationBlockReason(free)).toBeNull();
+    expect(historyNavigationBlockReason({ ...free, autosaveStatus: 'dirty' })).toBeNull();
+    expect(historyNavigationBlockReason({ ...free, autosaveStatus: 'saving' })).toBeNull();
+    expect(historyNavigationBlockReason({ ...free, autosaveStatus: 'error' })).toBeNull();
+  });
+
+  it('blocks while a gesture (transaction) is open — jumpTo would throw', () => {
+    expect(historyNavigationBlockReason({ ...free, transactionOpen: true })).toMatch(/sürükleme/i);
+  });
+
+  it('blocks while the store is locked (project loading)', () => {
+    expect(historyNavigationBlockReason({ ...free, locked: true })).toMatch(/yükleni/i);
+  });
+
+  it('blocks while the 409 conflict dialog is up', () => {
+    expect(historyNavigationBlockReason({ ...free, autosaveStatus: 'conflict' })).toMatch(
+      /çakışma/i,
+    );
+  });
+
+  /** Kapı ile docStore'un gerçek davranışı ayrışmamalı. */
+  it('agrees with docStore: every blocked case is refused by the store as well', () => {
+    useDocStore.setState({
+      doc: createEmptyDoc('00000000-0000-0000-0000-000000000000', defaultProjectSettings),
+      history: [],
+      cursor: 0,
+      locked: false,
+      transactionOpen: false,
+    });
+    const store = useDocStore.getState();
+    store.mutate('w', 'Genişlik 1', (d) => void (d.settings.width = 1001));
+
+    // locked -> hem kapı hem store reddeder.
+    store.setLocked(true);
+    expect(historyNavigationBlockReason({ ...free, locked: true })).not.toBeNull();
+    expect(() => useDocStore.getState().undo()).toThrow(/locked/);
+    store.setLocked(false);
+
+    // transaction açık -> hem kapı hem store reddeder.
+    const tx = useDocStore.getState().beginTransaction('trim', 'Kırpma');
+    expect(useDocStore.getState().transactionOpen).toBe(true);
+    expect(
+      historyNavigationBlockReason({ ...free, transactionOpen: true }),
+    ).not.toBeNull();
+    expect(() => useDocStore.getState().jumpTo(-1)).toThrow(/transaction/i);
+    tx.abort();
   });
 });

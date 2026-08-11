@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { TimelineMenuActionId, TimelineMenuEntry } from './contextMenu';
+import { setTimelineMenuOpen } from './contextMenuState';
 
 /** Menü kenarının ekrana yapışmaması için pay (px). */
 const EDGE_MARGIN = 6;
@@ -26,6 +27,16 @@ export interface TimelineContextMenuProps {
 export function TimelineContextMenu({ x, y, entries, onSelect, onClose }: TimelineContextMenuProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: x, top: y });
+
+  // Menü açıkken klavyenin sahibi MENÜDÜR: global dispatcher susar (Delete bir
+  // klibi silmez, 'c' bölmez, ArrowDown playhead'i oynatmaz — ok tuşları menü
+  // öğeleri arasında gezinir). Bayrak mount ömrüne bağlı olduğu için hangi
+  // yolla kapanırsa kapansın (Escape / dışarı tık / tekerlek / resize / blur /
+  // eylem) mutlaka temizlenir.
+  useEffect(() => {
+    setTimelineMenuOpen(true);
+    return () => setTimelineMenuOpen(false);
+  }, []);
 
   // Ekran dışına taşmayı engelle (ölçüm mount sonrası, boyama öncesi).
   useLayoutEffect(() => {

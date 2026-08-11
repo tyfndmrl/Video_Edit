@@ -4,10 +4,39 @@
  * Bu dosyadaki her jest Chromium'un girdi hattından geçer: pointer capture,
  * buton maskesi, wheel modifier'ları, sürükleme eşiği... hepsi gerçek. Store
  * yalnızca SONUCU doğrulamak için okunur.
+ *
+ * ---------------------------------------------------------------------------
+ * NİCEL İDDİA KURALI (M4 denetimi, yüksek bulgu)
+ * ---------------------------------------------------------------------------
+ * Bu dosya eskiden yalnız YÖN kanıtlıyordu (`toBeGreaterThan` / `toBeLessThan`).
+ * 8 saniyelik bir sürükleme 8 ms de taşısa, 40 sn de taşısa test yeşildi;
+ * pxPerUs'un tersine çevrildiği ya da bir yerde ikiye bölündüğü bir hata
+ * fark edilmezdi. Seed deterministik olduğu için BEKLENEN DEĞER hesaplanabilir:
+ *
+ *   xPx = (timeUs - scrollUs) * pxPerUs           (geometry.ts, tek kaynak)
+ *   commit edilen zaman = frame ızgarasına oturtulmuş hedef
+ *                          (snapping.ts: aday yoksa DAİMA ızgara)
+ *
+ * Tolerans neden var ve neden 2 px: fare koordinatı tarayıcı girdi hattında
+ * tam sayı piksele yuvarlanabilir (basma + bırakma = iki uçta yuvarlama) ve
+ * frame ızgarası (30 fps -> 33.333 µs) bu ölçekte 0.26 px'tir. 2 px'lik
+ * pencere bu iki kaynağı kapsar, ondan büyük hiçbir sapmayı affetmez. Sığdırma
+ * zoom'unda (pxPerUs ~ 7.8e-6) 2 px ≈ 0.26 sn — yani 8 sn'lik bir taşımada
+ * %3'ten büyük her hata kırmızıdır.
  */
+import { snapUsToFrameGrid, type Rational } from '@videoedit/timeline-schema';
 import { test, expect } from './fixtures/test';
-import { findClip } from './support/appBridge';
-import { SECOND_US } from './fixtures/seed';
+import { findClip, readProjectSettings } from './support/appBridge';
+import { TimelineHarness } from './support/timeline';
+import { SECOND_US, SEED_TIMES } from './fixtures/seed';
+
+/** Konum belirsizliğinin (fare yuvarlaması + ızgara) kabul edilen üst sınırı. */
+const TOLERANCE_PX = 2;
+
+/** Aday yakalama eşiği (snapping.ts SNAP_THRESHOLD_PX) — testlerin ön koşulu. */
+const SNAP_THRESHOLD_PX = 8;
+
+const tolUs = (pxPerUs: number): number => TimelineHarness.pxToUs(TOLERANCE_PX, pxPerUs);
 
 test.describe('Timeline — gerçek fare', () => {
   test.beforeEach(async ({ editor, seed }) => {
@@ -31,16 +60,39 @@ test.describe('Timeline — gerçek fare', () => {
     ).not.toBe(signatureBefore);
   });
 
-  test('boş alana sürüklenen klip taşınır (timelineStartUs değişir)', async ({ editor, seed }) => {
+  test('boş alana sürüklenen klip TAM 8 sn taşınır (68. saniyeye)', async ({ editor, seed }) => {
     const before = await editor.state();
-    const start0 = findClip(before, seed.clipAId).clip.timelineStartUs;
+    const anchor = findClip(before, seed.clipAId).clip;
+    const settings = await readProjectSettings(editor.page);
+    const fps: Rational = settings.fps;
 
     // clipA [60s,66s) -> boşluk [66s,76s). +8 sn: [68s,74s), clipB'ye (76s) değmez.
-    await editor.timeline.dragClipByTime(seed.clipAId, 8 * SECOND_US);
+    const deltaUs = 8 * SECOND_US;
+    // Ön koşul: hedefin yakınında YAKALAYICI bir aday olmamalı, yoksa beklenen
+    // değer ızgara değil o adayın kendisi olurdu. En yakın aday clipB başı (76s),
+    // sürüklenen klibin sonuna (74s) 2 sn uzakta.
+    expect(
+      TimelineHarness.pxToUs(SNAP_THRESHOLD_PX, before.pxPerUs),
+      'Snap eşiği 2 sn\'yi aşarsa bu test aday snap\'ini ölçer, ızgarayı değil.',
+    ).toBeLessThan(2 * SECOND_US);
+
+    await editor.timeline.dragClipByTime(seed.clipAId, deltaUs);
 
     const after = await editor.state();
     const moved = findClip(after, seed.clipAId);
-    expect(moved.clip.timelineStartUs).toBeGreaterThan(start0);
+    // Beklenen: hedef başlangıç frame ızgarasına oturur. 68 sn @30fps = 2040.
+    // tam frame -> ızgara onu değiştirmez.
+    const expectedStartUs = snapUsToFrameGrid(anchor.timelineStartUs + deltaUs, fps);
+    expect(expectedStartUs).toBe(68 * SECOND_US);
+    expect(
+      moved.clip.timelineStartUs,
+      `Klip 68. saniyeye taşınmalıydı (±${TOLERANCE_PX} px).`,
+    ).toBeGreaterThan(expectedStartUs - tolUs(before.pxPerUs));
+    expect(moved.clip.timelineStartUs).toBeLessThan(expectedStartUs + tolUs(before.pxPerUs));
+
+    // Taşıma SÜREYE ve KATMANA dokunmaz — burada tolerans yok, birebir.
+    expect(moved.clip.timelineDurationUs).toBe(anchor.timelineDurationUs);
+    expect(moved.trackIndex).toBe(findClip(before, seed.clipAId).trackIndex);
     expect(after.historyLabels.at(-1)).toMatch(/taşın/i);
   });
 
@@ -70,36 +122,67 @@ test.describe('Timeline — gerçek fare', () => {
     await expect(editor.warningToast).toContainText(/çakış/i);
   });
 
-  test('kenardan sürüklemek klibi kırpar (süre değişir)', async ({ editor, seed }) => {
+  test('sağ kenarı 63. saniyeye çekmek klibi TAM 3 sn\'ye kırpar', async ({ editor, seed }) => {
     const before = await editor.state();
-    const duration0 = findClip(before, seed.clipAId).clip.timelineDurationUs;
+    const clip0 = findClip(before, seed.clipAId).clip;
+    const settings = await readProjectSettings(editor.page);
+    const targetEndUs = 63 * SECOND_US;
 
-    await editor.timeline.dragRightEdgeByTime(seed.clipAId, -3 * SECOND_US);
+    // Ön koşul: 63 sn'nin yakınında aday yok (en yakını clipB başı, 13 sn ötede).
+    expect(
+      TimelineHarness.pxToUs(SNAP_THRESHOLD_PX, before.pxPerUs),
+    ).toBeLessThan(13 * SECOND_US);
+
+    await editor.timeline.dragRightEdgeToTime(seed.clipAId, targetEndUs);
 
     const after = await editor.state();
     const trimmed = findClip(after, seed.clipAId).clip;
-    expect(trimmed.timelineDurationUs).toBeLessThan(duration0);
-    expect(trimmed.timelineStartUs).toBe(findClip(before, seed.clipAId).clip.timelineStartUs);
+    // Kırpma imlecin zamanını yeni kenar yapar; ızgaraya oturur.
+    const expectedDurationUs = snapUsToFrameGrid(targetEndUs, settings.fps) - clip0.timelineStartUs;
+    expect(expectedDurationUs).toBe(3 * SECOND_US);
+    expect(
+      trimmed.timelineDurationUs,
+      `Klip süresi 3 sn olmalıydı (±${TOLERANCE_PX} px), yalnızca "kısaldı" değil.`,
+    ).toBeGreaterThan(expectedDurationUs - tolUs(before.pxPerUs));
+    expect(trimmed.timelineDurationUs).toBeLessThan(expectedDurationUs + tolUs(before.pxPerUs));
+
+    // Sağ kenar kırpması SOL kenara dokunmaz — birebir.
+    expect(trimmed.timelineStartUs).toBe(clip0.timelineStartUs);
     expect(after.historyLabels.at(-1)).toMatch(/kırp/i);
   });
 
-  test('klibi alt track\'e sürüklemek katman değiştirir', async ({ editor, seed }) => {
+  test('klibi alt track\'e sürüklemek katman değiştirir, ZAMANI değiştirmez', async ({
+    editor,
+    seed,
+  }) => {
     const before = await editor.state();
-    expect(findClip(before, seed.clipAId).trackIndex).toBe(0);
+    const clip0 = findClip(before, seed.clipAId);
+    expect(clip0.trackIndex).toBe(0);
 
     await editor.timeline.dragClipByTime(seed.clipAId, 0, 1);
 
     const after = await editor.state();
-    expect(findClip(after, seed.clipAId).trackIndex).toBe(1);
+    const moved = findClip(after, seed.clipAId);
+    expect(moved.trackIndex).toBe(1);
+    // Yatay piksel farkı SIFIR olduğu için burada tolerans YOK: dikey bir jestin
+    // zamanı kıpırdatması tam olarak "katman değiştirince klip kaydı" hatasıdır.
+    expect(
+      moved.clip.timelineStartUs,
+      'Yalnızca dikey sürükleme klibin zamanını değiştirmemeli.',
+    ).toBe(clip0.clip.timelineStartUs);
+    expect(moved.clip.timelineDurationUs).toBe(clip0.clip.timelineDurationUs);
   });
 
   test('Ctrl+Z gerçek fareyle yapılan taşımayı geri alır', async ({ editor, seed }) => {
     const before = await editor.state();
     const start0 = findClip(before, seed.clipAId).clip.timelineStartUs;
+    expect(start0).toBe(SEED_TIMES.clipAStartUs);
 
     await editor.timeline.dragClipByTime(seed.clipAId, 8 * SECOND_US);
     const moved = await editor.state();
-    expect(findClip(moved, seed.clipAId).clip.timelineStartUs).not.toBe(start0);
+    const movedStart = findClip(moved, seed.clipAId).clip.timelineStartUs;
+    expect(movedStart).toBeGreaterThan(68 * SECOND_US - tolUs(before.pxPerUs));
+    expect(movedStart).toBeLessThan(68 * SECOND_US + tolUs(before.pxPerUs));
 
     await editor.page.keyboard.press('Control+z');
     await editor.page.waitForTimeout(120);
@@ -109,47 +192,117 @@ test.describe('Timeline — gerçek fare', () => {
     expect(undone.cursor).toBe(before.cursor);
   });
 
-  test('Ctrl+wheel zoom seviyesini değiştirir', async ({ editor }) => {
+  test('Ctrl+wheel zoom\'u TAM 1.2 kat değiştirir ve imleç zamanını sabit tutar', async ({
+    editor,
+  }) => {
     const before = await editor.state();
+    const wrap = await editor.timeline.wrapBox();
+    // zoomAt çapası: imlecin canvas içindeki yerel x'i (centerOfBody -> w/2).
+    const anchorPx = wrap.width / 2;
+    const anchorTime = (state: { scrollUs: number; pxPerUs: number }): number =>
+      state.scrollUs + anchorPx / state.pxPerUs;
 
     await editor.timeline.ctrlWheel(-120);
     const zoomedIn = await editor.state();
-    expect(zoomedIn.pxPerUs).toBeGreaterThan(before.pxPerUs);
+    // TimelinePanel: deltaY < 0 -> faktör 1.2 (tek wheel olayı = tek adım).
+    expect(
+      zoomedIn.pxPerUs / before.pxPerUs,
+      'Bir wheel adımı TAM 1.2 kat yakınlaştırmalı.',
+    ).toBeCloseTo(1.2, 10);
+    // Çapa değişmezliği: imlecin altındaki zaman yerinde kalmalı (aksi halde
+    // yakınlaştırma içeriği kaydırır ve kullanıcı hedefini kaybeder).
+    expect(
+      Math.abs(anchorTime(zoomedIn) - anchorTime(before)),
+      'Yakınlaştırma imlecin altındaki zamanı 1 pikselden fazla kaydırmamalı.',
+    ).toBeLessThan(TimelineHarness.pxToUs(1, before.pxPerUs));
 
     await editor.timeline.ctrlWheel(240);
     const zoomedOut = await editor.state();
-    expect(zoomedOut.pxPerUs).toBeLessThan(zoomedIn.pxPerUs);
+    expect(
+      zoomedOut.pxPerUs / zoomedIn.pxPerUs,
+      'deltaY > 0 tek adımda TAM 1/1.2 kat uzaklaştırmalı.',
+    ).toBeCloseTo(1 / 1.2, 10);
+    expect(
+      zoomedOut.pxPerUs,
+      'Yakınlaştır + uzaklaştır başlangıç zoom\'una dönmeli.',
+    ).toBeCloseTo(before.pxPerUs, 12);
   });
 
-  test('orta tuşla sürüklemek timeline\'ı kaydırır (pan)', async ({ editor }) => {
+  test('orta tuşla 200 px sürüklemek TAM 200 px\'lik zamanı kaydırır (pan)', async ({ editor }) => {
     // Kaydırma payı olsun diye önce yakınlaştır (scrollUs 0'da kırpılır).
     await editor.timeline.ctrlWheel(-120);
     await editor.timeline.ctrlWheel(-120);
     const before = await editor.state();
 
     const center = await editor.timeline.centerOfBody();
+    const dragPx = 200;
     // "Grab" modeli (features/timeline/pan.ts): imleç SOLA giderse daha GEÇ
-    // zaman görünür -> scrollUs artar.
-    await editor.timeline.drag(center, { x: center.x - 200, y: center.y }, 'middle');
+    // zaman görünür -> scrollUs artar, tam da kat edilen piksel kadar.
+    await editor.timeline.drag(center, { x: center.x - dragPx, y: center.y }, 'middle');
     const panned = await editor.state();
+
+    const expectedPanned = before.scrollUs + TimelineHarness.pxToUs(dragPx, before.pxPerUs);
     expect(
       panned.scrollUs,
-      'Orta tuşla (middle-drag) sola sürükleme scrollUs\'u artırmalı.',
-    ).toBeGreaterThan(before.scrollUs);
+      `200 px'lik pan tam olarak 200 px'lik zaman kaydırmalı (±${TOLERANCE_PX} px).`,
+    ).toBeGreaterThan(expectedPanned - tolUs(before.pxPerUs));
+    expect(panned.scrollUs).toBeLessThan(expectedPanned + tolUs(before.pxPerUs));
+    // Pan zoom'a dokunmaz.
+    expect(panned.pxPerUs).toBe(before.pxPerUs);
 
-    // Ters yön geri getirir.
-    await editor.timeline.drag(center, { x: center.x + 200, y: center.y }, 'middle');
+    // Ters yön aynı miktarı geri getirir.
+    await editor.timeline.drag(center, { x: center.x + dragPx, y: center.y }, 'middle');
     const back = await editor.state();
-    expect(back.scrollUs).toBeLessThan(panned.scrollUs);
+    expect(
+      back.scrollUs,
+      'Aynı mesafe ters yöne sürüklenince başlangıç kaydırmasına dönülmeli.',
+    ).toBeGreaterThan(before.scrollUs - tolUs(before.pxPerUs));
+    expect(back.scrollUs).toBeLessThan(before.scrollUs + tolUs(before.pxPerUs));
   });
 
-  test('Shift+wheel yatay kaydırır', async ({ editor }) => {
+  test('Shift+wheel yatay kaydırmayı deltaY kadar piksel öteler', async ({ editor }) => {
     await editor.timeline.ctrlWheel(-120);
     const before = await editor.state();
 
-    await editor.timeline.shiftWheel(240);
+    // 100 px: kaydırmanın ÜST SINIRINDAN (pan.ts maxPanScrollUs) uzak kalacak
+    // kadar küçük, ölçülebilecek kadar büyük. Sınır davranışı bir sonraki testte.
+    const deltaY = 100;
+    await editor.timeline.shiftWheel(deltaY);
     const after = await editor.state();
 
-    expect(after.scrollUs).toBeGreaterThan(before.scrollUs);
+    // TimelinePanel: scrollUs += deltaY / pxPerUs (sonra tam sayıya yuvarlanır).
+    // Fare KONUMU işin içinde olmadığı için piksel yuvarlaması yok — iddia birebir.
+    const expected = Math.round(before.scrollUs + deltaY / before.pxPerUs);
+    expect(
+      after.scrollUs,
+      'Shift+wheel tam olarak deltaY piksellik zaman kaydırmalı. ' +
+        `beklenen=${expected} gerçek=${after.scrollUs} ` +
+        `scroll0=${before.scrollUs} pxPerUs=${before.pxPerUs} ` +
+        '(sapma büyükse kaydırma üst sınırına çarpmış olabilir.)',
+    ).toBe(expected);
+    expect(after.pxPerUs, 'Shift+wheel zoom\'a dokunmamalı.').toBe(before.pxPerUs);
+  });
+
+  test('kaçak Shift+wheel içeriği ekrandan ATAMAZ: içerik sonu %75 çizgisinde durur', async ({
+    editor,
+  }) => {
+    // Kaydırmanın üst sınırı (pan.ts): içerik sonu görünür alanın en fazla
+    // %75'ine kadar gidebilir, yani ekranda DAİMA içerik kalır. Burada beklenen
+    // değer uygulamanın fonksiyonundan değil, o KULLANICI KURALINDAN türetiliyor.
+    const tailFraction = 0.25;
+    await editor.timeline.ctrlWheel(-120);
+    const wrap = await editor.timeline.wrapBox();
+
+    // Tek seferde defalarca ekran boyu kaydırmayı dene.
+    for (let i = 0; i < 6; i++) await editor.timeline.shiftWheel(2000);
+
+    const after = await editor.state();
+    const contentEndX = (SEED_TIMES.contentEndUs - after.scrollUs) * after.pxPerUs;
+    expect(
+      contentEndX,
+      'Sınırsız yatay kaydırma "timeline boşaldı" şikayetinin ta kendisiydi: ' +
+        'içerik sonu görünür alanın %75 çizgisinden geriye gidememeli.',
+    ).toBeGreaterThan(wrap.width * (1 - tailFraction) - TOLERANCE_PX);
+    expect(contentEndX).toBeLessThan(wrap.width * (1 - tailFraction) + TOLERANCE_PX);
   });
 });

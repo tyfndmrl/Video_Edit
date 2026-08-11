@@ -101,6 +101,30 @@ internal static class ExportTestDocs
         Audio = audio,
     };
 
+    /// <summary>
+    /// Görsel (still image) klibi. Editörün ürettiği şeklin birebir aynısı (timelineOps
+    /// buildClipFromAsset): sourceIn = 0, sourceOut = klip süresi (varsayılan 4 sn) — bu aralık
+    /// dosyada bir zaman aralığına KARŞILIK GELMEZ, yalnız süre modelidir; audio DAİMA null.
+    /// </summary>
+    public static MediaClip ImageClip(
+        Guid assetId, long timelineStartUs, long durationUs,
+        Transform? transform = null, double opacity = 1) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        Kind = MediaClipKind.Image,
+        AssetId = assetId,
+        TimelineStartUs = timelineStartUs,
+        TimelineDurationUs = durationUs,
+        SourceInUs = 0,
+        SourceOutUs = durationUs,
+        Speed = new MediaClipSpeed { Rate = 1 },
+        Transform = transform ?? DefaultTransform(),
+        Keyframes = new KeyframeTracks(),
+        Effects = [],
+        Opacity = opacity,
+        Audio = null,
+    };
+
     /// <summary>Ses klibi (audio track içeriği) — görsel katman üretmez, yalnız mikse girer.</summary>
     public static MediaClip AudioClip(
         Guid assetId, long timelineStartUs, long sourceInUs, long sourceOutUs,

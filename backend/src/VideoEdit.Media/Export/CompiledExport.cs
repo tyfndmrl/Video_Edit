@@ -20,13 +20,22 @@ public sealed record ExportAssetSource(
 /// Tek ffmpeg girişi: input-level trim (tasarım 04 §2.1 — daima -ss + -t, ASLA -to;
 /// aynı asset'ten N klip = N ayrı giriş). Saniye literal'leri TimeFormat.Sec ile
 /// InvariantCulture üretilir.
+/// <para>
+/// <see cref="Loop"/> = GÖRSEL (still image) girişidir: dosyada zaman ekseni yoktur, tek kare
+/// <c>-loop 1</c> ile çoğaltılır ve <c>-t</c> ile sınırlanır. Seek anlamsız olduğu için
+/// <c>-ss</c> ÜRETİLMEZ (PosterRecipe'teki "tek karelik girişte seek kareyi kaçırır" kuralıyla
+/// aynı gerekçe); kesin kare sayısını zincirdeki <c>trim=end_frame</c> garanti eder.
+/// </para>
 /// </summary>
-public sealed record ExportInput(string Path, long SourceStartUs, long SourceDurationUs)
+public sealed record ExportInput(
+    string Path, long SourceStartUs, long SourceDurationUs, bool Loop = false)
 {
     public string StartSec => TimeFormat.Sec(SourceStartUs);
     public string DurationSec => TimeFormat.Sec(SourceDurationUs);
 
-    public IEnumerable<string> ToArgs() => ["-ss", StartSec, "-t", DurationSec, "-i", Path];
+    public IEnumerable<string> ToArgs() => Loop
+        ? ["-loop", "1", "-t", DurationSec, "-i", Path]
+        : ["-ss", StartSec, "-t", DurationSec, "-i", Path];
 }
 
 /// <summary>

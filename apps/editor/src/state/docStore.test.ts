@@ -220,6 +220,38 @@ describe('docStore lock (project-loading window, finding 1c)', () => {
     expect(useDocStore.getState().doc.settings.width).toBe(999);
     store.setLocked(false);
   });
+
+  /**
+   * undo/redo/jumpTo REWRITE the document from patches and make autosave
+   * dirty — they are mutations, and the lock exists precisely to keep edits
+   * from racing an in-flight project load. They used to walk straight past the
+   * lock: a history-panel click (or Ctrl+Z) during a load mutated the document
+   * the server copy was about to replace, and autosave tried to save it.
+   */
+  it('refuses undo/redo/jumpTo while locked (they are doc mutations too)', () => {
+    const store = useDocStore.getState();
+    store.mutate('w', 'Width 1', (d) => void (d.settings.width = 111));
+    store.mutate('w', 'Width 2', (d) => void (d.settings.width = 222));
+    const docBefore = useDocStore.getState().doc;
+    const cursorBefore = useDocStore.getState().cursor;
+
+    store.setLocked(true);
+    // vitest runs with import.meta.env.DEV === true -> loud failure.
+    expect(() => store.undo()).toThrow(/locked/);
+    expect(() => store.redo()).toThrow(/locked/);
+    expect(() => store.jumpTo(-1)).toThrow(/locked/);
+    expect(useDocStore.getState().doc, 'document must be untouched').toBe(docBefore);
+    expect(useDocStore.getState().cursor).toBe(cursorBefore);
+
+    // Unlock -> history navigation works again.
+    store.setLocked(false);
+    store.undo();
+    expect(useDocStore.getState().doc.settings.width).toBe(111);
+    store.jumpTo(-1);
+    expect(useDocStore.getState().cursor).toBe(0);
+    store.redo();
+    expect(useDocStore.getState().doc.settings.width).toBe(111);
+  });
 });
 
 describe('docStore undo/redo round-trip', () => {

@@ -8,11 +8,13 @@
  * özellik gerçekten varsa test yeşil olur, YOKSA kırmızı — istenen davranış.
  */
 import { expect, type Locator, type Page } from '@playwright/test';
-import { installAppBridge, readAppState } from './appBridge';
+import { installAppBridge, readAppState, type BridgeSource } from './appBridge';
 import { TimelineHarness } from './timeline';
 
 export class EditorApp {
   readonly timeline: TimelineHarness;
+  /** Store köprüsünün hangi katmandan kurulduğu (bkz. support/appBridge.ts). */
+  bridgeSource: BridgeSource | null = null;
 
   constructor(readonly page: Page) {
     this.timeline = new TimelineHarness(page);
@@ -46,15 +48,11 @@ export class EditorApp {
     }
 
     await this.page.locator('canvas').first().waitFor({ state: 'attached', timeout: 30_000 });
-    await installAppBridge(this.page);
-    await this.page.waitForFunction(
-      () => {
-        const bridge = (window as unknown as { __ve?: { session: { useProjectSession: { getState(): { status: string } } } } }).__ve;
-        return bridge?.session.useProjectSession.getState().status === 'ready';
-      },
-      undefined,
-      { timeout: 30_000 },
-    );
+    // installAppBridge KURAR ve CANLILIĞINI DOĞRULAR (oturum 'ready' + doküman
+    // dolu). Eskiden buradaki ayrı `waitForFunction` ölü bir köprüde 30 sn
+    // sonra opak biçimde düşüyordu; artık hangi katmanın kullanıldığı hatanın
+    // içinde yazıyor.
+    this.bridgeSource = await installAppBridge(this.page);
     await expect(this.page.getByTestId('timeline-loading-overlay')).toHaveCount(0);
     // İlk çizim + fit efekti için bir kare.
     await this.page.waitForTimeout(250);

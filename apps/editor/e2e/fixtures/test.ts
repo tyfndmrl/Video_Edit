@@ -22,6 +22,7 @@
  */
 import { test as base, expect, type BrowserContext } from '@playwright/test';
 import { EditorApp } from '../support/editor';
+import { bridgeRecorderInitScript } from '../support/appBridge';
 import { E2E_BASE_URL, E2E_VIEWPORT } from '../support/constants';
 import {
   buildSeedDoc,
@@ -92,6 +93,9 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
   // kırmızı bir testte retry'da trace.zip üretildi).
   page: async ({ context }, use) => {
     const page = await context.newPage();
+    // Sayfa açılmadan ÖNCE: modül URL kaydedicisi (appBridge'in tampondan
+    // bağımsız 2. katmanı). Bkz. support/appBridge.ts başlığı.
+    await page.addInitScript(bridgeRecorderInitScript());
     await use(page);
     await page.close();
   },

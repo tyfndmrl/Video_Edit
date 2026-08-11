@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { AutosaveIndicator } from '../features/timeline/AutosaveIndicator';
 import { ExportDialog } from '../features/export/ExportDialog';
+import { useHistoryNavigationBlockReason } from '../features/history/historyLogic';
 import { returnToProjectPicker } from '../features/projects/projectPickerLogic';
 import { toggleShortcutsOverlay } from '../features/shortcuts/shortcutsHelp';
 import { logout } from '../entities/auth';
@@ -17,8 +18,12 @@ export function TopBar() {
   const projectId = useProjectSession((s) => s.projectId);
   const projectName = useProjectSession((s) => s.projectName);
   const sessionReady = useProjectSession((s) => s.status) === 'ready';
-  const canUndo = useDocStore((s) => s.cursor > 0);
-  const canRedo = useDocStore((s) => s.cursor < s.history.length);
+  // undo/redo are document mutations (they rewrite doc from patches and dirty
+  // autosave), so they carry the SAME gate as the history panel rows: an open
+  // gesture, a project load in flight, or an unresolved 409 conflict.
+  const navBlocked = useHistoryNavigationBlockReason();
+  const canUndo = useDocStore((s) => s.cursor > 0) && navBlocked === null;
+  const canRedo = useDocStore((s) => s.cursor < s.history.length) && navBlocked === null;
   const [exportOpen, setExportOpen] = useState(false);
 
   return (
@@ -38,6 +43,7 @@ export function TopBar() {
       <div className="ml-3 flex items-center gap-1">
         <IconButton
           label="Geri al (Ctrl+Z)"
+          title={navBlocked ?? undefined}
           disabled={!canUndo}
           onClick={() => useDocStore.getState().undo()}
         >
@@ -45,6 +51,7 @@ export function TopBar() {
         </IconButton>
         <IconButton
           label="Yinele (Ctrl+Y)"
+          title={navBlocked ?? undefined}
           disabled={!canRedo}
           onClick={() => useDocStore.getState().redo()}
         >
@@ -91,11 +98,14 @@ export function TopBar() {
 
 function IconButton({
   label,
+  title,
   disabled,
   onClick,
   children,
 }: {
   label: string;
+  /** Ek açıklama (ör. neden devre dışı); yoksa label gösterilir. */
+  title?: string;
   disabled?: boolean;
   onClick: () => void;
   children: string;
@@ -104,7 +114,7 @@ function IconButton({
     <button
       type="button"
       aria-label={label}
-      title={label}
+      title={title ?? label}
       disabled={disabled}
       className="flex h-6 w-6 items-center justify-center rounded border border-edge text-xs text-fg-muted hover:bg-surface-3 hover:text-fg disabled:pointer-events-none disabled:opacity-40"
       onClick={onClick}

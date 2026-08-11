@@ -571,6 +571,172 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         Assert.True(MaxVolumeDb(outputPath) > -30d, "miks duyulabilir olmalı");
     }
 
+    // ───── M4 dalga 1 denetim düzeltmeleri: katman run'ları + görsel (still image) klipler ─────
+
+    /// <summary>Görsel fixture'ının (0x2080C0 PNG) hattan geçtikten sonraki rgb24 değeri.</summary>
+    private static readonly byte[] ImageLayerRgb = [32, 128, 192];
+
+    [FfmpegFact]
+    public async Task ImageOnlyTimeline_RendersThroughLoopedInput_ForItsWholeDuration()
+    {
+        // Denetim bulgusu: ürün kullanıcıyı görsel yüklemeye AKTİF olarak yönlendiriyor
+        // (fileTypes.ts, worker, timeline) ama compiler görsel klibi 422 ile reddediyordu.
+        // Sözleşme: -loop 1 -t <süre> girişi + normal katman zinciri. GERÇEK RENDER şart —
+        // "-loop olmadan tek kare sonrası akış biter" sınıfı hata yalnız burada görünür.
+        var photoPath = media.ImageSolid320x240Png();
+        var doc = ExportTestDocs.Doc(
+            width: CanvasWidth, height: CanvasHeight,
+            clips: ExportTestDocs.ImageClip(ExportTestDocs.AssetC, 0, 2_000_000));
+        var sources = new Dictionary<Guid, ExportAssetSource>
+        {
+            [ExportTestDocs.AssetC] = new(photoPath, false, "bt709", "bt709"),
+        };
+
+        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var input = Assert.Single(compiled.Inputs);
+        Assert.True(input.Loop);
+        Assert.Equal(["-loop", "1", "-t", "2.033333", "-i", photoPath], input.ToArgs());
+
+        var outputPath = await RenderAsync(compiled, "image-only");
+        var outProbe = await new FfprobeService(_options).ProbeAsync(outputPath);
+        Assert.True(outProbe.HasVideo);
+        Assert.True(outProbe.HasAudio);                       // anullsrc: sessiz ses izi
+        Assert.Equal(CanvasWidth, outProbe.Width);
+        Assert.InRange(outProbe.DurationUs!.Value, 1_800_000, 2_200_000);
+        Assert.Equal("bt709", outProbe.ColorSpace);
+
+        // İLK ve SON kare aynı görseli taşımalı: -loop 1 tüm süre boyunca kare üretmiş demektir
+        // (loop olmasaydı ilk kareden sonrası donuk/boş olurdu ve süre kapısı da düşerdi).
+        foreach (var frame in new[] { 0, 30, 59 })
+        {
+            var rgb = DecodeFrameRgb24(outputPath, frame, $"image-only-f{frame}");
+            AssertPixel(rgb, 160, 120, ImageLayerRgb, tolerance: 12, $"görsel merkezi (kare {frame})");
+            AssertPixel(rgb, 5, 5, ImageLayerRgb, tolerance: 12, $"görsel tuvali kaplıyor (kare {frame})");
+        }
+    }
+
+    [FfmpegFact]
+    public async Task ImageLayerOverVideo_ComposesLikeAnyOtherLayer()
+    {
+        // Görsel klip ÜST katmanda: taban video + görsel PiP. Konum §2.5 formülünden gelir —
+        // kutu 80x60, P = (240, 60) → dikdörtgen x[200,280) y[30,90).
+        var photoPath = media.ImageSolid320x240Png();
+        var movingPath = media.Video320x240Moving2sWithAudio();
+        var movingProbe = await new FfprobeService(_options).ProbeAsync(movingPath);
+
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.ImageClip(ExportTestDocs.AssetC, 0, 2_000_000,
+                    transform: ExportTestDocs.Transform(x: 0.25, y: -0.25, scale: 0.25)),
+            ]),
+            // Taban katman scale 0.5 → x[80,240) y[60,180); dışında taban tuval görünür.
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000,
+                    ExportTestDocs.Audio(), ExportTestDocs.Transform(scale: 0.5)),
+            ]),
+        ], width: CanvasWidth, height: CanvasHeight);
+
+        var sources = new Dictionary<Guid, ExportAssetSource>
+        {
+            [ExportTestDocs.AssetA] = new(movingPath, true, movingProbe.ColorTransfer, movingProbe.ColorPrimaries),
+            [ExportTestDocs.AssetC] = new(photoPath, false, "bt709", "bt709"),
+        };
+
+        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        Assert.True(compiled.Inputs[1].Loop);                 // görsel = üst katman, ikinci giriş
+        var frame = DecodeFrameRgb24(await RenderAsync(compiled, "image-layer"), 30, "image-layer-f30");
+
+        AssertPixel(frame, 240, 60, ImageLayerRgb, 12, "görsel PiP merkezi");
+        AssertPixel(frame, 203, 75, ImageLayerRgb, 12, "görsel PiP sol kenarın 3 px içi");
+        AssertPixel(frame, 277, 45, ImageLayerRgb, 12, "görsel PiP sağ kenarın 3 px içi");
+        AssertBackground(frame, 283, 45, "PiP'in sağ dışı (tuval)");
+        AssertBackground(frame, 250, 27, "PiP'in üst dışı (tuval)");
+        // Alt katman (hareketli video) kendi bölgesinde görünür → görsel onu ÖRTMEMİŞ.
+        var mid = ((120 * CanvasWidth) + 160) * 3;
+        Assert.True(
+            Math.Abs(frame[mid] - ImageLayerRgb[0]) + Math.Abs(frame[mid + 1] - ImageLayerRgb[1])
+            + Math.Abs(frame[mid + 2] - ImageLayerRgb[2]) > 60,
+            "tuval merkezinde alt katman görünmeliydi");
+    }
+
+    [FfmpegFact]
+    public async Task ContiguousLayerClips_ConcatIntoOneOverlay_WithoutMovingASinglePixel()
+    {
+        // Denetim #1 (HIGH) düzeltmesinin GERÇEK RENDER kanıtı. Run'daki segmentler tek concat'e
+        // girer; concat girişlerinin AYNI BOYUTTA olması şarttır, oysa scale
+        // force_original_aspect_ratio=decrease kullandığı için gerçek boyut KAYNAĞIN aspect'ine
+        // bağlıdır (16:9 kaynak 4:3 kutuda 160x90'a düşer). Segmentler bu yüzden kutuya şeffaf
+        // pad'lenir — bu testin iki iddiası var:
+        //   (a) FARKLI aspect'li iki kaynak aynı run'da concat edilebiliyor (ffmpeg patlamıyor);
+        //   (b) pad geometriyi KAYDIRMIYOR: aynı klip tek başınayken (pad'siz yol) ve run
+        //       içindeyken (pad'li yol) katmanın kenarları AYNI piksele oturuyor.
+        var widePath = media.Video1280x720NoAudio();          // 16:9 → 4:3 kutuda letterbox
+        var solidPath = media.VideoSolid320x240NoAudio();     // 4:3 → kutuyu tam doldurur
+        var sources = new Dictionary<Guid, ExportAssetSource>
+        {
+            [ExportTestDocs.AssetB] = new(widePath, false, "bt709", "bt709"),
+            [ExportTestDocs.AssetC] = new(solidPath, false, "bt709", "bt709"),
+        };
+
+        // PiP yerleşimi (her iki dokümanda AYNI): scale 0.5 → kutu 160x120, merkezde. Taban
+        // katman YOK — kenar ölçümü siyah tuvale karşı yapılır (FirstLitColumn/Row).
+        var pip = ExportTestDocs.Transform(scale: 0.5);
+        var alone = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 1_000_000, transform: pip)]),
+        ], width: CanvasWidth, height: CanvasHeight);
+
+        var inRun = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 1_000_000, transform: pip),
+                // Bitişik + aynı yerleşim → AYNI run; kaynağın aspect'i farklı (4:3).
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetC, 1_000_000, 0, 1_000_000, transform: pip),
+            ]),
+        ], width: CanvasWidth, height: CanvasHeight);
+
+        var aloneCompiled = ExportCompiler.Compile(alone, sources, ExportProfile.Hd1080p);
+        var runCompiled = ExportCompiler.Compile(inRun, sources, ExportProfile.Hd1080p);
+        Assert.DoesNotContain("concat=", aloneCompiled.FilterGraphScript);
+        Assert.Contains("concat=n=2:v=1:a=0[v0]", runCompiled.FilterGraphScript);
+        // İki klip TEK overlay'e düşer (klip başına overlay olsaydı iki tane olurdu).
+        Assert.Equal(1, runCompiled.FilterGraphScript.Split(";\n").Count(l => l.Contains("]overlay=")));
+
+        var aloneFrame = DecodeFrameRgb24(
+            await RenderAsync(aloneCompiled, "run-alone"), 15, "run-alone-f15");
+        var runOutput = await RenderAsync(runCompiled, "run-concat");
+        var runFrame = DecodeFrameRgb24(runOutput, 15, "run-concat-f15");
+
+        // (b) Katmanın sınır kutusu BİREBİR aynı olmalı: pad'li ve pad'siz yol aynı pikselleri
+        //     boyar. 16:9 kaynak 160x120 kutuda 160x90'a düşer (letterbox) → pad ofseti yanlış
+        //     olsaydı kutu düşeyde kayardı.
+        Assert.Equal(LitBoundingBox(aloneFrame), LitBoundingBox(runFrame));
+
+        // Normatif dikdörtgen: kutu 160x120 merkezde, içerik 160x90 → x[80,240) y[75,165).
+        var (x0, y0, x1, y1) = LitBoundingBox(runFrame);
+        // (Sınırlarda ±2 px pay: kaynağın koyu sütunları eşiğin altında kalabilir, x264
+        //  ringing'i sert kenarın bir satır dışına taşabilir. Kayma olsaydı fark 15+ px olurdu.)
+        Assert.InRange(x0, 78, 100);
+        Assert.InRange(x1, 220, 241);
+        Assert.InRange(y0, 73, 85);
+        Assert.InRange(y1, 155, 166);
+        // Dikdörtgenin dışı taban tuval: kayma olsaydı burası boyanmış olurdu.
+        AssertBackground(runFrame, 76, 120, "katmanın 3 px solu");
+        AssertBackground(runFrame, 243, 120, "katmanın 3 px sağı");
+        AssertBackground(runFrame, 160, 71, "letterbox üst kenarının 3 px üstü");
+        AssertBackground(runFrame, 160, 168, "letterbox alt kenarının 3 px altı");
+
+        // (a) Run'ın İKİNCİ segmenti de doğru pencerede görünür (concat sırası korunmuş).
+        var second = DecodeFrameRgb24(runOutput, 45, "run-concat-f45");
+        AssertSolidLayer(second, 160, 120, "run'ın ikinci segmenti (düz renk) 1-2 sn arasında");
+        AssertBackground(second, 5, 5, "ikinci segment kenar dışında tuval");
+    }
+
     // ───────────────────────── Piksel / render yardımcıları ─────────────────────────
 
     private async Task<string> RenderAsync(CompiledExport compiled, string name)
@@ -668,6 +834,34 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         }
 
         return -1;
+    }
+
+    /// <summary>
+    /// "Aydınlık" piksellerin sınır kutusu (x0, y0, x1, y1 — kapsayıcı). Katmanın hangi
+    /// piksellere oturduğunun içerikten BAĞIMSIZ ölçüsüdür: iki render'ın kutusu eşitse
+    /// geometri birebir aynıdır.
+    /// </summary>
+    private static (int X0, int Y0, int X1, int Y1) LitBoundingBox(byte[] rgb)
+    {
+        int x0 = CanvasWidth, y0 = CanvasHeight, x1 = -1, y1 = -1;
+        for (var y = 0; y < CanvasHeight; y++)
+        {
+            for (var x = 0; x < CanvasWidth; x++)
+            {
+                var offset = ((y * CanvasWidth) + x) * 3;
+                if (Math.Max(rgb[offset], Math.Max(rgb[offset + 1], rgb[offset + 2])) <= 32)
+                {
+                    continue;
+                }
+
+                x0 = Math.Min(x0, x);
+                y0 = Math.Min(y0, y);
+                x1 = Math.Max(x1, x);
+                y1 = Math.Max(y1, y);
+            }
+        }
+
+        return (x0, y0, x1, y1);
     }
 
     /// <summary>Sütundaki ilk aydınlık satır (üst kenarın piksel konumu).</summary>

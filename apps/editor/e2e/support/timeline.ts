@@ -164,13 +164,42 @@ export class TimelineHarness {
     await this.drag(from, to);
   }
 
-  /** Sağ kenardan (trim tutamağı) sürükleyerek kırpma. */
+  /**
+   * Sağ kenardan (trim tutamağı) sürükleyerek kırpma — GÖRELİ.
+   *
+   * Nicel iddia kuran testler `dragRightEdgeToTime`i tercih etmeli: burada
+   * yakalama noktası kenardan 3 px içeride olduğu için sonuç, istenen deltadan
+   * o 3 pikselin zaman karşılığı kadar sapar.
+   */
   async dragRightEdgeByTime(clipId: string, deltaUs: number): Promise<void> {
     const st = await this.state();
     const box = await this.clipBox(clipId, st);
-    // Tutamak genişliği min(8, w/3); 3 px içeriden yakala.
     const from = { x: box.x + box.width - 3, y: box.y + TRACK_H / 2 };
     await this.drag(from, { x: from.x + deltaUs * st.pxPerUs, y: from.y });
+  }
+
+  /**
+   * Sağ kenardan (trim tutamağı) sürükleyip klibin sonunu HEDEF ZAMANA taşır.
+   *
+   * Neden "hedef zaman", "delta" değil: kırpma imlecin BULUNDUĞU zamanı yeni
+   * kenar yapar (TimelinePanel `xToTime(x)` -> `applyTrimToDraft`), yakalama
+   * noktasının kenardan kaç piksel içeride olduğu sonucu etkilemez. Hedefi
+   * doğrudan vermek, testin BEKLENEN DEĞERİ (frame ızgarasına oturmuş hedef)
+   * hesaplayabilmesini sağlar — "kısaldı mı?" yerine "tam olarak buraya mı?".
+   */
+  async dragRightEdgeToTime(clipId: string, targetEndUs: number): Promise<void> {
+    const st = await this.state();
+    const box = await this.clipBox(clipId, st);
+    const wrap = await this.wrapBox();
+    // Tutamak genişliği min(8, w/3); 3 px içeriden yakala.
+    const from = { x: box.x + box.width - 3, y: box.y + TRACK_H / 2 };
+    const to = { x: wrap.x + (targetEndUs - st.scrollUs) * st.pxPerUs, y: from.y };
+    await this.drag(from, to);
+  }
+
+  /** `px` piksellik konum belirsizliğinin mikrosaniye karşılığı (tolerans hesabı). */
+  static pxToUs(px: number, pxPerUs: number): number {
+    return px / pxPerUs;
   }
 
   /** Cetvele gerçek tıklama -> playhead o zamana gider (scrub). */
@@ -178,22 +207,32 @@ export class TimelineHarness {
     await this.click(await this.rulerPoint(timeUs));
   }
 
-  /** Ctrl+wheel: imleç çapalı zoom. Modifier gerçek klavye durumundan gelir. */
+  /**
+   * Ctrl+wheel: imleç çapalı zoom. Modifier gerçek klavye durumundan gelir.
+   *
+   * `settle()` ŞART: `page.mouse.wheel` olayın İŞLENMESİNİ beklemez
+   * ("does not wait for the scroll to finish"). Beklemeden okunan store, wheel
+   * ÖNCESİ pxPerUs'u verebilir — bu yarış nicel iddialarda gerçek bir yanlış
+   * kırmızı üretti (ölçüldü: bir sonraki jest 1.2 kat büyümüş zoom'u
+   * kullanırken beklenen değer eski zoom'dan hesaplandı).
+   */
   async ctrlWheel(deltaY: number, at?: { x: number; y: number }): Promise<void> {
     const point = at ?? (await this.centerOfBody());
     await this.page.mouse.move(point.x, point.y);
     await this.page.keyboard.down('Control');
     await this.page.mouse.wheel(0, deltaY);
     await this.page.keyboard.up('Control');
+    await this.settle();
   }
 
-  /** Shift+wheel: yatay pan. */
+  /** Shift+wheel: yatay pan. (Bekleme gerekçesi için bkz. ctrlWheel.) */
   async shiftWheel(deltaY: number, at?: { x: number; y: number }): Promise<void> {
     const point = at ?? (await this.centerOfBody());
     await this.page.mouse.move(point.x, point.y);
     await this.page.keyboard.down('Shift');
     await this.page.mouse.wheel(0, deltaY);
     await this.page.keyboard.up('Shift');
+    await this.settle();
   }
 
   /** Canvas gövdesinin ortası (cetvelin altı). */

@@ -19,6 +19,7 @@ hiçbir özellik ertelenmiş sayılmaz.
 | Hesap + proje yönetimi, autosave | ✅ tam (versiyon geçmişi UI'ı hariç) | UI → M6 |
 | **Ses katmanları** (waveform, seviye, fade, detach) | ✅ tam (M4 dalga 1) | — |
 | **Çoklu katman export + transform** | ✅ tam (M4 dalga 1) | — |
+| **Görseller (PNG/JPG/WebP)** | ✅ tam (M4 dalga 1 denetim düzeltmesi) | — |
 | **Yazı & overlay** (metin, sticker, şekil) | ❌ yok | **M4 dalga 2** |
 | **Geçişler** (xfade/acrossfade) | ❌ yok | **M4 dalga 2** |
 | Pis-dosya korpusu (iPhone HDR/VFR/döndürülmüş) testleri | ❌ yok | **M4 dalga 3** |
@@ -26,8 +27,16 @@ hiçbir özellik ertelenmiş sayılmaz.
 | **Hız değiştirme** (slow-mo/timelapse) | ❌ UI yok | **M5** |
 | **Keyframe animasyonları** | ❌ editör yok | **M5** |
 
+> **Görseller satırının geçmişi (kayda geçer).** M4 dalga 1'de ürün kullanıcıyı görsel
+> yüklemeye AKTİF olarak yönlendiriyordu (`fileTypes.ts` PNG/JPG/WebP diyor, worker işliyor,
+> timeline'a eklenebiliyor) ama ExportCompiler görsel klibi 422 ile reddediyordu — kullanıcı
+> emeğini dışa aktaramıyordu. Dalga 1 denetiminde kapatıldı: export `-loop 1 -t <süre>` girişi
+> açıyor, görsel klip diğer katmanlarla aynı geometri/opaklık zincirinden geçiyor ve ses
+> üretmiyor. Görsel klibin `sourceIn/sourceOut`'u dosyada bir zaman aralığına karşılık
+> GELMEDİĞİ için worker'ın kaynak-aralığı kapısından muaftır (`ExportPlan.Clips`).
+
 ### M4 dalga planı (denetim #18/#23 gereği yazıldı)
-- **Dalga 1** (tamam): çok katman overlay export, transform gizmo, klip özellikleri paneli, detach audio.
+- **Dalga 1** (tamam): çok katman overlay export, transform gizmo, klip özellikleri paneli, detach audio, görsel (still image) klipler.
 - **Dalga 2**: metin/şekil/sticker katmanları (SkiaSharp sunucu raster + client önizleme, font manifesti) + geçişler (xfade/acrossfade, D/2 handle sözleşmesi).
 - **Dalga 3**: pis-dosya korpusu (iPhone HLG, WhatsApp re-encode, OBS VFR, dikey/döndürülmüş MOV) uçtan uca testleri + parity sertleştirme.
 

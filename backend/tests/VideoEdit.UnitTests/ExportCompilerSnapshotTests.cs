@@ -187,6 +187,48 @@ public sealed class ExportCompilerSnapshotTests
         ]),
     ]);
 
+    /// <summary>
+    /// Aynı track'te ARDIŞIK iki PiP klibi (aynı yerleşim) + altında tam kare taban katman.
+    /// Üst track'in iki klibi TEK concat zincirinde birleşir ve tuvale TEK overlay ile biner —
+    /// klip başına overlay yalnız gerçek katmanlaşmada üretilir (M4 dalga 1 denetimi #1).
+    /// </summary>
+    private static TimelineDoc LayerRunConcat() => ExportTestDocs.MultiTrackDoc(
+    [
+        ExportTestDocs.VideoTrack(clips:
+        [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 1_000_000, 0, 1_000_000,
+                transform: ExportTestDocs.Transform(x: 0.25, y: -0.25, scale: 0.5)),
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetC, 2_000_000, 0, 1_000_000,
+                transform: ExportTestDocs.Transform(x: 0.25, y: -0.25, scale: 0.5)),
+        ]),
+        ExportTestDocs.VideoTrack(clips:
+        [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 4_000_000, ExportTestDocs.Audio()),
+        ]),
+    ]);
+
+    /// <summary>
+    /// Tek görsel (still image) klibi: -loop 1 -t girişi + tek katmanlı hızlı yol + ses yok
+    /// (anullsrc). Kullanıcının "fotoğrafı sürükleyip dışa aktarma" akışının birebir karşılığı.
+    /// </summary>
+    private static TimelineDoc ImageClip() => ExportTestDocs.Doc(
+        clips: ExportTestDocs.ImageClip(ExportTestDocs.AssetC, 0, 4_000_000));
+
+    /// <summary>Görsel klip ÜST katmanda (PiP, yarı saydam) — video taban katmanın üstünde.</summary>
+    private static TimelineDoc ImageOverVideo() => ExportTestDocs.MultiTrackDoc(
+    [
+        ExportTestDocs.VideoTrack(clips:
+        [
+            ExportTestDocs.ImageClip(ExportTestDocs.AssetC, 1_000_000, 2_000_000,
+                transform: ExportTestDocs.Transform(x: 0.25, y: -0.25, scale: 0.35),
+                opacity: 0.8),
+        ]),
+        ExportTestDocs.VideoTrack(clips:
+        [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 4_000_000, ExportTestDocs.Audio()),
+        ]),
+    ]);
+
     /// <summary>Video track + audio track miksi: ses klibi görsel katman ÜRETMEZ.</summary>
     private static TimelineDoc AudioTrackMix() => ExportTestDocs.MultiTrackDoc(
     [
@@ -219,6 +261,7 @@ public sealed class ExportCompilerSnapshotTests
         "muted-audio", "audio-fades", "hdr-source", "ntsc-fps", "ntsc-gap",
         "two-video-layers", "pip-transform", "layer-opacity",
         "hidden-muted-tracks", "audio-track-mix", "opaque-over-alpha",
+        "layer-run-concat", "image-clip", "image-over-video",
     ];
 
     private static (TimelineDoc Doc, Dictionary<Guid, ExportAssetSource> Sources) Fixture(string name) =>
@@ -238,8 +281,19 @@ public sealed class ExportCompilerSnapshotTests
             "hidden-muted-tracks" => (HiddenAndMutedTracks(), SdrSources()),
             "audio-track-mix" => (AudioTrackMix(), SdrSources()),
             "opaque-over-alpha" => (OpaqueOverAlpha(), SdrSources()),
+            "layer-run-concat" => (LayerRunConcat(), SdrSources()),
+            // Görsel asset'in ses stream'i YOKTUR — kaynak defteri de bunu böyle bildirir.
+            "image-clip" => (ImageClip(), ImageSources()),
+            "image-over-video" => (ImageOverVideo(), ImageSources()),
             _ => throw new ArgumentOutOfRangeException(nameof(name)),
         };
+
+    /// <summary>AssetC bir PNG (ses yok, video stream'i tek kare), AssetA sesli video.</summary>
+    private static Dictionary<Guid, ExportAssetSource> ImageSources() => new()
+    {
+        [ExportTestDocs.AssetA] = new ExportAssetSource("assets/a.mp4", true, "bt709", "bt709"),
+        [ExportTestDocs.AssetC] = new ExportAssetSource("assets/photo.png", false, "bt709", "bt709"),
+    };
 
     // ---------- Snapshot testleri ----------
 
@@ -448,7 +502,7 @@ public sealed class ExportCompilerSnapshotTests
         foreach (var name in new[]
                  {
                      "opaque-over-alpha", "layer-opacity", "pip-transform", "two-video-layers",
-                     "single-clip", "with-gaps", "hidden-muted-tracks",
+                     "with-gaps", "hidden-muted-tracks", "layer-run-concat", "image-over-video",
                  })
         {
             var (doc, sources) = Fixture(name);
@@ -586,6 +640,176 @@ public sealed class ExportCompilerSnapshotTests
         // Render sırası: en alt katman (docIndex 1) önce.
         Assert.Equal(1, plan.Tracks[0].DocIndex);
         Assert.Equal(0, plan.Tracks[1].DocIndex);
+    }
+
+    // ---------- Katman run'ları (M4 dalga 1 denetimi: performans regresyonu) ----------
+
+    [Fact]
+    public void Compile_SingleFullCanvasTrack_SkipsTheBaseCanvasAndOverlayEntirely()
+    {
+        // Denetim #1 (HIGH). Eski (M3) hat N klibi TEK concat ile birleştiriyordu (kare başına
+        // O(1)); M4 dalga 1 HER KLİP için tam çözünürlükte bir RGBA overlay katı ekledi ve
+        // 'enable=' yalnız blend'i kapatıyordu. Sözleşme: tek katmanlı proje M3 davranışına
+        // döner — taban tuval YOK, overlay YOK, letterbox pad + tek concat.
+        var compiled = ExportCompiler.Compile(MultiClipContiguous(), SdrSources(), ExportProfile.Hd1080p);
+
+        Assert.DoesNotContain("overlay=", compiled.FilterGraphScript);
+        Assert.DoesNotContain("color=c=0x000000:s=1920x1080", compiled.FilterGraphScript);
+        // Kompozisyon yoksa RGB tuvale de gerek yoktur: zincir yuv420p'de kalır (renk
+        // gidiş-dönüşü YOK — kayıpsız karşılaştırmada tuval yolu PSNR 35.87 dB, bu yol ∞).
+        Assert.DoesNotContain("format=rgba", compiled.FilterGraphScript);
+        Assert.DoesNotContain(":format=rgb", compiled.FilterGraphScript);
+        Assert.Contains("pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x000000,setsar=1,format=yuv420p",
+            compiled.FilterGraphScript);
+        Assert.Contains("[s0_0][s0_1]concat=n=2:v=1:a=0[v0]", compiled.FilterGraphScript);
+        Assert.Contains("[v0]setparams=colorspace=bt709:", compiled.FilterGraphScript);
+        Assert.Equal(5_000_000, compiled.ExpectedDurationUs);
+    }
+
+    [Fact]
+    public void Compile_ContiguousClipsOnALayerTrack_ShareOneConcatAndOneOverlay()
+    {
+        // Gerçek katmanlaşmada (alt katman + üstte PiP) taban tuval ve overlay KALIR, ama üst
+        // track'in ARDIŞIK iki klibi tek concat zincirinde birleşir → iki değil TEK overlay.
+        var compiled = ExportCompiler.Compile(LayerRunConcat(), SdrSources(), ExportProfile.Hd1080p);
+
+        var overlays = compiled.FilterGraphScript.Split(";\n")
+            .Where(l => l.Contains("]overlay=")).ToList();
+        Assert.Equal(2, overlays.Count);                       // taban katman + PiP run'ı
+        Assert.Contains("[base][v0]overlay=", compiled.FilterGraphScript);
+        Assert.Contains("[s1_0][s1_1]concat=n=2:v=1:a=0,setpts=PTS-STARTPTS+1.000000/TB[v1]",
+            compiled.FilterGraphScript);
+
+        // Run'ın enable penceresi İKİ klibi birden kapsar (1 sn → 3 sn, bitiş yarım frame geri).
+        Assert.Contains("enable='between(t,1.000000,2.983334)'", compiled.FilterGraphScript);
+
+        // concat girişleri aynı boyutta olmalı: segmentler yerleşim kutusuna şeffaf pad'lenir
+        // (gerçek ölçek çıktısı kaynağın aspect'ine bağlıdır — compiler kaynak boyutunu bilmez).
+        Assert.Contains("format=rgba,pad=960:540:(ow-iw)/2:(oh-ih)/2:color=#00000000",
+            compiled.FilterGraphScript);
+        // Segmentler 0'dan başlar; timeline ofseti concat SONRASINA taşınır.
+        Assert.Contains("settb=AVTB,setpts=PTS-STARTPTS[s1_0]", compiled.FilterGraphScript);
+        Assert.Contains("settb=AVTB,setpts=PTS-STARTPTS[s1_1]", compiled.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Compile_RunsBreakOnGapsPlacementChangesAndNonVisualClips()
+    {
+        // Run = ARDIŞIK + AYNI YERLEŞİM. Üçünü de tek dokümanda kırıyoruz:
+        //   klip1 0-1 sn PiP(A)  ─┐ bitişik ama YERLEŞİM farklı → ayrı run
+        //   klip2 1-2 sn PiP(B)  ─┘
+        //   klip3 3-4 sn PiP(B)   → aynı yerleşim ama BOŞLUK var → ayrı run
+        var pipA = ExportTestDocs.Transform(x: 0.25, scale: 0.5);
+        var pipB = ExportTestDocs.Transform(x: -0.25, scale: 0.5);
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 1_000_000, transform: pipA),
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 1_000_000, 0, 1_000_000, transform: pipB),
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 3_000_000, 0, 1_000_000, transform: pipB),
+            ]),
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 4_000_000, ExportTestDocs.Audio()),
+            ]),
+        ]);
+        var compiled = ExportCompiler.Compile(doc, SdrSources(), ExportProfile.Hd1080p);
+
+        // 1 taban + 3 ayrı run = 4 overlay, hiç concat yok.
+        Assert.Equal(4, compiled.FilterGraphScript.Split(";\n").Count(l => l.Contains("]overlay=")));
+        Assert.DoesNotContain("concat=", compiled.FilterGraphScript);
+        Assert.Contains("[c2][v3]overlay=", compiled.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Compile_NonCenteredAnchorRun_IsNotConcatenated()
+    {
+        // Kutuya normalize eden pad SİMETRİKTİR: yalnız çapa merkezdeyse geometriyi korur.
+        // Merkez dışı çapada run BÖLÜNÜR (bugünkü klip-başına overlay yolu) — sessizce
+        // 1 px kaydırmaktansa optimizasyondan vazgeçilir.
+        var corner = ExportTestDocs.Transform(scale: 0.5, anchorX: 0, anchorY: 0);
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 1_000_000, transform: corner),
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 1_000_000, 0, 1_000_000, transform: corner),
+            ]),
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000, ExportTestDocs.Audio()),
+            ]),
+        ]);
+        var compiled = ExportCompiler.Compile(doc, SdrSources(), ExportProfile.Hd1080p);
+
+        Assert.DoesNotContain("concat=", compiled.FilterGraphScript);
+        Assert.Equal(3, compiled.FilterGraphScript.Split(";\n").Count(l => l.Contains("]overlay=")));
+        // Çapa (0,0) → telafi çarpanı 0 → overlay konumu sade sabittir (P'nin kendisi).
+        Assert.Contains("overlay=x=960:y=540:", compiled.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Compile_PartialCoverOrTranslucentSingleTrack_KeepsTheBaseCanvas()
+    {
+        // Hızlı yol YALNIZ "tek run + tuvali baştan sona birim dönüşümle kaplıyor + opak" ise
+        // açılır. Üç karşı örnek: (a) ölçek < 1 → çevresinde tuval görünmeli;
+        // (b) opaklık < 1 → tuvalle harmanlanmalı; (c) klip timeline'ı kaplamıyor → boşlukta tuval.
+        var scaled = ExportTestDocs.Doc(clips: ExportTestDocs.VideoClip(
+            ExportTestDocs.AssetA, 0, 0, 2_000_000, transform: ExportTestDocs.Transform(scale: 0.5)));
+        var translucent = ExportTestDocs.Doc(clips: ExportTestDocs.VideoClip(
+            ExportTestDocs.AssetA, 0, 0, 2_000_000, opacity: 0.5));
+        var late = ExportTestDocs.Doc(clips: ExportTestDocs.VideoClip(
+            ExportTestDocs.AssetA, 1_000_000, 0, 2_000_000));
+
+        foreach (var (doc, what) in new[]
+                 {
+                     (scaled, "ölçek 0.5"), (translucent, "opaklık 0.5"), (late, "1 sn'de başlıyor"),
+                 })
+        {
+            var script = ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p)
+                .FilterGraphScript;
+            Assert.True(script.Contains("[base][v0]overlay=", StringComparison.Ordinal),
+                $"{what}: taban tuval atlanmamalıydı → {script}");
+            Assert.Contains("format=rgba", script);
+        }
+    }
+
+    [Fact]
+    public void Validate_InertClips_AreExcludedFromTheAssetAndSourceRangeLedgers()
+    {
+        // Atıl klip (gizli VE susturulmuş track) hiçbir ffmpeg girişi açmaz — ama eskiden
+        // asset'i yine de plan.AssetIds'e giriyordu: worker onu R2'den İNDİRİYOR, probe'luyor ve
+        // kaynak-aralığı kapısına sokuyordu. Render EDİLMEYEN bir klip "source-out-of-range" ile
+        // TÜM export'u düşürebiliyordu (M4 dalga 1 denetimi).
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(hidden: true, muted: true, clips:
+            [
+                // Kaynak süresini AŞAN aralık: eski davranışta export'u düşürürdü.
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 9_000_000, ExportTestDocs.Audio()),
+            ]),
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000, ExportTestDocs.Audio()),
+            ]),
+        ]);
+
+        var plan = ExportCompiler.Validate(doc);
+        Assert.Equal([ExportTestDocs.AssetA], plan.AssetIds);   // atıl asset İNDİRİLMEZ
+        Assert.Single(plan.Clips);
+        Assert.Null(VideoEdit.Worker.Jobs.ExportJob.FindSourceOutOfRange(
+            plan.Clips, ExportTestDocs.AssetB, probeDurationUs: 3_000_000, plan.FpsNum, plan.FpsDen));
+
+        // Süre yine de atıl katmanın sonunu kapsar (timeline uzunluğu görünürlükten bağımsız).
+        Assert.Equal(9_000_000, plan.TotalDurationUs);
+        // Gizli ama SESLİ track atıl DEĞİLDİR — asset'i indirilir ve kapıya girer.
+        var audible = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(hidden: true, clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 2_000_000, ExportTestDocs.Audio())]),
+        ]);
+        Assert.Contains(ExportTestDocs.AssetB, ExportCompiler.Validate(audible).AssetIds);
     }
 
     // ---------- Micro-fade (rendering-semantics §8.4) ----------
@@ -802,16 +1026,67 @@ public sealed class ExportCompilerSnapshotTests
         Assert.Equal("text-clip", ex.Feature);
     }
 
-    [Fact]
-    public void Validate_ImageClip_Throws()
-    {
-        // Görsel klipleri M4 dalga 2 kapsamındadır (loop'lu giriş + süre modeli) — tipli hata.
-        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
-        clip.Kind = MediaClipKind.Image;
-        var doc = ExportTestDocs.Doc(clips: clip);
+    // ---------- Görsel (still image) klipler ----------
 
-        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
-        Assert.Equal("image-clip", ex.Feature);
+    [Fact]
+    public void Compile_ImageClip_UsesLoopedInput_WithoutSeek()
+    {
+        // Denetim bulgusu: ürün kullanıcıyı görsel yüklemeye AKTİF olarak yönlendiriyordu
+        // (fileTypes.ts PNG/JPG/WebP diyor, worker işliyor, timeline'a eklenebiliyor) ama
+        // compiler 422 atıyordu — kullanıcı emeğini kaybediyordu. Sözleşme: -loop 1 -t <süre>,
+        // SEEK YOK (tek karelik girişte -ss kareyi kaçırır — PosterRecipe ile aynı gerekçe).
+        var compiled = ExportCompiler.Compile(ImageClip(), ImageSources(), ExportProfile.Hd1080p);
+
+        var input = Assert.Single(compiled.Inputs);
+        Assert.True(input.Loop);
+        // -t bir frame CÖMERT (4 sn + 1 frame): görsel demuxer'ının kendi fps'i proje fps'inden
+        // farklı olabilir; kesin kare sayısını zincirdeki trim=end_frame sabitler.
+        Assert.Equal(["-loop", "1", "-t", "4.033333", "-i", "assets/photo.png"], input.ToArgs());
+        Assert.DoesNotContain("-ss", compiled.ToFfmpegArgs("graph.txt", "out.mp4"));
+        Assert.Contains("fps=30/1,trim=end_frame=120,", compiled.FilterGraphScript);
+
+        // Görsel ses üretmez → miks yok, toplam süre kadar sessizlik.
+        Assert.Contains("anullsrc=channel_layout=stereo:sample_rate=48000", compiled.FilterGraphScript);
+        Assert.DoesNotContain("[0:a]", compiled.FilterGraphScript);
+        Assert.Equal(4_000_000, compiled.ExpectedDurationUs);
+    }
+
+    [Fact]
+    public void Validate_ImageClip_IsExcludedFromTheSourceRangeLedger()
+    {
+        // Görsel klibin sourceIn/sourceOut'u dosyada bir zaman aralığına KARŞILIK GELMEZ
+        // (editör 4 sn'lik sentetik aralık üretir). Worker'ın kaynak-aralığı kapısı bu klibi
+        // görürse, süresi ~0 olan PNG için "reads source range beyond asset duration" der ve
+        // TÜM export'u düşürürdü — plan.Clips bu yüzden görselleri dışarıda bırakır.
+        var plan = ExportCompiler.Validate(ImageOverVideo());
+
+        Assert.Equal(2, plan.AssetIds.Count);                    // görsel yine de İNDİRİLİR
+        Assert.Contains(ExportTestDocs.AssetC, plan.AssetIds);
+        var ranged = Assert.Single(plan.Clips);                  // ama aralık defterinde YOK
+        Assert.Equal(MediaClipKind.Video, ranged.Kind);
+
+        // Kapı, görsel asset'in ölçülen süresiyle (tek kare ≈ 40 ms) tetiklenMEZ.
+        Assert.Null(VideoEdit.Worker.Jobs.ExportJob.FindSourceOutOfRange(
+            plan.Clips, ExportTestDocs.AssetC, probeDurationUs: 40_000, plan.FpsNum, plan.FpsDen));
+    }
+
+    [Fact]
+    public void Compile_ImageLayerOverVideo_ComposesLikeAnyOtherLayer()
+    {
+        var compiled = ExportCompiler.Compile(ImageOverVideo(), ImageSources(), ExportProfile.Hd1080p);
+
+        // Alt katman video (giriş 0), üst katman görsel (giriş 1 — loop'lu).
+        Assert.False(compiled.Inputs[0].Loop);
+        Assert.True(compiled.Inputs[1].Loop);
+        Assert.Contains("[base][v0]overlay=", compiled.FilterGraphScript);
+        Assert.Contains("[c0][v1]overlay=", compiled.FilterGraphScript);
+        // Görsel katman da diğerleriyle aynı geometri/opaklık zincirinden geçer.
+        Assert.Contains("scale=672:378:", compiled.FilterGraphScript);
+        Assert.Contains("colorchannelmixer=aa=0.8", compiled.FilterGraphScript);
+        Assert.Contains("enable='between(t,1.000000,2.983334)'", compiled.FilterGraphScript);
+        // Ses yalnız video klibinden gelir (görselde ses yok).
+        Assert.Contains("amix=inputs=1:", compiled.FilterGraphScript);
+        Assert.DoesNotContain("[1:a]", compiled.FilterGraphScript);
     }
 
     [Fact]

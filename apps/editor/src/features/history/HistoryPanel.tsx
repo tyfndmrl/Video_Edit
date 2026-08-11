@@ -13,16 +13,23 @@
  */
 import { useMemo } from 'react';
 import { useDocStore } from '../../state/docStore';
-import { buildHistoryRows, historyRowHint, type HistoryRow } from './historyLogic';
+import {
+  buildHistoryRows,
+  historyRowHint,
+  useHistoryNavigationBlockReason,
+  type HistoryRow,
+} from './historyLogic';
 
 export function HistoryPanel() {
   // Granular selectors: `doc` deliberately NOT selected — it changes on every
   // pointermove during a drag, while history/cursor change once per commit.
   const history = useDocStore((s) => s.history);
   const cursor = useDocStore((s) => s.cursor);
-  // jumpTo throws while a gesture is open (docStore.assertNoActiveTransaction);
-  // disable the rows instead of letting a click blow up mid-drag.
-  const transactionOpen = useDocStore((s) => s.transactionOpen);
+  // jumpTo is a document mutation: it throws while a gesture is open
+  // (assertNoActiveTransaction) AND while the store is locked, and it is
+  // meaningless while the 409 dialog is up (the doc is about to be replaced by
+  // the server copy). Same gate as TopBar's undo/redo — historyLogic owns it.
+  const blockReason = useHistoryNavigationBlockReason();
 
   const rows = useMemo(() => buildHistoryRows(history, cursor), [history, cursor]);
 
@@ -31,21 +38,21 @@ export function HistoryPanel() {
   }
 
   return (
-    <ol className="flex flex-col gap-0.5 px-2 py-2">
+    <ol className="flex flex-col gap-0.5 px-2 py-2" data-testid="history-rows">
       {rows.map((row) => (
-        <HistoryRowItem key={row.index} row={row} disabled={transactionOpen} />
+        <HistoryRowItem key={row.index} row={row} blockReason={blockReason} />
       ))}
     </ol>
   );
 }
 
-function HistoryRowItem({ row, disabled }: { row: HistoryRow; disabled: boolean }) {
-  const hint = historyRowHint(row);
+function HistoryRowItem({ row, blockReason }: { row: HistoryRow; blockReason: string | null }) {
+  const hint = blockReason ?? historyRowHint(row);
   return (
     <li>
       <button
         type="button"
-        disabled={disabled}
+        disabled={blockReason !== null}
         aria-current={row.current ? 'step' : undefined}
         title={`${row.label} — ${hint}`}
         className={[

@@ -41,8 +41,14 @@ export interface DocStore {
   cursor: number;
   /**
    * True while projectSession is loading a project (fetch in flight). While
-   * locked, mutate/beginTransaction are refused: throw in dev, no-op in prod
-   * (M2 chief-architect finding 1c — no edits may race a project load).
+   * locked, mutate/beginTransaction AND undo/redo/jumpTo are refused: throw in
+   * dev, no-op in prod (M2 chief-architect finding 1c — no edits may race a
+   * project load).
+   *
+   * undo/redo/jumpTo are doc mutations too: they rewrite `doc` from patches and
+   * make autosave dirty. Leaving them ungated let a history-panel click (or
+   * Ctrl+Z) mutate a document that the in-flight load is about to replace, and
+   * autosave then tried to PUT that doomed document.
    */
   locked: boolean;
   /**
@@ -239,6 +245,7 @@ export const useDocStore = create<DocStore>()((set, get) => {
 
     undo() {
       assertNoActiveTransaction('undo');
+      if (refuseWhenLocked('undo')) return;
       const { history, cursor, doc } = get();
       if (cursor === 0) return;
       const entry = history[cursor - 1]!;
@@ -247,6 +254,7 @@ export const useDocStore = create<DocStore>()((set, get) => {
 
     redo() {
       assertNoActiveTransaction('redo');
+      if (refuseWhenLocked('redo')) return;
       const { history, cursor, doc } = get();
       if (cursor >= history.length) return;
       const entry = history[cursor]!;
@@ -255,6 +263,7 @@ export const useDocStore = create<DocStore>()((set, get) => {
 
     jumpTo(index) {
       assertNoActiveTransaction('jumpTo');
+      if (refuseWhenLocked('jumpTo')) return;
       const { history } = get();
       const target = Math.max(-1, Math.min(index, history.length - 1)) + 1;
       let { doc, cursor } = get();

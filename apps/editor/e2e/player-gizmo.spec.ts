@@ -73,6 +73,65 @@ function outsideBoxPoint(geo: GizmoScreenGeometry): { x: number; y: number } {
   return best.point;
 }
 
+/**
+ * ---------------------------------------------------------------------------
+ * NİCEL İDDİA KURALI (M4 denetimi, yüksek bulgu)
+ * ---------------------------------------------------------------------------
+ * Bu dosya eskiden yalnız YÖN kanıtlıyordu ("x arttı", "ölçek küçüldü").
+ * Sürükleme ile dokümana yazılan miktar arasındaki katsayı ikiye bölünse ya da
+ * ekran ölçeği hesaba katılmasa test yine yeşil kalırdı. Beklenen değerler
+ * rendering-semantics §2.3'ten türetilir:
+ *
+ *   P = (W/2 + x*W, H/2 + y*H)   ->   Δx_doc = Δx_komp / W
+ *   ekran -> kompozisyon dönüşümü TEK ÜNİFORM ölçektir (viewport.ts):
+ *   Δx_komp = Δx_ekran / mappingScale,  ve  kutu_genişliği = W * mappingScale
+ *   =>  Δx_doc = Δx_ekran / kutu_genişliği           (ölçekten bağımsız!)
+ *
+ * Yani beklenen değer, EKRANDA ölçülen kutu genişliğine bölünmüş piksel
+ * mesafesidir; testin ikinci bir geometri matematiği kurmasına gerek yok.
+ * Bu türetme kutunun kompozisyon dikdörtgeni olmasını varsayar (kaynak boyutu
+ * bilinmediğinde "fit" kutusu tam olarak budur); `expectBoxIsCompRect` bunu
+ * her testte ayrıca doğrular, varsayım sessizce çürüyemez.
+ *
+ * Tolerans neden ~2 px: fare koordinatı girdi hattında tam sayıya
+ * yuvarlanabilir (basma + bırakma) ve doküman değerleri 4/3/2 ondalığa
+ * yuvarlanarak saklanır. 2 px'ten büyük hiçbir sapma affedilmez.
+ */
+const TOLERANCE_PX = 2;
+
+/** Kutunun eksen hizalı ekran boyutu (rotasyon 0 iken kutunun kendisi). */
+function boxSize(geo: GizmoScreenGeometry): { w: number; h: number } {
+  const xs = geo.corners.map((p) => p.x);
+  const ys = geo.corners.map((p) => p.y);
+  return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+}
+
+/**
+ * "Kutu = kompozisyon dikdörtgeni" varsayımının denetimi. Kaynak en-boy oranı
+ * proje oranıyla aynıysa fit kutusu birebir kompozisyon kutusudur ve
+ * `Δx_doc = Δx_ekran / kutu_genişliği` türetmesi geçerlidir. Değilse beklenen
+ * değerler sessizce kayardı — bu yüzden iddia edilir, varsayılmaz.
+ */
+async function expectBoxIsCompRect(page: Page, geo: GizmoScreenGeometry): Promise<void> {
+  const comp = await page.evaluate(() => {
+    const bridge = (window as unknown as {
+      __ve: {
+        doc: {
+          useDocStore: { getState(): { doc: { settings: { width: number; height: number } } } };
+        };
+      };
+    }).__ve;
+    const s = bridge.doc.useDocStore.getState().doc.settings;
+    return { width: s.width, height: s.height };
+  });
+  const box = boxSize(geo);
+  expect(
+    box.w / box.h,
+    'Gizmo kutusu proje en-boy oranını taşımalı; taşımıyorsa beklenen değer ' +
+      'türetmesi (Δx_doc = Δx_ekran / kutu_genişliği) geçersizdir.',
+  ).toBeCloseTo(comp.width / comp.height, 2);
+}
+
 /** Dokümandaki transform (store, salt okunur doğrulama). */
 async function clipTransform(page: Page, clipId: string): Promise<ClipTransform> {
   const value = await page.evaluate((id: string) => {
@@ -305,14 +364,31 @@ test.describe('Player transform gizmo — gerçek fare', () => {
     expect(before.x).toBe(0);
 
     const geo = await gizmoGeometry(editor.page);
-    await dragMouse(editor.page, geo.centre, { x: geo.centre.x + 120, y: geo.centre.y + 40 });
+    await expectBoxIsCompRect(editor.page, geo);
+    const box = boxSize(geo);
+    const dragPx = { x: 120, y: 40 };
+    await dragMouse(editor.page, geo.centre, {
+      x: geo.centre.x + dragPx.x,
+      y: geo.centre.y + dragPx.y,
+    });
 
     const after = await clipTransform(editor.page, seed.clipAId);
+    // §2.3: P = W/2 + x*W  ->  Δx_doc = Δx_ekran / kutu_genişliği.
+    const expectedX = dragPx.x / box.w;
+    const expectedY = dragPx.y / box.h;
     expect(
-      after.x,
-      'Gizmo kutusunu sağa sürüklemek transform.x değerini ARTIRMALI (§2.3: P = W/2 + x*W).',
-    ).toBeGreaterThan(before.x);
-    expect(after.y, 'Aşağı sürükleme transform.y değerini artırmalı.').toBeGreaterThan(before.y);
+      Math.abs(after.x - expectedX),
+      `120 px sağa sürükleme transform.x'i TAM ${expectedX.toFixed(4)} yapmalı ` +
+        `(gerçek ${after.x}); "arttı" yetmez.`,
+    ).toBeLessThan(TOLERANCE_PX / box.w);
+    expect(
+      Math.abs(after.y - expectedY),
+      `40 px aşağı sürükleme transform.y'yi TAM ${expectedY.toFixed(4)} yapmalı ` +
+        `(gerçek ${after.y}).`,
+    ).toBeLessThan(TOLERANCE_PX / box.h);
+    // Yatay/dikey oran korunmalı: eksenler karışırsa (x'e y katsayısı) yön
+    // testleri yine yeşil kalırdı.
+    expect(after.x / after.y).toBeCloseTo((dragPx.x / box.w) / (dragPx.y / box.h), 1);
     expect(after.scale, 'Taşıma ölçeğe dokunmamalı.').toBe(before.scale);
     expect(after.rotationDeg, 'Taşıma döndürmeye dokunmamalı.').toBe(before.rotationDeg);
 
@@ -344,19 +420,34 @@ test.describe('Player transform gizmo — gerçek fare', () => {
     const before = await clipTransform(editor.page, seed.clipAId);
 
     const geo = await gizmoGeometry(editor.page);
+    await expectBoxIsCompRect(editor.page, geo);
     // Sağ-alt köşeyi çapaya (merkez) DOĞRU çek: ölçek küçülür.
+    // Ölçek faktörü, çapa->imleç vektörünün çapa->köşe vektörüne izdüşümüdür
+    // (core/gizmo.ts). Köşeyi çapaya doğru %40 çekmek faktörü TAM 0.6 yapar —
+    // yani beklenen ölçek, başlangıç ölçeğinin 0.6 katı, tahmin değil hesap.
+    const pull = 0.4;
     const inward = {
-      x: geo.cornerSe.x - (geo.cornerSe.x - geo.centre.x) * 0.4,
-      y: geo.cornerSe.y - (geo.cornerSe.y - geo.centre.y) * 0.4,
+      x: geo.cornerSe.x - (geo.cornerSe.x - geo.centre.x) * pull,
+      y: geo.cornerSe.y - (geo.cornerSe.y - geo.centre.y) * pull,
     };
+    const armPx = Math.hypot(geo.cornerSe.x - geo.centre.x, geo.cornerSe.y - geo.centre.y);
     await dragMouse(editor.page, geo.cornerSe, inward);
 
     const after = await clipTransform(editor.page, seed.clipAId);
-    expect(after.scale, 'Köşeyi içeri çekmek ölçeği küçültmeli.').toBeLessThan(before.scale);
-    expect(after.scale).toBeGreaterThan(0);
+    const expectedScale = before.scale * (1 - pull);
+    expect(expectedScale).toBeCloseTo(0.6, 10);
+    expect(
+      Math.abs(after.scale - expectedScale),
+      `Ölçek TAM ${expectedScale} olmalı (gerçek ${after.scale}); "küçüldü" yetmez.`,
+    ).toBeLessThan(TOLERANCE_PX / armPx);
     expect(after.x, 'Ölçekleme konuma dokunmamalı (çapa sabit nokta, §2.3).').toBe(before.x);
     expect(after.y).toBe(before.y);
     expect((await editor.state()).historyLabels.at(-1)).toMatch(/ölçek/i);
+
+    // Kutu da gerçekten küçülmeli: doküman değişip ekran değişmiyorsa gizmo
+    // pointer'ı takip etmiyor demektir.
+    const geoAfter = await gizmoGeometry(editor.page);
+    expect(boxSize(geoAfter).w / boxSize(geo).w).toBeCloseTo(1 - pull, 1);
   });
 
   test('üst tutamak klibi döndürür', async ({ editor, seed }) => {
@@ -366,19 +457,27 @@ test.describe('Player transform gizmo — gerçek fare', () => {
     expect(before.rotationDeg).toBe(0);
 
     const geo = await gizmoGeometry(editor.page);
-    // Tutamak çapanın TAM ÜSTÜNDE; sağa doğru bir yay çizince saat yönünde döner.
+    // Tutamak çapanın TAM ÜSTÜNDE (açı -90°); imleci çapa etrafında -45°'ye
+    // taşımak TAM 45° saat yönü dönüş demektir (core/gizmo.ts: atan2 farkı).
+    // Yarıçap açıyı etkilemez, bu yüzden beklenen değer birebir hesaplanabilir.
     const radius = geo.centre.y - geo.rotate.y;
+    const targetAngleDeg = -45;
+    const targetRad = (targetAngleDeg * Math.PI) / 180;
     await dragMouse(editor.page, geo.rotate, {
-      x: geo.centre.x + radius * Math.cos(-Math.PI / 4),
-      y: geo.centre.y + radius * Math.sin(-Math.PI / 4),
+      x: geo.centre.x + radius * Math.cos(targetRad),
+      y: geo.centre.y + radius * Math.sin(targetRad),
     });
 
     const after = await clipTransform(editor.page, seed.clipAId);
+    const expectedDeg = targetAngleDeg - -90; // 45
+    expect(expectedDeg).toBe(45);
+    // Tolerans: yarıçap üzerinde ~2 px'lik imleç yuvarlaması kadar açı.
+    const toleranceDeg = ((TOLERANCE_PX / radius) * 180) / Math.PI;
     expect(
-      after.rotationDeg,
-      'Tutamağı saat yönünde çevirmek rotationDeg değerini POZİTİF yapmalı (§2.1).',
-    ).toBeGreaterThan(0);
-    expect(after.rotationDeg).toBeLessThan(90);
+      Math.abs(after.rotationDeg - expectedDeg),
+      `Dönüş TAM ${expectedDeg}° olmalı (gerçek ${after.rotationDeg}°, ` +
+        `tolerans ±${toleranceDeg.toFixed(2)}°); "pozitif oldu" yetmez.`,
+    ).toBeLessThan(toleranceDeg);
     expect(after.x, 'Döndürme konuma dokunmamalı.').toBe(before.x);
     expect(after.scale, 'Döndürme ölçeğe dokunmamalı.').toBe(before.scale);
     expect((await editor.state()).historyLabels.at(-1)).toMatch(/döndür/i);
@@ -432,14 +531,20 @@ test.describe('Player transform gizmo — gerçek fare', () => {
     const cursorBefore = (await editor.state()).cursor;
 
     const geo = await gizmoGeometry(editor.page);
-    await beginDrag(editor.page, geo.centre, { x: geo.centre.x + 140, y: geo.centre.y + 60 });
+    await expectBoxIsCompRect(editor.page, geo);
+    const box = boxSize(geo);
+    const dragPx = 140;
+    await beginDrag(editor.page, geo.centre, { x: geo.centre.x + dragPx, y: geo.centre.y + 60 });
 
     // Ön koşul: jest GERÇEKTEN canlı olmalı, yoksa "Escape çalıştı" iddiası
     // hiçbir şey kanıtlamaz (hiç başlamamış bir sürüklemeyi iptal etmek kolay).
+    // Ön koşul da NİCEL: yazılan miktar sürüklenen mesafeye eşit olmalı, yoksa
+    // "canlı" dediğimiz şey bambaşka bir şey olabilir.
     const during = await clipTransform(editor.page, seed.clipAId);
-    expect(during.x, 'Escape testinin anlamlı olması için sürükleme yazıyor olmalı.').toBeGreaterThan(
-      before.x,
-    );
+    expect(
+      Math.abs(during.x - (before.x + dragPx / box.w)),
+      'Escape testinin anlamlı olması için sürükleme TAM sürüklenen kadar yazıyor olmalı.',
+    ).toBeLessThan(TOLERANCE_PX / box.w);
     expect(await transactionOpen(editor.page), 'Sürükleme bir transaction açmalı.').toBe(true);
 
     await editor.page.keyboard.press('Escape');
@@ -526,12 +631,16 @@ test.describe('Player transform gizmo — gerçek fare', () => {
     await expect(editor.page.getByTestId('player-gizmo')).toHaveCount(1);
 
     const geo2 = await gizmoGeometry(editor.page);
-    await dragMouse(editor.page, geo2.centre, { x: geo2.centre.x + 110, y: geo2.centre.y });
+    const box2 = boxSize(geo2);
+    const dragPx = 110;
+    await dragMouse(editor.page, geo2.centre, { x: geo2.centre.x + dragPx, y: geo2.centre.y });
     const after = await clipTransform(editor.page, seed.clipAId);
     expect(
-      after.x,
-      'Yarıda kesilen jestten SONRA yeni bir sürükleme çalışmalı (beginTransaction patlamamalı).',
-    ).toBeGreaterThan(before.x);
+      Math.abs(after.x - (before.x + dragPx / box2.w)),
+      'Yarıda kesilen jestten SONRA yeni sürükleme TAM sürüklenen kadar yazmalı ' +
+        '(beginTransaction patlamamalı, yarım jestin kalıntısı da eklenmemeli).',
+    ).toBeLessThan(TOLERANCE_PX / box2.w);
+    expect(after.y, 'Yatay sürükleme dikey konuma dokunmamalı.').toBe(before.y);
     expect(
       (await editor.state()).cursor - cursorBefore,
       'Yalnızca ikinci (tamamlanmış) sürükleme geçmişe girmeli.',

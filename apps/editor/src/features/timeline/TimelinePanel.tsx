@@ -27,28 +27,17 @@ import { useEditorStore } from '../../state/editorStore';
 import { useProjectSession } from '../../state/projectSession';
 import {
   addClipFromAsset,
-  addMarkerAtPlayhead,
   addTrack,
   applyTrimToDraft,
   assertDocValidDev,
   clipEndUs,
-  copyClips,
-  cutClips,
-  deleteClips,
-  deleteTrack,
-  detachAudio,
-  duplicateClips,
-  hasClipboardContent,
   knownAssetDurations,
   moveClips,
-  pasteAtPlayhead,
   planMoveClips,
   projectEndUs,
-  splitAtPlayhead,
   toggleTrackHidden,
   toggleTrackLocked,
   toggleTrackMuted,
-  trimSelectedToPlayhead,
   type OpResult,
   type TrimEdge,
   type TrimMode,
@@ -61,7 +50,8 @@ import {
   type TimelineMenuTarget,
 } from './contextMenu';
 import { MOVE_CONFLICT_MESSAGE, WARNING_TTL_MS, opFailureMessage } from './feedback';
-import { panScrollUs, panScrollY } from './pan';
+import { runTimelineMenuAction } from './menuActions';
+import { clampScrollUs, maxPanScrollUs, panScrollUs, panScrollY } from './pan';
 import { TimelineContextMenu } from './TimelineContextMenu';
 import {
   RULER_H,
@@ -149,11 +139,20 @@ type PointerState =
       startScrollY: number;
     };
 
-/** Sağ tık menüsünün açık durumu (client koordinatları + hedef). */
+/**
+ * Sağ tık menüsünün açık durumu (client koordinatları + hedef).
+ *
+ * `playheadUs` menünün AÇILDIĞI andaki playhead'dir ve menü kapanana kadar
+ * DONAR: hem menü içeriği (buildTimelineMenu) hem çalıştırılan op
+ * (runTimelineMenuAction) bu tek değeri kullanır. Menü açıkken playhead'in
+ * kayması (oynatma sürüyor olabilir) menüyü bayatlatıyor ve kullanıcının
+ * gördüğünden BAŞKA bir yerde kesme riski doğuruyordu.
+ */
 interface MenuState {
   x: number;
   y: number;
   target: TimelineMenuTarget;
+  playheadUs: MicroSec;
 }
 
 export function TimelinePanel() {
@@ -363,14 +362,35 @@ export function TimelinePanel() {
   // Zoom / pan / fit
   // ---------------------------------------------------------------------
 
-  const zoomAt = useCallback((anchorX: number, factor: number) => {
+  /**
+   * TEK yatay kaydırma yazma yolu — her zaman [0, maxPanScrollUs] arasına
+   * kelepçeler. Orta tuş pan'i, Shift+wheel ve zoom hepsi buradan geçer;
+   * sınırsız kalan bir yol tek jestte "boş timeline" üretiyordu.
+   */
+  const applyScrollUs = useCallback((next: MicroSec, pxPerUs?: number) => {
     const st = useEditorStore.getState();
-    const next = clampPxPerUs(st.pxPerUs * factor);
-    if (next === st.pxPerUs) return;
-    const cursorTime = st.scrollUs + anchorX / st.pxPerUs;
-    st.setPxPerUs(next);
-    st.setScrollUs(Math.max(0, cursorTime - anchorX / next));
+    const zoom = pxPerUs ?? st.pxPerUs;
+    const max = maxPanScrollUs(
+      projectEndUs(useDocStore.getState().doc),
+      viewportRef.current.w,
+      zoom,
+    );
+    st.setScrollUs(clampScrollUs(next, max));
   }, []);
+
+  const zoomAt = useCallback(
+    (anchorX: number, factor: number) => {
+      const st = useEditorStore.getState();
+      const next = clampPxPerUs(st.pxPerUs * factor);
+      if (next === st.pxPerUs) return;
+      const cursorTime = st.scrollUs + anchorX / st.pxPerUs;
+      st.setPxPerUs(next);
+      // Yeni zoom ile kelepçele: uzaklaşırken görünür aralık büyüdüğü için üst
+      // sınır küçülür, eski scroll değeri sınırın dışında kalabilir.
+      applyScrollUs(cursorTime - anchorX / next, next);
+    },
+    [applyScrollUs],
+  );
 
   const fitToProject = useCallback(() => {
     const d = useDocStore.getState().doc;
@@ -428,7 +448,8 @@ export function TimelinePanel() {
       } else if (e.shiftKey) {
         const st = useEditorStore.getState();
         const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
-        st.setScrollUs(Math.max(0, st.scrollUs + delta / st.pxPerUs));
+        // Orta tuş pan'iyle AYNI üst sınır — iki yol da içeriği ekrandan atamaz.
+        applyScrollUs(st.scrollUs + delta / st.pxPerUs);
       } else {
         const trackCount = useDocStore.getState().doc.tracks.length;
         const bodyH = Math.max(0, viewportRef.current.h - RULER_H);
@@ -438,7 +459,7 @@ export function TimelinePanel() {
     };
     wrap.addEventListener('wheel', onWheel, { passive: false });
     return () => wrap.removeEventListener('wheel', onWheel);
-  }, [zoomAt]);
+  }, [zoomAt, applyScrollUs]);
 
   // ---------------------------------------------------------------------
   // Pointer interactions
@@ -618,7 +639,15 @@ export function TimelinePanel() {
       }
 
       if (state.mode === 'pan') {
-        st.setScrollUs(panScrollUs(state.startScrollUs, state.startX, x, st.pxPerUs));
+        st.setScrollUs(
+          panScrollUs(
+            state.startScrollUs,
+            state.startX,
+            x,
+            st.pxPerUs,
+            maxPanScrollUs(projectEndUs(d), viewportRef.current.w, st.pxPerUs),
+          ),
+        );
         const bodyH = Math.max(0, viewportRef.current.h - RULER_H);
         const maxScroll = Math.max(0, tracksContentHeight(d.tracks.length) - bodyH);
         setScrollY(panScrollY(state.startScrollY, state.startY, y, maxScroll));
@@ -815,11 +844,15 @@ export function TimelinePanel() {
       const { x, y, contentY } = localPoint(e.clientX, e.clientY);
       const st = useEditorStore.getState();
       const d = useDocStore.getState().doc;
+      // Menü ömrü boyunca DONAN playhead (finding 4): içerik de eylem de bunu
+      // kullanır, oynatma sürerken bile menü kendi gösterdiğiyle tutarlı kalır.
+      const playheadUs = st.playheadUs;
 
       if (y < RULER_H) {
         setMenu({
           x: e.clientX,
           y: e.clientY,
+          playheadUs,
           target: {
             kind: 'ruler',
             timeUs: snapUsToFrameGrid(xToTime(x, st.scrollUs, st.pxPerUs), d.settings.fps),
@@ -832,7 +865,12 @@ export function TimelinePanel() {
       if (hit) {
         // Menü açılırken klip seçili değilse seç (eylemler seçim üzerinden çalışır).
         if (!st.selection.has(hit.clipId)) st.setSelection([hit.clipId]);
-        setMenu({ x: e.clientX, y: e.clientY, target: { kind: 'clip', clipId: hit.clipId } });
+        setMenu({
+          x: e.clientX,
+          y: e.clientY,
+          playheadUs,
+          target: { kind: 'clip', clipId: hit.clipId },
+        });
         return;
       }
 
@@ -841,6 +879,7 @@ export function TimelinePanel() {
       setMenu({
         x: e.clientX,
         y: e.clientY,
+        playheadUs,
         target: track ? { kind: 'track', trackId: track.id } : { kind: 'empty' },
       });
     },
@@ -866,71 +905,26 @@ export function TimelinePanel() {
   );
 
   /**
-   * Menü eylemleri — hepsi MEVCUT timelineOps fonksiyonlarını çağırır; burada
-   * yeni düzenleme mantığı yoktur. Başarısız sonuçlar uyarı balonuna düşer.
+   * Menü eylemleri — eşleme menuActions.ts'te (MEVCUT timelineOps çağrıları,
+   * yeni düzenleme mantığı yok). Menünün AÇILIŞ anındaki seçim ve DONMUŞ
+   * playhead geçirilir, böylece op menünün gösterdiği bağlamda çalışır.
+   * Başarısız sonuçlar uyarı balonuna düşer.
    */
   const runMenuAction = useCallback(
     (id: TimelineMenuActionId) => {
-      const target = menu?.target;
+      const open = menu;
       closeMenu();
-      if (target === undefined) return;
+      if (open === null) return;
       if (useProjectSession.getState().status !== 'ready') return;
-      const st = useEditorStore.getState();
-      const selection = [...st.selection];
-
-      switch (id) {
-        case 'splitAtPlayhead':
-          reportOp(splitAtPlayhead());
-          return;
-        case 'cut':
-          reportOp(cutClips(selection));
-          return;
-        case 'copy':
-          if (!copyClips(selection)) warn(opFailureMessage('nothing to copy'));
-          return;
-        case 'duplicate':
-          reportOp(duplicateClips(selection));
-          return;
-        case 'delete':
-          reportOp(deleteClips(selection));
-          return;
-        case 'rippleDelete':
-          reportOp(deleteClips(selection, { ripple: true }));
-          return;
-        case 'trimStartToPlayhead':
-          reportOp(trimSelectedToPlayhead('left'));
-          return;
-        case 'trimEndToPlayhead':
-          reportOp(trimSelectedToPlayhead('right'));
-          return;
-        case 'detachAudio':
-          if (target.kind === 'clip') reportOp(detachAudio(target.clipId));
-          return;
-        case 'paste':
-          reportOp(pasteAtPlayhead());
-          return;
-        case 'toggleMuted':
-          if (target.kind === 'track') reportOp(toggleTrackMuted(target.trackId));
-          return;
-        case 'toggleHidden':
-          if (target.kind === 'track') reportOp(toggleTrackHidden(target.trackId));
-          return;
-        case 'toggleLocked':
-          if (target.kind === 'track') reportOp(toggleTrackLocked(target.trackId));
-          return;
-        case 'deleteTrack':
-          if (target.kind === 'track') reportOp(deleteTrack(target.trackId));
-          return;
-        case 'addMarker':
-          if (target.kind === 'ruler') {
-            // "Buraya": önce playhead tıklanan kareye gider, sonra mevcut op.
-            st.setPlayheadUs(target.timeUs);
-            addMarkerAtPlayhead();
-          }
-          return;
-      }
+      reportOp(
+        runTimelineMenuAction(id, {
+          target: open.target,
+          selection: [...useEditorStore.getState().selection],
+          playheadUs: open.playheadUs,
+        }),
+      );
     },
-    [closeMenu, menu, reportOp, warn],
+    [closeMenu, menu, reportOp],
   );
 
   // ---------------------------------------------------------------------
@@ -1035,16 +1029,17 @@ export function TimelinePanel() {
   const fps = doc.settings.fps;
 
   // Menü içeriği bağlamdan SAF olarak üretilir (contextMenu.ts). Playhead
-  // burada getState ile okunur — panel oynatma sırasında yeniden render
-  // edilmesin diye playheadUs'a selector bağlanmıyor (bkz. dosya başı notu).
+  // menü state'inden gelir — menü açılırken DONDURULMUŞ değerdir; canlı
+  // playhead'e selector bağlanmıyor (panel oynatma sırasında yeniden render
+  // edilmesin diye, bkz. dosya başı notu) ve zaten bağlanmamalı: menü içeriği
+  // ile eylemin çalıştığı an aynı olmalı.
   const menuEntries =
     menu !== null
       ? buildTimelineMenu({
           target: menu.target,
           doc,
-          selectionCount: selection.size,
-          playheadUs: useEditorStore.getState().playheadUs,
-          clipboardHasContent: hasClipboardContent(),
+          selection: [...selection],
+          playheadUs: menu.playheadUs,
           mutationAllowed: sessionStatus === 'ready',
         })
       : [];
@@ -1171,6 +1166,7 @@ export function TimelinePanel() {
                     setMenu({
                       x: e.clientX,
                       y: e.clientY,
+                      playheadUs: useEditorStore.getState().playheadUs,
                       target: { kind: 'track', trackId: track.id },
                     });
                   }}

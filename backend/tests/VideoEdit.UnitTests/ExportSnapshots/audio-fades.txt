@@ -3,12 +3,10 @@
 -ss 0.000000 -t 2.000000 -i assets/b.mp4
 
 # filter_complex_script
-color=c=0x000000:s=1920x1080:r=30/1:d=5.033333,trim=end_frame=150,format=rgba,setsar=1,settb=AVTB,setpts=PTS-STARTPTS[base];
-[0:v]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,fps=30/1,trim=end_frame=90,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,setsar=1,format=rgba,settb=AVTB,setpts=PTS-STARTPTS[v0];
-[base][v0]overlay=x=960-0.5*w:y=540-0.5*h:enable='between(t,0.000000,2.983334)':eval=frame:format=rgb[c0];
-[1:v]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,fps=30/1,trim=end_frame=60,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,setsar=1,format=rgba,settb=AVTB,setpts=PTS-STARTPTS+3.000000/TB[v1];
-[c0][v1]overlay=x=960-0.5*w:y=540-0.5*h:enable='between(t,3.000000,4.983334)':eval=frame:format=rgb[c1];
-[c1]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv[vout];
+[0:v]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,fps=30/1,trim=end_frame=90,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x000000,setsar=1,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[s0_0];
+[1:v]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,fps=30/1,trim=end_frame=60,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x000000,setsar=1,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[s0_1];
+[s0_0][s0_1]concat=n=2:v=1:a=0[v0];
+[v0]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv[vout];
 [0:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000,volume=0.5,afade=t=in:st=0:d=0.500000:curve=tri,afade=t=out:st=2.000000:d=1.000000:curve=tri[a0];
 [1:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000,volume=2,afade=t=in:st=0:d=0.005000:curve=tri,afade=t=out:st=1.995000:d=0.005000:curve=tri,adelay=3000|3000[a1];
 [a0][a1]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.98[aout]

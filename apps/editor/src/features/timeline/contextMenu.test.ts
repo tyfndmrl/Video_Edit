@@ -1,11 +1,38 @@
-import { describe, expect, it } from 'vitest';
+/**
+ * contextMenu testleri.
+ *
+ * Bu dosyanın ASIL yükü iki yapısal testtir (bkz. describe blokları en altta):
+ *
+ *  - "disabled === (blockReason !== null)": menü öğesinin gri olması ile op'un
+ *    ret gerekçesi TEK kaynaktan gelir.
+ *  - "op'u gerçekten çağıran eşleme testi": her öğe için runTimelineMenuAction
+ *    GERÇEK store üzerinde koşturulur ve `ok === !disabled` doğrulanır. Menü
+ *    "Çoğalt"ı aktif gösterip op'un reddetmesi (kullanıcı: "tıklıyorum hiçbir
+ *    şey olmuyor, sadece uyarı çıkıyor") bu testle imkânsız hale gelir.
+ */
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   clipTimelineDurationUs,
   type MediaClip,
   type TimelineDoc,
   type Track,
 } from '@videoedit/timeline-schema';
-import { createEmptyDoc, defaultProjectSettings } from '../../state/docStore';
+import { createEmptyDoc, defaultProjectSettings, useDocStore } from '../../state/docStore';
+import { useEditorStore } from '../../state/editorStore';
+import { useAssetStore } from '../../state/assetStore';
+import {
+  clearClipboardForTests,
+  copyBlockReason,
+  copyClips,
+  cutBlockReason,
+  deleteBlockReason,
+  detachAudioBlockReason,
+  duplicateBlockReason,
+  pasteBlockReason,
+  splitBlockReason,
+  trackDeleteBlockReason,
+  trimToPlayheadBlockReason,
+} from '../../state/timelineOps';
 import {
   buildTimelineMenu,
   type TimelineMenuActionId,
@@ -13,6 +40,7 @@ import {
   type TimelineMenuEntry,
   type TimelineMenuItem,
 } from './contextMenu';
+import { runTimelineMenuAction } from './menuActions';
 
 const US = 1_000_000;
 const PROJECT_ID = '01890000-0000-7000-8000-000000000001';
@@ -59,9 +87,8 @@ function ctx(over: Partial<TimelineMenuContext> = {}): TimelineMenuContext {
   return {
     target: { kind: 'clip', clipId: CLIP_A },
     doc: baseDoc(),
-    selectionCount: 1,
+    selection: [CLIP_A],
     playheadUs: 5 * US,
-    clipboardHasContent: true,
     mutationAllowed: true,
     ...over,
   };
@@ -86,6 +113,22 @@ function disabledIds(entries: TimelineMenuEntry[]): TimelineMenuActionId[] {
     .filter((i) => i.disabled)
     .map((i) => i.id);
 }
+
+/** Dokümanı GERÇEK store'a yükler (op çağıran testler için). */
+function loadIntoStore(d: TimelineDoc, selection: string[] = [], playheadUs = 5 * US): void {
+  useDocStore.getState().setLocked(false);
+  useDocStore.getState().loadDoc(d);
+  useEditorStore.getState().setSelection(selection);
+  useEditorStore.getState().setPlayheadUs(playheadUs);
+}
+
+beforeEach(() => {
+  clearClipboardForTests();
+  useAssetStore.getState().setAssets([
+    { id: ASSET_A, kind: 'video', name: 'a.mp4', status: 'ready', durationUs: 60 * US },
+  ]);
+  loadIntoStore(baseDoc(), [CLIP_A]);
+});
 
 describe('buildTimelineMenu — klip bağlamı', () => {
   it('offers the clip actions in order, with a separator before the trim pair', () => {
@@ -158,6 +201,27 @@ describe('buildTimelineMenu — klip bağlamı', () => {
     ] as const) {
       expect(find(entries, id).disabled, id).toBe(true);
     }
+  });
+
+  /**
+   * Denetim bulgusu 3'ün ta kendisi: bitişik komşusu olan bir klibin
+   * kopyasına yer YOKTUR (duplicate klibi kendi süresi kadar sağa koyar).
+   * Menü bunu aktif gösterip op'un reddetmesi kullanıcıya "çalışmıyor"
+   * hissi veriyordu.
+   */
+  it('greys out "Çoğalt" when the duplicate would not fit (adjacent neighbour)', () => {
+    const doc = docWith([
+      track(V1, 'video', [clip(CLIP_A, 0, 10 * US), clip(CLIP_B, 10 * US, 10 * US)]),
+    ]);
+    const item = find(buildTimelineMenu(ctx({ doc })), 'duplicate');
+    expect(item.disabled).toBe(true);
+    expect(item.blockReason).toBe('overlaps an existing clip');
+
+    // Aynı klip, komşusu uzaktayken: kopyaya yer var -> aktif.
+    const roomy = docWith([
+      track(V1, 'video', [clip(CLIP_A, 0, 10 * US), clip(CLIP_B, 40 * US, 10 * US)]),
+    ]);
+    expect(find(buildTimelineMenu(ctx({ doc: roomy })), 'duplicate').disabled).toBe(false);
   });
 
   describe('"Sesi ayır"', () => {
@@ -234,7 +298,7 @@ describe('buildTimelineMenu — klip bağlamı', () => {
   });
 
   it('greys out selection-driven actions when nothing is selected', () => {
-    const entries = buildTimelineMenu(ctx({ selectionCount: 0 }));
+    const entries = buildTimelineMenu(ctx({ selection: [] }));
     expect(find(entries, 'copy').disabled).toBe(true);
     expect(find(entries, 'cut').disabled).toBe(true);
     expect(find(entries, 'delete').disabled).toBe(true);
@@ -285,10 +349,27 @@ describe('buildTimelineMenu — track bağlamı', () => {
   });
 
   it('greys out paste when the clipboard is empty', () => {
-    expect(find(buildTimelineMenu(trackCtx({ clipboardHasContent: false })), 'paste').disabled).toBe(
+    expect(find(buildTimelineMenu(trackCtx()), 'paste').disabled).toBe(true);
+    expect(find(buildTimelineMenu(trackCtx()), 'paste').blockReason).toBe('clipboard empty');
+  });
+
+  /**
+   * Yapıştırma da op'un ret kuralına bağlandı: pano dolu OLSA BİLE hedef
+   * aralık doluysa öğe kapalıdır (eskiden yalnız "pano boş mu" bakılıyordu).
+   */
+  it('greys out paste when the clipboard content would overlap at the playhead', () => {
+    const doc = docWith([track(V1, 'video', [clip(CLIP_A, 0, 10 * US)])]);
+    loadIntoStore(doc, [CLIP_A]);
+    expect(copyClips([CLIP_A])).toBe(true);
+
+    // Playhead klibin içinde -> yapıştırılan kopya çakışır.
+    expect(find(buildTimelineMenu(trackCtx({ doc, playheadUs: 5 * US })), 'paste').disabled).toBe(
       true,
     );
-    expect(find(buildTimelineMenu(trackCtx()), 'paste').disabled).toBe(false);
+    // Playhead klibin sonrasında -> yer var.
+    expect(find(buildTimelineMenu(trackCtx({ doc, playheadUs: 30 * US })), 'paste').disabled).toBe(
+      false,
+    );
   });
 
   it('greys out deleting the LAST video track (matches the op guard)', () => {
@@ -331,12 +412,183 @@ describe('buildTimelineMenu — ruler / boş alan', () => {
   });
 
   it('offers only paste outside the track rows', () => {
-    const entries = buildTimelineMenu(ctx({ target: { kind: 'empty' } }));
+    const doc = docWith([track(V1, 'video', [clip(CLIP_A, 0, 10 * US)])]);
+    loadIntoStore(doc, [CLIP_A]);
+    copyClips([CLIP_A]);
+    const entries = buildTimelineMenu(ctx({ target: { kind: 'empty' }, doc, playheadUs: 30 * US }));
     expect(ids(entries)).toEqual(['paste']);
     expect(find(entries, 'paste').disabled).toBe(false);
+
+    clearClipboardForTests();
     expect(
-      find(buildTimelineMenu(ctx({ target: { kind: 'empty' }, clipboardHasContent: false })), 'paste')
-        .disabled,
+      find(buildTimelineMenu(ctx({ target: { kind: 'empty' }, doc })), 'paste').disabled,
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sözleşme testleri (denetim bulgusu 3)
+// ---------------------------------------------------------------------------
+
+/** Bir öğenin ret gerekçesini op tarafındaki KAYNAK kuraldan hesaplar. */
+function reasonFromOps(id: TimelineMenuActionId, c: TimelineMenuContext): string | null {
+  const selection = new Set(c.selection);
+  const clipId = c.target.kind === 'clip' ? c.target.clipId : null;
+  const trackId = c.target.kind === 'track' ? c.target.trackId : null;
+  const gate = (r: string | null): string | null => (c.mutationAllowed ? r : 'blocked');
+  switch (id) {
+    case 'splitAtPlayhead':
+      return gate(splitBlockReason(c.doc, c.playheadUs, selection));
+    case 'cut':
+      return gate(cutBlockReason(c.doc, c.selection));
+    case 'copy':
+      return copyBlockReason(c.doc, c.selection);
+    case 'duplicate':
+      return gate(duplicateBlockReason(c.doc, c.selection));
+    case 'delete':
+    case 'rippleDelete':
+      return gate(deleteBlockReason(c.doc, c.selection));
+    case 'trimStartToPlayhead':
+    case 'trimEndToPlayhead':
+      return gate(trimToPlayheadBlockReason(c.doc, c.playheadUs, selection));
+    case 'detachAudio':
+      return gate(clipId === null ? 'no clip' : detachAudioBlockReason(c.doc, clipId));
+    case 'paste':
+      return gate(pasteBlockReason(c.doc, c.playheadUs));
+    case 'toggleMuted':
+    case 'toggleHidden':
+    case 'toggleLocked':
+      return gate(null);
+    case 'deleteTrack':
+      return gate(trackId === null ? 'no track' : trackDeleteBlockReason(c.doc, trackId));
+    case 'addMarker':
+      return gate(null);
+  }
+}
+
+describe('menü disabled durumu === op ret gerekçesi (tablo testi)', () => {
+  const twoAdjacent = docWith([
+    track(V1, 'video', [clip(CLIP_A, 0, 10 * US), clip(CLIP_B, 10 * US, 10 * US)]),
+    track(A1, 'audio', []),
+  ]);
+  const lockedTrack = docWith([
+    track(V1, 'video', [clip(CLIP_A, 0, 10 * US)], { locked: true }),
+    track(V2, 'video', []),
+  ]);
+
+  const cases: { name: string; ctx: TimelineMenuContext }[] = [
+    { name: 'klip / playhead içeride', ctx: ctx() },
+    { name: 'klip / playhead dışarıda', ctx: ctx({ playheadUs: 40 * US }) },
+    { name: 'klip / seçim yok', ctx: ctx({ selection: [] }) },
+    { name: 'klip / bitişik komşu (çoğaltmaya yer yok)', ctx: ctx({ doc: twoAdjacent }) },
+    { name: 'klip / kilitli track', ctx: ctx({ doc: lockedTrack }) },
+    { name: 'klip / mutasyon yasak', ctx: ctx({ mutationAllowed: false }) },
+    { name: 'track', ctx: ctx({ target: { kind: 'track', trackId: V1 }, doc: twoAdjacent }) },
+    { name: 'track / mutasyon yasak', ctx: ctx({ target: { kind: 'track', trackId: V1 }, doc: twoAdjacent, mutationAllowed: false }) },
+    { name: 'ruler', ctx: ctx({ target: { kind: 'ruler', timeUs: 3 * US } }) },
+    { name: 'boş alan', ctx: ctx({ target: { kind: 'empty' } }) },
+  ];
+
+  it.each(cases)('$name', ({ ctx: c }) => {
+    const entries = items(buildTimelineMenu(c));
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) {
+      expect(entry.disabled, `${entry.id}: disabled`).toBe(reasonFromOps(entry.id, c) !== null);
+      // blockReason ile disabled ASLA ayrışmaz.
+      expect(entry.disabled, `${entry.id}: blockReason tutarlılığı`).toBe(
+        entry.blockReason !== null,
+      );
+    }
+  });
+});
+
+describe("menü öğesi -> op eşlemesi (op'u gerçekten çağırır)", () => {
+  /**
+   * Her aktif öğe op'a inince BAŞARILI, her gri öğe op'a inince BAŞARISIZ
+   * olmalı. "Gri olanı da çalıştır" kısmı bilinçli: menü bir eylemi haksız
+   * yere kapatıyorsa (aşırı-kısıtlama) bu test de kırmızıya döner.
+   */
+  function assertMappingMatches(c: TimelineMenuContext, selection: string[]): void {
+    for (const entry of items(buildTimelineMenu(c))) {
+      // Her öğe için taze doküman: op'lar birbirinin zeminini kaydırmasın.
+      loadIntoStore(structuredClone(c.doc), selection, c.playheadUs);
+      const result = runTimelineMenuAction(entry.id, {
+        target: c.target,
+        selection,
+        playheadUs: c.playheadUs,
+      });
+      expect(result.ok, `${entry.id}: disabled=${entry.disabled} -> ok=${result.ok}`).toBe(
+        !entry.disabled,
+      );
+    }
+  }
+
+  it('klip menüsü — playhead klibin içinde, her öğe aktif ve op kabul ediyor', () => {
+    const c = ctx({ doc: docWith([track(V1, 'video', [clip(CLIP_A, 0, 10 * US)])]) });
+    assertMappingMatches(c, [CLIP_A]);
+  });
+
+  it('klip menüsü — playhead dışarıda: gri öğeleri op da reddediyor', () => {
+    const c = ctx({
+      doc: docWith([track(V1, 'video', [clip(CLIP_A, 0, 10 * US)])]),
+      playheadUs: 40 * US,
+    });
+    assertMappingMatches(c, [CLIP_A]);
+  });
+
+  it('klip menüsü — bitişik komşu: "Çoğalt" hem gri hem op tarafından reddediliyor', () => {
+    const c = ctx({
+      doc: docWith([track(V1, 'video', [clip(CLIP_A, 0, 10 * US), clip(CLIP_B, 10 * US, 10 * US)])]),
+    });
+    expect(find(buildTimelineMenu(c), 'duplicate').disabled).toBe(true);
+    assertMappingMatches(c, [CLIP_A]);
+  });
+
+  it('klip menüsü — kilitli track: op da her mutasyonu reddediyor', () => {
+    const c = ctx({
+      doc: docWith([
+        track(V1, 'video', [clip(CLIP_A, 0, 10 * US)], { locked: true }),
+        track(V2, 'video', []),
+      ]),
+    });
+    assertMappingMatches(c, [CLIP_A]);
+  });
+
+  it('track menüsü — bayraklar ve track silme', () => {
+    const c = ctx({
+      target: { kind: 'track', trackId: V2 },
+      doc: docWith([track(V1, 'video', [clip(CLIP_A, 0, 10 * US)]), track(V2, 'video', [])]),
+    });
+    assertMappingMatches(c, [CLIP_A]);
+  });
+
+  it('ruler menüsü — marker eylemi', () => {
+    const c = ctx({ target: { kind: 'ruler', timeUs: 3 * US } });
+    assertMappingMatches(c, [CLIP_A]);
+    expect(useDocStore.getState().doc.markers).toHaveLength(1);
+    expect(useDocStore.getState().doc.markers[0].timeUs).toBe(3 * US);
+  });
+
+  /**
+   * Bulgu 4'ün op tarafı: menü DONMUŞ playhead ile açıldıysa, araya playhead'i
+   * oynatan bir olay girse bile bölme MENÜNÜN gösterdiği yerde olmalıdır.
+   */
+  it('donmuş playhead: split, canlı playhead değil MENÜNÜN değeriyle böler', () => {
+    const doc = docWith([track(V1, 'video', [clip(CLIP_A, 0, 10 * US)])]);
+    loadIntoStore(doc, [CLIP_A], 4 * US);
+    const frozen = useEditorStore.getState().playheadUs;
+
+    // Menü açıkken playhead klibin DIŞINA kaçıyor (ArrowDown / oynatma).
+    useEditorStore.getState().setPlayheadUs(40 * US);
+
+    const result = runTimelineMenuAction('splitAtPlayhead', {
+      target: { kind: 'clip', clipId: CLIP_A },
+      selection: [CLIP_A],
+      playheadUs: frozen,
+    });
+    expect(result.ok, 'donmuş playhead ile bölme başarılı olmalı').toBe(true);
+    const clips = useDocStore.getState().doc.tracks[0].clips;
+    expect(clips).toHaveLength(2);
+    expect(clips[1].timelineStartUs).toBe(4 * US); // canlı 40 s değil, donmuş 4 s
   });
 });

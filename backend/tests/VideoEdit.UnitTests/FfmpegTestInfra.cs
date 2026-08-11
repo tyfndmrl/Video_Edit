@@ -144,6 +144,19 @@ public sealed class FfmpegTestMediaFixture : IDisposable
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
     ]);
 
+    /// <summary>
+    /// 320×240 DÜZ RENK PNG (0x2080C0 — testsrc2/smptebars paletlerinde bulunmayan bir mavi),
+    /// GÖRSEL KLİP senaryosunun kaynağı. Still image'in süresi ve ses stream'i YOKTUR: export
+    /// hattı bu girişi -loop 1 -t ile açar, bu yüzden "kaynak bitti" davranışı video kaynaktan
+    /// farklıdır ve gerçek render'la doğrulanması ŞARTTIR (snapshot testi göremez).
+    /// </summary>
+    public string ImageSolid320x240Png() => GetOrCreate("photo.png",
+    [
+        "-y",
+        "-f", "lavfi", "-i", "color=c=0x2080C0:size=320x240",
+        "-frames:v", "1",
+    ]);
+
     /// <summary>3 sn 440 Hz sinüs WAV (audio-only asset senaryosu).</summary>
     public string AudioWav() => GetOrCreate("tone.wav",
     [

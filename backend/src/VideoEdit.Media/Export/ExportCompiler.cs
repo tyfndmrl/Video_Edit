@@ -16,8 +16,18 @@ public sealed record ExportTrackPlan(Track Track, int DocIndex, IReadOnlyList<Me
 /// Doğrulama çıktısı: normalize plan. API ön-doğrulaması yalnız <see cref="ExportCompiler.Validate"/>
 /// çağırır (asset yolu gerekmez); worker aynı planla kaynakları indirip Compile'a geçer.
 /// TotalDurationUs TÜM track'lerin en geç klip bitişinin proje fps grid'ine snap edilmiş halidir.
-/// Clips tüm track'lerin kliplerinin render sırasında düzleştirilmiş halidir (worker'ın
-/// kaynak-aralığı kapısı bunu kullanır).
+/// <para>
+/// <see cref="Clips"/> = worker'ın KAYNAK-ARALIĞI KAPISININ defteridir (render sırasında
+/// düzleştirilmiş). İki sınıf klip bilerek DIŞARIDA bırakılır:
+///  - GÖRSEL klipler: sourceIn/sourceOut'ları dosyada bir zaman aralığına karşılık GELMEZ
+///    (still image'in süresi yoktur; editör 4 sn'lik sentetik aralık üretir) — kapıya
+///    sokulurlarsa "reads source range beyond asset duration" ile export düşerdi;
+///  - ATIL klipler (gizli track + şema gereği ses üretemeyen klip): hiçbir ffmpeg girişi
+///    açmazlar, dolayısıyla hiçbir kaynak aralığı OKUMAZLAR — render edilmeyen bir klibin
+///    TÜM export'u düşürmesi (M4 dalga 1 denetimi) böylece imkânsızlaşır.
+/// <see cref="AssetIds"/> ise atıl klipleri dışlar (worker boşuna indirmesin) ama GÖRSELLERİ
+/// İÇERİR — görsel dosyası indirilmeden render edilemez.
+/// </para>
 /// </summary>
 public sealed record ExportPlan(
     TimelineDoc Doc,
@@ -31,15 +41,32 @@ public sealed record ExportPlan(
     int Height);
 
 /// <summary>
-/// FilterGraph Compiler v2 (M4 dalga 1 = çok katman kompozisyonu; geçiş/keyframe/efekt/hız
-/// ve metin-şekil-çıkartma klipleri hâlâ tipli hata). TimelineDoc → deterministik
-/// CompiledExport. Kurallar:
+/// FilterGraph Compiler v2 (M4 dalga 1 = çok katman kompozisyonu + görsel klipler;
+/// geçiş/keyframe/efekt/hız ve metin-şekil-çıkartma klipleri hâlâ tipli hata). TimelineDoc →
+/// deterministik CompiledExport. Kurallar:
 ///  - trim INPUT seviyesinde -ss/-t (tasarım 04 §2.1; -to ASLA); aynı asset'ten N klip = N giriş;
+///    GÖRSEL klipte zaman ekseni yoktur → -loop 1 -t &lt;süre&gt; (seek YOK, ExportInput.Loop);
 ///  - segment defteri FRAME SAYISIYLA tutulur: her klip proje fps grid'inde tam frame sayısına
 ///    çözülür ve zincire trim=end_frame=N eklenir — µs-farkı aritmetiğinin NTSC'de ürettiği
 ///    ±1 frame kaymaları biter (rendering-semantics §1.4);
-///  - KOMPOZİSYON (tasarım 04 §2.2 + rendering-semantics §2.2): taban DAİMA proje
-///    çözünürlüğünde settings.backgroundColor tuvalidir; her klip bu tuvale overlay edilir.
+///  - KATMAN RUN'LARI (M4 dalga 1 denetimi, performans regresyonu): aynı track'te ARDIŞIK
+///    (frame-bitişik) ve AYNI yerleşime sahip klipler TEK concat zincirinde birleşir ve tuvale
+///    TEK overlay ile biner. Klip başına overlay yalnız GERÇEK katmanlaşmada (farklı track,
+///    zaman boşluğu ya da farklı yerleşim) üretilir. GERÇEK ÖLÇÜM (1080p, 12 klip, 12 sn, tek
+///    track, ffmpeg 8.0, 3 koşumun en iyisi): klip başına overlay → run concat'i; filtre-only
+///    3727 → 1519 ms (2.5x), uçtan uca (libx264 veryfast crf18) 4273 → 2001 ms (2.1x).
+///    Kazanç klip sayısıyla büyür: eski hatta her klip, GÖRÜNMEDİĞİ karelerde bile grafikte
+///    tam çözünürlüklü bir overlay katı olarak duruyordu;
+///  - TEK KATMANLI HIZLI YOL: grafikte TEK run var, timeline'ı BAŞTAN SONA kaplıyor, yerleşim
+///    birim (scale=1, merkez çapa, dönmesiz) ve opaklık 1 ise taban tuval + overlay TAMAMEN
+///    atlanır: segmentler proje tuvaline letterbox pad'lenip doğrudan concat edilir (M3 hattı).
+///    Kompozisyon yoksa blend de yoktur — RGB tuval maliyeti ödenmez. Bu yol aynı zamanda
+///    RENK KAYBINI da kaldırır: tuval yolu yuv→rgba→kompozisyon→yuv420p gidiş-dönüşü yapıyordu
+///    ve DOKUNULMAMIŞ tam-kare bir klipte bile kayıp ölçülebilirdi (kayıpsız ffv1 karşılaştırma,
+///    aynı renk etiketleriyle: tuval yolu PSNR 35.87 dB — Y 38.6 / V 31.1; hızlı yol PSNR ∞,
+///    yani kaynakla BİT BİT AYNI);
+///  - KOMPOZİSYON (tasarım 04 §2.2 + rendering-semantics §2.2): hızlı yol dışında taban DAİMA
+///    proje çözünürlüğünde settings.backgroundColor tuvalidir; her run bu tuvale overlay edilir.
 ///    Boşluklar (klipsiz aralıklar) ayrı segment gerektirmez — taban tuval görünür.
 ///    Render sırası tracks dizisinde SONDAN BAŞA'dır (tracks[0] en üst katman, şema §1.2);
 ///  - her video zinciri fps=&lt;projeFps&gt;,trim=end_frame=N,scale(fit=contain × transform.scale),
@@ -92,6 +119,11 @@ public static class ExportCompiler
     /// </summary>
     public const string CompositeFormat = ":format=rgb";
 
+    /// <summary>
+    /// Şeffaf pad rengi — katman zincirlerinde kullanılan tek "boşluk" rengi (rgba tuval).
+    /// </summary>
+    public const string TransparentPad = "#00000000";
+
     /// <summary>M4 dalga 1 kapsam + sözleşme doğrulaması. İhlalde ExportCompileException türevi fırlatır.</summary>
     public static ExportPlan Validate(TimelineDoc doc)
     {
@@ -140,7 +172,8 @@ public static class ExportCompiler
         // (clips.length == 0, tipi ne olursa olsun) yok sayılır: editör +V/+A ile içeriksiz
         // track ekler — bunlar export kapsamını değiştirmez, 422'ye düşürmez.
         var trackPlans = new List<ExportTrackPlan>();
-        var allClips = new List<MediaClip>();
+        var sourceRangeClips = new List<MediaClip>();
+        var assetIds = new List<Guid>();
         long totalDurationUs = 0;
         for (var i = tracks.Count - 1; i >= 0; i--)
         {
@@ -189,7 +222,23 @@ public static class ExportCompiler
                 totalDurationUs,
                 SnapUs(last.TimelineStartUs + last.TimelineDurationUs, fpsNum, fpsDen));
             trackPlans.Add(new ExportTrackPlan(track, i, clips));
-            allClips.AddRange(clips);
+
+            // Defterler (ExportPlan yorumuna bakınız): atıl klip hiçbir giriş açmaz →
+            // ne indirilir ne kaynak-aralığı kapısına girer; görsel klip indirilir ama
+            // kaynak aralığı OKUMAZ (zaman ekseni yok).
+            foreach (var clip in clips)
+            {
+                if (IsInert(clip, track))
+                {
+                    continue;
+                }
+
+                assetIds.Add(clip.AssetId);
+                if (clip.Kind != MediaClipKind.Image)
+                {
+                    sourceRangeClips.Add(clip);
+                }
+            }
         }
 
         if (trackPlans.Count == 0)
@@ -202,9 +251,8 @@ public static class ExportCompiler
             throw new InvalidTimelineException("timeline duration is shorter than one output frame.");
         }
 
-        var assetIds = allClips.Select(c => c.AssetId).Distinct().ToList();
         return new ExportPlan(
-            doc, trackPlans, allClips, assetIds, totalDurationUs,
+            doc, trackPlans, sourceRangeClips, assetIds.Distinct().ToList(), totalDurationUs,
             fpsNum, fpsDen, width, height);
     }
 
@@ -232,32 +280,26 @@ public static class ExportCompiler
         var inputs = new List<ExportInput>();
         var videoLines = new List<string>();
         var audioLines = new List<string>();
-
-        // ── Taban tuval: proje çözünürlüğünde, TAM toplam frame sayısı kadar (frame defteri).
-        //    color d= bir frame CÖMERT verilir; trim=end_frame kesin sayıyı garanti eder
-        //    (d'nin µs yuvarlaması kaynak frame sayısını belirleyemez).
+        var runs = new List<LayerRun>();
         var totalFrames = FrameOf(plan.TotalDurationUs, plan.FpsNum, plan.FpsDen);
-        var canvasHeadroomUs = UsOf(totalFrames + 1, plan.FpsNum, plan.FpsDen);
-        //    Tuval RGB'dir: kompozisyon RGB'de yapılır (§6.3) ve settings.backgroundColor zaten
-        //    RGB hex'tir — araya yuv420p sokmak arka plan rengini gereksizce yuvarlardı.
-        videoLines.Add(
-            $"color=c={background}:s={plan.Width}x{plan.Height}:r={fpsArg}:d={TimeFormat.Sec(canvasHeadroomUs)},"
-            + $"trim=end_frame={totalFrames.ToString(CultureInfo.InvariantCulture)},"
-            + "format=rgba,setsar=1,settb=AVTB,setpts=PTS-STARTPTS[base]");
 
-        // enable penceresinin bitişi yarım frame geri çekilir: bitişik iki klipte aynı t
-        // değeri iki overlay'i birden tetiklemesin (tasarım 04 §8 tuzak 9).
-        var halfFrameUs = UsOf(1, plan.FpsNum, plan.FpsDen) / 2;
-
-        var composite = "base";
-        var layerIndex = 0;
-
-        // Render sırası: plan.Tracks zaten sondan başa (en alt katman önce) sıralıdır.
+        // ── 1) Girişleri aç + görsel klipleri KATMAN RUN'LARINA topla + ses zincirlerini kur.
+        //      Giriş sırası render sırasıdır (plan.Tracks sondan başa: en alt katman önce).
         foreach (var trackPlan in plan.Tracks)
         {
+            LayerRun? open = null;
             for (var i = 0; i < trackPlan.Clips.Count; i++)
             {
                 var clip = trackPlan.Clips[i];
+
+                // Atıl klip (gizli track + şema gereği sessiz): giriş bile açılmaz, asset'i
+                // plan.AssetIds'te de yoktur — sources[] araması YAPILMAZ.
+                if (IsInert(clip, trackPlan.Track))
+                {
+                    open = null;
+                    continue;
+                }
+
                 var source = sources[clip.AssetId];
 
                 // hidden = YALNIZ görsel gizleme (resolve.ts semantiği): ses üretilmeye devam eder.
@@ -265,6 +307,7 @@ public static class ExportCompiler
                 var audio = AudibleAudioOf(clip, trackPlan.Track, source);
                 if (!isVisual && audio is null)
                 {
+                    open = null;
                     continue; // ne görüntü ne ses — giriş bile açılmaz
                 }
 
@@ -274,33 +317,31 @@ public static class ExportCompiler
                 var startUs = UsOf(startFrame, plan.FpsNum, plan.FpsDen);
 
                 var inputIndex = inputs.Count;
-                inputs.Add(new ExportInput(
-                    source.Path, clip.SourceInUs, clip.SourceOutUs - clip.SourceInUs));
+                inputs.Add(InputFor(clip, source, endFrame - startFrame, plan));
 
                 if (isVisual)
                 {
-                    var label = $"v{layerIndex.ToString(CultureInfo.InvariantCulture)}";
-                    var next = $"c{layerIndex.ToString(CultureInfo.InvariantCulture)}";
                     var placement = LayerGeometry.Compute(clip.Transform, plan.Width, plan.Height);
 
-                    videoLines.Add(
-                        $"[{inputIndex.ToString(CultureInfo.InvariantCulture)}:v]"
-                        + BuildVideoChain(clip, source, placement, fpsArg,
-                            endFrame - startFrame, startUs)
-                        + $"[{label}]");
+                    // Run'a katılma koşulu: ÖNCEKİ görsel klip frame-bitişik bitiyor, yerleşim
+                    // BİREBİR aynı ve yerleşim concat'e uygun. Değilse yeni run (= bugünkü
+                    // klip-başına overlay davranışı).
+                    if (open is null || open.EndFrame != startFrame
+                        || open.Placement != placement || !CanConcatRun(placement))
+                    {
+                        open = new LayerRun(placement, startFrame) { EndFrame = endFrame };
+                        runs.Add(open);
+                    }
+                    else
+                    {
+                        open.EndFrame = endFrame;
+                    }
 
-                    var endEnableUs = UsOf(endFrame, plan.FpsNum, plan.FpsDen) - halfFrameUs;
-                    videoLines.Add(
-                        $"[{composite}][{label}]overlay="
-                        + $"x={OverlayCoordinate(placement.AnchorTargetX, placement.OverlayAnchorFactorX, "w")}"
-                        + $":y={OverlayCoordinate(placement.AnchorTargetY, placement.OverlayAnchorFactorY, "h")}"
-                        + $":enable='between(t,{TimeFormat.Sec(startUs)},{TimeFormat.Sec(endEnableUs)})'"
-                        + ":eval=frame"
-                        // §6.3: kompozisyon DAİMA RGB'de — grafik başına tek mod (denetim #1/#15).
-                        + CompositeFormat
-                        + $"[{next}]");
-                    composite = next;
-                    layerIndex++;
+                    open.Segments.Add(new LayerSegment(inputIndex, clip, source, endFrame - startFrame));
+                }
+                else
+                {
+                    open = null; // görsel süreklilik kırıldı (ses klibi / gizli track)
                 }
 
                 if (audio is not null)
@@ -310,6 +351,59 @@ public static class ExportCompiler
                     audioLines.Add(BuildAudioChain(
                         clip, audio, prevClip, nextClip, inputIndex, startUs, audioLines.Count));
                 }
+            }
+        }
+
+        // ── 2) Video grafiği. Tek katmanlı hızlı yol: TEK run timeline'ı baştan sona kaplıyor,
+        //      yerleşim birim, opaklık 1 → kompozisyon YOK, dolayısıyla taban tuval ve overlay
+        //      de yok (M3 hattı: scale + letterbox pad + concat).
+        var singleCover = runs.Count == 1
+            && runs[0].StartFrame == 0
+            && runs[0].EndFrame == totalFrames
+            && CoversCanvas(runs[0].Placement, plan.Width, plan.Height)
+            && runs[0].Segments.All(s => s.Clip.Opacity >= 1d);
+
+        string composite;
+        if (singleCover)
+        {
+            composite = EmitRun(videoLines, runs[0], plan, fpsArg, background, opaque: true, 0);
+        }
+        else
+        {
+            // ── Taban tuval: proje çözünürlüğünde, TAM toplam frame sayısı kadar (frame defteri).
+            //    color d= bir frame CÖMERT verilir; trim=end_frame kesin sayıyı garanti eder
+            //    (d'nin µs yuvarlaması kaynak frame sayısını belirleyemez).
+            var canvasHeadroomUs = UsOf(totalFrames + 1, plan.FpsNum, plan.FpsDen);
+            //    Tuval RGB'dir: kompozisyon RGB'de yapılır (§6.3) ve settings.backgroundColor zaten
+            //    RGB hex'tir — araya yuv420p sokmak arka plan rengini gereksizce yuvarlardı.
+            videoLines.Add(
+                $"color=c={background}:s={plan.Width}x{plan.Height}:r={fpsArg}:d={TimeFormat.Sec(canvasHeadroomUs)},"
+                + $"trim=end_frame={totalFrames.ToString(CultureInfo.InvariantCulture)},"
+                + "format=rgba,setsar=1,settb=AVTB,setpts=PTS-STARTPTS[base]");
+
+            // enable penceresinin bitişi yarım frame geri çekilir: bitişik iki run'da aynı t
+            // değeri iki overlay'i birden tetiklemesin (tasarım 04 §8 tuzak 9).
+            var halfFrameUs = UsOf(1, plan.FpsNum, plan.FpsDen) / 2;
+
+            composite = "base";
+            for (var n = 0; n < runs.Count; n++)
+            {
+                var run = runs[n];
+                var label = EmitRun(videoLines, run, plan, fpsArg, background, opaque: false, n);
+                var next = $"c{n.ToString(CultureInfo.InvariantCulture)}";
+                var placement = run.Placement;
+                var startUs = UsOf(run.StartFrame, plan.FpsNum, plan.FpsDen);
+                var endEnableUs = UsOf(run.EndFrame, plan.FpsNum, plan.FpsDen) - halfFrameUs;
+                videoLines.Add(
+                    $"[{composite}][{label}]overlay="
+                    + $"x={OverlayCoordinate(placement.AnchorTargetX, placement.OverlayAnchorFactorX, "w")}"
+                    + $":y={OverlayCoordinate(placement.AnchorTargetY, placement.OverlayAnchorFactorY, "h")}"
+                    + $":enable='between(t,{TimeFormat.Sec(startUs)},{TimeFormat.Sec(endEnableUs)})'"
+                    + ":eval=frame"
+                    // §6.3: kompozisyon DAİMA RGB'de — grafik başına tek mod (denetim #1/#15).
+                    + CompositeFormat
+                    + $"[{next}]");
+                composite = next;
             }
         }
 
@@ -345,29 +439,141 @@ public static class ExportCompiler
             plan.TotalDurationUs);
     }
 
+    // ───────────────────────── Katman run'ları ─────────────────────────
+
+    /// <summary>Run içindeki tek klip: hangi giriş, hangi kaynak, kaç frame.</summary>
+    private sealed record LayerSegment(
+        int InputIndex, MediaClip Clip, ExportAssetSource Source, long Frames);
+
+    /// <summary>
+    /// Aynı track'te ARDIŞIK (frame-bitişik) ve AYNI yerleşimli kliplerin oluşturduğu tek katman
+    /// akışı. Segmentler tek concat zincirinde birleşir → tuvale TEK overlay biner. Klip başına
+    /// overlay yalnız gerçek katmanlaşmada üretilir (M4 dalga 1 denetimi: performans regresyonu).
+    /// </summary>
+    private sealed record LayerRun(LayerPlacement Placement, long StartFrame)
+    {
+        public long EndFrame { get; set; }
+
+        public List<LayerSegment> Segments { get; } = [];
+    }
+
+    /// <summary>
+    /// Bir yerleşim concat'lenebilir mi? Run'daki segmentler concat için AYNI BOYUTTA olmalıdır;
+    /// scale <c>force_original_aspect_ratio=decrease</c> kullandığı için gerçek boyut KAYNAĞIN
+    /// aspect'ine bağlıdır (compiler kaynak boyutunu bilmez) → segmentler yerleşim kutusuna
+    /// simetrik şeffaf pad ile normalize edilir. Bu pad'in geometriyi KAYDIRMAMASI iki şart ister:
+    ///  - çapa MERKEZDE (overlay telafi çarpanı 0.5): simetrik pad merkezi korur, çapa
+    ///    merkezdeyse §2.5'in <c>P - 0.5*w</c> formülü pad'li ve pad'siz halde AYNI pikseli verir;
+    ///    merkez dışı çapada pad, çapayı görüntü içindeki oranından kaydırırdı;
+    ///  - kutu ÇİFT boyutlu: pad ofseti <c>(ow-iw)/2</c> tamsayı bölmedir; kutu ve ölçek çıktısı
+    ///    (force_divisible_by=2 sayesinde) çift olduğunda ofset TAM bölünür, aksi halde katman
+    ///    yarım piksel kayardı.
+    /// Şart sağlanmazsa run tek segmentte kalır ve bugünkü klip-başına overlay yolu kullanılır.
+    /// </summary>
+    private static bool CanConcatRun(LayerPlacement placement) =>
+        placement.OverlayAnchorFactorX == 0.5d
+        && placement.OverlayAnchorFactorY == 0.5d
+        && !placement.NeedsAnchorPad
+        && placement.BoxWidth % 2 == 0
+        && placement.BoxHeight % 2 == 0;
+
+    /// <summary>
+    /// Yerleşim proje tuvalinin TAMAMINI birim dönüşümle kaplıyor mu (scale=1, merkez çapa,
+    /// dönme yok, kaydırma yok)? Böyle bir katman için <c>overlay x = W/2 - 0.5*w</c> ile
+    /// <c>pad=W:H:(ow-iw)/2</c> AYNI pikseli verir (W ve w çift) — tuval + overlay yerine
+    /// letterbox pad kullanılabilir.
+    /// </summary>
+    private static bool CoversCanvas(LayerPlacement placement, int width, int height) =>
+        !placement.Rotates
+        && placement.BoxWidth == width
+        && placement.BoxHeight == height
+        && placement.OverlayAnchorFactorX == 0.5d
+        && placement.OverlayAnchorFactorY == 0.5d
+        && placement.AnchorTargetX == width / 2d
+        && placement.AnchorTargetY == height / 2d;
+
+    /// <summary>
+    /// Run'ı grafiğe yazar ve akış etiketini döndürür.
+    /// Tek segmentli run = bugünkü klip zinciri (bayt bayt aynı çıktı). Çok segmentli run:
+    /// her segment kendi zincirini kurar (kutuya normalize pad ile), sonra tek concat.
+    /// <paramref name="opaque"/> = tek katmanlı hızlı yol: kompozisyon yoktur, segmentler proje
+    /// tuvaline arka plan rengiyle letterbox pad'lenip yuv420p'de birleşir (M3 hattı).
+    /// </summary>
+    private static string EmitRun(
+        List<string> lines, LayerRun run, ExportPlan plan, string fpsArg,
+        string background, bool opaque, int labelIndex)
+    {
+        var label = $"v{labelIndex.ToString(CultureInfo.InvariantCulture)}";
+        var startUs = UsOf(run.StartFrame, plan.FpsNum, plan.FpsDen);
+        var single = run.Segments.Count == 1;
+
+        // Tek segmentli run'da segment zincirinin sonuna timeline ofseti doğrudan eklenir;
+        // çok segmentlide ofset CONCAT SONRASINA taşınır (segmentler 0'dan başlamalı).
+        var segmentLabels = new List<string>(run.Segments.Count);
+        for (var i = 0; i < run.Segments.Count; i++)
+        {
+            var segment = run.Segments[i];
+            var outLabel = single
+                ? label
+                : $"s{labelIndex.ToString(CultureInfo.InvariantCulture)}"
+                  + $"_{i.ToString(CultureInfo.InvariantCulture)}";
+            segmentLabels.Add(outLabel);
+            lines.Add(
+                $"[{segment.InputIndex.ToString(CultureInfo.InvariantCulture)}:v]"
+                + BuildVideoChain(segment, run.Placement, plan, fpsArg, background,
+                    opaque, normalizeToBox: !single)
+                + "," + SetPtsFilter(single ? startUs : 0)
+                + $"[{outLabel}]");
+        }
+
+        if (!single)
+        {
+            var offset = startUs > 0 ? "," + SetPtsFilter(startUs) : "";
+            lines.Add(
+                string.Concat(segmentLabels.Select(l => $"[{l}]"))
+                + $"concat=n={run.Segments.Count.ToString(CultureInfo.InvariantCulture)}:v=1:a=0"
+                + offset + $"[{label}]");
+        }
+
+        return label;
+    }
+
+    /// <summary>
+    /// Klibi timeline'daki yerine kaydıran setpts (tasarım 04 §2.2): setpts olmadan overlay
+    /// ilk frame'den itibaren gösterir. enable ile BİRLİKTE kullanılır.
+    /// </summary>
+    private static string SetPtsFilter(long startUs) => startUs > 0
+        ? $"setpts=PTS-STARTPTS+{TimeFormat.Sec(startUs)}/TB"
+        : "setpts=PTS-STARTPTS";
+
     // ───────────────────────── Video katman zinciri ─────────────────────────
 
     /// <summary>
     /// Katman zinciri (rendering-semantics §2.3 sırası + §6):
     /// [HDR tonemap] → setparams(BT.709/tv, §6.1) → fps → trim=end_frame →
-    /// scale(fit=contain × scale) → setsar=1 → format=rgba → [colorchannelmixer=aa
-    /// (opaklık, §6.3)] → [çapa pad'i] → [rotate c=none] → settb=AVTB → setpts(+timeline konumu).
+    /// scale(fit=contain × scale) → setsar=1 → format=rgba → [kutuya normalize pad] →
+    /// [colorchannelmixer=aa (opaklık, §6.3)] → [çapa pad'i] → [rotate c=none] → settb=AVTB.
+    /// Timeline ofseti (setpts) çağıran tarafta eklenir — run'da concat SONRASINA taşınır.
+    /// <paramref name="opaque"/>: tek katmanlı hızlı yol — RGB kompozisyon yoktur, katman proje
+    /// tuvaline ARKA PLAN rengiyle letterbox pad'lenir ve yuv420p'de kalır (M3 hattı; alpha
+    /// taşımadığı için concat/encode zinciri hiç RGB'ye çıkmaz).
     /// </summary>
     private static string BuildVideoChain(
-        MediaClip clip, ExportAssetSource source, LayerPlacement placement,
-        string fpsArg, long clipFrames, long startUs)
+        LayerSegment segment, LayerPlacement placement, ExportPlan plan,
+        string fpsArg, string background, bool opaque, bool normalizeToBox)
     {
+        var clip = segment.Clip;
         var chain = new List<string>();
-        if (source.IsHdr)
+        if (segment.Source.IsHdr)
         {
-            chain.Add(ColorChain.ForSource(source.ColorTransfer));
+            chain.Add(ColorChain.ForSource(segment.Source.ColorTransfer));
         }
 
         // §6.1: kaynak renk varsayımı RGB'ye geçişten ÖNCE beyan edilir — sonra beyan etmek
         // dönüşümü etkilemez, yalnız etiketi düzeltir (ve renkler kayar).
         chain.Add(SourceColorParams);
         chain.Add($"fps={fpsArg}");
-        chain.Add($"trim=end_frame={clipFrames.ToString(CultureInfo.InvariantCulture)}");
+        chain.Add($"trim=end_frame={segment.Frames.ToString(CultureInfo.InvariantCulture)}");
 
         // fit=contain (§2.2) ve transform.scale (§2.3 adım 1-2) TEK ölçekte birleşir: hedef
         // kutu proje tuvalinin scale katıdır, force_original_aspect_ratio=decrease aspect'i
@@ -375,12 +581,38 @@ public static class ExportCompiler
         chain.Add($"scale={placement.BoxWidth.ToString(CultureInfo.InvariantCulture)}"
                   + $":{placement.BoxHeight.ToString(CultureInfo.InvariantCulture)}"
                   + ":force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic");
+
+        if (opaque)
+        {
+            // Hızlı yol = M3 hattı: taban tuval yerine letterbox pad. Kutu proje tuvalidir ve
+            // çapa merkezdedir (CoversCanvas), dolayısıyla ortalanmış pad, taban tuvale
+            // yapılan overlay ile BİREBİR aynı pikselleri verir. Bu pad aynı zamanda concat'in
+            // istediği boyut normalizasyonudur — normalizeToBox'a ayrıca gerek yoktur.
+            chain.Add($"pad={plan.Width.ToString(CultureInfo.InvariantCulture)}"
+                      + $":{plan.Height.ToString(CultureInfo.InvariantCulture)}"
+                      + $":(ow-iw)/2:(oh-ih)/2:color={background}");
+            chain.Add("setsar=1");
+            chain.Add("format=yuv420p");
+            chain.Add("settb=AVTB");
+            return string.Join(',', chain);
+        }
+
         chain.Add("setsar=1");
 
         // §6.3: kompozisyon RGB'de yapılır → HER katman rgba ile girer (overlay'in alpha'lı
         // giriş formatı zaten rgba'dır; opak katmanı yuv420p bırakmak overlay'e sessiz bir
         // dönüşüm sokar ve ölçekleme chroma'yı gereksizce alt örneklerdi).
         chain.Add("format=rgba");
+
+        if (normalizeToBox)
+        {
+            // concat girişleri AYNI boyutta olmalı; gerçek ölçek çıktısı kaynağın aspect'ine
+            // bağlıdır → şeffaf, SİMETRİK pad ile kutuya sabitlenir. CanConcatRun bu pad'in
+            // geometriyi kaydırmadığını (merkez çapa + çift kutu) garanti eder.
+            chain.Add($"pad={placement.BoxWidth.ToString(CultureInfo.InvariantCulture)}"
+                      + $":{placement.BoxHeight.ToString(CultureInfo.InvariantCulture)}"
+                      + $":(ow-iw)/2:(oh-ih)/2:color={TransparentPad}");
+        }
 
         if (clip.Opacity < 1)
         {
@@ -396,7 +628,7 @@ public static class ExportCompiler
                 // için bu, ÇAPA etrafında dönmenin birebir karşılığıdır (§2.5 telafi formülü).
                 chain.Add($"pad=w=iw*{Num(placement.PadWidthFactor)}:h=ih*{Num(placement.PadHeightFactor)}"
                           + $":x=iw*{Num(placement.PadXFactor)}:y=ih*{Num(placement.PadYFactor)}"
-                          + ":color=#00000000");
+                          + $":color={TransparentPad}");
             }
 
             // ow=oh=hypot(iw,ih) (= §2.5'in Dg'si) dönen kutuyu her açıda kapsar; c=none şeffaf
@@ -408,13 +640,20 @@ public static class ExportCompiler
         }
 
         chain.Add("settb=AVTB");
-        chain.Add(startUs > 0
-            // Klibi timeline'daki yerine kaydırır (tasarım 04 §2.2): setpts olmadan overlay
-            // ilk frame'den itibaren gösterir. enable ile BİRLİKTE kullanılır.
-            ? $"setpts=PTS-STARTPTS+{TimeFormat.Sec(startUs)}/TB"
-            : "setpts=PTS-STARTPTS");
         return string.Join(',', chain);
     }
+
+    /// <summary>
+    /// Klibin ffmpeg girişi. Video/ses klibi: input-level trim (-ss/-t, §2.1). GÖRSEL klip:
+    /// dosyada zaman ekseni yoktur → <c>-loop 1 -t</c>; -t bir frame CÖMERT verilir (görsel
+    /// demuxer'ının kendi fps'i proje fps'inden farklı olabilir), kesin kare sayısını zincirdeki
+    /// <c>trim=end_frame</c> sabitler — taban tuvaldeki <c>d=</c> + trim deseninin aynısı.
+    /// </summary>
+    private static ExportInput InputFor(
+        MediaClip clip, ExportAssetSource source, long clipFrames, ExportPlan plan) =>
+        clip.Kind == MediaClipKind.Image
+            ? new ExportInput(source.Path, 0, UsOf(clipFrames + 1, plan.FpsNum, plan.FpsDen), Loop: true)
+            : new ExportInput(source.Path, clip.SourceInUs, clip.SourceOutUs - clip.SourceInUs);
 
     /// <summary>overlay_x = P.x - anchorFactor * &lt;w|h&gt; (§2.5); çarpan 0 ise sade sabit.</summary>
     private static string OverlayCoordinate(double target, double anchorFactor, string dimension) =>
@@ -446,13 +685,6 @@ public static class ExportCompiler
                 $"Timeline'da {kindTr} klibi var — {kindTr} klipleri dışa aktarıcıda henüz "
                 + "desteklenmiyor (overlay varlıkları M4 dalga 2'de geliyor). Dışa aktarmadan "
                 + "önce bu klipleri kaldırın.");
-        }
-
-        if (media.Kind == MediaClipKind.Image)
-        {
-            throw new UnsupportedFeatureException("image-clip",
-                $"'{media.Id}' klibi bir görsel klibi — görsel klipleri dışa aktarıcıda henüz "
-                + "desteklenmiyor (M4 dalga 2'de geliyor).");
         }
 
         if (media.Speed is not { Rate: 1 })
@@ -529,11 +761,13 @@ public static class ExportCompiler
     /// </summary>
     private static void ValidateGeometry(MediaClip media, int width, int height)
     {
+        // Bu mesajlar 422 ProblemDetails.Detail olarak KULLANICIYA görünür (ExportEndpoints) —
+        // kardeş UnsupportedFeature mesajlarıyla aynı dilde olmalıdır (M4 dalga 1 denetimi).
         if (media.Opacity is < 0 or > 1 || double.IsNaN(media.Opacity))
         {
             throw new InvalidTimelineException(
-                $"clip '{media.Id}' opacity must be within [0..1] "
-                + $"(was {media.Opacity.ToString(CultureInfo.InvariantCulture)}).");
+                $"'{media.Id}' klibinin opaklığı [0..1] aralığında olmalı "
+                + $"(gelen değer {media.Opacity.ToString(CultureInfo.InvariantCulture)}).");
         }
 
         if (media.Kind == MediaClipKind.Audio)
@@ -542,33 +776,34 @@ public static class ExportCompiler
         }
 
         var transform = media.Transform
-            ?? throw new InvalidTimelineException($"clip '{media.Id}' has no transform.");
+            ?? throw new InvalidTimelineException($"'{media.Id}' klibinde transform bilgisi yok.");
 
         if (!double.IsFinite(transform.X) || !double.IsFinite(transform.Y)
             || !double.IsFinite(transform.Scale) || !double.IsFinite(transform.RotationDeg)
             || !double.IsFinite(transform.AnchorX) || !double.IsFinite(transform.AnchorY))
         {
-            throw new InvalidTimelineException($"clip '{media.Id}' has a non-finite transform value.");
+            throw new InvalidTimelineException(
+                $"'{media.Id}' klibinin transform değerlerinden biri sonlu bir sayı değil.");
         }
 
         if (transform.AnchorX is < 0 or > 1 || transform.AnchorY is < 0 or > 1)
         {
             throw new InvalidTimelineException(
-                $"clip '{media.Id}' transform anchor must be within [0..1].");
+                $"'{media.Id}' klibinin çapa (anchor) noktası [0..1] aralığında olmalı.");
         }
 
         if (transform.Scale <= 0)
         {
             throw new InvalidTimelineException(
-                $"clip '{media.Id}' transform.scale must be positive "
-                + $"(was {transform.Scale.ToString(CultureInfo.InvariantCulture)}).");
+                $"'{media.Id}' klibinin ölçeği pozitif olmalı "
+                + $"(gelen değer {transform.Scale.ToString(CultureInfo.InvariantCulture)}).");
         }
 
         var placement = LayerGeometry.Compute(transform, width, height);
         if (placement.BoxWidth < 2 || placement.BoxHeight < 2)
         {
             throw new InvalidTimelineException(
-                $"clip '{media.Id}' transform.scale collapses the layer below one pixel.");
+                $"'{media.Id}' klibinin ölçeği katmanı bir pikselin altına düşürüyor.");
         }
 
         // Tavan ARA TUVALDEN doğrulanır (denetim #2): çapa telafisi pad'i kutuyu 2x'e,
@@ -607,17 +842,16 @@ public static class ExportCompiler
     // ───────────────────────── Ses zinciri ─────────────────────────
 
     /// <summary>
-    /// Klibin DUYULABİLİR ses ayarı, yoksa null. apps/editor resolve.ts (clipAudioOf +
-    /// isClipMuted) ile birebir aynı semantik:
+    /// Klibin DOKÜMANDA BEYAN EDİLEN ses ayarı (kaynağa bakmadan), yoksa null. apps/editor
+    /// resolve.ts (clipAudioOf + isClipMuted) ile birebir aynı semantik:
     ///  - video klibi: gömülü ses; audio alanı null ise (detach) ses YOK;
     ///  - ses klibi: kendi sesi; null alan birim kazanca düşer;
-    ///  - görsel klibi: hiç ses yok (zaten kapsam dışı);
-    ///  - track.muted ya da clip.audio.muted → ses YOK; track.hidden ses üretimini ETKİLEMEZ;
-    ///  - kaynakta gerçekten ses stream'i yoksa → ses YOK.
+    ///  - görsel klibi: hiç ses yok (still image ses taşımaz);
+    ///  - track.muted ya da clip.audio.muted → ses YOK; track.hidden ses üretimini ETKİLEMEZ.
     /// </summary>
-    private static ClipAudio? AudibleAudioOf(MediaClip clip, Track track, ExportAssetSource source)
+    private static ClipAudio? DeclaredAudioOf(MediaClip clip, Track track)
     {
-        if (track.Muted || !source.HasAudio || clip.Kind == MediaClipKind.Image)
+        if (track.Muted || clip.Kind == MediaClipKind.Image)
         {
             return null;
         }
@@ -627,6 +861,23 @@ public static class ExportCompiler
             : clip.Audio;
         return audio is { Muted: false } ? audio : null;
     }
+
+    /// <summary>
+    /// Klibin DUYULABİLİR ses ayarı: beyan edilen ses + kaynakta gerçekten ses stream'i olması.
+    /// </summary>
+    private static ClipAudio? AudibleAudioOf(MediaClip clip, Track track, ExportAssetSource source) =>
+        source.HasAudio ? DeclaredAudioOf(clip, track) : null;
+
+    /// <summary>
+    /// ATIL klip: track GİZLİ ve klip şema gereği ses de üretemiyor → ne görüntü ne ses.
+    /// Böyle bir klip hiçbir ffmpeg girişi açmaz; asset'i indirmeye (plan.AssetIds) ve worker'ın
+    /// kaynak-aralığı kapısına (plan.Clips) sokmaya da gerek yoktur — render EDİLMEYEN bir klibin
+    /// tüm export'u "source-out-of-range" ile düşürmesi böylece imkânsızlaşır (M4 dalga 1 denetimi).
+    /// Kaynağa bağlı olmayan (yalnız dokümandan okunan) bir karardır: Validate'te de,
+    /// Compile'da da AYNI sonucu verir.
+    /// </summary>
+    private static bool IsInert(MediaClip clip, Track track) =>
+        track.Hidden && DeclaredAudioOf(clip, track) is null;
 
     /// <summary>
     /// Klip ses zinciri (rendering-semantics §8 + görev sözleşmesi):

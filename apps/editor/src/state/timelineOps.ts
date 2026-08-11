@@ -947,15 +947,58 @@ export function clipsAtTime(d: TimelineDoc, timeUs: MicroSec): Uuid[] {
 }
 
 /**
+ * Clips a playhead-relative op (split / trim-to-playhead) would act on:
+ * the clips under `timeUs`, narrowed to the selection when there is one.
+ * Single definition shared by the ops and their block-reason helpers.
+ */
+function playheadTargets(
+  d: TimelineDoc,
+  timeUs: MicroSec,
+  selection: ReadonlySet<Uuid>,
+): Uuid[] {
+  const under = clipsAtTime(d, snapUsToFrameGrid(timeUs, d.settings.fps));
+  return selection.size > 0 ? under.filter((id) => selection.has(id)) : under;
+}
+
+/**
+ * Why splitting at `timeUs` is impossible, or null.
+ *
+ * `timeUs` is a parameter (not a live playhead read) so the context menu can
+ * reason about the playhead FROZEN at menu-open time — the same instant the
+ * action will use. NOTE: this covers the op's precondition ("no clip under
+ * playhead"); a per-clip edge case inside applySplitToDraft can still fail and
+ * the op reports it — the menu never claims more than the op guarantees.
+ */
+export function splitBlockReason(
+  d: TimelineDoc,
+  timeUs: MicroSec,
+  selection: ReadonlySet<Uuid>,
+): string | null {
+  return playheadTargets(d, timeUs, selection).length === 0 ? 'no clip under playhead' : null;
+}
+
+/** Same rule for Q/W (trimSelectedToPlayhead) — identical precondition. */
+export function trimToPlayheadBlockReason(
+  d: TimelineDoc,
+  timeUs: MicroSec,
+  selection: ReadonlySet<Uuid>,
+): string | null {
+  return playheadTargets(d, timeUs, selection).length === 0 ? 'no clip under playhead' : null;
+}
+
+/**
  * C shortcut: split the selected clips under the playhead, or — when nothing
  * is selected — every clip under the playhead (unlocked tracks). One undo entry.
+ *
+ * `timeUs` overrides the live playhead: the context menu passes the value it
+ * FROZE when it opened, so the cut lands where the user saw the playhead, not
+ * where an arrow key moved it while the menu was up.
  */
-export function splitAtPlayhead(): OpResult {
+export function splitAtPlayhead(timeUs?: MicroSec): OpResult {
   const d = doc();
-  const t = useEditorStore.getState().playheadUs;
+  const t = timeUs ?? useEditorStore.getState().playheadUs;
   const selection = useEditorStore.getState().selection;
-  const under = clipsAtTime(d, snapUsToFrameGrid(t, d.settings.fps));
-  const targets = selection.size > 0 ? under.filter((id) => selection.has(id)) : under;
+  const targets = playheadTargets(d, t, selection);
   if (targets.length === 0) return fail('no clip under playhead');
 
   const tx = useDocStore.getState().beginTransaction('split', targets.length === 1 ? 'Klip bölündü' : `${targets.length} klip bölündü`);
@@ -971,13 +1014,15 @@ export function splitAtPlayhead(): OpResult {
   return any ? OK : fail('split failed');
 }
 
-/** Q/W shortcuts: trim the start (Q) or end (W) of clips under the playhead to the playhead. */
-export function trimSelectedToPlayhead(edge: TrimEdge): OpResult {
+/**
+ * Q/W shortcuts: trim the start (Q) or end (W) of clips under the playhead to
+ * the playhead. `timeUs` overrides the live playhead (frozen menu value).
+ */
+export function trimSelectedToPlayhead(edge: TrimEdge, timeUs?: MicroSec): OpResult {
   const d = doc();
-  const t = useEditorStore.getState().playheadUs;
+  const t = timeUs ?? useEditorStore.getState().playheadUs;
   const selection = useEditorStore.getState().selection;
-  const under = clipsAtTime(d, snapUsToFrameGrid(t, d.settings.fps));
-  const targets = selection.size > 0 ? under.filter((id) => selection.has(id)) : under;
+  const targets = playheadTargets(d, t, selection);
   if (targets.length === 0) return fail('no clip under playhead');
 
   const durations = knownAssetDurations();
@@ -998,12 +1043,27 @@ export function trimSelectedToPlayhead(edge: TrimEdge): OpResult {
 // deleteClips (+ ripple)
 // ---------------------------------------------------------------------------
 
-export function deleteClips(clipIds: readonly Uuid[], opts: { ripple?: boolean } = {}): OpResult {
-  const d = doc();
-  const deletable = clipIds.filter((id) => {
+/** Clips of `clipIds` that exist in `d` and sit on an unlocked track. */
+function deletableClipIds(d: TimelineDoc, clipIds: readonly Uuid[]): Uuid[] {
+  return clipIds.filter((id) => {
     const loc = locateClip(d, id);
     return loc !== null && !loc.track.locked;
   });
+}
+
+/**
+ * Why `clipIds` cannot be deleted, or null.
+ *
+ * Same contract as trackDeleteBlockReason/detachAudioBlockReason: the context
+ * menu greys the item out with EXACTLY the rule deleteClips enforces.
+ */
+export function deleteBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string | null {
+  return deletableClipIds(d, clipIds).length === 0 ? 'nothing to delete' : null;
+}
+
+export function deleteClips(clipIds: readonly Uuid[], opts: { ripple?: boolean } = {}): OpResult {
+  const d = doc();
+  const deletable = deletableClipIds(d, clipIds);
   if (deletable.length === 0) return fail('nothing to delete');
   const removing = new Set(deletable);
   const ripple = opts.ripple === true;
@@ -1074,6 +1134,16 @@ function cloneClip(clip: Clip): Clip {
   return copy;
 }
 
+/** Why `clipIds` cannot be copied, or null (copyClips finds nothing to copy). */
+export function copyBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string | null {
+  return clipIds.some((id) => locateClip(d, id) !== null) ? null : 'nothing to copy';
+}
+
+/** Cut = copy THEN delete: blocked when either half is (cutClips' own order). */
+export function cutBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string | null {
+  return copyBlockReason(d, clipIds) ?? deleteBlockReason(d, clipIds);
+}
+
 export function copyClips(clipIds: readonly Uuid[]): boolean {
   const d = doc();
   const entries: ClipboardEntry[] = [];
@@ -1096,6 +1166,54 @@ export function cutClips(clipIds: readonly Uuid[]): OpResult {
 }
 
 /**
+ * Where a batch insert wants to put one clip. Only the fields the placement
+ * rules need — so the check can run on a MENU RENDER without cloning clips.
+ */
+interface ClipPlacement {
+  trackId: Uuid;
+  kind: Clip['kind'];
+  startUs: MicroSec;
+  durationUs: MicroSec;
+}
+
+/**
+ * Why a batch of placements cannot be inserted into `d`, or null.
+ *
+ * This is the ONLY definition of "does this paste/duplicate fit": insertBatch
+ * runs it before mutating, and pasteBlockReason/duplicateBlockReason (hence the
+ * context menu) run the SAME function. A menu item and its op can no longer
+ * disagree about whether an action is possible.
+ */
+function placementBlockReason(d: TimelineDoc, placements: readonly ClipPlacement[]): string | null {
+  const perTrack = new Map<Uuid, { start: MicroSec; end: MicroSec }[]>();
+  for (const p of placements) {
+    const track = d.tracks.find((t) => t.id === p.trackId);
+    if (!track) return 'target track no longer exists';
+    if (track.locked) return 'target track is locked';
+    if (track.type !== trackTypeForClipKind(p.kind)) return 'track type mismatch';
+    if (p.startUs < 0) return 'before timeline start';
+    if (!fitsInTrack(track, p.startUs, p.durationUs)) return 'overlaps an existing clip';
+    const list = perTrack.get(p.trackId) ?? [];
+    const end = p.startUs + p.durationUs;
+    for (const other of list) {
+      if (p.startUs < other.end && other.start < end) return 'pasted clips overlap each other';
+    }
+    list.push({ start: p.startUs, end });
+    perTrack.set(p.trackId, list);
+  }
+  return null;
+}
+
+function toPlacements(batch: readonly { clip: Clip; trackId: Uuid }[]): ClipPlacement[] {
+  return batch.map(({ clip, trackId }) => ({
+    trackId,
+    kind: clip.kind,
+    startUs: clip.timelineStartUs,
+    durationUs: clip.timelineDurationUs,
+  }));
+}
+
+/**
  * Inserts a batch of prepared clips (already positioned, fresh ids assumed by
  * the caller) atomically: every clip must fit or the whole paste is rejected.
  */
@@ -1105,25 +1223,8 @@ function insertBatch(
   batch: { clip: Clip; trackId: Uuid }[],
 ): OpResult {
   const d = doc();
-  const perTrack = new Map<Uuid, { start: MicroSec; end: MicroSec }[]>();
-  for (const { clip, trackId } of batch) {
-    const track = d.tracks.find((t) => t.id === trackId);
-    if (!track) return fail('target track no longer exists');
-    if (track.locked) return fail('target track is locked');
-    if (track.type !== trackTypeForClipKind(clip.kind)) return fail('track type mismatch');
-    if (clip.timelineStartUs < 0) return fail('before timeline start');
-    if (!fitsInTrack(track, clip.timelineStartUs, clip.timelineDurationUs)) {
-      return fail('overlaps an existing clip');
-    }
-    const list = perTrack.get(trackId) ?? [];
-    for (const other of list) {
-      if (clip.timelineStartUs < other.end && other.start < clipEndUs(clip)) {
-        return fail('pasted clips overlap each other');
-      }
-    }
-    list.push({ start: clip.timelineStartUs, end: clipEndUs(clip) });
-    perTrack.set(trackId, list);
-  }
+  const blocked = placementBlockReason(d, toPlacements(batch));
+  if (blocked !== null) return fail(blocked);
 
   useDocStore.getState().mutate(actionType, label, (dd) => {
     for (const { clip, trackId } of batch) {
@@ -1136,11 +1237,38 @@ function insertBatch(
   return OK;
 }
 
+/** Where the clipboard would land if pasted at `timeUs` (pure). */
+function pastePlacements(d: TimelineDoc, timeUs: MicroSec): ClipPlacement[] | null {
+  if (!clipboard || clipboard.length === 0) return null;
+  const base = snapUsToFrameGrid(timeUs, d.settings.fps);
+  return clipboard.map((e) => ({
+    trackId: e.trackId,
+    kind: e.clip.kind,
+    startUs: base + e.offsetUs,
+    durationUs: e.clip.timelineDurationUs,
+  }));
+}
+
+/**
+ * Why the clipboard cannot be pasted at `timeUs`, or null.
+ *
+ * `timeUs` is a PARAMETER, not a read of the live playhead: the context menu
+ * freezes the playhead at open time and must reason about that exact instant
+ * (see runTimelineMenuAction). Reads the module clipboard, which is genuinely
+ * outside the document.
+ */
+export function pasteBlockReason(d: TimelineDoc, timeUs: MicroSec): string | null {
+  const placements = pastePlacements(d, timeUs);
+  if (placements === null) return 'clipboard empty';
+  return placementBlockReason(d, placements);
+}
+
 /** Ctrl+V: paste the clipboard at the playhead (original tracks, offsets kept). */
-export function pasteAtPlayhead(): OpResult {
+export function pasteAtPlayhead(timeUs?: MicroSec): OpResult {
   if (!clipboard || clipboard.length === 0) return fail('clipboard empty');
   const d = doc();
-  const base = snapUsToFrameGrid(useEditorStore.getState().playheadUs, d.settings.fps);
+  const at = timeUs ?? useEditorStore.getState().playheadUs;
+  const base = snapUsToFrameGrid(at, d.settings.fps);
   const batch = clipboard.map((e) => {
     const clip = cloneClip(e.clip);
     clip.id = uuidv7();
@@ -1148,6 +1276,41 @@ export function pasteAtPlayhead(): OpResult {
     return { clip, trackId: e.trackId };
   });
   return insertBatch('paste', `${batch.length} klip yapıştırıldı`, batch);
+}
+
+/** Where duplicates of `clipIds` would land (pure) — null when there is nothing to duplicate. */
+function duplicatePlacements(d: TimelineDoc, clipIds: readonly Uuid[]): ClipPlacement[] | null {
+  let minStart = Number.MAX_SAFE_INTEGER;
+  let maxEnd = 0;
+  const sources: { clip: Clip; trackId: Uuid }[] = [];
+  for (const id of clipIds) {
+    const loc = locateClip(d, id);
+    if (!loc) continue;
+    minStart = Math.min(minStart, loc.clip.timelineStartUs);
+    maxEnd = Math.max(maxEnd, clipEndUs(loc.clip));
+    sources.push({ clip: loc.clip, trackId: loc.track.id });
+  }
+  if (sources.length === 0) return null;
+  const span = maxEnd - minStart;
+  return sources.map((s) => ({
+    trackId: s.trackId,
+    kind: s.clip.kind,
+    startUs: s.clip.timelineStartUs + span,
+    durationUs: s.clip.timelineDurationUs,
+  }));
+}
+
+/**
+ * Why `clipIds` cannot be duplicated, or null.
+ *
+ * This closes the "menu offers what the op refuses" hole: a clip whose
+ * neighbour sits immediately after it has NO room for its duplicate, so the
+ * menu greys "Çoğalt" out instead of showing a warning bubble on click.
+ */
+export function duplicateBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string | null {
+  const placements = duplicatePlacements(d, clipIds);
+  if (placements === null) return 'nothing to duplicate';
+  return placementBlockReason(d, placements);
 }
 
 /** Ctrl+D: duplicate the selection right after its own span, same tracks. */
@@ -1558,9 +1721,11 @@ export function detachAudio(clipId: Uuid): OpResult {
 // Markers / misc queries
 // ---------------------------------------------------------------------------
 
-export function addMarkerAtPlayhead(): void {
+/** M shortcut / ruler menu. `atUs` overrides the live playhead (frozen value). */
+export function addMarkerAtPlayhead(atUs?: MicroSec): void {
   const d = doc();
-  const timeUs = snapUsToFrameGrid(useEditorStore.getState().playheadUs, d.settings.fps);
+  const raw = atUs ?? useEditorStore.getState().playheadUs;
+  const timeUs = snapUsToFrameGrid(raw, d.settings.fps);
   useDocStore.getState().mutate('marker', 'Marker eklendi', (dd) => {
     dd.markers.push({ id: uuidv7(), timeUs });
   });

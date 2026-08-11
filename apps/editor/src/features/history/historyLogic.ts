@@ -12,7 +12,8 @@
  *     cursor = index + 1; jumpTo(-1) is "before the first entry".
  * A row's `index` is therefore exactly the argument to pass to jumpTo().
  */
-import type { HistoryEntry } from '../../state/docStore';
+import { useAutosaveStore } from '../../state/autosave';
+import { useDocStore, type HistoryEntry } from '../../state/docStore';
 
 /** Baseline row ("Başlangıç") — the document state before any entry. */
 export const HISTORY_BASE_INDEX = -1;
@@ -81,4 +82,47 @@ export function buildHistoryRows(history: HistoryEntry[], cursor: number): Histo
 export function historyRowHint(row: HistoryRow): string {
   if (row.current) return 'Mevcut konum';
   return row.undone ? 'Bu işleme ileri sar' : 'Bu işleme geri dön';
+}
+
+// ---------------------------------------------------------------------------
+// Geçmişte gezinme kapısı (undo / redo / jumpTo)
+// ---------------------------------------------------------------------------
+
+export interface HistoryNavigationGate {
+  /** docStore.transactionOpen — bir jest (sürükleme/slider) sürüyor. */
+  transactionOpen: boolean;
+  /** docStore.locked — projectSession bir projeyi yüklüyor. */
+  locked: boolean;
+  /** useAutosaveStore.status — 'conflict' iken 409 diyaloğu açıktır. */
+  autosaveStatus: string;
+}
+
+/**
+ * Neden geçmişte gezinilemez (ya da null = serbest).
+ *
+ * undo/redo/jumpTo dokümanı patch'lerle YENİDEN YAZAR ve autosave'i kirletir —
+ * yani bir düzenleme kadar mutasyondur. Bu yüzden düzenlemelerle AYNI kapılara
+ * tabidir. Kural tek yerde durur: TopBar'ın Geri al/Yinele düğmeleri,
+ * HistoryPanel satırları ve docStore/dispatcher kapıları aynı koşulu paylaşır,
+ * böylece "düğme aktif ama tıklayınca hiçbir şey olmuyor" (ya da daha kötüsü:
+ * birazdan sunucu kopyasıyla değiştirilecek dokümanı mutasyona uğratıyor)
+ * durumu oluşamaz.
+ */
+export function historyNavigationBlockReason(gate: HistoryNavigationGate): string | null {
+  if (gate.transactionOpen) return 'Sürükleme bitmeden geçmişte gezinilemez';
+  if (gate.locked) return 'Proje yüklenirken geçmişte gezinilemez';
+  if (gate.autosaveStatus === 'conflict') return 'Çakışma çözülmeden geçmişte gezinilemez';
+  return null;
+}
+
+/**
+ * React kancası hali — TopBar ve HistoryPanel bunu paylaşır (tek kaynak).
+ * Granüler selector'lar: `doc` bilinçli olarak okunmaz (her pointermove'da
+ * değişir, bu paneller değişmez).
+ */
+export function useHistoryNavigationBlockReason(): string | null {
+  const transactionOpen = useDocStore((s) => s.transactionOpen);
+  const locked = useDocStore((s) => s.locked);
+  const autosaveStatus = useAutosaveStore((s) => s.status);
+  return historyNavigationBlockReason({ transactionOpen, locked, autosaveStatus });
 }

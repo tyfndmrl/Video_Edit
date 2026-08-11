@@ -39,6 +39,17 @@ jobs:
       - name: Typecheck editor E2E
         run: pnpm --filter @videoedit/editor test:e2e:typecheck
 
+      # TESLIM EDILEN ARTEFAKT. M4 denetimi (yuksek): `vite build` CI'da hicbir
+      # adimda calismiyordu (grep = 0). E2E bilincli olarak DEV sunucusuna
+      # baglanir (bkz. e2e job'undaki gerekce), dolayisiyla production
+      # derlemesini kiran bir degisiklik — kaldirilmis bir dinamik import,
+      # `import.meta.env.DEV` disinda kalan bir test kancasi, rollup'in
+      # cozemedigi bir alias — TUM CI yesilken kullaniciya bozuk gidebilirdi.
+      # `build` script'i `tsc -b && vite build`: tsc adimi zaten yukarida
+      # kosuyor (incremental, saniyeler), asil deger vite/rollup asamasi.
+      - name: Build editor (teslim edilen production artefakti)
+        run: pnpm --filter @videoedit/editor build
+
       # Uretilmis artefakt drift kontrolu: schema.json + test vektorleri
       # commit'lenmis halleriyle birebir ayni olmali.
       - name: Schema drift kontrolu
@@ -171,9 +182,22 @@ jobs:
           ASPNETCORE_ENVIRONMENT: Development
           ASPNETCORE_URLS: http://localhost:5000
 
-      # DEV sunucusu (preview degil): E2E, store'lari Vite'in modul grafigi
-      # uzerinden okur (e2e/support/appBridge.ts) — production build'de modul
-      # yollari hash'lenir ve bu kopru calismaz.
+      # DEV sunucusu (preview degil) — BILINCLI ve KORUNAN bir karar:
+      #
+      # E2E, jestin SONUCUNU dogrulamak icin store'lari okur (canvas timeline'in
+      # secili klip / zoom / scroll durumu icin DOM'da okunabilir gosterge yok).
+      # Kopru iki yoldan kurulur (e2e/support/appBridge.ts):
+      #   1. `window.__videoeditTest` — uygulamanin DEV-only test kancasi
+      #      (src/state/testBridge.ts, `import.meta.env.DEV` guard'li; production
+      #      bundle'inda kod olarak BULUNMAZ).
+      #   2. Vite dev modul grafigi (`import('/src/state/docStore.ts?t=...')`).
+      # Her ikisi de dev sunucusuna baglidir. Production preview'da modul
+      # yollari hash'lenir, test kancasi da derlenmez -> kopru kurulamaz.
+      #
+      # Bu, "test edilen sey teslim edilen sey degil" riskini tasir; risk
+      # node job'undaki `Build editor (teslim edilen production artefakti)`
+      # adimiyla karsilanir: production derlemesi her PR'da GERCEKTEN uretilir.
+      # Etkilesim kanitinin kendisi (gercek fare/klavye) dev/prod'dan bagimsizdir.
       - name: Vite dev sunucusunu baslat (http://localhost:5173)
         run: |
           pnpm --filter @videoedit/editor exec vite --port 5173 --strictPort > vite.log 2>&1 &

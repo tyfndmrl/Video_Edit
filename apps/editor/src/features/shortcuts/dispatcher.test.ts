@@ -5,6 +5,7 @@ import { createEmptyDoc, defaultProjectSettings, useDocStore } from '../../state
 import { useAssetStore } from '../../state/assetStore';
 import { useEditorStore } from '../../state/editorStore';
 import { useProjectSession } from '../../state/projectSession';
+import { setTimelineMenuOpen } from '../timeline/contextMenuState';
 import { handleShortcut, isEditableTarget, type KeyEventLike } from './dispatcher';
 import { setPlaybackEngineForTests, type PlaybackEngineLike } from './playerBridge';
 
@@ -87,6 +88,7 @@ beforeEach(() => {
 
 afterEach(() => {
   setPlaybackEngineForTests(undefined);
+  setTimelineMenuOpen(false);
   useProjectSession.setState({ status: 'idle', projectId: null, projectName: null, error: null });
   useAutosaveStore.setState({ status: 'idle', conflict: null });
 });
@@ -273,6 +275,45 @@ describe('doc-mutation gating while the session is not ready (finding 1b)', () =
     },
   );
 
+  /**
+   * Undo/redo are document mutations too (they rewrite doc from patches and
+   * dirty autosave). The gating tests deliberately skipped them, so nobody
+   * noticed the gate they were assumed to have did not exist: a Ctrl+Z while a
+   * project load was in flight mutated the document that was about to be
+   * replaced by the server copy.
+   */
+  it.each(['loading', 'idle', 'error'] as const)(
+    'swallows Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y while session status is %s',
+    (status) => {
+      const clip = seedClip();
+      useEditorStore.getState().setSelection([clip.id]);
+      useEditorStore.getState().setPlayheadUs(2 * US);
+
+      // Build a real history entry while the session is READY.
+      handleShortcut(key({ key: 'c' }));
+      expect(useDocStore.getState().doc.tracks[0].clips).toHaveLength(2);
+      const docBefore = useDocStore.getState().doc;
+      const cursorBefore = useDocStore.getState().cursor;
+
+      useProjectSession.setState({ status });
+      for (const k of [
+        key({ key: 'z', ctrlKey: true }),
+        key({ key: 'z', ctrlKey: true, shiftKey: true }),
+        key({ key: 'y', ctrlKey: true }),
+        key({ key: 'Z', ctrlKey: true }), // Shift'li düzenlerde büyük harf gelir
+      ]) {
+        expect(handleShortcut(k)).toBe(true); // swallowed, never reaches the browser
+      }
+      expect(useDocStore.getState().doc, 'undo/redo must not mutate the doc').toBe(docBefore);
+      expect(useDocStore.getState().cursor).toBe(cursorBefore);
+
+      // Session back to ready -> undo works again.
+      useProjectSession.setState({ status: 'ready' });
+      handleShortcut(key({ key: 'z', ctrlKey: true }));
+      expect(useDocStore.getState().doc.tracks[0].clips).toHaveLength(1);
+    },
+  );
+
   it('non-mutating shortcuts still work while loading (snapping toggle, navigation)', () => {
     seedClip();
     useProjectSession.setState({ status: 'loading' });
@@ -306,7 +347,7 @@ describe('doc-mutation gating while the 409 conflict dialog is open (finding 5)'
     expect(useDocStore.getState().doc).toBe(docBefore);
     expect(useDocStore.getState().history).toHaveLength(0);
 
-    // Undo/navigation stay available under the dialog.
+    // Navigation (view state only) stays available under the dialog.
     handleShortcut(key({ key: 'ArrowRight' }));
     expect(useEditorStore.getState().playheadUs).toBe(2 * US + 33_333);
 
@@ -314,5 +355,78 @@ describe('doc-mutation gating while the 409 conflict dialog is open (finding 5)'
     useAutosaveStore.setState({ status: 'saved', conflict: null });
     handleShortcut(key({ key: 'c' }));
     expect(useDocStore.getState().doc.tracks[0].clips).toHaveLength(2);
+  });
+
+  /**
+   * Undo/redo are NOT "read-only navigation": they rewrite the document. Under
+   * the 409 dialog the local document is about to be replaced by the server
+   * copy, so a Ctrl+Z there mutated a doomed document — and autosave then tried
+   * to save it.
+   */
+  it('swallows Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y while autosave status is conflict', () => {
+    const clip = seedClip();
+    useEditorStore.getState().setSelection([clip.id]);
+    useEditorStore.getState().setPlayheadUs(2 * US);
+    handleShortcut(key({ key: 'c' })); // one real history entry
+    const docBefore = useDocStore.getState().doc;
+    const cursorBefore = useDocStore.getState().cursor;
+
+    useAutosaveStore.setState({
+      status: 'conflict',
+      conflict: { revisionNumber: 9, timeline: {} },
+    });
+
+    for (const k of [
+      key({ key: 'z', ctrlKey: true }),
+      key({ key: 'z', ctrlKey: true, shiftKey: true }),
+      key({ key: 'y', ctrlKey: true }),
+    ]) {
+      expect(handleShortcut(k)).toBe(true);
+    }
+    expect(useDocStore.getState().doc).toBe(docBefore);
+    expect(useDocStore.getState().cursor).toBe(cursorBefore);
+
+    useAutosaveStore.setState({ status: 'saved', conflict: null });
+    handleShortcut(key({ key: 'z', ctrlKey: true }));
+    expect(useDocStore.getState().doc.tracks[0].clips).toHaveLength(1);
+  });
+});
+
+/**
+ * Sağ tık menüsü açıkken klavyenin sahibi menüdür (denetim bulgusu 2).
+ * Gerçek klavye kanıtı e2e/context-menu.spec.ts'te; burada dispatch tablosunun
+ * kapıyı tanıdığı doğrulanır.
+ */
+describe('shortcut passivity while the timeline context menu is open (finding 2)', () => {
+  it('handles NOTHING while the menu is open — not Delete, not C, not ArrowDown', () => {
+    const clip = seedClip();
+    useEditorStore.getState().setSelection([clip.id]);
+    useEditorStore.getState().setPlayheadUs(2 * US);
+    const docBefore = useDocStore.getState().doc;
+    const playheadBefore = useEditorStore.getState().playheadUs;
+    const snapBefore = useEditorStore.getState().snappingEnabled;
+
+    setTimelineMenuOpen(true);
+    for (const k of [
+      key({ key: 'Delete' }),
+      key({ key: 'c' }),
+      key({ key: 'ArrowDown' }),
+      key({ key: 'ArrowRight' }),
+      key({ key: ' ' }),
+      key({ key: 's' }),
+      key({ key: 'm' }),
+      key({ key: 'z', ctrlKey: true }),
+      key({ key: 'd', ctrlKey: true }),
+    ]) {
+      expect(handleShortcut(k), `${k.key} must be passive`).toBe(false);
+    }
+    expect(useDocStore.getState().doc).toBe(docBefore);
+    expect(useEditorStore.getState().playheadUs).toBe(playheadBefore);
+    expect(useEditorStore.getState().snappingEnabled).toBe(snapBefore);
+
+    // Menü kapanınca kısayollar geri gelir.
+    setTimelineMenuOpen(false);
+    expect(handleShortcut(key({ key: 'ArrowDown' }))).toBe(true);
+    expect(useEditorStore.getState().playheadUs).not.toBe(playheadBefore);
   });
 });
