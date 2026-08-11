@@ -25,6 +25,13 @@
  * - A pointerdown that hits nothing is NOT swallowed: the click keeps bubbling
  *   to the panel, so click-to-play still works with a clip selected. A real
  *   drag suppresses that click.
+ * - A KEYFRAMED clip is draggable too (M5). Writing the base transform would
+ *   change nothing on screen — sampleKeyframes wins (rendering-semantics §3.3)
+ *   — so the drag writes the keyframe AT THE PLAYHEAD instead, creating one if
+ *   the instant has none. Channels that are still static keep writing the base
+ *   value, per channel, through `keyframes/keyframeOps.applyTransformPatchToDraft`.
+ *   (Before M5 the box went read-only here; "you may look but not touch" was
+ *   the honest stop-gap, not the destination.)
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react';
@@ -32,7 +39,9 @@ import { isMediaClip } from '@videoedit/timeline-schema';
 import type { Transform, Uuid } from '@videoedit/timeline-schema';
 import { useDocStore, type Transaction } from '../../state/docStore';
 import { useEditorStore } from '../../state/editorStore';
-import { applyClipTransformToDraft, maxClipScale } from '../../state/timelineOps';
+import { maxClipScale } from '../../state/timelineOps';
+import { keyframeTimeAtPlayhead } from '../keyframes/keyframeModel';
+import { applyTransformPatchToDraft } from '../keyframes/keyframeOps';
 import { useAssetStore } from '../../state/assetStore';
 import type { SourceSize } from './engine';
 import { effectiveTransform, resolveVisualStack } from './core/resolve';
@@ -75,6 +84,13 @@ interface DragState {
   start: GizmoDragStart;
   tx: Transaction;
   clipIds: Uuid[];
+  /**
+   * Clip-relative, frame-snapped playhead captured at pointerdown: the instant
+   * an animated channel's keyframe is written at. Frozen for the gesture —
+   * the gizmo only exists while paused, and a moving write target would smear
+   * one drag across several keyframes.
+   */
+  clipTimeUs: number;
   /** Pointer position at pointerdown, CONTAINER-local px (threshold check). */
   origin: Point;
   /** True once the drag passed DRAG_THRESHOLD_PX (patches start flowing). */
@@ -264,9 +280,10 @@ export function TransformGizmo({
   );
 
   /**
-   * A keyframed transform is animated: dragging the box would write the BASE
-   * transform and appear to do nothing. Rather than lie, the gizmo goes
-   * read-only and says why.
+   * The transform is animated on at least one channel. Not a lock any more
+   * (M5) — it changes WHERE a drag lands (the keyframe at the playhead) and it
+   * is drawn as a dashed box so the user knows the number they are editing
+   * belongs to this instant only.
    */
   const keyframed = useMemo(() => {
     const kf = target?.clip.keyframes;
@@ -320,7 +337,7 @@ export function TransformGizmo({
 
   const onPointerDown = useCallback(
     (e: ReactPointerEvent<SVGSVGElement>) => {
-      if (e.button !== 0 || !geometry || !target || !shownTransform || keyframed) return;
+      if (e.button !== 0 || !geometry || !target || !shownTransform) return;
       const point = localPoint(e);
       const handle = hitTestGizmo(geometry, point);
       // Miss: do NOT capture. The event keeps bubbling, so clicking the picture
@@ -360,8 +377,14 @@ export function TransformGizmo({
       dragRef.current = {
         pointerId: e.pointerId,
         start,
-        tx: useDocStore.getState().beginTransaction('clipTransform', DRAG_LABEL[handle]),
+        tx: useDocStore
+          .getState()
+          .beginTransaction(
+            keyframed ? 'keyframeValue' : 'clipTransform',
+            keyframed ? `${DRAG_LABEL[handle]} (keyframe)` : DRAG_LABEL[handle],
+          ),
         clipIds: [target.clip.id],
+        clipTimeUs: keyframeTimeAtPlayhead(target.clip, playheadUs, doc.settings.fps),
         origin: point,
         active: false,
         detach: () => {
@@ -380,6 +403,7 @@ export function TransformGizmo({
       compH,
       source,
       finishDrag,
+      playheadUs,
       doc.settings,
     ],
   );
@@ -390,7 +414,7 @@ export function TransformGizmo({
       const point = localPoint(e);
       if (!drag) {
         // Idle: reflect what the pointer would grab in the cursor.
-        const handle = geometry && !keyframed ? hitTestGizmo(geometry, point) : null;
+        const handle = geometry ? hitTestGizmo(geometry, point) : null;
         setHoverHandle((prev) => (prev === handle ? prev : handle));
         return;
       }
@@ -405,13 +429,15 @@ export function TransformGizmo({
       });
       if (Object.keys(patch).length === 0) return;
       drag.tx.update((d) => {
-        applyClipTransformToDraft(d, drag.clipIds, patch);
+        // Per channel: animated -> keyframe at drag.clipTimeUs, static -> base
+        // value (the SAME op the inspector's numeric fields use, one level in).
+        applyTransformPatchToDraft(d, drag.clipIds[0], patch, drag.clipTimeUs);
       });
       // The engine's doc reload is debounced (100 ms); during a drag that reads
       // as lag between the box and the picture, so push it through now.
       flushPreviewLoad();
     },
-    [geometry, keyframed, localPoint, flushPreviewLoad],
+    [geometry, localPoint, flushPreviewLoad],
   );
 
   const endDrag = useCallback(
@@ -474,8 +500,10 @@ export function TransformGizmo({
         strokeDasharray={keyframed ? '5 4' : undefined}
         pointerEvents="none"
       />
-      {!keyframed && (
-        <>
+      {/* Handles are present whether or not the clip is animated — the dashed
+          outline is the only difference, because WHERE the drag lands changed,
+          not WHETHER it may happen. */}
+      <>
           <line
             x1={topMid.x}
             y1={topMid.y}
@@ -518,12 +546,11 @@ export function TransformGizmo({
               pointerEvents="none"
             />
           ))}
-        </>
-      )}
+      </>
       {keyframed && (
         <title>
-          Bu klibin dönüşümü animasyonlu (keyframe). Kutuyu sürüklemek temel değeri
-          değiştirir ve ekranda bir şey değişmezdi — değerleri Inspector&apos;dan düzenleyin.
+          Bu klibin dönüşümü animasyonlu (keyframe). Kutuyu sürüklemek PLAYHEAD anındaki
+          keyframe&apos;i günceller; o anda keyframe yoksa yenisi eklenir.
         </title>
       )}
     </svg>

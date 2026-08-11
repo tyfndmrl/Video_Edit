@@ -96,6 +96,12 @@ export interface SliderFieldProps {
   gesture: GestureLabel;
   onChange(value: number): void;
   testId?: string;
+  /**
+   * Trailing control owned by another feature (today: the keyframe diamond
+   * from features/keyframes). Kept generic on purpose — the input primitives
+   * must not learn what a keyframe is.
+   */
+  adornment?: React.ReactNode;
 }
 
 export function SliderField({
@@ -112,17 +118,19 @@ export function SliderField({
   gesture,
   onChange,
   testId,
+  adornment,
 }: SliderFieldProps) {
   const mixed = value === null;
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-baseline justify-between gap-2 text-[11px]">
+      <div className="flex items-center justify-between gap-2 text-[11px]">
         <label htmlFor={id} className="shrink-0 text-fg-muted">
           {label}
         </label>
-        <span className="flex shrink-0 items-baseline gap-1.5 font-mono text-fg">
+        <span className="flex shrink-0 items-center gap-1.5 font-mono text-fg">
           {valueText}
           {hint !== undefined && <span className="text-[10px] text-fg-muted">{hint}</span>}
+          {adornment}
         </span>
       </div>
       <input
@@ -175,6 +183,18 @@ export interface NumberFieldProps {
   gesture: GestureLabel;
   onChange(value: number): void;
   testId?: string;
+  /**
+   * false = the label is NOT scrub-draggable (typing only).
+   *
+   * Load-bearing for LAYOUT properties (clip speed): the scrub path opens a
+   * docStore transaction on pointerdown, and an `onChange` that routes to a
+   * plain op would then call `mutate` INSIDE that transaction — which throws
+   * (docStore.assertNoActiveTransaction). A property whose write cannot be
+   * coalesced must not offer the gesture at all.
+   */
+  scrubbable?: boolean;
+  /** Trailing control owned by another feature (see SliderFieldProps). */
+  adornment?: React.ReactNode;
 }
 
 export function NumberField({
@@ -191,6 +211,8 @@ export function NumberField({
   gesture,
   onChange,
   testId,
+  scrubbable = true,
+  adornment,
 }: NumberFieldProps) {
   const [text, setText] = useState('');
   const [editing, setEditing] = useState(false);
@@ -226,7 +248,7 @@ export function NumberField({
   };
 
   const onScrubDown = (e: ReactPointerEvent<HTMLSpanElement>): void => {
-    if (disabled) return;
+    if (disabled || !scrubbable) return;
     // The store refused a transaction (project loading, or the timeline/gizmo
     // owns it): do not start a drag at all rather than emit one history entry
     // per pixel. beginLiveEdit still marks the gesture, so the pointerup
@@ -256,10 +278,15 @@ export function NumberField({
         // exact path. touch-none stops the browser from panning instead.
         role="presentation"
         data-testid={testId !== undefined ? `${testId}-scrub` : undefined}
+        data-scrubbable={scrubbable ? 'true' : 'false'}
         className={`w-16 shrink-0 touch-none select-none text-[11px] text-fg-muted ${
-          disabled ? 'cursor-not-allowed opacity-50' : 'cursor-ew-resize hover:text-fg'
+          disabled
+            ? 'cursor-not-allowed opacity-50'
+            : scrubbable
+              ? 'cursor-ew-resize hover:text-fg'
+              : ''
         }`}
-        title={`${label} — sürükleyerek değiştir`}
+        title={scrubbable ? `${label} — sürükleyerek değiştir` : label}
         onPointerDown={onScrubDown}
         onPointerMove={onScrubMove}
         onPointerUp={onScrubUp}
@@ -313,6 +340,7 @@ export function NumberField({
       {unit !== undefined && (
         <span className="w-5 shrink-0 text-[10px] text-fg-muted">{unit}</span>
       )}
+      {adornment}
     </div>
   );
 }

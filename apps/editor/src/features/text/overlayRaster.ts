@@ -8,9 +8,21 @@
  * server PNG + bbox when the document settles. Export ALWAYS uses the server
  * raster; a canvas raster never reaches an export.
  *
- * TODO(M4 dalga 2, backend): there is no `POST /api/projects/{id}/overlays`
- * (or equivalent) raster/measure endpoint yet, so the swap does not happen —
- * the preview shows the canvas raster permanently and the inspector says so.
+ * WHAT THE M4 dalga-2 DENETİMİ CHANGED HERE (bulgu #2 and #3a):
+ * - the layout rule is now the SERVER's, shared through textLayout.ts and
+ *   pinned cross-language by test-vectors/text-layout-vectors.json. The bbox is
+ *   a union of boxes (not `content + 2*(stroke + padding)`), the background is
+ *   painted on `content ± padding` (not on the whole bbox), and lines are drawn
+ *   on real baselines (not on `textBaseline: 'middle'` guesses);
+ * - the font is the SAME FILE the export uses: fontCatalogue.ts installs
+ *   `@font-face` rules for the curated TTFs served by `GET /api/fonts/...`, so
+ *   `measureText` shapes the file SkiaSharp rasterizes, not a lookalike the OS
+ *   happened to have.
+ *
+ * STILL OPEN (docs/backlog.md, "Sunucu overlay ölçüm/raster ucu"): there is no
+ * `POST /api/overlays/measure` yet, so the client's Canvas2D shaping is still a
+ * SECOND shaping engine next to HarfBuzz. Same rule, same file, but ligatures /
+ * RTL / emoji can still differ by a few pixels — the inspector note says so.
  * When the endpoint lands, this module stays as the live-editing fast path and
  * only the cache in the engine learns to prefer the server bitmap.
  *
@@ -18,12 +30,15 @@
  * as long as UNPACK_PREMULTIPLY_ALPHA_WEBGL is false, which the compositor
  * already guarantees. Nothing here may premultiply by hand.
  */
-import { cssStackFor } from './fontManifest';
+import { cssStackFor, fontCatalogueRevision } from './fontManifest';
 import { OVERLAY_RASTER_SCALE, SHAPE_RASTER_SCALE } from './overlayGeometry';
 import { computeShapeGeometry, insetBox, type ShapeStyle } from './shapeGeometry';
 import {
+  EMPTY_INK,
   canvasFontString,
   layoutText,
+  type GlyphMeasurer,
+  type InkBox,
   type TextLayout,
   type TextStyle,
 } from './textLayout';
@@ -72,19 +87,82 @@ function getMeasureCtx(): CanvasRenderingContext2D | null {
 }
 
 /**
- * Layout of a text style using the browser's own metrics. Falls back to a
- * crude per-character estimate when there is no DOM (unit tests, SSR) so
- * callers never have to branch.
+ * Probe string for the FONT box metrics. `fontBoundingBox*` is a property of
+ * the font, not of the text, but a browser only fills it in for a real
+ * measurement — an empty string is not one.
+ */
+const METRICS_PROBE = 'Hg';
+
+/**
+ * Browser measurer — Canvas2D `measureText`, mapped onto the SHARED contract in
+ * textLayout.ts (the same interface `IGlyphMeasurer` gives SkiaSharp).
+ *
+ * SIGN CONVENTION: Canvas reports every metric as a POSITIVE distance from the
+ * baseline; Skia (and therefore our layout contract) wants a NEGATIVE ascent
+ * and an ink box whose `top` is negative above the baseline. The negations
+ * below are that conversion — getting them wrong flips the box vertically.
+ */
+function browserMeasurer(ctx: CanvasRenderingContext2D, style: TextStyle): GlyphMeasurer {
+  ctx.font = canvasFontString(style, cssStackFor(style.fontId));
+  const probe = ctx.measureText(METRICS_PROBE);
+  const ascent = probe.fontBoundingBoxAscent;
+  const descent = probe.fontBoundingBoxDescent;
+  // Very old engines omit fontBoundingBox*; fall back to the em box so the
+  // vertical model degrades predictably instead of producing NaN.
+  const usable = Number.isFinite(ascent) && Number.isFinite(descent) && ascent + descent > 0;
+  return {
+    metrics: usable
+      ? { ascent: -ascent, descent }
+      : { ascent: -style.fontSizePx * 0.8, descent: style.fontSizePx * 0.2 },
+    advance: (line) => {
+      ctx.font = canvasFontString(style, cssStackFor(style.fontId));
+      return ctx.measureText(line).width;
+    },
+    ink: (line): InkBox => {
+      if (line.length === 0) return EMPTY_INK;
+      ctx.font = canvasFontString(style, cssStackFor(style.fontId));
+      const m = ctx.measureText(line);
+      const left = -m.actualBoundingBoxLeft;
+      const right = m.actualBoundingBoxRight;
+      const top = -m.actualBoundingBoxAscent;
+      const bottom = m.actualBoundingBoxDescent;
+      if (![left, right, top, bottom].every(Number.isFinite)) return EMPTY_INK;
+      return { left, top, right, bottom };
+    },
+  };
+}
+
+/**
+ * DOM-less measurer (unit tests, SSR): a crude synthetic font so callers never
+ * have to branch. Deliberately NOT the vector file's font — the vector tests
+ * drive `layoutText` directly with their own measurer.
+ */
+function estimateMeasurer(style: TextStyle): GlyphMeasurer {
+  const cell = style.fontSizePx * 0.55;
+  return {
+    metrics: { ascent: -style.fontSizePx * 0.8, descent: style.fontSizePx * 0.2 },
+    advance: (line) => line.length * cell,
+    ink: (line): InkBox => {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) return EMPTY_INK;
+      return {
+        left: (line.length - line.trimStart().length) * cell,
+        top: -style.fontSizePx * 0.7,
+        right: (line.length - (line.length - line.trimEnd().length)) * cell,
+        bottom: style.fontSizePx * 0.1,
+      };
+    },
+  };
+}
+
+/**
+ * Layout of a text style using the browser's own metrics, through the SHARED
+ * rule in textLayout.ts (mirrored by TextLayoutEngine.cs and pinned by
+ * test-vectors/text-layout-vectors.json).
  */
 export function measureTextLayout(style: TextStyle): TextLayout {
   const ctx = getMeasureCtx();
-  if (!ctx) {
-    return layoutText(style, (line, s) => line.length * s.fontSizePx * 0.55);
-  }
-  return layoutText(style, (line, s) => {
-    ctx.font = canvasFontString(s, cssStackFor(s.fontId));
-    return ctx.measureText(line).width;
-  });
+  return layoutText(style, ctx ? browserMeasurer(ctx, style) : estimateMeasurer(style));
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +172,11 @@ export function measureTextLayout(style: TextStyle): TextLayout {
 export function textRasterKey(style: TextStyle): string {
   return JSON.stringify([
     'text',
+    // Font catalogue revision: the SAME style measures differently before and
+    // after the curated TTF finishes downloading (@font-face, fontCatalogue.ts).
+    // Without it the first raster — drawn with the generic fallback — would be
+    // cached forever and the preview would never show the export's font.
+    fontCatalogueRevision(),
     style.content,
     style.fontId,
     style.fontSizePx,
@@ -206,29 +289,52 @@ export function rasterizeText(style: TextStyle): OverlayRaster | null {
   if (!started) return null;
   const { ctx, raster } = started;
 
+  // Move to CONTENT-box coordinates, exactly like the export
+  // (SkiaOverlayRasterService: `canvas.Translate(originX, originY)`). Every
+  // number below is then the same number the server uses.
+  ctx.translate(layout.originXPx, layout.originYPx);
+
   const background = style.background;
-  if (background && background.color) {
+  if (background && background.color && layout.backgroundRect) {
+    // CONTENT ± padding — NOT the bbox. Painting the bbox (what this file used
+    // to do) also covered the stroke overhang, which is exactly the divergence
+    // M4 dalga-2 bulgu #2 measured (42x34 here vs 30x22 in the export).
+    const rect = layout.backgroundRect;
     ctx.fillStyle = background.color;
-    roundRectPath(ctx, 0, 0, layout.bboxWidthPx, layout.bboxHeightPx, background.radiusPx);
+    roundRectPath(
+      ctx,
+      rect.left,
+      rect.top,
+      rect.right - rect.left,
+      rect.bottom - rect.top,
+      background.radiusPx,
+    );
     ctx.fill();
   }
 
   ctx.font = canvasFontString(style, cssStackFor(style.fontId));
-  ctx.textBaseline = 'middle';
+  // ALPHABETIC baseline: the layout hands out real baselines (CSS half-leading
+  // model), the same ones SkiaSharp draws at. 'middle' would re-derive the
+  // vertical position from the browser's own em box and drift.
+  ctx.textBaseline = 'alphabetic';
   ctx.textAlign = 'left';
+  // Round join AND round cap — SKStrokeJoin.Round + SKStrokeCap.Round in the
+  // export. A mitre here would put spikes on the preview's glyph corners.
   ctx.lineJoin = 'round';
-  ctx.miterLimit = 2;
+  ctx.lineCap = 'round';
 
   const stroke = style.stroke;
   for (const line of layout.lines) {
     if (line.text.length === 0) continue;
+    // Stroke FIRST, fill after: the fill covers the inner half of the stroke,
+    // so only strokeWidth/2 spills outward (what the bbox reserved).
     if (stroke && stroke.widthPx > 0) {
       ctx.strokeStyle = stroke.color;
       ctx.lineWidth = stroke.widthPx;
-      ctx.strokeText(line.text, line.xPx, line.centerYPx);
+      ctx.strokeText(line.text, line.leftPx, line.baselineYPx);
     }
     ctx.fillStyle = style.fill;
-    ctx.fillText(line.text, line.xPx, line.centerYPx);
+    ctx.fillText(line.text, line.leftPx, line.baselineYPx);
   }
   return raster;
 }

@@ -195,6 +195,13 @@ try
 
     // --- Uygulama servisleri ---
     builder.Services.AddSingleton(TimeProvider.System);
+    // Font kataloğu (GET /api/fonts) + export'un "bilinmeyen fontId" ön kontrolü. Manifest
+    // BİR KEZ okunur; okunamazsa sağlayıcı hatayı TAŞIR (API açılışta patlamaz, yalnız font
+    // uçları 503 döner — bkz. FontManifestProvider).
+    builder.Services.Configure<VideoEdit.Media.Text.TextRasterOptions>(
+        builder.Configuration.GetSection(VideoEdit.Media.Text.TextRasterOptions.SectionName));
+    builder.Services.AddSingleton(sp => new VideoEdit.Media.Text.FontManifestProvider(
+        sp.GetService<Microsoft.Extensions.Options.IOptions<VideoEdit.Media.Text.TextRasterOptions>>()?.Value));
     builder.Services.AddSingleton<ISnapshotPolicy, SnapshotPolicy>();
     builder.Services.AddScoped<IRefreshTokenService, RefreshTokenService>();
     builder.Services.AddScoped<JwtTokenService>();
@@ -281,6 +288,7 @@ try
     app.MapProjectEndpoints();
     app.MapAssetEndpoints();
     app.MapExportEndpoints();
+    app.MapFontEndpoints();
 
     app.Run();
     return 0;

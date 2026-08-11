@@ -25,10 +25,21 @@ public sealed record RasterResult(
     IReadOnlyList<LaidOutLine> Lines,
     bool HasMissingGlyphs,
     bool SyntheticItalic,
-    bool SubstitutedWeight)
+    bool SubstitutedWeight,
+    FontSourceKind? FontSource = null,
+    string? FontFamily = null,
+    string? FontWarning = null)
 {
     /// <summary>Şekil rasterinde satır bilgisi yoktur.</summary>
     public static IReadOnlyList<LaidOutLine> NoLines { get; } = [];
+
+    /// <summary>
+    /// Bu raster her makinede AYNI baytları üretir mi. Sistem fontuyla çizilmiş metinde
+    /// <c>false</c>'tur (yerel font sürümü/hinting'i makineye göre değişir) — piksel
+    /// golden'ları YALNIZ <c>true</c> olan rasterler için anlamlıdır.
+    /// Şekil rasterlerinde font yoktur, dolayısıyla daima <c>true</c>.
+    /// </summary>
+    public bool Deterministic => FontSource != FontSourceKind.System;
 }
 
 /// <summary>

@@ -164,7 +164,12 @@ internal static class ExportTestDocs
         Text = new TextClipText
         {
             Content = content,
-            FontId = "inter",
+            // KÜRATÖRLÜ id (fonts/manifest.json). Eskiden 'inter' yazıyordu — manifestte
+            // OLMAYAN bir id; editörün varsayılanı da oydu ve metin içeren her export
+            // 'font-missing' ile düşüyordu (M4 dalga-2 denetimi, KRİTİK bulgu #1). Test
+            // dokümanları da gerçek katalogdan seçilir, aksi halde 422 ön kontrolü
+            // (ExportEndpoints) kendi test verimizi reddederdi.
+            FontId = "roboto",
             FontSizePx = 64,
             FontWeight = 400,
             Italic = false,
@@ -226,6 +231,77 @@ internal static class ExportTestDocs
         FadeOutUs = fadeOutUs,
         Muted = muted,
     };
+
+    // ---------- M5: hız, efektler, keyframe'ler ----------
+
+    /// <summary>
+    /// Hızlandırılmış/yavaşlatılmış video klibi. Süre sözleşmesi (rendering-semantics §1.3)
+    /// BURADA kurulur: timelineDurationUs = roundHalfUp((sourceOut-sourceIn)/rate) — compiler
+    /// bunu doğrular, testin fixture'ı da aynı formülü kullanmalıdır.
+    /// </summary>
+    public static MediaClip SpeedClip(
+        Guid assetId, long timelineStartUs, long sourceInUs, long sourceOutUs, double rate,
+        ClipAudio? audio = null, Transform? transform = null)
+    {
+        var clip = VideoClip(assetId, timelineStartUs, sourceInUs, sourceOutUs, audio, transform);
+        clip.Speed = new MediaClipSpeed { Rate = rate };
+        clip.TimelineDurationUs = Timecode.ClipTimelineDurationUs(sourceInUs, sourceOutUs, rate);
+        return clip;
+    }
+
+    /// <summary>colorAdjust efekti (§4.1) — verilmeyen parametreler şemada da etkisizdir (0).</summary>
+    public static Effect ColorAdjust(
+        double exposure = 0, double temperature = 0, double tint = 0,
+        double contrast = 0, double brightness = 0, double saturation = 0, bool enabled = true)
+    {
+        var effect = new Effect
+        {
+            Id = Guid.CreateVersion7(),
+            Type = EffectType.ColorAdjust,
+            Enabled = enabled,
+        };
+        Put(effect, "exposure", exposure);
+        Put(effect, "temperature", temperature);
+        Put(effect, "tint", tint);
+        Put(effect, "contrast", contrast);
+        Put(effect, "brightness", brightness);
+        Put(effect, "saturation", saturation);
+        return effect;
+
+        static void Put(Effect effect, string key, double value)
+        {
+            if (value != 0)
+            {
+                effect.Params[key] = value;
+            }
+        }
+    }
+
+    /// <summary>lut efekti (§4.2): .cube dosyası bir ASSET'tir, intensity karışım oranıdır.</summary>
+    public static Effect Lut(Guid assetId, double intensity = 1, bool enabled = true)
+    {
+        var effect = new Effect
+        {
+            Id = Guid.CreateVersion7(),
+            Type = EffectType.Lut,
+            Enabled = enabled,
+        };
+        effect.Params["assetId"] = assetId.ToString();
+        effect.Params["intensity"] = intensity;
+        return effect;
+    }
+
+    /// <summary>Tek keyframe (§3.3: easing BU keyframe'den SONRAKİ segmente aittir).</summary>
+    public static Keyframe Kf(long timeUs, double value, Easing? easing = null) => new()
+    {
+        TimeUs = timeUs,
+        Value = value,
+        Easing = easing ?? new EasingLinear { Type = "linear" },
+    };
+
+    public static Easing EaseInOut() => new EasingEaseInOut { Type = "easeInOut" };
+
+    public static Easing EaseIn() => new EasingEaseIn { Type = "easeIn" };
 
     public static Transform DefaultTransform() => new()
     {

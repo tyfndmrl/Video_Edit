@@ -153,6 +153,34 @@ export function unitQuadToNdcMatrix(
   ]);
 }
 
+/**
+ * Inverse of a unitQuadToNdcMatrix() result: NDC -> unit quad. null when the
+ * placement is degenerate (scale 0 — nothing to sample).
+ *
+ * The transition pass needs it: it draws ONE full-frame quad and asks, per
+ * fragment, "which source pixel of each side lands here?". The bottom row of
+ * these matrices is always (0, 0, 1) (they are affine), so the inverse is the
+ * closed form of a 2x2 plus a translation — no general 3x3 solver needed.
+ */
+export function invertAffineMat3(m: Float32Array): Float32Array | null {
+  // Column-major: columns are (a, b, 0), (c, d, 0), (e, f, 1).
+  const a = m[0]!;
+  const b = m[1]!;
+  const c = m[3]!;
+  const d = m[4]!;
+  const e = m[6]!;
+  const f = m[7]!;
+  const det = a * d - b * c;
+  if (!Number.isFinite(det) || det === 0) return null;
+  const ia = d / det;
+  const ib = -b / det;
+  const ic = -c / det;
+  const id = a / det;
+  const ie = (c * f - d * e) / det;
+  const iff = (b * e - a * f) / det;
+  return new Float32Array([ia, ib, 0, ic, id, 0, ie, iff, 1]);
+}
+
 /** Apply the mat3 to (u, v, 1) — used by tests to cross-check against the formula. */
 export function applyMat3(m: Float32Array, u: number, v: number): { x: number; y: number } {
   return {

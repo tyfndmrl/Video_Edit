@@ -86,7 +86,8 @@ public sealed record TextLayout(
     double BboxTopPx,
     double BboxWidthPx,
     double BboxHeightPx,
-    bool HasMissingGlyphs)
+    bool HasMissingGlyphs,
+    InkBox? BackgroundRect = null)
 {
     public double OriginXPx => -BboxLeftPx;
 
@@ -134,6 +135,20 @@ public sealed record TextLayoutRequest
 /// </summary>
 public static class TextLayoutEngine
 {
+    /// <summary>
+    /// ÖLÇÜMÜ SIFIR olan metnin asgari içerik genişliği (fontSizePx'in katı). Boş metin de
+    /// tutulabilir bir kutu taşımalıdır; aksi halde gizmo kutusu yok olur ve kullanıcı yeni
+    /// eklediği metni seçemez.
+    /// <para>
+    /// AYNI SABİT İSTEMCİDE DE VARDIR: <c>EMPTY_TEXT_MIN_WIDTH_RATIO</c>
+    /// (apps/editor/src/features/text/textLayout.ts). İkisini
+    /// <c>packages/timeline-schema/test-vectors/text-layout-vectors.json</c> kilitler —
+    /// biri değişirse ÖTEKİ DİLİN testi kırmızıya döner (M4 dalga-2 denetimi, bulgu #2).
+    /// </para>
+    /// Kural YALNIZ ölçüm 0 iken uygulanır: gerçekten dar bir satır ("I") dar kalmalıdır.
+    /// </summary>
+    public const double EmptyTextMinWidthRatio = 0.5;
+
     /// <summary>Boş içerik bile TEK satır üretir: yükseklik korunur, kutu kaybolmaz.</summary>
     public static TextLayout Layout(TextLayoutRequest request, IGlyphMeasurer measurer)
     {
@@ -155,7 +170,10 @@ public static class TextLayoutEngine
         var firstBaseline = halfLeading - metrics.Ascent;
 
         var advances = lines.Select(measurer.MeasureAdvance).ToList();
-        var contentWidth = advances.Count == 0 ? 0d : advances.Max();
+        var measured = advances.Count == 0 ? 0d : advances.Max();
+        // Asgari genişlik kuralı — İSTEMCİYLE AYNI (bkz. EmptyTextMinWidthRatio). Yalnız
+        // ölçüm 0 iken devreye girer; " " gibi advance üreten metinlerde girmez.
+        var contentWidth = measured > 0d ? measured : request.FontSizePx * EmptyTextMinWidthRatio;
         var contentHeight = lineHeightPx * lines.Count;
 
         var laidOut = new List<LaidOutLine>(lines.Count);
@@ -181,11 +199,17 @@ public static class TextLayoutEngine
 
         // Kutu birleşimi: içerik kutusu DAİMA içeridedir (yalnız boşluktan oluşan metinde bile
         // yerleşim kutusu korunur), üstüne mürekkep+kontur taşması ve arka plan kutusu eklenir.
-        var box = new InkBox(0, 0, Math.Max(contentWidth, 0), Math.Max(contentHeight, 0))
-            .Union(ink);
+        var content = new InkBox(0, 0, Math.Max(contentWidth, 0), Math.Max(contentHeight, 0));
+        var box = content.Union(ink);
+
+        // ARKA PLAN DİKDÖRTGENİ = İÇERİK ± PAY (bbox DEĞİL). Burada üretilir ki çizim tarafı
+        // (SkiaOverlayRasterService) ve istemci aynı kutuyu kullansın — denetim bulgusu #2'nin
+        // ikinci yarısı tam olarak buydu: istemci arka planı TÜM bbox'a boyuyordu.
+        InkBox? backgroundRect = null;
         if (request.BackgroundPaddingPx is { } padding)
         {
-            box = box.Union(new InkBox(0, 0, contentWidth, contentHeight).Inflate(Math.Max(0d, padding)));
+            backgroundRect = content.Inflate(Math.Max(0d, padding));
+            box = box.Union(backgroundRect.Value);
         }
 
         // Dışa doğru tamsayıya: kırpılma olmasın (yarım piksel mürekkep kesilmesin).
@@ -203,7 +227,8 @@ public static class TextLayoutEngine
             top0,
             width,
             height,
-            !measurer.ContainsAllGlyphs(request.Content));
+            !measurer.ContainsAllGlyphs(request.Content),
+            backgroundRect);
     }
 
     /// <summary>

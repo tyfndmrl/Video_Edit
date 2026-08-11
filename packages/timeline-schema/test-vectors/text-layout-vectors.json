@@ -1,0 +1,311 @@
+{
+  "vectorVersion": 1,
+  "tolerance": 1e-9,
+  "emptyTextMinWidthRatio": 0.5,
+  "//": [
+    "CROSS-LANGUAGE metin yerleşim vektörleri — rendering-semantics §7, M4 dalga-2 denetimi",
+    "bulgu #2 ('istemci/sunucu bbox kuralları çelişiyor').",
+    "",
+    "Aynı dosyayı İKİ taraf da okur:",
+    "  TS  : apps/editor/src/features/text/textLayoutVectors.test.ts",
+    "  C#  : backend/tests/VideoEdit.UnitTests/TextLayoutVectorParityTests.cs",
+    "İki uygulama da AYNI sentetik fontla sürülür, yani vektörler FONT metriklerini değil",
+    "YERLEŞİM KURALINI kilitler. Bir tarafta kural değişirse ÖTEKİ DİLİN testi kırmızıya döner.",
+    "",
+    "Beklenen değerler ELLE hesaplanmıştır (üreten script yoktur): oranlar öyle seçildi ki her",
+    "ara değer tam ondalık çıkar. Bir vaka güncellenecekse aritmetiği tekrar elle yapın —",
+    "'implementasyondan yeniden üret' yasaktır, testi tautolojiye çevirir.",
+    "",
+    "SENTETİK FONT (ölçüm kuralları — iki dil de birebir bunu gerçekler):",
+    "  cell        = fontSizePx * advanceRatio",
+    "  advance(s)  = s.length * cell            (boşluk dahil HER karakter bir hücre)",
+    "  metrics     = { ascent: fontSizePx * ascentRatio (NEGATİF), descent: fontSizePx * descentRatio }",
+    "  ink(s)      : s içindeki boşluk-olmayan ilk/son karakter indeksleri f..l; hiç yoksa BOŞ kutu.",
+    "                left  = f * cell + fontSizePx * inkSideBearingRatio",
+    "                right = (l + 1) * cell - fontSizePx * inkSideBearingRatio",
+    "                top   = -fontSizePx * inkAscentRatio",
+    "                bottom= +fontSizePx * inkDescentRatio",
+    "                (kalem (0, taban çizgisi) noktasına GÖRECELİ — Skia uzlaşımı)",
+    "",
+    "YERLEŞİM KURALI (tek kural, iki dilde aynı):",
+    "  lineHeightPx  = fontSizePx * lineHeight",
+    "  halfLeading   = (lineHeightPx - (descent - ascent)) / 2",
+    "  baseline(0)   = halfLeading - ascent ; baseline(i) = baseline(0) + i*lineHeightPx",
+    "  contentWidth  = max(advance); TÜMÜ 0 ise fontSizePx * emptyTextMinWidthRatio",
+    "  contentHeight = lineHeightPx * satırSayısı",
+    "  left(i)       = left:0 | center:(cw-adv)/2 | right:(cw-adv)",
+    "  ink           = U ink(i).translate(left(i), baseline(i)).inflate(strokeWidthPx/2)",
+    "  box           = (0,0,cw,ch) U ink U (arkaplan varsa (0,0,cw,ch).inflate(padding))",
+    "  bbox          = floor(left), floor(top), max(1, ceil(right)-floor(left)), max(1, ceil(bottom)-floor(top))",
+    "  origin        = (-bboxLeft, -bboxTop)",
+    "  backgroundRect= (0,0,cw,ch).inflate(padding)   — BBOX DEĞİL (bulgu #2'nin ikinci yarısı)"
+  ],
+
+  "font": {
+    "ascentRatio": -0.8,
+    "descentRatio": 0.2,
+    "advanceRatio": 0.5,
+    "inkAscentRatio": 0.7,
+    "inkDescentRatio": 0.1,
+    "inkSideBearingRatio": 0.05
+  },
+
+  "cases": [
+    {
+      "name": "plain-single-line",
+      "why": "Taban durum: mürekkep içerik kutusunun İÇİNDE, bbox = içerik kutusu.",
+      "style": {
+        "content": "ab",
+        "fontSizePx": 20,
+        "lineHeight": 1.2,
+        "align": "left",
+        "strokeWidthPx": 0,
+        "backgroundPaddingPx": null
+      },
+      "expected": {
+        "lineHeightPx": 24,
+        "contentWidthPx": 20,
+        "contentHeightPx": 24,
+        "bboxLeftPx": 0,
+        "bboxTopPx": 0,
+        "bboxWidthPx": 20,
+        "bboxHeightPx": 24,
+        "originXPx": 0,
+        "originYPx": 0,
+        "backgroundRect": null,
+        "lines": [{ "index": 0, "text": "ab", "advanceWidthPx": 20, "leftPx": 0, "baselineYPx": 18 }]
+      }
+    },
+    {
+      "name": "stroke-6-expands-by-half",
+      "why": "Denetimde ölçülen ÇELİŞKİ vakası. Kontur 6 → dışa taşan pay 3 (TAM 6 DEĞİL); kutu yalnız MÜREKKEP+3 kadar büyür, içerik kutusu her iki kenarda pay eklemez.",
+      "style": {
+        "content": "ab",
+        "fontSizePx": 20,
+        "lineHeight": 1.2,
+        "align": "left",
+        "strokeWidthPx": 6,
+        "backgroundPaddingPx": null
+      },
+      "expected": {
+        "lineHeightPx": 24,
+        "contentWidthPx": 20,
+        "contentHeightPx": 24,
+        "bboxLeftPx": -2,
+        "bboxTopPx": 0,
+        "bboxWidthPx": 24,
+        "bboxHeightPx": 24,
+        "originXPx": 2,
+        "originYPx": 0,
+        "backgroundRect": null,
+        "lines": [{ "index": 0, "text": "ab", "advanceWidthPx": 20, "leftPx": 0, "baselineYPx": 18 }]
+      }
+    },
+    {
+      "name": "stroke-and-background",
+      "why": "Denetimin ikinci ölçülen vakası. Arka plan payı İÇERİK kutusuna uygulanır; bbox üç kutunun BİRLEŞİMİ, arka plan dikdörtgeni bbox DEĞİL.",
+      "style": {
+        "content": "ab",
+        "fontSizePx": 20,
+        "lineHeight": 1.2,
+        "align": "left",
+        "strokeWidthPx": 6,
+        "backgroundPaddingPx": 8
+      },
+      "expected": {
+        "lineHeightPx": 24,
+        "contentWidthPx": 20,
+        "contentHeightPx": 24,
+        "bboxLeftPx": -8,
+        "bboxTopPx": -8,
+        "bboxWidthPx": 36,
+        "bboxHeightPx": 40,
+        "originXPx": 8,
+        "originYPx": 8,
+        "backgroundRect": { "left": -8, "top": -8, "right": 28, "bottom": 32 },
+        "lines": [{ "index": 0, "text": "ab", "advanceWidthPx": 20, "leftPx": 0, "baselineYPx": 18 }]
+      }
+    },
+    {
+      "name": "background-zero-padding",
+      "why": "Payı 0 olan arka plan kutuyu BÜYÜTMEZ ve dikdörtgen tam içerik kutusudur (bbox'a boyanırsa bu vaka kırılır).",
+      "style": {
+        "content": "ab",
+        "fontSizePx": 20,
+        "lineHeight": 1.2,
+        "align": "left",
+        "strokeWidthPx": 0,
+        "backgroundPaddingPx": 0
+      },
+      "expected": {
+        "lineHeightPx": 24,
+        "contentWidthPx": 20,
+        "contentHeightPx": 24,
+        "bboxLeftPx": 0,
+        "bboxTopPx": 0,
+        "bboxWidthPx": 20,
+        "bboxHeightPx": 24,
+        "originXPx": 0,
+        "originYPx": 0,
+        "backgroundRect": { "left": 0, "top": 0, "right": 20, "bottom": 24 },
+        "lines": [{ "index": 0, "text": "ab", "advanceWidthPx": 20, "leftPx": 0, "baselineYPx": 18 }]
+      }
+    },
+    {
+      "name": "empty-content-min-width",
+      "why": "BOŞ metin: tek boş satır, içerik genişliği fontSizePx * emptyTextMinWidthRatio. İki tarafta AYNI kural (sunucuda bu kural eksikti).",
+      "style": {
+        "content": "",
+        "fontSizePx": 20,
+        "lineHeight": 1.2,
+        "align": "left",
+        "strokeWidthPx": 0,
+        "backgroundPaddingPx": null
+      },
+      "expected": {
+        "lineHeightPx": 24,
+        "contentWidthPx": 10,
+        "contentHeightPx": 24,
+        "bboxLeftPx": 0,
+        "bboxTopPx": 0,
+        "bboxWidthPx": 10,
+        "bboxHeightPx": 24,
+        "originXPx": 0,
+        "originYPx": 0,
+        "backgroundRect": null,
+        "lines": [{ "index": 0, "text": "", "advanceWidthPx": 0, "leftPx": 0, "baselineYPx": 18 }]
+      }
+    },
+    {
+      "name": "whitespace-only-no-min",
+      "why": "Asgari genişlik YALNIZ ölçüm 0 iken uygulanır: tek boşluk advance üretir (10), mürekkep üretmez.",
+      "style": {
+        "content": " ",
+        "fontSizePx": 20,
+        "lineHeight": 1.2,
+        "align": "left",
+        "strokeWidthPx": 0,
+        "backgroundPaddingPx": null
+      },
+      "expected": {
+        "lineHeightPx": 24,
+        "contentWidthPx": 10,
+        "contentHeightPx": 24,
+        "bboxLeftPx": 0,
+        "bboxTopPx": 0,
+        "bboxWidthPx": 10,
+        "bboxHeightPx": 24,
+        "originXPx": 0,
+        "originYPx": 0,
+        "backgroundRect": null,
+        "lines": [{ "index": 0, "text": " ", "advanceWidthPx": 10, "leftPx": 0, "baselineYPx": 18 }]
+      }
+    },
+    {
+      "name": "multiline-center",
+      "why": "Hizalama ADVANCE üzerinden (mürekkep değil) ve satır aralığı lineHeightPx katları.",
+      "style": {
+        "content": "ab\nabcd",
+        "fontSizePx": 20,
+        "lineHeight": 1.5,
+        "align": "center",
+        "strokeWidthPx": 0,
+        "backgroundPaddingPx": null
+      },
+      "expected": {
+        "lineHeightPx": 30,
+        "contentWidthPx": 40,
+        "contentHeightPx": 60,
+        "bboxLeftPx": 0,
+        "bboxTopPx": 0,
+        "bboxWidthPx": 40,
+        "bboxHeightPx": 60,
+        "originXPx": 0,
+        "originYPx": 0,
+        "backgroundRect": null,
+        "lines": [
+          { "index": 0, "text": "ab", "advanceWidthPx": 20, "leftPx": 10, "baselineYPx": 21 },
+          { "index": 1, "text": "abcd", "advanceWidthPx": 40, "leftPx": 0, "baselineYPx": 51 }
+        ]
+      }
+    },
+    {
+      "name": "trailing-newline-right-align",
+      "why": "Sondaki \\n BOŞ bir satır üretir (kutu büyür) ve sağa hizalamada o satır sağ kenara oturur.",
+      "style": {
+        "content": "ab\n",
+        "fontSizePx": 20,
+        "lineHeight": 1.2,
+        "align": "right",
+        "strokeWidthPx": 2,
+        "backgroundPaddingPx": null
+      },
+      "expected": {
+        "lineHeightPx": 24,
+        "contentWidthPx": 20,
+        "contentHeightPx": 48,
+        "bboxLeftPx": 0,
+        "bboxTopPx": 0,
+        "bboxWidthPx": 20,
+        "bboxHeightPx": 48,
+        "originXPx": 0,
+        "originYPx": 0,
+        "backgroundRect": null,
+        "lines": [
+          { "index": 0, "text": "ab", "advanceWidthPx": 20, "leftPx": 0, "baselineYPx": 18 },
+          { "index": 1, "text": "", "advanceWidthPx": 0, "leftPx": 20, "baselineYPx": 42 }
+        ]
+      }
+    },
+    {
+      "name": "fractional-floor-ceil",
+      "why": "Kesirli kutu DIŞA doğru tamsayılanır (floor/ceil) — yarım piksel mürekkep kırpılmaz.",
+      "style": {
+        "content": "a",
+        "fontSizePx": 25,
+        "lineHeight": 1.2,
+        "align": "left",
+        "strokeWidthPx": 5,
+        "backgroundPaddingPx": null
+      },
+      "expected": {
+        "lineHeightPx": 30,
+        "contentWidthPx": 12.5,
+        "contentHeightPx": 30,
+        "bboxLeftPx": -2,
+        "bboxTopPx": 0,
+        "bboxWidthPx": 16,
+        "bboxHeightPx": 30,
+        "originXPx": 2,
+        "originYPx": 0,
+        "backgroundRect": null,
+        "lines": [{ "index": 0, "text": "a", "advanceWidthPx": 12.5, "leftPx": 0, "baselineYPx": 22.5 }]
+      }
+    },
+    {
+      "name": "tight-line-height-ink-above-content",
+      "why": "lineHeight < 1: halfLeading NEGATİF, mürekkep içerik kutusunun ÜSTÜNE taşar → bboxTop negatif, origin kayar.",
+      "style": {
+        "content": "ab",
+        "fontSizePx": 20,
+        "lineHeight": 0.7,
+        "align": "left",
+        "strokeWidthPx": 0,
+        "backgroundPaddingPx": null
+      },
+      "expected": {
+        "lineHeightPx": 14,
+        "contentWidthPx": 20,
+        "contentHeightPx": 14,
+        "bboxLeftPx": 0,
+        "bboxTopPx": -1,
+        "bboxWidthPx": 20,
+        "bboxHeightPx": 16,
+        "originXPx": 0,
+        "originYPx": 1,
+        "backgroundRect": null,
+        "lines": [{ "index": 0, "text": "ab", "advanceWidthPx": 20, "leftPx": 0, "baselineYPx": 13 }]
+      }
+    }
+  ]
+}

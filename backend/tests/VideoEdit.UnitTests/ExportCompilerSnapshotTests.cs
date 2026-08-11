@@ -1,7 +1,11 @@
 using System.Globalization;
 using System.Text;
+using VideoEdit.Contracts;
 using VideoEdit.Contracts.Timeline;
+using VideoEdit.Media;
 using VideoEdit.Media.Export;
+using MediaEasing = VideoEdit.Media.Easing;
+using MediaKeyframe = VideoEdit.Media.Keyframe;
 
 namespace VideoEdit.UnitTests;
 
@@ -331,6 +335,106 @@ public sealed class ExportCompilerSnapshotTests
         ]),
     ]);
 
+    // ---------- M5 fixture'ları: hız, renk düzeltme, LUT, keyframe ----------
+
+    /// <summary>2x hızlı + 0.25x yavaş klip, ikisi de sesli (atempo katlaması dahil).</summary>
+    private static TimelineDoc SpeedChange() => ExportTestDocs.Doc(
+        clips:
+        [
+            ExportTestDocs.SpeedClip(ExportTestDocs.AssetA, 0, 0, 4_000_000, 2,
+                ExportTestDocs.Audio()),
+            ExportTestDocs.SpeedClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 2_000_000, 0.25,
+                ExportTestDocs.Audio(volume: 0.5)),
+        ]);
+
+    /// <summary>§4.1'in ALTI parametresi birden — aşama sırası snapshot'ta sabitlenir.</summary>
+    private static TimelineDoc ColorAdjustAllParams()
+    {
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000,
+            ExportTestDocs.Audio());
+        clip.Effects =
+        [
+            ExportTestDocs.ColorAdjust(
+                exposure: 0.3, temperature: 0.45, tint: -0.2,
+                contrast: 0.15, brightness: 0.05, saturation: 0.2),
+        ];
+        return ExportTestDocs.Doc(clips: clip);
+    }
+
+    /// <summary>LUT %75 karışım (split/blend) + tam güçte LUT (düz lut3d) — §4.2'nin iki dalı.</summary>
+    private static TimelineDoc LutEffects()
+    {
+        var blended = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000);
+        blended.Effects = [ExportTestDocs.Lut(LutAsset, 0.75)];
+        var full = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 0, 2_000_000);
+        full.Effects = [ExportTestDocs.ColorAdjust(saturation: -0.5), ExportTestDocs.Lut(LutAsset)];
+        return ExportTestDocs.Doc(clips: [blended, full]);
+    }
+
+    /// <summary>
+    /// TAMAMI LİNEER keyframe'ler → ifade yolu: overlay x/y 'if' zinciri, scale eval=frame,
+    /// rotate ifadesi, 0→1 opaklık fade'i. Alt katman animasyonun tuval üstünde olduğunu gösterir.
+    /// </summary>
+    private static TimelineDoc KeyframeLinear()
+    {
+        var animated = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 1_000_000, 0, 2_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.5));
+        animated.Keyframes = new KeyframeTracks
+        {
+            X = [ExportTestDocs.Kf(0, -0.25), ExportTestDocs.Kf(1_000_000, 0.25),
+                 ExportTestDocs.Kf(2_000_000, 0)],
+            Y = [ExportTestDocs.Kf(0, 0), ExportTestDocs.Kf(2_000_000, -0.2)],
+            // Ölçek animasyonu DÖNME ile birlikte kullanılamaz (rotate çıkış tuvalini config
+            // anında kurar ve büyüyen katmanı kırpar) — dönme eğrili fixture'da sınanır.
+            Scale = [ExportTestDocs.Kf(0, 0.5), ExportTestDocs.Kf(2_000_000, 1)],
+            Opacity = [ExportTestDocs.Kf(0, 0), ExportTestDocs.Kf(500_000, 1)],
+        };
+        return ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips: [animated]),
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 3_000_000,
+                    ExportTestDocs.Audio()),
+            ]),
+        ]);
+    }
+
+    /// <summary>
+    /// EĞRİLİ easing → sendcmd yolu: overlay x (kompozit eksen) + opaklık (klip ekseni).
+    /// Klip kısa tutulur — snapshot frame başına komut taşır.
+    /// </summary>
+    private static TimelineDoc KeyframeEased()
+    {
+        var animated = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 400_000,
+            transform: ExportTestDocs.Transform(scale: 0.5));
+        animated.Keyframes = new KeyframeTracks
+        {
+            X = [ExportTestDocs.Kf(0, -0.25, ExportTestDocs.EaseInOut()),
+                 ExportTestDocs.Kf(400_000, 0.25)],
+            Opacity = [ExportTestDocs.Kf(0, 0.2, ExportTestDocs.EaseIn()),
+                       ExportTestDocs.Kf(400_000, 0.8)],
+            RotationDeg = [ExportTestDocs.Kf(0, 0, ExportTestDocs.EaseInOut()),
+                           ExportTestDocs.Kf(400_000, 45)],
+        };
+        return ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips: [animated]),
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000)]),
+        ]);
+    }
+
+    /// <summary>LUT (.cube) varlığı — MEDYA defterinden ayrıdır (probe edilmez).</summary>
+    private static readonly Guid LutAsset = Guid.Parse("00000000-0000-0000-0000-0000000000d4");
+
+    private static Dictionary<Guid, ExportAssetSource> LutSources()
+    {
+        var sources = SdrSources(hasAudio: false);
+        sources[LutAsset] = new ExportAssetSource("luts/teal.cube", false, null, null);
+        return sources;
+    }
+
     private static Dictionary<Guid, ExportAssetSource> SdrSources(bool hasAudio = true) => new()
     {
         [ExportTestDocs.AssetA] = new ExportAssetSource("assets/a.mp4", hasAudio, "bt709", "bt709"),
@@ -352,11 +456,18 @@ public sealed class ExportCompilerSnapshotTests
         "layer-run-concat", "image-clip", "image-over-video",
         "transition-single", "transition-audio", "transition-chain",
         "transition-pip-layer", "text-over-video", "shape-and-sticker",
+        // M5: hız, renk düzeltme, LUT, keyframe (ifade yolu + sendcmd yolu)
+        "speed-change", "color-adjust", "lut-effects", "keyframe-linear", "keyframe-eased",
     ];
 
     private static (TimelineDoc Doc, Dictionary<Guid, ExportAssetSource> Sources) Fixture(string name) =>
         name switch
         {
+            "speed-change" => (SpeedChange(), SdrSources()),
+            "color-adjust" => (ColorAdjustAllParams(), SdrSources()),
+            "lut-effects" => (LutEffects(), LutSources()),
+            "keyframe-linear" => (KeyframeLinear(), SdrSources()),
+            "keyframe-eased" => (KeyframeEased(), SdrSources(hasAudio: false)),
             "transition-single" => (TransitionSingle(), SdrSources(hasAudio: false)),
             "transition-audio" => (TransitionSingle(audio: ExportTestDocs.Audio(volume: 0.8)), SdrSources()),
             "transition-chain" => (TransitionChain(), SdrSources()),
@@ -1093,46 +1204,235 @@ public sealed class ExportCompilerSnapshotTests
     }
 
     [Fact]
-    public void Validate_Keyframes_Throws()
+    public void Validate_VolumeKeyframes_AreStillOutOfScope()
     {
-        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        // M5 kapsamı: x/y/scale/rotationDeg/opacity. VOLUME keyframe'i (§8.1) ses zincirine
+        // AYRI bir sendcmd mekanizması ister ve kapsam dışıdır — sessizce yok saymak yerine
+        // tipli hata (kullanıcı "ses otomasyonum çalışmadı" demesin).
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000,
+            ExportTestDocs.Audio());
         clip.Keyframes = new KeyframeTracks
         {
-            Opacity =
-            [
-                new Keyframe { TimeUs = 0, Value = 0, Easing = new EasingLinear { Type = "linear" } },
-            ],
+            Volume = [ExportTestDocs.Kf(0, 1), ExportTestDocs.Kf(500_000, 0)],
         };
         var doc = ExportTestDocs.Doc(clips: clip);
 
         var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
-        Assert.Equal("keyframes", ex.Feature);
+        Assert.Equal("keyframes-volume", ex.Feature);
     }
 
     [Fact]
-    public void Validate_EnabledEffect_Throws()
+    public void Validate_DuplicateColorAdjust_Throws()
     {
+        // Önizleme uber-shader'ı TEK parametre kümesi uygular (compositor.ts) → iki colorAdjust'ın
+        // hangi sırayla uygulandığı export'ta bile tanımlı olsa parity KIRILIRDI.
         var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
         clip.Effects =
         [
-            new Effect { Id = Guid.CreateVersion7(), Type = EffectType.ColorAdjust, Enabled = true },
+            ExportTestDocs.ColorAdjust(contrast: 0.2),
+            ExportTestDocs.ColorAdjust(saturation: 0.3),
         ];
         var doc = ExportTestDocs.Doc(clips: clip);
 
-        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
-        Assert.Equal("effects", ex.Feature);
+        var ex = Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(doc));
+        Assert.Contains("colorAdjust", ex.Message);
     }
 
     [Fact]
-    public void Validate_SpeedRate_Throws()
+    public void Validate_ColorAdjustOutOfRange_Throws()
     {
         var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
-        clip.Speed = new MediaClipSpeed { Rate = 2 };
-        clip.TimelineDurationUs = 500_000;
+        clip.Effects = [ExportTestDocs.ColorAdjust(contrast: 1.5)];
         var doc = ExportTestDocs.Doc(clips: clip);
 
-        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
-        Assert.Equal("speed", ex.Feature);
+        Assert.Contains("[-1..1]",
+            Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(doc)).Message);
+    }
+
+    [Fact]
+    public void Validate_DisabledEffect_IsIgnored_AndProducesNoFilter()
+    {
+        // enabled=false efekt hiç yokmuş gibi davranmalı: kapalı bir efekt yüzünden export
+        // düşerse kullanıcı efekti kapatarak sorunu çözemez.
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.Effects = [ExportTestDocs.ColorAdjust(contrast: 0.5, enabled: false)];
+        var compiled = ExportCompiler.Compile(
+            ExportTestDocs.Doc(clips: clip), SdrSources(), ExportProfile.Hd1080p);
+
+        Assert.DoesNotContain("lutrgb", compiled.FilterGraphScript);
+        Assert.DoesNotContain("colorchannelmixer", compiled.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Validate_ZeroedColorAdjust_ProducesNoFilterAtAll()
+    {
+        // §4.1: "Tüm parametreler 0 ise compiler efekt filtresi HİÇ üretmez."
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.Effects = [ExportTestDocs.ColorAdjust()];
+        var compiled = ExportCompiler.Compile(
+            ExportTestDocs.Doc(clips: clip), SdrSources(), ExportProfile.Hd1080p);
+
+        Assert.DoesNotContain("lutrgb", compiled.FilterGraphScript);
+        Assert.DoesNotContain("exposure=", compiled.FilterGraphScript);
+        Assert.DoesNotContain("format=rgba", compiled.FilterGraphScript); // hızlı yol bozulmadı
+    }
+
+    [Fact]
+    public void Validate_LutWithoutAsset_ThrowsTypedError()
+    {
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.Effects = [ExportTestDocs.Lut(ExportTestDocs.AssetC)];
+        var doc = ExportTestDocs.Doc(clips: clip);
+
+        // Plan LUT'u ayrı defterde tutar; kaynak defterinde yoksa TİPLİ hata (worker retry etmez).
+        Assert.Contains(ExportTestDocs.AssetC, ExportCompiler.Validate(doc).LutAssetIds);
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Compile(
+            doc,
+            new Dictionary<Guid, ExportAssetSource>
+            {
+                [ExportTestDocs.AssetA] = new("assets/a.mp4", false, "bt709", "bt709"),
+            },
+            ExportProfile.Hd1080p));
+        Assert.Equal("lut-asset", ex.Feature);
+    }
+
+    [Fact]
+    public void Validate_LutAssetIds_AreSeparateFromMediaAssetIds()
+    {
+        // Worker AssetIds'i ffprobe'dan geçirir ve video stream'i şart koşar; .cube dosyası
+        // orada olsaydı "no video stream" ile TÜM export düşerdi (M5 denetim kapısı).
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.Effects = [ExportTestDocs.Lut(ExportTestDocs.AssetC, 0.5)];
+        var plan = ExportCompiler.Validate(ExportTestDocs.Doc(clips: clip));
+
+        Assert.Equal([ExportTestDocs.AssetA], plan.AssetIds);
+        Assert.Equal([ExportTestDocs.AssetC], plan.LutAssetIds);
+    }
+
+    [Fact]
+    public void Validate_SpeedRate_OutOfSchemaRange_Throws()
+    {
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.Speed = new MediaClipSpeed { Rate = 25 };
+        clip.TimelineDurationUs = 40_000;
+        var doc = ExportTestDocs.Doc(clips: clip);
+
+        Assert.Contains("[0.1..10]",
+            Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(doc)).Message);
+    }
+
+    [Fact]
+    public void Validate_SpeedDurationContract_MustMatchTheSchemaFormula()
+    {
+        // §1.3: timelineDurationUs = roundHalfUp((out-in)/rate). Editör yanlış süre yazarsa
+        // export sessizce KAYMAZ, sözleşme ihlali görünür olur.
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.Speed = new MediaClipSpeed { Rate = 2 };
+        clip.TimelineDurationUs = 1_000_000; // olması gereken: 500_000
+        var doc = ExportTestDocs.Doc(clips: clip);
+
+        Assert.Contains("duration contract",
+            Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(doc)).Message);
+    }
+
+    [Fact]
+    public void Compile_SpeedRate_EmitsSetptsRegridAndAtempoChain()
+    {
+        // tasarım 04 §2.4. Video: fps normalize → setpts=PTS/k → TEKRAR fps (çıktı ızgarası)
+        // → trim (frame defteri). Ses: atempo zinciri EN BAŞTA (sonraki pencereler timeline
+        // eksenindedir). k=0.25 için 0.5×0.5 katlaması.
+        var fast = ExportTestDocs.SpeedClip(
+            ExportTestDocs.AssetA, 0, 0, 4_000_000, 2, ExportTestDocs.Audio());
+        var fastCompiled = ExportCompiler.Compile(
+            ExportTestDocs.Doc(clips: fast), SdrSources(), ExportProfile.Hd1080p);
+        Assert.Contains("fps=30/1,setpts=PTS/2,fps=30/1,trim=end_frame=60,",
+            fastCompiled.FilterGraphScript);
+        Assert.Contains("[0:a]atempo=2,asetpts=PTS-STARTPTS", fastCompiled.FilterGraphScript);
+        Assert.Equal(2_000_000, fastCompiled.ExpectedDurationUs);
+        // Kaynak trim'i KAYNAK ekseninde kalır: 4 sn kaynak okunur, 2 sn timeline üretilir.
+        Assert.Equal(["-ss", "0.000000", "-t", "4.000000", "-i", "assets/a.mp4"],
+            fastCompiled.Inputs[0].ToArgs());
+
+        var slow = ExportTestDocs.SpeedClip(
+            ExportTestDocs.AssetA, 0, 0, 1_000_000, 0.25, ExportTestDocs.Audio());
+        var slowCompiled = ExportCompiler.Compile(
+            ExportTestDocs.Doc(clips: slow), SdrSources(), ExportProfile.Hd1080p);
+        Assert.Contains("setpts=PTS/0.25,fps=30/1,trim=end_frame=120,", slowCompiled.FilterGraphScript);
+        Assert.Contains("[0:a]atempo=0.5,atempo=0.5,asetpts=PTS-STARTPTS",
+            slowCompiled.FilterGraphScript);
+        Assert.Equal(4_000_000, slowCompiled.ExpectedDurationUs);
+    }
+
+    [Theory]
+    [InlineData(1d, new double[0])]
+    [InlineData(2d, new[] { 2d })]
+    [InlineData(0.5d, new[] { 0.5d })]
+    [InlineData(0.25d, new[] { 0.5d, 0.5d })]
+    [InlineData(0.1d, new[] { 0.5d, 0.5d, 0.5d, 0.8d })]
+    public void AtempoChain_FoldsOutOfRangeRates(double rate, double[] expected)
+    {
+        var chain = ExportCompiler.AtempoChain(rate).ToArray();
+        Assert.Equal(expected.Length, chain.Length);
+        for (var i = 0; i < expected.Length; i++)
+        {
+            Assert.Equal(expected[i], chain[i], 9);
+        }
+
+        // Katlamanın ÇARPIMI daima orijinal hızdır — süre sözleşmesi buna dayanır.
+        Assert.Equal(rate, chain.Length == 0 ? 1d : chain.Aggregate(1d, (a, b) => a * b), 9);
+    }
+
+    [Fact]
+    public void Compile_SpeedWithTransition_ScalesTheHandleIntoTheSourceDomain()
+    {
+        // §5.2: sourceIn' = sourceIn - roundHalfUp((D/2) * rate). 2x hızda 200 ms'lik
+        // timeline payı kaynakta 400 ms'tir — timeline payını doğrudan kullanmak geçişi
+        // yarı yarıya donmuş kareyle doldururdu.
+        var a = ExportTestDocs.SpeedClip(ExportTestDocs.AssetA, 0, 1_000_000, 5_000_000, 2);
+        var b = ExportTestDocs.SpeedClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 5_000_000, 2);
+        ExportTestDocs.Link(a, b, 400_000);
+        var compiled = ExportCompiler.Compile(
+            ExportTestDocs.Doc(clips: [a, b]), SdrSources(hasAudio: false), ExportProfile.Hd1080p);
+
+        // D/2 = 200 ms timeline = 400 ms kaynak → A 1.0→5.4 (4.4 sn), B 0.6→5.0 (4.4 sn).
+        Assert.Equal(["-ss", "1.000000", "-t", "4.400000", "-i", "assets/a.mp4"],
+            compiled.Inputs[0].ToArgs());
+        Assert.Equal(["-ss", "0.600000", "-t", "4.400000", "-i", "assets/b.mp4"],
+            compiled.Inputs[1].ToArgs());
+        // Timeline tarafı DEĞİŞMEZ: segment defteri 60 + 6 frame, offset kapalı formda.
+        Assert.Contains("trim=end_frame=66,", compiled.FilterGraphScript);
+        Assert.Contains("xfade=transition=fade:duration=0.400000:offset=1.800000",
+            compiled.FilterGraphScript);
+        Assert.Equal(4_000_000, compiled.ExpectedDurationUs);
+    }
+
+    [Fact]
+    public void Compile_SpeedWithTransition_RejectsInsufficientSourceHandle()
+    {
+        // Aynı geçiş rate=1'de geçerli (200 ms pay var), rate=2'de GEÇERSİZ (400 ms gerekir).
+        var a = ExportTestDocs.SpeedClip(ExportTestDocs.AssetA, 0, 1_000_000, 5_000_000, 2);
+        var b = ExportTestDocs.SpeedClip(ExportTestDocs.AssetB, 2_000_000, 300_000, 4_300_000, 2);
+        ExportTestDocs.Link(a, b, 400_000);
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(
+            ExportTestDocs.Doc(clips: [a, b])));
+        Assert.Equal("transition-handle", ex.Feature);
+    }
+
+    [Fact]
+    public void Compile_SpeedOnStillImage_ProducesNoSpeedFilters()
+    {
+        // Görselin ZAMAN EKSENİ YOKTUR: -loop 1 -t zaten TIMELINE süresi kadar kare üretir,
+        // setpts=PTS/k eklemek kare sayısını ikinci kez bölerdi.
+        var image = ExportTestDocs.ImageClip(ExportTestDocs.AssetC, 0, 2_000_000);
+        image.Speed = new MediaClipSpeed { Rate = 2 };
+        image.SourceOutUs = 4_000_000; // (out-in)/rate = 2 sn ✓
+        var compiled = ExportCompiler.Compile(
+            ExportTestDocs.Doc(clips: image), ImageSources(), ExportProfile.Hd1080p);
+
+        Assert.DoesNotContain("setpts=PTS/", compiled.FilterGraphScript);
+        Assert.True(compiled.Inputs[0].Loop);
+        Assert.Equal(2_000_000, compiled.ExpectedDurationUs);
     }
 
     // ---------- M4 dalga 2: geçişler (rendering-semantics §5) ----------
@@ -1548,25 +1848,275 @@ public sealed class ExportCompilerSnapshotTests
     }
 
     [Fact]
-    public void Validate_KeyframesAndEffectsOnOverlayClips_AreStillRejected()
+    public void Validate_KeyframesAndEffectsOnOverlayClips_AreSupported()
     {
-        // GÖREV 3: kapsam dışı özellikler overlay kliplerinde de tipli hata verir (M5).
-        var withKeyframes = ExportTestDocs.TextClip(0, 1_000_000);
-        withKeyframes.Keyframes = new KeyframeTracks
+        // M5: keyframe ve efektler overlay kliplerinde de derlenir (metin/şekil rasteri normal
+        // katman zincirinden geçer). Ölçek kutusunun tabanı rasterin KENDİ bbox'ıdır (§7) —
+        // animasyonlu ölçekte de öyle olmalı, tuval DEĞİL.
+        var text = ExportTestDocs.TextClip(0, 1_000_000);
+        text.Keyframes = new KeyframeTracks
         {
-            Opacity = [new Keyframe { TimeUs = 0, Value = 0, Easing = new EasingLinear { Type = "linear" } }],
+            Opacity = [ExportTestDocs.Kf(0, 0), ExportTestDocs.Kf(500_000, 1)],
+            Scale = [ExportTestDocs.Kf(0, 1), ExportTestDocs.Kf(1_000_000, 2)],
         };
-        var kfDoc = ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips: [withKeyframes])]);
-        Assert.Equal("keyframes",
-            Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(kfDoc)).Feature);
+        text.Effects = [ExportTestDocs.ColorAdjust(saturation: -1)];
+        var doc = ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips: [text])]);
+        var textId = ((TextClip)doc.Tracks[0].Clips[0]).Id;
 
-        var withEffect = ExportTestDocs.ShapeClip(0, 1_000_000);
-        withEffect.Effects =
-            [new Effect { Id = Guid.CreateVersion7(), Type = EffectType.ColorAdjust, Enabled = true }];
-        var fxDoc = ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips: [withEffect])]);
-        Assert.Equal("effects",
-            Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(fxDoc)).Feature);
+        var compiled = ExportCompiler.Compile(
+            doc, SdrSources(), ExportProfile.Hd1080p,
+            new Dictionary<Guid, ExportRasterSource>
+            {
+                [textId] = new("rasters/text.png", TextBboxWidth, TextBboxHeight),
+            });
+
+        // Ölçek ifadesi bbox tabanlıdır (640x160), tuval (1920x1080) DEĞİL.
+        Assert.Contains("scale=w='if(lt(t,0.000000),640,", compiled.FilterGraphScript);
+        Assert.Contains(":h='if(lt(t,0.000000),160,", compiled.FilterGraphScript);
+        // 0→1 lineer opaklık fade'e map'lenir (sendcmd'e gerek yok).
+        Assert.Contains("fade=t=in:st=0.000000:d=0.500000:alpha=1", compiled.FilterGraphScript);
+        // saturation = -1 tam gri (colorchannelmixer BT.709 matrisi).
+        Assert.Contains("colorchannelmixer=rr=0.2126:", compiled.FilterGraphScript);
     }
+
+    [Fact]
+    public void Validate_KeyframesOnAudioClip_Throw()
+    {
+        // Ses klibi görsel katman üretmez → transform/opaklık animasyonunun karşılığı yoktur.
+        var clip = ExportTestDocs.AudioClip(ExportTestDocs.AssetC, 0, 0, 1_000_000);
+        clip.Keyframes = new KeyframeTracks { Opacity = [ExportTestDocs.Kf(0, 1)] };
+        var doc = ExportTestDocs.MultiTrackDoc([ExportTestDocs.AudioTrack(clips: [clip])]);
+
+        Assert.Equal("keyframes-audio-clip",
+            Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc)).Feature);
+    }
+
+    [Fact]
+    public void Validate_KeyframesWithTransition_Throw()
+    {
+        // Geçişte iki klip TEK akışa katlanır → run bölünemez, katman yerleşimi kesim boyunca
+        // sabit olmalıdır (xfade "iki giriş aynı boyutta" da şart koşar).
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000);
+        b.Keyframes = new KeyframeTracks
+        {
+            X = [ExportTestDocs.Kf(0, 0), ExportTestDocs.Kf(1_000_000, 0.25)],
+        };
+        ExportTestDocs.Link(a, b, 400_000);
+
+        Assert.Equal("transition-keyframes",
+            Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(
+                ExportTestDocs.Doc(clips: [a, b]))).Feature);
+    }
+
+    [Fact]
+    public void Validate_UnsortedKeyframes_Throw()
+    {
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000);
+        clip.Keyframes = new KeyframeTracks
+        {
+            X = [ExportTestDocs.Kf(500_000, 0), ExportTestDocs.Kf(500_000, 0.25)],
+        };
+
+        Assert.Contains("ARTAN",
+            Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(
+                ExportTestDocs.Doc(clips: clip))).Message);
+    }
+
+    [Fact]
+    public void Validate_AnimatedScale_ValidatesTheCeilingFromTheLARGESTKeyframe()
+    {
+        // Bellek tavanı ARA TUVALDEN doğrulanır (denetim #2) ve animasyonlu ölçekte ara tuval
+        // EN BÜYÜK karede en büyüktür. Taban ölçek küçük olsa bile tavan aşılabilir.
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.5));
+        clip.Keyframes = new KeyframeTracks
+        {
+            Scale = [ExportTestDocs.Kf(0, 0.5), ExportTestDocs.Kf(2_000_000, 6)],
+        };
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(
+            ExportTestDocs.Doc(clips: clip)));
+        Assert.Equal("transform-scale", ex.Feature);
+    }
+
+    [Fact]
+    public void Compile_LinearPositionKeyframes_UseAnIfChainExpression_NotSendcmd()
+    {
+        // tasarım 04 §2.5 ucuz yol: TAMAMI LİNEER kanal piecewise-linear ifadeye derlenir —
+        // kare başına komut yok. İfade KOMPOZİT eksendedir (overlay'in t'si tuval karesidir),
+        // bu yüzden keyframe zamanlarına klibin timeline başlangıcı EKLENİR.
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 1_000_000, 0, 2_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.5));
+        clip.Keyframes = new KeyframeTracks
+        {
+            X = [ExportTestDocs.Kf(0, -0.25), ExportTestDocs.Kf(1_000_000, 0.25)],
+        };
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips: [clip]),
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 3_000_000)]),
+        ]);
+        var compiled = ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p);
+
+        // P.x = W/2 + x*W → -0.25 ⇒ 480, +0.25 ⇒ 1440. Zaman ekseni 1.0 → 2.0 sn.
+        Assert.Contains(
+            "x='if(lt(t,1.000000),480,if(lt(t,2.000000),480+(1440-480)*(t-1.000000)"
+            + "/(2.000000-1.000000),1440))-0.5*w'",
+            compiled.FilterGraphScript);
+        Assert.DoesNotContain("sendcmd", compiled.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Compile_EasedPositionKeyframes_UseAFrameSampledDecisionTree_NotSendcmd()
+    {
+        // §3.4: eğrili easing kapalı forma GÖMÜLMEZ, FRAME BAŞINA örneklenir. Örnekler
+        // sendcmd yerine DENGELİ İKİLİ KARAR AĞACI ifadesine gömülür — sendcmd overlay'i
+        // güvenilir süremez (overlay iki girişlidir ve framesync ile tamponlar; ölçüm
+        // KeyframeCompiler.StepExpression yorumunda).
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 1_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.5));
+        clip.Keyframes = new KeyframeTracks
+        {
+            X = [ExportTestDocs.Kf(0, -0.25, ExportTestDocs.EaseInOut()), ExportTestDocs.Kf(1_000_000, 0.25)],
+        };
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips: [clip]),
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000)]),
+        ]);
+        var compiled = ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p);
+
+        Assert.DoesNotContain("sendcmd", compiled.FilterGraphScript);
+        Assert.Contains("overlay=x='if(lt(t,", compiled.FilterGraphScript);
+        Assert.EndsWith("-0.5*w'", OverlayXArgument(compiled.FilterGraphScript), StringComparison.Ordinal);
+
+        // Örneklenen HER kare için bir yaprak vardır ve yaprak değeri §3.2'nin C# referansıyla
+        // (32 iterasyon bisection) BİREBİR aynı olmalıdır — preview ile aynı fonksiyon ailesi.
+        for (var frame = 0; frame < 30; frame++)
+        {
+            var timeUs = Timecode.FromFrameNumber(frame, 30, 1).Micros;
+            var value = MediaEasing.SampleKeyframes(
+            [
+                new MediaKeyframe(0, -0.25, EasingValue.EaseInOut),
+                new MediaKeyframe(1_000_000, 0.25, EasingValue.Linear),
+            ], timeUs);
+            var literal = (960 + (value * 1920)).ToString("0.######", CultureInfo.InvariantCulture);
+            Assert.Contains(literal, compiled.FilterGraphScript);
+        }
+
+        // Karar ağacı DENGELİDİR: 30 yaprak için derinlik 5 civarıdır, 30 DEĞİL (iç içe 30 'if'
+        // ffmpeg'in özyinelemeli ifade ayrıştırıcısını uzun kliplerde taşırırdı).
+        Assert.InRange(MaxIfNesting(OverlayXArgument(compiled.FilterGraphScript)), 1, 8);
+    }
+
+    /// <summary>Script'teki ilk <c>overlay=x=…</c> argümanını (tırnaklı ifade) döndürür.</summary>
+    private static string OverlayXArgument(string script)
+    {
+        var start = script.IndexOf("overlay=x='", StringComparison.Ordinal) + "overlay=x=".Length;
+        var end = script.IndexOf("':y=", start, StringComparison.Ordinal) + 1;
+        return script[start..end];
+    }
+
+    /// <summary>İfadedeki en derin parantez seviyesindeki 'if(' sayısı (ağaç derinliği).</summary>
+    private static int MaxIfNesting(string expression)
+    {
+        var depth = 0;
+        var max = 0;
+        for (var i = 0; i < expression.Length; i++)
+        {
+            if (expression[i] == 'i' && i + 2 < expression.Length
+                && expression[i + 1] == 'f' && expression[i + 2] == '(')
+            {
+                depth++;
+                max = Math.Max(max, depth);
+            }
+            else if (expression[i] == ')')
+            {
+                depth = Math.Max(0, depth - 1);
+            }
+        }
+
+        return max;
+    }
+
+    [Fact]
+    public void Compile_ArbitraryOpacityCurve_UsesSendcmdColorchannelmixer()
+    {
+        // tasarım 04 §2.5 madde 2: 0→1 / 1→0 DIŞINDAKİ her opaklık eğrisi sendcmd ile
+        // colorchannelmixer aa'ya yazılır (filtre zaman ifadesi ALMAZ).
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 1_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.5));
+        clip.Keyframes = new KeyframeTracks
+        {
+            Opacity = [ExportTestDocs.Kf(0, 0.2), ExportTestDocs.Kf(1_000_000, 0.8)],
+        };
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips: [clip]),
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000)]),
+        ]);
+        var compiled = ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p);
+
+        Assert.Contains("colorchannelmixer@k1=aa=0.2", compiled.FilterGraphScript);
+        Assert.Contains("0.000000 colorchannelmixer@k1 aa 0.2;", compiled.FilterGraphScript);
+        Assert.DoesNotContain("fade=t=", compiled.FilterGraphScript);
+        // KATMAN sendcmd'i klip-göreli t ister → zincirin başında setpts sıfırlaması olmalı.
+        Assert.Contains("trim=end_frame=30,setpts=PTS-STARTPTS,", compiled.FilterGraphScript);
+        // sendcmd hedefinin HEMEN ÖNÜNDEDİR: aralarına iki girişli bir filtre girerse komut
+        // framesync tamponu yüzünden yanlış kareye düşer (M5 ölçümü).
+        Assert.Contains("',colorchannelmixer@k1=aa=", compiled.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Compile_ExcessivelyLongEasedAnimation_HitsTheSampleBudget()
+    {
+        // §3.4 örneklemesi klip uzunluğuyla DOĞRUSAL büyür. Tavan aşıldığında graph okunamaz
+        // hale gelir (worker onu loglar) — sessiz kırpma yerine tipli hata, ve mesaj çözümü
+        // (lineer easing) söyler.
+        const long durationUs = 2_100_000_000; // 2100 sn @30fps = 63_000 kare
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, durationUs,
+            transform: ExportTestDocs.Transform(scale: 0.5));
+        clip.Keyframes = new KeyframeTracks
+        {
+            X = [ExportTestDocs.Kf(0, -0.25, ExportTestDocs.EaseInOut()),
+                 ExportTestDocs.Kf(durationUs, 0.25)],
+        };
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips: [clip]),
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, durationUs)]),
+        ]);
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p));
+        Assert.Equal("keyframe-sample-budget", ex.Feature);
+        Assert.Contains("lineer easing", ex.Message);
+    }
+
+    [Fact]
+    public void Compile_KeyframedClip_GetsItsOwnRun_AndDisablesTheFastPath()
+    {
+        // Animasyonlu klip komşularıyla concat edilemez (overlay ifadesi run başına tektir) ve
+        // tek katmanlı hızlı yolu da kapatır (yerleşim kare kare değişiyor).
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 1_000_000, 1_000_000, 2_000_000);
+        b.Keyframes = new KeyframeTracks
+        {
+            X = [ExportTestDocs.Kf(0, 0), ExportTestDocs.Kf(1_000_000, 0.25)],
+        };
+        var compiled = ExportCompiler.Compile(
+            ExportTestDocs.Doc(clips: [a, b]), SdrSources(hasAudio: false), ExportProfile.Hd1080p);
+
+        Assert.DoesNotContain("concat=", compiled.FilterGraphScript);
+        Assert.Contains("color=c=0x000000:s=1920x1080", compiled.FilterGraphScript); // taban tuval
+        Assert.Equal(2, compiled.FilterGraphScript.Split(";\n").Count(l => l.Contains("]overlay")));
+    }
+
 
     [Fact]
     public void Compile_OversizedTextRaster_ThrowsTypedFeatureError()

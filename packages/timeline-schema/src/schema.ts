@@ -312,3 +312,25 @@ export type TimelineDoc = z.infer<typeof TimelineDocSchema>;
 export function isMediaClip(clip: Clip): clip is MediaClip {
   return clip.kind === 'video' || clip.kind === 'audio' || clip.kind === 'image';
 }
+
+/**
+ * Does this clip's SOURCE file have a time axis?
+ *
+ * MIRRORS the export compiler's `ExportClipPlan.IsStillInput`
+ * (`Kind is not (Video or Audio)`) — inverted, and deliberately written with the
+ * same formula so the two stay comparable. A still source (image, and every
+ * raster overlay) is opened with `-loop 1 -t`: seeking into it is meaningless
+ * and it yields as many frames as the window asks for.
+ *
+ * Consequence for transitions (rendering-semantics §5.2): the D/2 SOURCE handle
+ * only exists where source time exists. A still clip therefore has an unlimited
+ * handle on its side of the cut — which is exactly what the compiler does
+ * (`if (!next.IsStillInput && next.SourceInUs < halfSourceUs)`, and still clips
+ * are kept out of the source-range ledger entirely). The editor and the document
+ * invariants MUST use this same predicate, otherwise a crossfade between two
+ * photographs — a slideshow, the most common use of a transition — is rejected
+ * by the editor even though the renderer supports it.
+ */
+export function hasSourceTimeAxis(clip: Clip): boolean {
+  return clip.kind === 'video' || clip.kind === 'audio';
+}

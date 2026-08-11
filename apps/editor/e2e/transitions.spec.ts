@@ -22,6 +22,10 @@
  * (`validateTimelineDoc`): "editörün yazdığı doküman kendi sözleşmesinden
  * geçiyor mu?" sorusunun tek dürüst yanıtı budur.
  */
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   frameToUs,
   usToFrame,
@@ -32,9 +36,13 @@ import {
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures/test';
 import { readProjectSettings } from './support/appBridge';
-import type { EditorApp } from './support/editor';
+import { EditorApp } from './support/editor';
+import { LibraryPanelHarness, listProjectAssets } from './support/library';
+import { FFMPEG_SKIP_REASON, ffmpegVersion } from './support/media';
+import { createEmptyProject } from './support/projects';
+import { mixTransitionRef, toBytes, type Rgba } from '../src/features/player/core/transitionRef';
 import { TRACK_H } from '../src/features/timeline/geometry';
-import { SECOND_US, SEED_TIMES } from './fixtures/seed';
+import { SECOND_US, SEED_TIMES, saveTimeline } from './fixtures/seed';
 
 /** Rozet, şeridin ALTINDA duruyor (geometry.ts TRANSITION_BADGE_*). */
 const BADGE_H = 14;
@@ -491,5 +499,438 @@ test.describe('Geçişler — gerçek fare', () => {
     expect(b.timelineStartUs, 'Roll sonrası klipler hâlâ bitişik olmalı.').toBe(
       a.timelineStartUs + a.timelineDurationUs,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ÖNİZLEME (rendering-semantics §5.3) — M4 dalga 2 denetim bulgusu
+// ---------------------------------------------------------------------------
+//
+// Bulgu (YÜKSEK): geçiş dokümana yazılıyordu ama OYNATICI hiç uygulamıyordu —
+// `resolveVisualStack` track başına tek klip döndürüyor, kullanıcı önizlemede
+// SERT KESİM görüp export'ta crossfade alıyordu. Aşağıdaki iki test o iddianın
+// iki ayrı kanıt seviyesidir:
+//
+//   1. "pencere oynatıcıya ULAŞIYOR mu?"  -> gerçek fareyle scrub + gösterge
+//      (medya gerektirmez, her ortamda koşar),
+//   2. "iki kaynak GERÇEKTEN karışıyor mu?" -> gerçek medya + canvas PİKSELİ;
+//      geçiş kaldırılınca aynı karede imza TEK kaynağa döner (negatif kontrol).
+
+/** Oynatıcıdaki geçiş göstergesi (PlayerPanel). */
+function transitionNote(editor: EditorApp) {
+  return editor.page.getByTestId('preview-transition-note');
+}
+
+/**
+ * Kesimin çevresinde, bir pikselin `maxUsPerPx`'ten az zamana denk geldiği bir
+ * yakınlığa kadar GERÇEK Ctrl+wheel ile yakınlaşır.
+ *
+ * Neden şart: sığdırılmış görünümde 82 sn ~670 px'e sığar, yani bir piksel ~8 sn
+ * eder — 1 sn'lik bir geçiş penceresinin İÇİNE cetvelden tıklayarak girmek
+ * imkânsızdır. Zoom olmadan bu test "pencere yok" derdi, oysa ölçüm aleti kördü.
+ */
+async function zoomForWindow(
+  editor: EditorApp,
+  clipId: string,
+  maxUsPerPx: number,
+): Promise<void> {
+  for (let i = 0; i < 25; i++) {
+    const state = await editor.state();
+    if (1 / state.pxPerUs <= maxUsPerPx) return;
+    const box = await editor.timeline.clipBox(clipId, state);
+    await editor.timeline.ctrlWheel(-120, {
+      x: box.x + box.width,
+      y: box.y + TRACK_H / 2,
+    });
+  }
+  const state = await editor.state();
+  expect(
+    1 / state.pxPerUs,
+    'Ctrl+wheel ile yeterince yakınlaşılamadı — pencere içine tıklanamaz.',
+  ).toBeLessThanOrEqual(maxUsPerPx);
+}
+
+/**
+ * Klip bloğu verilen genişliğe ulaşana kadar GERÇEK Ctrl+wheel ile yakınlaşır.
+ *
+ * Neden şart: kesim rozeti dar bloklarda ÇİZİLMEZ (geometry.ts
+ * TRANSITION_BADGE_MIN_CLIP_W = 26 px) — 2 sn'lik klipler sığdırılmış görünümde
+ * ~20 px olur ve rozete tıklamak imkânsızdır. Kullanıcı da aynı şeyi yapar:
+ * çalışacağı kesime yakınlaşır.
+ */
+async function zoomUntilClipWide(
+  editor: EditorApp,
+  clipId: string,
+  minWidthPx: number,
+): Promise<void> {
+  for (let i = 0; i < 25; i++) {
+    const box = await editor.timeline.clipBox(clipId);
+    if (box.width >= minWidthPx) return;
+    await editor.timeline.ctrlWheel(-120, { x: box.x + box.width / 2, y: box.y + TRACK_H / 2 });
+  }
+  expect(
+    (await editor.timeline.clipBox(clipId)).width,
+    'Ctrl+wheel ile klip bloğu yeterince genişletilemedi (rozete tıklanamaz).',
+  ).toBeGreaterThanOrEqual(minWidthPx);
+}
+
+/** Göstergedeki ilerleme yüzdesi ("Geçiş: Çapraz geçiş %48" -> 48). */
+async function noteProgressPercent(editor: EditorApp): Promise<number> {
+  const text = await transitionNote(editor).innerText();
+  const match = /%\s*(\d+)/.exec(text);
+  expect(match, `Gösterge metninde yüzde yok: "${text}"`).not.toBeNull();
+  return Number(match![1]);
+}
+
+test.describe('Geçiş önizlemesi — pencere oynatıcıya ulaşıyor mu (gerçek fare)', () => {
+  test('playhead geçiş penceresindeyken oynatıcı "geçiş" göstergesi çıkar, dışında ÇIKMAZ', async ({
+    editor,
+    seed,
+  }) => {
+    await editor.ensureContentVisible(seed.clipAId);
+    const cutUs = await makeAdjacentCutWithHandle(editor, seed, 2 * SECOND_US);
+
+    await editor.timeline.click(await badgePoint(editor, seed.clipAId));
+    await editor.page.getByTestId('transition-type-crossfade').click();
+    await editor.page.waitForTimeout(150);
+
+    const doc = await readDoc(editor.page);
+    const durationUs = clipOf(doc, seed.clipAId).transitionOut!.durationUs;
+    expect(durationUs, 'Ön koşul: geçiş yazılmış olmalı.').toBeGreaterThan(0);
+
+    // Pencere [T-D/2, T+D/2): içine tıklayabilmek için D/20 hassasiyet yeter.
+    await zoomForWindow(editor, seed.clipAId, durationUs / 20);
+
+    // --- kesim anı: pencerenin TAM ORTASI ---
+    await editor.timeline.scrubTo(cutUs);
+    await expect(
+      transitionNote(editor),
+      'Kesimin üstünde oynatıcı "geçiş" göstergesi göstermeli — geçişin ' +
+        'önizlemede uygulandığının kullanıcıya görünen tek işareti bu.',
+    ).toBeVisible();
+    await expect(transitionNote(editor)).toContainText(/çapraz geçiş/i);
+    const half = await noteProgressPercent(editor);
+    expect(half, 'Kesim anında ilerleme %50 olmalı (p = 0.5).').toBeGreaterThanOrEqual(44);
+    expect(half).toBeLessThanOrEqual(56);
+
+    // --- pencerenin ilk çeyreği: ilerleme ~%25 (p playhead'i İZLİYOR) ---
+    await editor.timeline.scrubTo(cutUs - durationUs / 4);
+    await expect(transitionNote(editor)).toBeVisible();
+    const quarter = await noteProgressPercent(editor);
+    expect(quarter, 'Pencerenin ilk çeyreğinde ilerleme ~%25 olmalı.').toBeGreaterThanOrEqual(19);
+    expect(quarter).toBeLessThanOrEqual(31);
+
+    // --- NEGATİF KONTROL 1: pencerenin dışında gösterge YOK ---
+    await editor.timeline.scrubTo(cutUs - durationUs);
+    await expect(
+      transitionNote(editor),
+      'Pencere dışında gösterge kalmamalı (her karede "geçiş" demek = hiç dememek).',
+    ).toHaveCount(0);
+
+    // --- NEGATİF KONTROL 2: geçiş kaldırılınca kesimde de gösterge YOK ---
+    const box = await editor.timeline.clipBox(seed.clipAId);
+    await editor.timeline.click(
+      { x: box.x + Math.max(20, box.width - 20), y: box.y + TRACK_H / 2 },
+      'right',
+    );
+    await expect(editor.contextMenu).toBeVisible();
+    await editor.contextMenuItem(/geçişi kaldır/i).click();
+    await editor.page.waitForTimeout(200);
+    expect(clipOf(await readDoc(editor.page), seed.clipAId).transitionOut).toBeUndefined();
+
+    await editor.timeline.scrubTo(cutUs);
+    await expect(
+      transitionNote(editor),
+      'Geçiş kalktıysa sert kesim vardır — gösterge de olmamalı.',
+    ).toHaveCount(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Piksel imzası — GERÇEK medya
+// ---------------------------------------------------------------------------
+
+/** e2e/.artifacts/media (gitignore) — koşumlar arasında yeniden kullanılır. */
+const MEDIA_DIR = join(fileURLToPath(new URL('.', import.meta.url)), '.artifacts', 'media');
+
+/**
+ * DÜZ RENKLİ test videosu (4 sn, sessiz).
+ *
+ * Neden testsrc2 değil: geçişin kanıtı bir PİKSEL İMZASI. Her karesi farklı olan
+ * bir kaynakta "beklenen renk" hesaplanamaz (±1 kare kayması imzayı değiştirir);
+ * düz renkte ise beklenen değer §5.3'ün formülünden TÜRETİLİR ve handle
+ * malzemesi de aynı renktedir, yani kare hassasiyetinden bağımsızdır.
+ *
+ * Renkler kasten doygun değil: 4:2:0 + limited-range gidiş-dönüşü doygun kırmızıda
+ * birkaç birim kayar; orta tonlarda iki kaynak arasında kanal başına ~150 birim
+ * fark kalır, bu da imzayı ayırt etmeye fazlasıyla yeter.
+ */
+const SOLID_A = { name: 'e2e-solid-a.mp4', hex: '0xC83232', rgb: { r: 200, g: 50, b: 50 } };
+const SOLID_B = { name: 'e2e-solid-b.mp4', hex: '0x3250C8', rgb: { r: 50, g: 80, b: 200 } };
+const SOLID_DURATION_SEC = 4;
+
+function ensureSolidVideo(spec: { name: string; hex: string }): string {
+  const path = join(MEDIA_DIR, spec.name);
+  if (existsSync(path)) return path;
+  mkdirSync(MEDIA_DIR, { recursive: true });
+  const res = spawnSync(
+    'ffmpeg',
+    [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi',
+      '-i', `color=c=${spec.hex}:s=640x480:rate=30:duration=${SOLID_DURATION_SEC}`,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+      '-b:v', '2000k', '-movflags', '+faststart',
+      path,
+    ],
+    { encoding: 'utf8', timeout: 120_000 },
+  );
+  if (res.status !== 0 || !existsSync(path)) {
+    throw new Error(`Duz renkli test videosu uretilemedi (ffmpeg ${res.status}):\n${res.stderr}`);
+  }
+  return path;
+}
+
+/** Önizleme kompozitöründen tek piksel (proje koordinatı) — bkz. speed-color.spec.ts. */
+async function probePixel(page: Page, x: number, y: number): Promise<[number, number, number, number]> {
+  const value = await page.evaluate(
+    async ([px, py]: [number, number]) => {
+      const hook = (window as unknown as {
+        __videoeditPlayer?: { version: number; probePixel(x: number, y: number): Promise<number[]> };
+      }).__videoeditPlayer;
+      if (!hook || hook.version !== 1) return null;
+      return hook.probePixel(px, py);
+    },
+    [x, y] as [number, number],
+  );
+  expect(value, 'window.__videoeditPlayer yok (Vite DEV sunucusuna baglanildi mi?).').not.toBeNull();
+  return value as [number, number, number, number];
+}
+
+async function centrePixel(page: Page): Promise<[number, number, number, number]> {
+  const settings = await readProjectSettings(page);
+  return probePixel(page, Math.floor(settings.width / 2), Math.floor(settings.height / 2));
+}
+
+/**
+ * Kanal toleransı. Kaynak renkler arasında kanal başına ~150 birim var; 20
+ * birimlik pay yuvarlama/renk-uzayı gidiş-dönüşünü karşılar ama "karışım mı,
+ * tek kaynak mı?" sorusunu asla belirsiz bırakmaz.
+ */
+const CHANNEL_TOLERANCE = 20;
+
+function near(actual: readonly number[], expected: readonly number[], tol = CHANNEL_TOLERANCE): boolean {
+  return [0, 1, 2].every((i) => Math.abs(actual[i]! - expected[i]!) <= tol);
+}
+
+function rgba(c: { r: number; g: number; b: number }): Rgba {
+  return { r: c.r / 255, g: c.g / 255, b: c.b / 255, a: 1 };
+}
+
+/** Bir koşulun verilen süre içinde sağlanıp sağlanmadığı (atlama kararı için). */
+async function becomesTrue(
+  probe: () => Promise<boolean>,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await probe()) return true;
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+}
+
+test.describe('Geçiş önizlemesi — canvas piksel imzası (gerçek medya)', () => {
+  test('geçişin ortasındaki karede İKİ kaynak karışır; geçiş kalkınca imza TEK kaynağa döner', async ({
+    page,
+    account,
+  }) => {
+    test.skip(ffmpegVersion() === null, FFMPEG_SKIP_REASON);
+    // Yükleme + worker işleme + ilk decode: varsayılan 60 sn yetmez.
+    test.setTimeout(420_000);
+
+    const fileA = ensureSolidVideo(SOLID_A);
+    const fileB = ensureSolidVideo(SOLID_B);
+    const project = await createEmptyProject(
+      account.context.request,
+      account.accessToken,
+      'E2E gecis piksel',
+    );
+
+    const app = new EditorApp(page);
+    await app.open(project.projectId, { email: account.email, password: account.password });
+    const library = new LibraryPanelHarness(page);
+
+    // --- 1) GERÇEK yükleme: iki düz renkli kaynak, worker işleyene kadar bekle ---
+    await library.pickFiles([fileA, fileB]);
+    await library.waitForReady(SOLID_A.name);
+    await library.waitForReady(SOLID_B.name);
+
+    const assets = await listProjectAssets(
+      account.context.request,
+      account.accessToken,
+      project.projectId,
+    );
+    const assetA = assets.find((a) => a.fileName === SOLID_A.name);
+    const assetB = assets.find((a) => a.fileName === SOLID_B.name);
+    expect(assetA, 'A kaynagi listede yok.').toBeDefined();
+    expect(assetB, 'B kaynagi listede yok.').toBeDefined();
+
+    // --- 2) Doküman ön koşulu API'den: BİTİŞİK iki klip + gelen tarafta pay ---
+    // (fixtures/seed.ts ile aynı gerekçe: kurulum API'den, JEST gerçek fareden.)
+    const startUs = 60 * SECOND_US;
+    const clipDurUs = 2 * SECOND_US;
+    const cutUs = startUs + clipDurUs;
+    const clipAId = crypto.randomUUID();
+    const clipBId = crypto.randomUUID();
+    const trackId = crypto.randomUUID();
+    const clip = (id: string, assetId: string, tStart: number, sourceInUs: number) => ({
+      id,
+      kind: 'video',
+      assetId,
+      timelineStartUs: tStart,
+      timelineDurationUs: clipDurUs,
+      sourceInUs,
+      sourceOutUs: sourceInUs + clipDurUs,
+      speed: { rate: 1 },
+      audio: null,
+      transform: { x: 0, y: 0, scale: 1, rotationDeg: 0, anchorX: 0.5, anchorY: 0.5 },
+      keyframes: {},
+      effects: [],
+      opacity: 1,
+    });
+    const timeline = {
+      schemaVersion: 1,
+      projectId: project.projectId,
+      settings: {
+        width: 1920,
+        height: 1080,
+        fps: { num: 30, den: 1 },
+        audioSampleRate: 48000,
+        backgroundColor: '#000000',
+      },
+      tracks: [
+        {
+          id: trackId,
+          type: 'video',
+          name: 'V1',
+          muted: false,
+          hidden: false,
+          locked: false,
+          clips: [
+            // A: kaynağın [0,2 sn)'si — kuyruk payı 2 sn (varlık 4 sn).
+            clip(clipAId, assetA!.id, startUs, 0),
+            // B: kaynağın [1 sn,3 sn)'si — baş payı 1 sn (D/2 için fazlasıyla).
+            clip(clipBId, assetB!.id, cutUs, 1 * SECOND_US),
+          ],
+        },
+      ],
+      markers: [],
+    };
+    const detail = await account.context.request.get(`/api/projects/${project.projectId}`, {
+      headers: { Authorization: `Bearer ${account.accessToken}` },
+    });
+    const revision = ((await detail.json()) as { revisionNumber: number }).revisionNumber;
+    await saveTimeline(
+      account.context.request,
+      account.accessToken,
+      project.projectId,
+      timeline,
+      revision,
+    );
+    await app.open(project.projectId, { email: account.email, password: account.password });
+    await app.ensureContentVisible(clipAId);
+
+    // --- 3) Ön koşul: önizleme bu kaynakları GERÇEKTEN çözebiliyor mu? ---
+    // Çözemiyorsa (tarayıcıda H.264 yok, proxy gelmedi) bu testin ölçtüğü şey
+    // ürün değil ORTAMDIR; sahte kırmızı yerine gerekçeli atlama.
+    await app.timeline.scrubTo(startUs + SECOND_US);
+    const decoded = await becomesTrue(
+      async () => near(await centrePixel(page), [SOLID_A.rgb.r, SOLID_A.rgb.g, SOLID_A.rgb.b]),
+      30_000,
+    );
+    test.skip(
+      !decoded,
+      'Onizleme klip A nin rengini hic gostermedi: tarayici proxy yi (H.264) cozemiyor ' +
+        'ya da presigned URL gelmedi. Gecis PIKSEL testi ORTAM nedeniyle atlandi — ' +
+        'pencere/gosterge kaniti icin "pencere oynaticiya ulasiyor mu" testine bakin.',
+    );
+
+    // Klip B tek başına da doğru renkte mi? (imzaların ayırt ediciliği)
+    await app.timeline.scrubTo(cutUs + SECOND_US);
+    await expect
+      .poll(async () => near(await centrePixel(page), [SOLID_B.rgb.r, SOLID_B.rgb.g, SOLID_B.rgb.b]), {
+        timeout: 20_000,
+        message: 'On kosul: klip B kendi basina kendi rengini gostermeli.',
+      })
+      .toBe(true);
+
+    // --- 4) GERÇEK fare: kesim rozeti -> crossfade ---
+    // Rozet dar blokta çizilmez: önce kesime yakınlaş (kullanıcının yaptığı gibi).
+    await zoomUntilClipWide(app, clipAId, 120);
+    await app.timeline.click(await badgePoint(app, clipAId));
+    await expect(
+      page.getByTestId('transition-editor'),
+      'Kesim rozetine tiklayinca gecis duzenleyicisi acilmali.',
+    ).toBeVisible();
+    await page.getByTestId('transition-type-crossfade').click();
+    await page.waitForTimeout(200);
+
+    const doc = await readDoc(page);
+    const durationUs = clipOf(doc, clipAId).transitionOut!.durationUs;
+    expect(durationUs, 'Gecis dokumana yazilmali.').toBeGreaterThan(0);
+    expect(clipOf(doc, clipBId).transitionIn).toEqual(clipOf(doc, clipAId).transitionOut);
+    await page.keyboard.press('Escape');
+
+    // --- 5) Pencerenin ortası: piksel İKİ kaynağın karışımı olmalı ---
+    await zoomForWindow(app, clipAId, durationUs / 20);
+    await app.timeline.scrubTo(cutUs);
+    await expect(transitionNote(app), 'Pencerenin icindeyiz (gosterge).').toBeVisible();
+
+    // BEKLENEN DEĞER uygulamadan değil §5.3'ün formülünden gelir.
+    const expectedMix = toBytes(
+      mixTransitionRef('crossfade', rgba(SOLID_A.rgb), rgba(SOLID_B.rgb), 0.5),
+    );
+    await expect
+      .poll(async () => near(await centrePixel(page), expectedMix), {
+        timeout: 20_000,
+        message:
+          `Gecisin ortasindaki kare §5.3'e gore yari yariya karisim olmali ` +
+          `(beklenen ${expectedMix.join(',')}). Sert kesim goruluyorsa onizleme gecisi ` +
+          'hic uygulamiyor demektir — denetim bulgusunun ta kendisi.',
+      })
+      .toBe(true);
+
+    const blended = await centrePixel(page);
+    expect(
+      near(blended, [SOLID_A.rgb.r, SOLID_A.rgb.g, SOLID_A.rgb.b]),
+      'Karisim A nin kendisi OLAMAZ.',
+    ).toBe(false);
+    expect(
+      near(blended, [SOLID_B.rgb.r, SOLID_B.rgb.g, SOLID_B.rgb.b]),
+      'Karisim B nin kendisi OLAMAZ.',
+    ).toBe(false);
+
+    // --- 6) NEGATİF KONTROL: geçişi kaldır -> AYNI karede imza TEK kaynak ---
+    const box = await app.timeline.clipBox(clipAId);
+    await app.timeline.click(
+      { x: box.x + Math.max(20, box.width - 20), y: box.y + TRACK_H / 2 },
+      'right',
+    );
+    await expect(app.contextMenu).toBeVisible();
+    await app.contextMenuItem(/geçişi kaldır/i).click();
+    await page.waitForTimeout(200);
+    expect(clipOf(await readDoc(page), clipAId).transitionOut).toBeUndefined();
+
+    await app.timeline.scrubTo(cutUs);
+    await expect(transitionNote(app)).toHaveCount(0);
+    await expect
+      .poll(async () => near(await centrePixel(page), [SOLID_B.rgb.r, SOLID_B.rgb.g, SOLID_B.rgb.b]), {
+        timeout: 20_000,
+        message:
+          'Sert kesimde kesim anindaki kare TEK kaynaktir (B). Imza hala karisiksa ' +
+          'test kendi olcusunu dogrulamiyor demektir.',
+      })
+      .toBe(true);
   });
 });

@@ -60,10 +60,52 @@ public sealed class TextLayoutEngineTests
 
         Assert.Single(layout.Lines);
         Assert.Equal(15, layout.ContentHeightPx); // 10 * 1.5
-        Assert.Equal(0, layout.ContentWidthPx);
+        // ÖLÇÜMÜ SIFIR olan metin asgari genişliği taşır (fontSizePx * 0.5) — İSTEMCİYLE AYNI
+        // kural (M4 dalga-2 bulgu #2). Kutu 0 olsaydı gizmo kutusu yok olur, kullanıcı yeni
+        // eklediği boş metni seçemezdi.
+        Assert.Equal(5, layout.ContentWidthPx);
         // Bbox asla 0 olmaz: en az 1×1 (geçersiz PNG boyutu üretilemez).
         Assert.True(layout.BboxWidthPx >= 1);
         Assert.True(layout.BboxHeightPx >= 1);
+    }
+
+    [Fact]
+    public void WhitespaceOnlyContent_KeepsItsAdvance_MinimumOnlyAppliesToZero()
+    {
+        // Tek boşluk ADVANCE üretir (FakeMeasurer: 10 px/karakter) → asgari kural DEVREDE DEĞİL.
+        // Bu ayrım da istemciyle ortaktır (vektör dosyası: 'whitespace-only-no-min').
+        var layout = TextLayoutEngine.Layout(Request(" ", fontSize: 10), new FakeMeasurer());
+
+        Assert.Equal(10, layout.ContentWidthPx);
+    }
+
+    [Fact]
+    public void BackgroundRect_IsContentPlusMinusPadding_NotTheBbox()
+    {
+        // Denetim bulgusu #2'nin ikinci yarısı: arka plan İÇERİK ± pay kutusudur. Kontur
+        // bbox'ı büyütür ama arka plan dikdörtgenine DOKUNMAZ.
+        var layout = TextLayoutEngine.Layout(
+            Request("ab", fontSize: 10, strokeWidth: 6, backgroundPadding: 2),
+            new FakeMeasurer());
+
+        Assert.NotNull(layout.BackgroundRect);
+        var rect = layout.BackgroundRect!.Value;
+        Assert.Equal(-2, rect.Left);
+        Assert.Equal(-2, rect.Top);
+        Assert.Equal(layout.ContentWidthPx + 2, rect.Right);
+        Assert.Equal(layout.ContentHeightPx + 2, rect.Bottom);
+        // Kontur payı (6/2 = 3) arka plan payından (2) büyük: bbox arka plan kutusundan
+        // GENİŞTİR. "Arka plan = bbox" olsaydı bu iki sayı eşit çıkardı.
+        Assert.Equal(24, rect.Right - rect.Left);
+        Assert.Equal(26, layout.BboxWidthPx);
+    }
+
+    [Fact]
+    public void NoBackground_ProducesNoBackgroundRect()
+    {
+        var layout = TextLayoutEngine.Layout(Request("ab"), new FakeMeasurer());
+
+        Assert.Null(layout.BackgroundRect);
     }
 
     [Fact]

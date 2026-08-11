@@ -11,10 +11,32 @@
  * menüsü, önizleme rasterının geometrisi (rendering-semantics §7 baseScale) ve
  * şekil katmanı.
  */
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import { validateTimelineDoc } from '@videoedit/timeline-schema';
 import { test, expect } from './fixtures/test';
 import { SECOND_US } from './fixtures/seed';
+
+/** Seed projesinin çıktı genişliği (fixtures/seed.ts) — bbox'ı px'e çevirmek için. */
+const SEED_WIDTH_PX = 1920;
+
+/**
+ * SUNUCUNUN çözebildiği fontId'ler — testin ELİNDEKİ tek doğruluk kaynağı.
+ * Editörün ne yazdığını bu dosyaya karşı doğrularız; M4 dalga-2 KRİTİK bulgu #1
+ * tam olarak buydu: editör 'inter' yazıyordu, bu dosyada 'inter' YOK.
+ */
+const SERVER_FONT_IDS: string[] = (() => {
+  const manifestPath = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../../../fonts/manifest.json',
+  );
+  const parsed = JSON.parse(new TextDecoder().decode(readFileSync(manifestPath))) as {
+    fonts: Record<string, unknown>;
+  };
+  return Object.keys(parsed.fonts);
+})();
 
 /** clipA [60s,66s) — playhead klibin içindeyken metin ekleniyor. */
 const INSIDE_CLIP_A_US = 63 * SECOND_US;
@@ -26,9 +48,11 @@ interface TextClipProbe {
   text?: {
     content: string;
     fill: string;
+    fontId: string;
     fontSizePx: number;
     align: string;
     stroke?: { color: string; widthPx: number };
+    background?: { color: string; paddingPx: number; radiusPx: number };
   };
   shape?: { type: string; fill: string };
   transform: { x: number; y: number; scale: number; rotationDeg: number };
@@ -68,10 +92,17 @@ function expectDocValid(doc: unknown, context: string): void {
   expect(result.success, `${context} — sözleşme ihlali:\n${issues}`).toBe(true);
 }
 
-/** Gerçek fare tıklaması: locator'ın ekrandaki kutusunun ortasına. */
+/**
+ * Gerçek fare tıklaması: locator'ın ekrandaki kutusunun ortasına.
+ *
+ * Önce görünür alana kaydırılır — kullanıcının da yaptığı şey. Inspector paneli
+ * kaydırılabilir; kaydırmadan `boundingBox()` panelin DIŞINDA bir nokta
+ * döndürür ve fare başka bir öğeye basar (arka plan alanları burada kırılmıştı).
+ */
 async function clickReal(page: Page, testId: string): Promise<void> {
   const el = page.getByTestId(testId);
   await expect(el, `Öğe ekranda yok: ${testId}`).toBeVisible();
+  await el.scrollIntoViewIfNeeded();
   const box = await el.boundingBox();
   expect(box, `Öğenin kutusu okunamadı: ${testId}`).not.toBeNull();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
@@ -363,6 +394,127 @@ test.describe('Metin / şekil katmanları — gerçek fare ve klavye', () => {
 
     // Metin bölümü bir şekil klibinde GÖRÜNMEMELİ (bölümler karışmaz).
     await expect(page.getByTestId('clip-inspector-text')).toHaveCount(0);
+  });
+
+  /**
+   * M4 dalga-2 denetimi, KRİTİK bulgu #1 — "metin ekle → dışa aktar" ANA YOLU.
+   *
+   * Eskiden yeni metin klibi `fontId: 'inter'` ile doğuyordu; 'inter'
+   * fonts/manifest.json'da YOKTUR, yani her export 'font-missing' ile düşerdi.
+   * Test bunu tek şeye indirger: GERÇEK FARE ile eklenen klibin fontId'si
+   * SUNUCUNUN manifestinde var mı?
+   */
+  test('yeni metin klibinin fontId\'si sunucu manifestinde VAR (font-missing regresyonu)', async ({
+    editor,
+  }) => {
+    const page = editor.page;
+    expect(SERVER_FONT_IDS.length, 'fonts/manifest.json okunamadı.').toBeGreaterThan(0);
+
+    const clipId = await addTextAtClipA(editor);
+    const fontId = (await readClip(page, clipId)).text?.fontId;
+
+    expect(
+      SERVER_FONT_IDS,
+      `Yeni metin klibi fontId='${fontId}' ile doğdu; sunucu manifestinde yok → export ` +
+        "'font-missing' ile düşerdi. Manifest: " + SERVER_FONT_IDS.join(', '),
+    ).toContain(fontId);
+
+    // Seçici de yalnız sunucunun çözebildiği id'leri sunmalı (katalog artık
+    // GET /api/fonts'tan gelir; ağ yoksa derlenmiş küratörlü liste kullanılır —
+    // her iki dalda da id'ler manifestin İÇİNDEDİR).
+    await expect(page.getByTestId('clip-inspector-text')).toBeVisible();
+    const options = await page
+      .getByTestId('clip-text-font')
+      .locator('option')
+      .evaluateAll((nodes) => nodes.map((n) => (n as HTMLOptionElement).value));
+    expect(options.length, 'Yazı tipi seçici boş.').toBeGreaterThan(0);
+    for (const option of options) {
+      expect(SERVER_FONT_IDS, `Seçicideki '${option}' sunucuda yok.`).toContain(option);
+    }
+
+    // Başka bir küratörlü fontu GERÇEKTEN seç: dokümana yazılan değer de geçerli kalmalı.
+    const other = options.find((o) => o !== fontId) ?? options[0];
+    await page.getByTestId('clip-text-font').selectOption(other);
+    await expect.poll(async () => (await readClip(page, clipId)).text?.fontId).toBe(other);
+    expect(SERVER_FONT_IDS).toContain(other);
+    expectDocValid(await readDoc(page), 'yazı tipi değiştirildikten sonra');
+  });
+
+  /**
+   * M4 dalga-2 denetimi, bulgu #2 — TEK kutu kuralı, GERÇEK piksellerde.
+   *
+   * Eski istemci kuralı kutuyu HER KENARDA (kontur + arkaplanPayı) kadar
+   * büyütüyordu; sunucu ise mürekkep+kontur/2 ve içerik+pay birleşimini
+   * kullanıyor. Aradaki fark ölçülebilir: kontur W açıldığında kutu ESKİ kuralda
+   * 2W büyürdü, YENİ kuralda en fazla W (yarısı her kenardan, üstelik yalnız
+   * mürekkep içerik kenarına dayanıyorsa).
+   */
+  test('kontur ve arka plan önizleme kutusunu SUNUCU kuralı kadar büyütür', async ({ editor }) => {
+    const page = editor.page;
+    const clipId = await addTextAtClipA(editor);
+    await expect(page.getByTestId('player-gizmo')).toHaveAttribute('data-clip-id', clipId);
+
+    /** Gizmo kutusunun PROJE pikseli cinsinden genişliği (= bbox, scale 1). */
+    const bboxWidth = async (): Promise<number> => {
+      const geo = await gizmoBox(page);
+      expect(geo, 'Gizmo kutusu okunamadı.').not.toBeNull();
+      return (geo!.width * SEED_WIDTH_PX) / geo!.canvasWidth;
+    };
+
+    // Varsayılan metin KONTURLU gelir (overlayDefaults): önce konturu kapat ki
+    // ölçümün tabanı temiz olsun. Gerçek fare ile toggle.
+    await clickReal(page, 'clip-text-stroke');
+    await expect.poll(async () => (await readClip(page, clipId)).text?.stroke).toBeUndefined();
+    await expect.poll(bboxWidth, { timeout: 5000 }).toBeGreaterThan(0);
+    const plain = await bboxWidth();
+
+    // ---- Kontur 24 px ----
+    await clickReal(page, 'clip-text-stroke');
+    await retype(page, 'clip-text-stroke-width', '24');
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await readClip(page, clipId)).text?.stroke?.widthPx).toBe(24);
+    // Önizleme rasterı bir sonraki karede yeniden üretilir ve ARA durumlardan
+    // (kontur açılırken varsayılan 4 px) geçer: kutunun 24 px'lik konturu
+    // yansıttığı kareyi bekle, yoksa ölçüm ara kareyi yakalar.
+    await expect
+      .poll(async () => (await bboxWidth()) - plain, { timeout: 5000 })
+      .toBeGreaterThan(12);
+    const stroked = await bboxWidth();
+
+    const grewBy = stroked - plain;
+    expect(
+      grewBy,
+      `Kontur 24 px kutuyu ${grewBy.toFixed(1)} px büyüttü. ESKİ istemci kuralı 48 px ` +
+        '(her kenarda TAM genişlik) büyütürdü; sunucu kuralı en fazla 24 px büyütür ' +
+        '(kontur glif konturunun ORTASINDADIR, dışa taşan pay yarısıdır).',
+    ).toBeLessThanOrEqual(24 + 2.5);
+    expect(grewBy, 'Kontur kutuyu hiç büyütmedi — mürekkep taşması hesaba katılmamış.')
+      .toBeGreaterThan(0);
+
+    // ---- Arka plan payı 40 px (kontur payından BÜYÜK) ----
+    await clickReal(page, 'clip-text-background');
+    await retype(page, 'clip-text-bg-padding', '40');
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(async () => (await readClip(page, clipId)).text?.background?.paddingPx)
+      .toBe(40);
+    // Yine ara kare var: arka plan açılırken pay VARSAYILAN 16 ile gelir.
+    await expect
+      .poll(async () => (await bboxWidth()) - plain, { timeout: 5000 })
+      .toBeGreaterThanOrEqual(80 - 2.5);
+    const withBackground = await bboxWidth();
+    void stroked;
+
+    // Pay (40) kontur payından (12) büyük → kutuyu ARKA PLAN belirler: içerik ± 40.
+    // Eski kural burada içerik + 2*(24 + 40) = içerik + 128 verirdi; ÜST SINIR
+    // ayırt edici olan taraftır.
+    expect(
+      withBackground - plain,
+      `Arka plan payı 40 px iken kutu tabana göre ${(withBackground - plain).toFixed(1)} px ` +
+        'büyüdü; tek kural bunu 80 px (içerik ± 40) yapar, eski istemci kuralı 128 px yapardı.',
+    ).toBeLessThanOrEqual(80 + 2.5);
+
+    expectDocValid(await readDoc(page), 'kontur ve arka plan açıldıktan sonra');
   });
 
   test('metin klibi kırpma/taşıma ile aynı zemini paylaşır (gerçek fare)', async ({ editor }) => {

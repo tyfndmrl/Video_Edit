@@ -53,6 +53,50 @@ function clampInt(tClipUs: number, clipDurUs: MicroSec): number {
   return Math.min(clipDurUs, Math.max(0, roundHalfUp(tClipUs)));
 }
 
+// ---------------------------------------------------------------------------
+// Transitions (rendering-semantics §5.4) — the acrossfade equivalent
+// ---------------------------------------------------------------------------
+
+/**
+ * The transition durations on a clip's two edges (0 = no transition there).
+ * §5.4 pairs the audio window with the picture's: A's tail overlaps B's head
+ * over the SAME D, so the sound crosses exactly when the picture does.
+ */
+export interface TransitionRamp {
+  /** D of the transition on the clip's IN edge (its left cut). */
+  inUs: number;
+  /** D of the transition on the clip's OUT edge (its right cut). */
+  outUs: number;
+}
+
+export const NO_TRANSITION_RAMP: TransitionRamp = { inUs: 0, outUs: 0 };
+
+/**
+ * Linear crossfade factor at clip-local time tClipUs (§5.4 `c1=tri:c2=tri`,
+ * i.e. the same linear law as §8.2's fades).
+ *
+ * The domain is the clip's timeline life EXTENDED by D/2 at each transition
+ * edge — that extension is the handle the export compiler feeds to acrossfade,
+ * and the preview plays the very same material. Outside it: silence.
+ */
+export function transitionGainAt(
+  tClipUs: number,
+  clipDurUs: MicroSec,
+  ramp: TransitionRamp = NO_TRANSITION_RAMP,
+): number {
+  const halfIn = ramp.inUs > 0 ? ramp.inUs / 2 : 0;
+  const halfOut = ramp.outUs > 0 ? ramp.outUs / 2 : 0;
+  if (tClipUs < -halfIn || tClipUs > clipDurUs + halfOut) return 0;
+  let g = 1;
+  if (ramp.inUs > 0 && tClipUs < halfIn) {
+    g *= Math.min(1, Math.max(0, (tClipUs + halfIn) / ramp.inUs));
+  }
+  if (ramp.outUs > 0 && tClipUs > clipDurUs - halfOut) {
+    g *= Math.min(1, Math.max(0, (clipDurUs + halfOut - tClipUs) / ramp.outUs));
+  }
+  return g;
+}
+
 export interface GainCurveOptions {
   /**
    * Apply a 5 ms micro-fade at the start/end EDGE OF THE WINDOW. The engine
@@ -62,6 +106,12 @@ export interface GainCurveOptions {
   microFadeIn?: boolean;
   microFadeOut?: boolean;
   volumeKeyframes?: readonly Keyframe[];
+  /**
+   * §5.4 crossfade ramps. When present the clip's own volume/fade envelope is
+   * evaluated CLAMPED into [0, duration] (the handle material plays at the
+   * clip's normal level) and multiplied by the linear crossfade factor.
+   */
+  transition?: TransitionRamp;
 }
 
 /**
@@ -85,16 +135,34 @@ export function buildGainCurve(
   const n = Math.max(2, Math.floor(sampleCount));
   const span = endClipUs - startClipUs;
   const curve = new Float32Array(n);
+  const ramp = opts.transition;
 
   // §8.4: the user's own fade already reaches zero at the edge -> skip micro-fade.
-  const wantMicroIn = (opts.microFadeIn ?? false) && !(audio.fadeInUs > 0 && startClipUs <= 0);
+  // A transition edge does the same job (the ramp IS the fade) and a 5 ms notch
+  // inside a crossfade is an audible dip, so it suppresses the micro-fade too.
+  const wantMicroIn =
+    (opts.microFadeIn ?? false) &&
+    !(audio.fadeInUs > 0 && startClipUs <= 0) &&
+    !((ramp?.inUs ?? 0) > 0);
   const wantMicroOut =
-    (opts.microFadeOut ?? false) && !(audio.fadeOutUs > 0 && endClipUs >= clipDurUs);
+    (opts.microFadeOut ?? false) &&
+    !(audio.fadeOutUs > 0 && endClipUs >= clipDurUs) &&
+    !((ramp?.outUs ?? 0) > 0);
 
   for (let i = 0; i < n; i++) {
     const frac = n === 1 ? 0 : i / (n - 1);
     const t = startClipUs + span * frac;
-    let g = clipGainAt(audio, clipDurUs, t, opts.volumeKeyframes);
+    // Inside a transition window the clip plays HANDLE material (t outside
+    // [0, duration]); its own envelope is sampled at the clamped time and the
+    // crossfade ramp does the rest (§5.4).
+    let g = ramp
+      ? clipGainAt(
+          audio,
+          clipDurUs,
+          Math.min(clipDurUs, Math.max(0, t)),
+          opts.volumeKeyframes,
+        ) * transitionGainAt(t, clipDurUs, ramp)
+      : clipGainAt(audio, clipDurUs, t, opts.volumeKeyframes);
     const fromStart = t - startClipUs;
     const fromEnd = endClipUs - t;
     if (wantMicroIn && fromStart < MICRO_FADE_US) {

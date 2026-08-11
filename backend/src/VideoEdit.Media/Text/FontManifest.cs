@@ -32,9 +32,14 @@ public sealed class FontManifest
     public Dictionary<string, FontEntry> Fonts { get; set; } = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// Sistem fontlarına düşme (emoji/eksik glif için <c>SKFontManager</c> fallback'i).
-    /// VARSAYILAN KAPALI ve öyle kalmalıdır: sistem fontu makineden makineye değişir, açılırsa
-    /// export deterministik olmaktan çıkar (aynı proje farklı worker'da farklı piksel üretir).
+    /// GLİF DÜZEYİNDE sistem fontuna düşme (metnin içindeki emoji/eksik karakter için
+    /// <c>SKFontManager</c> fallback zinciri). VARSAYILAN KAPALI ve öyle kalmalıdır: açılırsa
+    /// AYNI fontla çizilen metnin bir kısmı makineye göre değişir ve satır kırılımı bile kayar.
+    /// <para>
+    /// Bunu <see cref="FontOptions.AllowSystemFallback"/> ile KARIŞTIRMAYIN: orası DOSYA
+    /// düzeyindedir (küratörlü TTF hiç kurulmamışsa fontId'nin tamamı sistem fontuyla çizilir,
+    /// sonuç <see cref="FontSourceKind.System"/> olarak İŞARETLENİR ve uyarı loglanır).
+    /// </para>
     /// </summary>
     [JsonPropertyName("allowSystemFallback")]
     public bool AllowSystemFallback { get; set; }
@@ -170,6 +175,10 @@ public sealed class FontManifest
     /// </list>
     /// Bulunamayan fontId ya da diskte olmayan dosya <see cref="FontNotFoundException"/> atar —
     /// SESSİZ FALLBACK YOKTUR (yanlış fontla export etmek, hata vermekten daha kötüdür).
+    /// <para>
+    /// Bu metot YALNIZ KÜRATÖRLÜ yolu bilir ve saf kalır (Skia'ya dokunmaz). Sistem fontuna
+    /// düşme politikası bir katman yukarıdadır: <see cref="FontResolver"/>.
+    /// </para>
     /// </summary>
     public FontFile Resolve(string fontId, int weight, bool italic)
     {
@@ -311,6 +320,17 @@ public sealed class FontEntry
     [JsonPropertyName("variableAxes")]
     public Dictionary<string, AxisRange>? VariableAxes { get; set; }
 
+    /// <summary>
+    /// Küratörlü TTF KURULU DEĞİLKEN denenecek sistem aile adları (öncelik sırasıyla) — ya da
+    /// mutlak dosya yolları. Yalnız <see cref="FontResolver"/> kullanır;
+    /// <see cref="FontManifest.Resolve"/> bu alandan HABERSİZDİR (küratörlü yol saf kalır).
+    /// Boşsa <see cref="SystemFontDefaults"/> tablosu geçerlidir; appsettings
+    /// <c>Fonts:SystemFallback:&lt;fontId&gt;</c> her ikisini de ezer.
+    /// <para>SİSTEM FONTU DOSYALARI DEPOYA KOPYALANMAZ (lisans) — yalnız çalışma zamanında okunur.</para>
+    /// </summary>
+    [JsonPropertyName("systemFallback")]
+    public string[]? SystemFallback { get; set; }
+
     /// <summary>Yeni projelerde önerilmez ama ESKİ projeler için yaşamaya devam eder (§7 pinleme).</summary>
     [JsonPropertyName("deprecated")]
     public bool Deprecated { get; set; }
@@ -363,7 +383,13 @@ public sealed class AxisRange
     public double Max { get; set; }
 }
 
-/// <summary>Çözümlenmiş font dosyası (henüz Skia'ya açılmadı).</summary>
+/// <summary>
+/// Çözümlenmiş font dosyası (henüz Skia'ya açılmadı).
+/// <para>
+/// <see cref="Source"/> <see cref="FontSourceKind.System"/> ise <see cref="Path"/> BOŞ olabilir:
+/// font <c>SKFontManager</c> üzerinden aile adıyla açılır (dosya yolu bilinmez).
+/// </para>
+/// </summary>
 public sealed record FontFile(
     string FontId,
     string Family,
@@ -373,14 +399,28 @@ public sealed record FontFile(
     int ResolvedWeight,
     bool RequestedItalic,
     bool SyntheticItalic,
-    IReadOnlyDictionary<string, float> Variations)
+    IReadOnlyDictionary<string, float> Variations,
+    FontSourceKind Source = FontSourceKind.Curated,
+    SystemFontOrigin? SystemOrigin = null)
 {
-    /// <summary>Değişken eksen kimliği — typeface cache anahtarının parçası.</summary>
-    public string CacheKey => Variations.Count == 0
-        ? Path
-        : Path + "|" + string.Join(',', Variations.OrderBy(v => v.Key, StringComparer.Ordinal)
-            .Select(v => $"{v.Key}={v.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}"));
+    /// <summary>Değişken ekseni olmayan fontlar için paylaşılan boş harita.</summary>
+    public static IReadOnlyDictionary<string, float> NoVariations { get; } =
+        new Dictionary<string, float>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Typeface cache anahtarı. Dosya yolu varsa yol (+ değişken eksenler); sistem fontu font
+    /// yöneticisinden geliyorsa aile + İSTENEN stil (aynı istek → aynı MatchFamily çağrısı).
+    /// </summary>
+    public string CacheKey => Path.Length == 0
+        ? $"system:{Family}|{RequestedWeight}|{(RequestedItalic ? "i" : "n")}"
+        : Variations.Count == 0
+            ? Path
+            : Path + "|" + string.Join(',', Variations.OrderBy(v => v.Key, StringComparer.Ordinal)
+                .Select(v => $"{v.Key}={v.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}"));
 
     /// <summary>İstenen ağırlık bulunamadı, en yakını kullanıldı (rapora/uyarıya girer).</summary>
     public bool SubstitutedWeight => RequestedWeight != ResolvedWeight;
+
+    /// <summary>Bu fontla yapılan render makineden makineye AYNI mı (yalnız küratörlü set).</summary>
+    public bool Deterministic => Source == FontSourceKind.Curated;
 }

@@ -28,6 +28,7 @@ import {
 } from '../geometry';
 import type { ClipHitRect } from '../hitTest';
 import { getFilmstripManifest, getSpriteImage, getWaveformPeaks } from './mediaCache';
+import { drawSpeedBadge } from './speedBadge';
 
 // ---------------------------------------------------------------------------
 // Drag visual state (owned by the pointer code, drawn here)
@@ -492,11 +493,19 @@ export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState
         ctx.clip();
         ctx.fillStyle = COLORS.nameBar;
         ctx.fillRect(x, y + 2, w, NAME_BAR_H);
+        // Speed badge first: the name is what gets truncated when they collide
+        // (a re-timed clip whose "2x" is hidden is the misleading case).
+        const badgeW = drawSpeedBadge(ctx, clip, x, y + 2, w, NAME_BAR_H);
         ctx.fillStyle = COLORS.clipName;
         ctx.font = '10px system-ui, sans-serif';
         ctx.textBaseline = 'middle';
         const name = clipLabel(clip, assets);
-        ctx.fillText(name, x + 5, y + 2 + NAME_BAR_H / 2, Math.max(10, w - 10));
+        // On a narrow re-timed clip the badge WINS: the block length already
+        // hides the speed, while the name is repeated in the inspector.
+        const nameMaxW = w - 10 - badgeW;
+        if (nameMaxW >= 12) {
+          ctx.fillText(name, x + 5, y + 2 + NAME_BAR_H / 2, nameMaxW);
+        }
         ctx.restore();
       }
 

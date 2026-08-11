@@ -10,6 +10,7 @@ import {
   applyMat3,
   computePlacement,
   fitScale,
+  invertAffineMat3,
   screenToNdc,
   sourceToScreen,
   unitQuadToNdcMatrix,
@@ -235,5 +236,41 @@ describe('baseScale override (§7 overlay rasters)', () => {
       });
       expect(p.s).toBe(1.5);
     }
+  });
+});
+
+describe('invertAffineMat3 (the transition pass maps NDC back into each quad)', () => {
+  const cases: { name: string; t: Partial<Transform> }[] = [
+    { name: 'identity', t: {} },
+    { name: 'scaled + moved', t: { scale: 0.4, x: 0.2, y: -0.1 } },
+    { name: 'rotated 30°', t: { rotationDeg: 30 } },
+    { name: 'rotated 90° off-anchor', t: { rotationDeg: 90, anchorX: 0, anchorY: 1, x: -0.3 } },
+  ];
+
+  for (const { name, t } of cases) {
+    it(`round-trips unit -> NDC -> unit (${name})`, () => {
+      const p = place(1280, 720, 1920, 1080, t);
+      const m = unitQuadToNdcMatrix(p, 1280, 720, 1920, 1080);
+      const inv = invertAffineMat3(m);
+      expect(inv).not.toBeNull();
+      for (const [u, v] of [
+        [0, 0],
+        [1, 0],
+        [0, 1],
+        [1, 1],
+        [0.37, 0.62],
+      ] as const) {
+        const ndc = applyMat3(m, u, v);
+        const back = applyMat3(inv!, ndc.x, ndc.y);
+        expect(back.x).toBeCloseTo(u, 6);
+        expect(back.y).toBeCloseTo(v, 6);
+      }
+    });
+  }
+
+  it('returns null for a degenerate placement instead of NaN pixels', () => {
+    // scale 0: the quad collapses, there is no source pixel to map back to.
+    const p = place(1280, 720, 1920, 1080, { scale: 0 });
+    expect(invertAffineMat3(unitQuadToNdcMatrix(p, 1280, 720, 1920, 1080))).toBeNull();
   });
 });

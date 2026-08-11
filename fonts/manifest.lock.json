@@ -1,0 +1,21 @@
+﻿{
+    "lockVersion":  1,
+    "files":  {
+                  "noto-sans/400":  "478c558ea716033cd60c03438f628dfa75694dcf6b5f6d505a2f05fd2b4f3823",
+                  "noto-sans/400i":  "467e3f89eeca4108bb8710a2b9e0cf2281ac56d5b0609211a83776d0505eecb5",
+                  "noto-sans/700":  "1df075a380fc7cb898acf64c1f7b3b4dd780de3caa860178bf929de35817a913",
+                  "noto-sans/700i":  "1b602a9d6353be42c91df097a4857b69fa2696f26703d7a33b54a15d87c2622c",
+                  "noto-serif/400":  "19e72cd8d595fae5bd74a5206f5d938512e1183d4fed7abb1ec1be1d7efa5f88",
+                  "noto-serif/400i":  "749e80e313ef711f9373c6cce17c72297ef05490b3dcda7967d1d5d90bf1183f",
+                  "noto-serif/700":  "96656aa5cec8f1d6fd0e804c1fad397e1a1cfa082e6642124e0bda68cd8363ce",
+                  "noto-serif/700i":  "c710c5b9cf354ae46e7a10472a08019b28220fafeb5887a482a76856f8f6fc0b",
+                  "open-sans/400":  "c53aceea2dcf5b4098099c0c4d0a061d17e178a049317b42a422b1a9f7f8eb59",
+                  "open-sans/400i":  "93bc1bb6abf4e6b7c75d7131714061d5b57cc478abcabe4cb3519bb38fb917aa",
+                  "open-sans/700":  "27da758f4dcac9a65abe914c13b463b42982b9909bc65713424099f4810bd1e6",
+                  "open-sans/700i":  "d672a770037104b6af45e1336b3d3c1729c8aea940f81e010f5a8a7319c29a21",
+                  "roboto/400":  "56a45233d29f11b4dfb86d248e921939d115778f87325e7ae8cc108383d6664d",
+                  "roboto/400i":  "fa0b17bb4aaac4a1b2ee149dd4ca3b55e97d3077aa6ba9bb02541b316e7c46ce",
+                  "roboto/700":  "61f89f8db49261c2f6106e8dccc35df7b2f7ed909020db40a3fc905e95f99334",
+                  "roboto/700i":  "40083ed54338397cf49d2c49f59eddcd963a30fdb301813d4bd3abbb37a13d12"
+              }
+}

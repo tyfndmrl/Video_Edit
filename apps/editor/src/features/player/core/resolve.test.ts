@@ -19,8 +19,12 @@ import {
   resolveAudible,
   resolveVisualStack,
   sourceTimeUs,
+  sourceTimeUsInWindow,
+  transitionAtPlayhead,
+  transitionHandleUs,
+  transitionWindowAt,
 } from './resolve';
-import { mkDoc, mkMediaClip, mkTrack } from './testFixtures';
+import { linkTransition, mkDoc, mkMediaClip, mkTrack } from './testFixtures';
 
 const SEC = 1_000_000;
 
@@ -144,6 +148,161 @@ describe('resolveVisualStack (bottom track first; tracks[0] = TOP layer)', () =>
 
   it('empty timeline -> empty stack (black canvas)', () => {
     expect(resolveVisualStack(mkDoc([]), 0)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Transitions (rendering-semantics §5.3) — the preview half
+// ---------------------------------------------------------------------------
+
+/**
+ * Two adjacent 6 s clips cut at 6 s with a 1 s crossfade, i.e. the window is
+ * [5.5 s, 6.5 s). clipB carries a source handle (sourceIn = 1 s) so the doc is
+ * the same shape the editor writes (§5.5 handle rule).
+ */
+function transitionFixture(durationUs = SEC) {
+  const a = mkMediaClip({ id: 'a', startUs: 0, durationUs: 6 * SEC });
+  const b = mkMediaClip({
+    id: 'b',
+    startUs: 6 * SEC,
+    durationUs: 6 * SEC,
+    sourceInUs: 1 * SEC,
+    sourceOutUs: 7 * SEC,
+  });
+  linkTransition(a, b, durationUs);
+  return { a, b, track: mkTrack('t0', [a, b]), doc: mkDoc([mkTrack('t0', [a, b])]) };
+}
+
+describe('transitionWindowAt (§5.3 window [T-D/2, T+D/2), p linear)', () => {
+  it('opens D/2 BEFORE the cut and closes D/2 after it', () => {
+    const { track } = transitionFixture();
+    expect(transitionWindowAt(track, 5_499_999), 'before the window: hard cut').toBeNull();
+    expect(transitionWindowAt(track, 5_500_000), 'window opens at T - D/2').not.toBeNull();
+    expect(transitionWindowAt(track, 6_499_999)).not.toBeNull();
+    expect(transitionWindowAt(track, 6_500_000), 'end-exclusive, like clips').toBeNull();
+  });
+
+  it('p is 0 at the opening edge, 0.5 exactly AT the cut, ->1 at the closing edge', () => {
+    const { track } = transitionFixture();
+    expect(transitionWindowAt(track, 5_500_000)!.p).toBeCloseTo(0, 9);
+    expect(transitionWindowAt(track, 6 * SEC)!.p, 'the cut is the halfway point').toBeCloseTo(
+      0.5,
+      9,
+    );
+    expect(transitionWindowAt(track, 6_499_999)!.p).toBeCloseTo(0.999999, 6);
+  });
+
+  it('names the OUTGOING clip as from and the INCOMING one as to, on both sides of T', () => {
+    const { track } = transitionFixture();
+    // Before the cut the playhead is over A (found via A.transitionOut)...
+    const before = transitionWindowAt(track, 5_600_000)!;
+    // ...after it, over B (found via B.transitionIn). Same pair either way.
+    const after = transitionWindowAt(track, 6_400_000)!;
+    expect([before.from.id, before.to.id]).toEqual(['a', 'b']);
+    expect([after.from.id, after.to.id]).toEqual(['a', 'b']);
+    expect(before.cutUs).toBe(6 * SEC);
+    expect(after.cutUs).toBe(6 * SEC);
+  });
+
+  it('a gap between the clips is NOT a cut, so no window opens', () => {
+    const a = mkMediaClip({ id: 'a', startUs: 0, durationUs: 6 * SEC });
+    const b = mkMediaClip({ id: 'b', startUs: 7 * SEC, durationUs: 6 * SEC });
+    linkTransition(a, b, SEC); // stale metadata after a move: must not blend
+    expect(transitionWindowAt(mkTrack('t', [a, b]), 6 * SEC)).toBeNull();
+  });
+
+  it('no transition metadata -> null everywhere around the cut', () => {
+    const a = mkMediaClip({ id: 'a', startUs: 0, durationUs: 6 * SEC });
+    const b = mkMediaClip({ id: 'b', startUs: 6 * SEC, durationUs: 6 * SEC });
+    const track = mkTrack('t', [a, b]);
+    for (const t of [5_500_000, 6 * SEC, 6_400_000]) {
+      expect(transitionWindowAt(track, t)).toBeNull();
+    }
+  });
+});
+
+describe('resolveVisualStack inside a transition window', () => {
+  it('returns BOTH clips (outgoing first) — the bug that made the preview a hard cut', () => {
+    const { doc } = transitionFixture();
+    const stack = resolveVisualStack(doc, 6 * SEC);
+    expect(stack.map((s) => s.clip.id)).toEqual(['a', 'b']);
+    expect(stack.map((s) => s.transition?.role)).toEqual(['from', 'to']);
+    expect(stack[0]!.transition!.p).toBeCloseTo(0.5, 9);
+    expect(stack[0]!.transition!.partnerClipId).toBe('b');
+    expect(stack[1]!.transition!.partnerClipId).toBe('a');
+    // Both entries belong to the SAME track (the compositor pairs them by that).
+    expect(stack.map((s) => s.trackIndex)).toEqual([0, 0]);
+  });
+
+  it('outside the window it is one clip and no transition marker (negative control)', () => {
+    const { doc } = transitionFixture();
+    const before = resolveVisualStack(doc, 5_000_000);
+    expect(before.map((s) => s.clip.id)).toEqual(['a']);
+    expect(before[0]!.transition).toBeUndefined();
+    const after = resolveVisualStack(doc, 7 * SEC);
+    expect(after.map((s) => s.clip.id)).toEqual(['b']);
+    expect(after[0]!.transition).toBeUndefined();
+  });
+
+  it('a hidden track contributes neither side (hiding still frees the decoder)', () => {
+    const { a, b } = transitionFixture();
+    const doc = mkDoc([mkTrack('t0', [a, b], { hidden: true })]);
+    expect(resolveVisualStack(doc, 6 * SEC)).toEqual([]);
+  });
+
+  it('audio-kind clips never enter the VISUAL stack, transition or not', () => {
+    const a = mkMediaClip({ id: 'a', startUs: 0, durationUs: 6 * SEC, kind: 'audio' });
+    const b = mkMediaClip({
+      id: 'b',
+      startUs: 6 * SEC,
+      durationUs: 6 * SEC,
+      kind: 'audio',
+      sourceInUs: SEC,
+      sourceOutUs: 7 * SEC,
+    });
+    linkTransition(a, b, SEC);
+    const doc = mkDoc([mkTrack('t0', [a, b], { type: 'audio' })]);
+    expect(resolveVisualStack(doc, 6 * SEC)).toEqual([]);
+    // ...but they ARE both audible (§5.4 acrossfade).
+    expect(resolveAudible(doc, 6 * SEC).map((s) => s.clip.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('transition source time (§5.3 handle material)', () => {
+  it('transitionHandleUs mirrors the schema invariant: roundHalfUp((D/2)*rate)', () => {
+    expect(transitionHandleUs(1_000_000, 1)).toBe(500_000);
+    expect(transitionHandleUs(1_000_000, 2)).toBe(1_000_000);
+    expect(transitionHandleUs(999_999, 1)).toBe(500_000); // .5 rounds half UP
+  });
+
+  it('the outgoing clip keeps ADVANCING past sourceOut instead of freezing', () => {
+    const { a } = transitionFixture();
+    const handle = transitionHandleUs(SEC, 1);
+    // t = 6.4 s is 0.4 s past A's end: plain sourceTimeUs clamps, the window
+    // version reads 0.4 s of handle material.
+    expect(sourceTimeUs(a, 6_400_000)).toBe(6 * SEC);
+    expect(sourceTimeUsInWindow(a, 6_400_000, handle)).toBe(6_400_000);
+    // ...but never further than one handle (that is all the export extends by).
+    expect(sourceTimeUsInWindow(a, 9 * SEC, handle)).toBe(6 * SEC + handle);
+  });
+
+  it('the incoming clip reads BEFORE sourceIn, never below 0', () => {
+    const { b } = transitionFixture();
+    const handle = transitionHandleUs(SEC, 1);
+    expect(sourceTimeUs(b, 5_600_000)).toBe(1 * SEC); // clamped to sourceIn
+    expect(sourceTimeUsInWindow(b, 5_600_000, handle)).toBe(600_000);
+    const noHandle = mkMediaClip({ id: 'n', startUs: 6 * SEC, durationUs: SEC, sourceInUs: 0 });
+    expect(sourceTimeUsInWindow(noHandle, 5_000_000, handle)).toBe(0);
+  });
+});
+
+describe('transitionAtPlayhead (the player badge)', () => {
+  it('finds the window on any visible track, top track first', () => {
+    const { a, b } = transitionFixture();
+    const other = mkMediaClip({ id: 'x', startUs: 0, durationUs: 20 * SEC });
+    const doc = mkDoc([mkTrack('top', [other]), mkTrack('bottom', [a, b])]);
+    expect(transitionAtPlayhead(doc, 6 * SEC)?.from.id).toBe('a');
+    expect(transitionAtPlayhead(doc, 3 * SEC)).toBeNull();
   });
 });
 

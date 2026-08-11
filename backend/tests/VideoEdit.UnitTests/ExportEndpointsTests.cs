@@ -12,6 +12,7 @@ using VideoEdit.Domain;
 using VideoEdit.Domain.Entities;
 using VideoEdit.Infrastructure;
 using VideoEdit.Infrastructure.Storage;
+using VideoEdit.Media.Text;
 
 namespace VideoEdit.UnitTests;
 
@@ -68,10 +69,17 @@ public sealed class ExportEndpointsTests : IDisposable
         return project;
     }
 
+    /// <summary>
+    /// Depodaki GERÇEK <c>fonts/manifest.json</c> — font ön kontrolü (M4 dalga-2 bulgu #1d)
+    /// gerçek küratörlü id'lerle koşsun diye. Sağlayıcı yükleyemezse kontrol atlanır ve
+    /// testler eskisi gibi davranır.
+    /// </summary>
+    private static readonly FontManifestProvider Fonts = new();
+
     private Task<IResult> CallStartAsync(Guid projectId, string? profile = "1080p") =>
         ExportEndpoints.StartExport(
             projectId, new CreateExportRequest(profile), PrincipalFor(_userId), _db, _jobs,
-            TimeProvider.System, CancellationToken.None);
+            TimeProvider.System, Fonts, CancellationToken.None);
 
     // ---------- POST /api/projects/{id}/exports ----------
 
@@ -156,21 +164,14 @@ public sealed class ExportEndpointsTests : IDisposable
     [Fact]
     public async Task StartExport_UnsupportedFeature_Returns422_WithoutQueueingGarbage()
     {
-        // Kapsam dışı özellik (keyframe — M5) — compiler ön-doğrulaması API'de koşar,
-        // kuyruğa hiç girmez. (Geçiş ve metin/şekil/çıkartma M4 dalga 2'de DESTEKLENİR;
-        // aşağıdaki StartExport_TransitionsAndOverlayClips_Accepted onları sabitler.)
-        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        // Kapsam dışı özellik (SES keyframe'i) — compiler ön-doğrulaması API'de koşar, kuyruğa
+        // hiç girmez. (Geçiş + metin/şekil/çıkartma M4 dalga 2'de, hız + renk + transform/opaklık
+        // keyframe'leri M5'te DESTEKLENİR; aşağıdaki *_Accepted testleri onları sabitler.)
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000,
+            ExportTestDocs.Audio());
         clip.Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks
         {
-            Opacity =
-            [
-                new VideoEdit.Contracts.Timeline.Keyframe
-                {
-                    TimeUs = 0,
-                    Value = 0,
-                    Easing = new VideoEdit.Contracts.Timeline.EasingLinear { Type = "linear" },
-                },
-            ],
+            Volume = [ExportTestDocs.Kf(0, 1), ExportTestDocs.Kf(500_000, 0)],
         };
         var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
             ExportTestDocs.Doc(clips: clip)));
@@ -182,6 +183,39 @@ public sealed class ExportEndpointsTests : IDisposable
         Assert.Contains("keyframe", problem.ProblemDetails.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(_db.Jobs.ToList()); // job satırı yazılmadı
         Assert.Equal(0, _jobs.CreateCount); // kuyruğa çöp atılmadı
+    }
+
+    [Fact]
+    public async Task StartExport_UnknownFontId_Returns422_BeforeQueueing()
+    {
+        // M4 dalga-2 denetimi, bulgu #1(d): manifestte olmayan bir fontId raster aşamasında
+        // 'font-missing' ile düşer — dakikalar sonra. Ön kontrol onu KUYRUĞA HİÇ SOKMAZ.
+        // ('inter' tam olarak editörün eski varsayılanıydı; sunucuda hiç var olmadı.)
+        Assert.NotNull(Fonts.Manifest);
+        var clip = ExportTestDocs.TextClip(0, 1_000_000);
+        clip.Text!.FontId = "inter";
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        var result = await CallStartAsync(project.Id);
+
+        var problem = Assert.IsType<ProblemHttpResult>(result);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Contains("inter", problem.ProblemDetails.Detail);
+        Assert.Equal("font-missing", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [Fact]
+    public async Task StartExport_CuratedFontId_IsAccepted()
+    {
+        // Negatif kontrolün diğer yarısı: küratörlü id 422 YEMEZ (ön kontrol her metni
+        // reddetmiyor, yalnız manifestte olmayanı).
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: ExportTestDocs.TextClip(0, 1_000_000))));
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
     }
 
     [Fact]

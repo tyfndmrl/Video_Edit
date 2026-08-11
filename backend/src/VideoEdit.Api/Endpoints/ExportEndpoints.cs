@@ -11,6 +11,7 @@ using VideoEdit.Infrastructure;
 using VideoEdit.Infrastructure.Jobs;
 using VideoEdit.Infrastructure.Storage;
 using VideoEdit.Media.Export;
+using VideoEdit.Media.Text;
 
 namespace VideoEdit.Api.Endpoints;
 
@@ -49,7 +50,7 @@ public static class ExportEndpoints
 
     internal static async Task<IResult> StartExport(
         Guid projectId, CreateExportRequest request, ClaimsPrincipal principal, AppDbContext db,
-        IBackgroundJobClient jobs, TimeProvider clock, CancellationToken ct)
+        IBackgroundJobClient jobs, TimeProvider clock, FontManifestProvider fonts, CancellationToken ct)
     {
         var userId = principal.GetUserId();
         var project = await db.Projects.AsNoTracking()
@@ -87,6 +88,26 @@ public static class ExportEndpoints
             var doc = project.Timeline.RootElement.Deserialize<TimelineDoc>(TimelineJson.Options)
                 ?? throw new InvalidTimelineException("timeline document is empty.");
             ExportCompiler.Validate(doc);
+
+            // FONT ÖN KONTROLÜ (M4 dalga-2 denetimi, bulgu #1d): manifestte olmayan bir
+            // fontId, raster aşamasında 'font-missing' ile düşer — ama o noktaya gelmek
+            // dakikalar sürer. Kuyruğa hiç girmesin. Manifest okunamıyorsa kontrol ATLANIR
+            // (yanlış 422 vermektense worker'ın deterministik hatasına bırakılır).
+            if (fonts.Manifest is { } manifest
+                && FontCatalogue.UnknownFontIds(doc, manifest) is { Count: > 0 } unknown)
+            {
+                return Results.Problem(
+                    statusCode: StatusCodes.Status422UnprocessableEntity,
+                    title: "Timeline uses a font the server does not have.",
+                    detail: $"Bilinmeyen fontId: {string.Join(", ", unknown.Select(f => $"'{f}'"))}. "
+                            + $"Kullanılabilir: {string.Join(", ", manifest.Fonts.Keys.Order(StringComparer.Ordinal))} "
+                            + "(GET /api/fonts).",
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["feature"] = "font-missing",
+                        ["unknownFontIds"] = unknown,
+                    });
+            }
         }
         catch (UnsupportedFeatureException ex)
         {

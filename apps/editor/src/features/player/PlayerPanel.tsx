@@ -24,12 +24,14 @@ import {
   getPlaybackEngine,
   registerPlaybackEngine,
   type AssetResolver,
+  type PreviewRateStatus,
   type PreviewStatus,
   type SourceSize,
 } from './engine';
 import { VideoPlaybackEngine } from './engine-video/engineV1';
-import { projectDurationUs } from './core/resolve';
+import { projectDurationUs, transitionAtPlayhead } from './core/resolve';
 import { previewShortfallNote } from './core/scheduler';
+import { transitionTypeLabel } from '../timeline/transitions';
 import { readIsPlaying, readUserSeekSeq } from './editorBridge';
 import { TransformGizmo } from './TransformGizmo';
 
@@ -59,6 +61,21 @@ export function PlayerPanel() {
   const settings = useDocStore((s) => s.doc.settings);
   const durationUs = useDocStore((s) => projectDurationUs(s.doc));
   const playheadUs = useEditorStore((s) => s.playheadUs);
+  /**
+   * The transition window under the playhead, as a rendered STRING so the
+   * selector stays value-stable (a fresh object every doc change would
+   * re-render the panel on every gizmo drag frame).
+   *
+   * Why the badge exists at all: a crossfade between two similar shots looks
+   * exactly like a preview that failed to update. The timeline already draws
+   * the band; the player has to say "you are inside it" for the same reason
+   * the shortfall note exists — a degraded or unusual frame must be legible.
+   */
+  const transitionNote = useDocStore((s) => {
+    const window = transitionAtPlayhead(s.doc, playheadUs);
+    if (!window) return null;
+    return `${transitionTypeLabel(window.type)} %${Math.round(window.p * 100)}`;
+  });
 
   // Engine play state — fed from playState$ in the mount effect below, so ANY
   // play/pause source (transport button, timeline Space shortcut) updates it.
@@ -73,6 +90,14 @@ export function PlayerPanel() {
     totalAudio: 0,
     shownAudio: 0,
     dropped: [],
+  });
+  // Clip speed x transport rate can leave the <video> element's portable
+  // range; the preview then runs at a different speed than the document and
+  // the user has to hear it from us, not discover it in the export.
+  const [rateStatus, setRateStatus] = useState<PreviewRateStatus>({
+    limited: false,
+    requested: 1,
+    applied: 1,
   });
   /**
    * Flush the engine's DEBOUNCED doc reload on demand. Assigned by the mount
@@ -110,6 +135,7 @@ export function PlayerPanel() {
 
     const unsubBlocked = engine.blocked$.subscribe(setBlocked);
     const unsubPreview = engine.previewStatus$.subscribe(setPreviewStatus);
+    const unsubRate = engine.previewRate$.subscribe(setRateStatus);
 
     // doc/asset changes -> engine.load (debounced 100 ms).
     let loadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -184,6 +210,7 @@ export function PlayerPanel() {
       unsubPlayState();
       unsubBlocked();
       unsubPreview();
+      unsubRate();
       unsubDoc();
       unsubAssets();
       unsubEditor();
@@ -267,6 +294,33 @@ export function PlayerPanel() {
             title={shortfall.detail}
           >
             {shortfall.text}
+          </div>
+        )}
+        {/* Transition window (§5.3): both sides are being mixed right now. */}
+        {transitionNote && (
+          <div
+            data-testid="preview-transition-note"
+            role="status"
+            className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/70 px-2 py-1 text-[11px] text-white"
+            title={
+              'Geçiş penceresi: kesimden D/2 önce başlar, D/2 sonra biter ' +
+              '(rendering-semantics §5.3). Önizlemede iki klip birlikte çözülüp karıştırılır.'
+            }
+          >
+            Geçiş: {transitionNote}
+          </div>
+        )}
+        {/* Speed honesty (M5): the element could not run at the rate the
+            document asks for, so what is on screen is NOT what will be
+            exported. Saying nothing here would make the export look broken. */}
+        {rateStatus.limited && (
+          <div
+            data-testid="preview-rate-note"
+            role="status"
+            className="pointer-events-none absolute right-2 top-2 rounded bg-amber-500/85 px-2 py-1 text-[11px] text-black"
+            title={`Tarayıcı <video> hızı 0.0625x–16x aralığındadır; istenen ${rateStatus.requested}x yerine ${rateStatus.applied}x çalınıyor. Dışa aktarımda bu sınır yoktur.`}
+          >
+            Önizleme hızı sınırlandı: {rateStatus.applied}x
           </div>
         )}
       </div>

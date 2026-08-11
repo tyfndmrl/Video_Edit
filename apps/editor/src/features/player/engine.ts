@@ -79,6 +79,24 @@ export interface SeekOptions {
   precise: boolean;
 }
 
+/**
+ * Preview playback-rate honesty (M5).
+ *
+ * The effective element rate is `clip.speed.rate * transportRate`, and a
+ * <video> element only plays back portably within [0.0625, 16] (design §4.2).
+ * Outside that window the preview runs at a DIFFERENT speed than the document
+ * describes — which the user must be told, because the export has no such
+ * limit and would come out fine while the preview looked wrong.
+ */
+export interface PreviewRateStatus {
+  /** true = at least one clip is playing at a clamped rate right now. */
+  limited: boolean;
+  /** The rate the document asked for (the worst offender when several). */
+  requested: number;
+  /** What the element actually got. */
+  applied: number;
+}
+
 /** Design §4.1 — both the v1 <video> engine and the v2 WebCodecs engine obey this. */
 export interface PlaybackEngine {
   load(doc: TimelineDoc, assets: AssetResolver): void;
@@ -122,6 +140,13 @@ export interface PlaybackEngine {
    * missing music bed) is indistinguishable from a broken one.
    */
   readonly previewStatus$?: Observable<PreviewStatus>;
+  /**
+   * Optional: emits when the effective playback rate had to be CLAMPED to the
+   * element's portable range (see PreviewRateStatus). Same contract as
+   * previewStatus$: emit only on change, and never stay silent about a preview
+   * that does not match the document.
+   */
+  readonly previewRate$?: Observable<PreviewRateStatus>;
   setPlaybackRate(r: number): void;
   /** Current playback rate multiplier (1 = realtime). */
   getPlaybackRate(): number;
@@ -153,9 +178,35 @@ export function getPlaybackEngine(): PlaybackEngine | null {
   return currentEngine;
 }
 
+/**
+ * DEV-only handle to the live engine: `window.__videoeditPlayer`.
+ *
+ * Same rationale (and same guard) as state/testBridge.ts. The preview's proof
+ * of correctness is a PIXEL — "did the inspector's brightness reach the
+ * shader?" has no answer in any store, and reading the canvas from outside is
+ * impossible because the drawing buffer is not preserved. This exposes the
+ * engine's own probe, which samples inside the compositing frame.
+ *
+ * Read-only for the test: it hands back a colour, it cannot edit anything.
+ */
+export interface VideoEditPlayerHook {
+  version: 1;
+  /** Composition pixel (project coords) after the next composed frame. */
+  probePixel(x: number, y: number): Promise<[number, number, number, number]>;
+}
+
 /** Called by PlayerPanel when it creates/destroys its engine instance. */
 export function registerPlaybackEngine(engine: PlaybackEngine | null): void {
   currentEngine = engine;
+  if (!import.meta.env?.DEV || typeof window === 'undefined') return;
+  const w = window as unknown as { __videoeditPlayer?: VideoEditPlayerHook };
+  const probe = (engine as unknown as { probePixel?: VideoEditPlayerHook['probePixel'] } | null)
+    ?.probePixel;
+  if (engine === null || typeof probe !== 'function') {
+    delete w.__videoeditPlayer;
+    return;
+  }
+  w.__videoeditPlayer = { version: 1, probePixel: (x, y) => probe.call(engine, x, y) };
 }
 
 // ---------------------------------------------------------------------------

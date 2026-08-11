@@ -79,6 +79,7 @@ import {
   useLibraryDndStore,
   type LibraryDragPayload,
 } from './libraryDnd';
+import { KeyframeStripOverlay } from '../keyframes/KeyframeStripOverlay';
 import { drawRuler } from './render/drawRuler';
 import { drawTracks, type DragVisual } from './render/drawTracks';
 import { setMediaCacheInvalidator } from './render/mediaCache';
@@ -1362,6 +1363,13 @@ export function TimelinePanel() {
           <canvas ref={rulerRef} className="block" />
           <canvas ref={bodyRef} className="block" />
           <canvas ref={overlayRef} className="pointer-events-none absolute inset-0" />
+          {/*
+            Keyframe şeridi (features/keyframes). Kendi canvas'ını ve kendi
+            pointer alanını taşır; elmasa denk GELMEYEN basma tüketilmez, yani
+            yukarıdaki jestlerin (taşıma/kırpma/marquee/sağ tık) hiçbiri
+            değişmez. scrollY store'da olmadığı için tek prop olarak geçilir.
+          */}
+          <KeyframeStripOverlay scrollY={scrollY} />
         </div>
       </div>
 

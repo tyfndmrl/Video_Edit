@@ -15,8 +15,11 @@
  *    duration D the export compiler extends A.sourceOut by
  *    roundHalfUp((D/2)*A.speed.rate) and pulls B.sourceIn back by
  *    roundHalfUp((D/2)*B.speed.rate) (source-domain handles, §5.2). The source
- *    media must have that much slack at the cut edge; only checked when
- *    `assetDurations` is provided. Independently:
+ *    media must have that much slack at the cut edge. Per side: the HEAD handle
+ *    (B.sourceIn) is always checked, the TAIL handle (A.sourceOut vs. the asset
+ *    duration) only when `assetDurations` is provided; a side whose source has
+ *    no time axis (`hasSourceTimeAxis` false — a still image) is exempt from
+ *    both, exactly like the compiler's `IsStillInput` branch. Independently:
  *    - D must sit exactly on the project fps grid and correspond to an EVEN
  *      frame count >= 2 (§5.2 even-frame snap, so D/2 is a whole frame count).
  *    - D must not exceed half of the shorter neighboring clip's timeline
@@ -41,7 +44,7 @@
  */
 
 import { clipTimelineDurationUs, frameToUs, roundHalfUp, usToFrame, type MicroSec, type Rational } from './time.js';
-import { isMediaClip, type Clip, type Effect, type MediaClip, type ProjectSettings, type TimelineDoc, type Track, type Transition } from './schema.js';
+import { hasSourceTimeAxis, isMediaClip, type Clip, type Effect, type MediaClip, type ProjectSettings, type TimelineDoc, type Track, type Transition } from './schema.js';
 
 // ---------------------------------------------------------------------------
 // Transform bounds shared with the export compiler
@@ -200,8 +203,14 @@ function checkTransitionEdge(
   // Handle rule (rendering-semantics §5.2, source-domain, speed-aware):
   //   sourceOut + roundHalfUp((D/2)*rateA) <= assetA.durationUs
   //   sourceIn  - roundHalfUp((D/2)*rateB) >= 0
-  // Skipped entirely when assetDurations is not provided (durations unknown).
-  if (assetDurations === undefined) return;
+  //
+  // The rule is about SOURCE TIME, so it applies per side and only to a side
+  // whose source HAS a time axis. A still image is opened with `-loop 1` and
+  // yields as many frames as the window asks for, so it always has a handle —
+  // the compiler skips these very checks for it (`!next.IsStillInput`, and
+  // still clips never enter the source-range ledger). Without this exemption a
+  // crossfade between two photographs is impossible in the editor while the
+  // renderer accepts it happily.
   const outgoing = edge === 'transitionIn' ? neighbor : clip; // clip A (before the cut)
   const incoming = edge === 'transitionIn' ? clip : neighbor; // clip B (after the cut)
   const outgoingClipIndex = edge === 'transitionIn' ? neighborIndex : clipIndex;
@@ -209,13 +218,20 @@ function checkTransitionEdge(
   const halfOut = transitionHandleUs(d, outgoing.speed.rate);
   const halfIn = transitionHandleUs(d, incoming.speed.rate);
 
-  if (incoming.sourceInUs < halfIn) {
+  // Head handle: bounded by sourceInUs alone, so it needs NO asset duration —
+  // and the compiler enforces it unconditionally. Skipping it when durations
+  // are unknown would let a document pass this validator and still be rejected
+  // with HTTP 422 at export.
+  if (hasSourceTimeAxis(incoming) && incoming.sourceInUs < halfIn) {
     ctx.addIssue({
       code: 'custom',
       message: `transition handle missing: incoming clip needs sourceInUs >= ${halfIn}us (roundHalfUp((D/2)*rate)), got ${incoming.sourceInUs}us`,
       path: ['tracks', trackIndex, 'clips', incomingClipIndex, 'sourceInUs'],
     });
   }
+
+  // Tail handle: needs the asset duration, which the caller may not have.
+  if (assetDurations === undefined || !hasSourceTimeAxis(outgoing)) return;
   const outgoingAssetDuration = lookupDuration(assetDurations, outgoing.assetId);
   if (outgoingAssetDuration !== undefined && outgoing.sourceOutUs + halfOut > outgoingAssetDuration) {
     ctx.addIssue({

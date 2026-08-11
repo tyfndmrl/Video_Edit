@@ -9,6 +9,7 @@ import type {
   TimelineDoc,
   Track,
   Transform,
+  TransitionType,
 } from '@videoedit/timeline-schema';
 
 export const IDENTITY_TRANSFORM: Transform = {
@@ -67,6 +68,21 @@ export function mkMediaClip(spec: MediaClipSpec): MediaClip {
     effects: [],
     opacity: spec.opacity ?? 1,
   };
+}
+
+/**
+ * Writes a transition on the cut between two ADJACENT clips, on BOTH sides —
+ * the §5.2 symmetry invariant. A one-sided fixture would test a document the
+ * schema rejects.
+ */
+export function linkTransition(
+  a: MediaClip,
+  b: MediaClip,
+  durationUs: number,
+  type: TransitionType = 'crossfade',
+): void {
+  a.transitionOut = { type, durationUs };
+  b.transitionIn = { type, durationUs };
 }
 
 export function mkTrack(

@@ -129,7 +129,11 @@ jobs:
     # continue-on-error YOK — bu job kirmiziysa CI kirmizidir; kullanicinin
     # "kirpma/tasima/sag tik calismiyor" sikayetini yakalayan tek katman bu.
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 25 -> 55: artik GERCEK medya uretiliyor (ffmpeg), Worker derlenip
+    # calisiyor ve iki test uctan uca transcode + export render yapiyor.
+    # Olculen yerel sure ~9 dk (94 test); CI runner'i yavas + Worker/API
+    # derlemesi + `playwright install` payi ile 55 dk rahat pay birakir.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
 
@@ -144,6 +148,22 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # [M4 denetim / YUKSEK] ffmpeg CI'da YOKTU -> E2E'nin en degerli testleri
+      # (media-upload, export-flow, player'in gercek medya testi) her kosuda
+      # `test.skip(ffmpegVersion() === null, ...)` ile ATLANIYORDU: CI yesildi
+      # ama medya hattinin TEK ucdan uca kaniti hic kosmamisti.
+      # Iki ayri tuketicisi var:
+      #   1. e2e/support/media.ts — test videosunu `ffmpeg -f lavfi testsrc2` ile
+      #      KOSUM SIRASINDA uretir (repo'da ikili dosya yok),
+      #   2. VideoEdit.Worker — Program.cs'teki EnsureMediaToolAvailable boot
+      #      kontrolu ffmpeg/ffprobe yoksa worker'i HIC ayaga kaldirmaz.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
       - name: Install (node)
         run: pnpm install --frozen-lockfile
 
@@ -151,20 +171,32 @@ jobs:
       - name: Build timeline-schema
         run: pnpm --filter @videoedit/timeline-schema build
 
-      # YALNIZ gerekli altyapi:
-      # - postgres: auth + proje + timeline (E2E'nin tek zorunlu bagimliligi).
-      # - minio   : API Development'ta acilista bucket kontrolu yapar (hata
-      #             olursa uyarip devam eder, ama gurultuyu onlemek icin ayakta).
-      # - redis   : API tarafinda KULLANILMIYOR (Hangfire storage = PostgreSQL) -> baslatilmaz.
-      # - Worker  : baslatilmaz. E2E medya YUKLEMEZ; timeline dogrudan API'den
-      #             seed edilir (bkz. e2e/fixtures/seed.ts), hicbir is kuyruga
-      #             girmez. Worker'i acmak yalnizca derleme suresi + log gurultusu olurdu.
+      # Gereken altyapi:
+      # - postgres: auth + proje + timeline + Hangfire storage.
+      # - minio   : ARTIK ZORUNLU. Tarayici part'lari dogrudan MinIO'ya PUT eder
+      #             (presigned URL; compose.dev.yml'deki MINIO_API_CORS_ALLOW_ORIGIN
+      #             = http://localhost:5173 tam da bunun icin) ve Worker orijinali
+      #             oradan indirip proxy/filmstrip/export ciktisini oraya yazar.
+      # - redis   : BASLATILMIYOR. Kod tabaninda TEK bir tuketicisi yok — dogrulama:
+      #             `grep -ri "redis\|StackExchange" backend/` yalnizca
+      #             appsettings*.json icindeki (kullanilmayan) ConnectionStrings:Redis
+      #             girdilerini ve yorum satirlarini bulur; ne API ne Worker bir
+      #             Redis istemcisi kaydeder (Hangfire storage = PostgreSQL).
+      #             Bu satir, "eksik mi unutuldu?" sorusuna kalici cevaptir.
       - name: Altyapi servisleri (postgres + minio)
         run: docker compose -f compose.dev.yml up -d postgres minio
 
       - name: Postgres hazir olsun
         run: |
           timeout 120 sh -c 'until docker compose -f compose.dev.yml exec -T postgres pg_isready -U app -d videoedit; do sleep 2; done'
+
+      # MinIO'nun healthcheck'i (mc ready local) yesillenmeden API acilista
+      # bucket'lari olusturamaz ve ilk yukleme 5xx alirdi. Eskiden beklenmiyordu
+      # cunku hicbir test gercekten yukleme yapmiyordu; artik yapiyor.
+      - name: MinIO hazir olsun
+        run: |
+          timeout 120 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" $(docker compose -f compose.dev.yml ps -q minio))" = "healthy" ]; do sleep 2; done'
+          echo "MinIO healthy."
 
       - name: Veritabani migrasyonlari
         run: dotnet run --project backend/src/VideoEdit.Api --no-launch-profile -- --migrate-only
@@ -181,6 +213,47 @@ jobs:
         env:
           ASPNETCORE_ENVIRONMENT: Development
           ASPNETCORE_URLS: http://localhost:5000
+
+      # [M4 denetim / YUKSEK] Worker CI'da HIC baslatilmiyordu. API yalniz
+      # Hangfire CLIENT'idir (Api/Program.cs: AddHangfire, AddHangfireServer YOK)
+      # — isi alacak kimse olmadigindan asset "Sirada"da kalir ve
+      # e2e/support/library.ts `waitForReady` 60 sn sonra WORKER_DOWN_MESSAGE ile
+      # ATLAR. Yani media-upload ve export-flow CI'da garantili skip'ti.
+      #
+      # DOTNET_ENVIRONMENT (ASPNETCORE_ degil): generic host ortami bundan okur
+      # (bkz. Worker/Program.cs basindaki not) — yanlis degiskenle Production
+      # sanip prod guard'larindan duserdi.
+      - name: "Worker'i baslat (Hangfire kuyruklari: transcode + export)"
+        run: |
+          dotnet run --project backend/src/VideoEdit.Worker --no-launch-profile > worker.log 2>&1 &
+          echo $! > worker.pid
+          # HAZIRLIK SINYALI: "surec ayakta" YETMEZ — ffmpeg/ffprobe boot
+          # kontrolu ya da Postgres baglantisi patlarsa surec saniyeler icinde
+          # oluyor. Worker ayaga kalktiginda Hangfire'a IKI server kaydeder
+          # (transcode + export, Worker/Program.cs'te iki AddHangfireServer);
+          # hangfire.server tablosundaki satir sayisi bu yuzden dogru sinyaldir
+          # (API server kaydetmedigi icin bu satirlar YALNIZ worker'indir).
+          ready=0
+          for _ in $(seq 1 90); do
+            if ! kill -0 "$(cat worker.pid)" 2>/dev/null; then
+              echo "::error::Worker sureci oldu (bkz. asagidaki log)."
+              cat worker.log
+              exit 1
+            fi
+            n=$(docker compose -f compose.dev.yml exec -T postgres \
+                  psql -U app -d videoedit -tAc 'select count(*) from hangfire.server' \
+                  2>/dev/null | tr -d '[:space:]')
+            if [ "${n:-0}" -ge 2 ]; then ready=1; break; fi
+            sleep 2
+          done
+          if [ "$ready" != 1 ]; then
+            echo "::error::Worker 180 sn icinde Hangfire'a kaydolmadi."
+            cat worker.log
+            exit 1
+          fi
+          echo "Worker hazir (Hangfire server kaydi: $n)."
+        env:
+          DOTNET_ENVIRONMENT: Development
 
       # DEV sunucusu (preview degil) — BILINCLI ve KORUNAN bir karar:
       #
@@ -207,13 +280,31 @@ jobs:
       - name: Playwright chromium
         run: pnpm --filter @videoedit/editor exec playwright install --with-deps chromium
 
+      # `test:e2e` yerine acik `playwright test`: config'in CI reporter listesine
+      # (list + html) e2e/support/ciSkipGuard.ts EKLENIR. --reporter CLI bayragi
+      # config'i TAMAMEN gecersiz kilar, bu yuzden list/html burada yeniden
+      # yazilir; html'in cikti klasoru env ile config'teki degerde tutulur
+      # (artefakt yukleme adimi o yolu bekliyor).
+      #
+      # ciSkipGuard NE ISE YARAR: bir testin `test.skip(...)` ile atlanmasi CI'da
+      # SESSIZ YESIL uretir — bu is diliminin kok bulgusu tam olarak buydu
+      # (ffmpeg yok + worker yok = en degerli iki test hic kosmadi, CI yesildi).
+      # Guard, CI'da atlanan TEK bir test bile varsa kosumu KIRMIZI yapar ve
+      # atlama gerekcesini basar. Skip yollari kodda KALIR (yerel gelistirici
+      # ffmpeg'siz calisabilsin diye) ama CI'da bir daha saklanamazlar.
       - name: E2E kos
-        run: pnpm --filter @videoedit/editor test:e2e
+        run: >
+          pnpm --filter @videoedit/editor exec playwright test
+          --reporter=list,html,./e2e/support/ciSkipGuard.ts
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: e2e/.artifacts/report
+          PLAYWRIGHT_HTML_OPEN: never
 
       - name: Sunucu loglari (yalniz hata durumunda)
         if: failure()
         run: |
           echo "----- API -----"; tail -n 200 api.log || true
+          echo "----- WORKER -----"; tail -n 200 worker.log || true
           echo "----- VITE -----"; tail -n 200 vite.log || true
 
       - name: Playwright trace/rapor artefaktlari

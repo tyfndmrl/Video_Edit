@@ -27,6 +27,18 @@ export interface PoolSlot {
 /** Min interval between error-driven URL clears per slot (retry storm guard). */
 const MEDIA_ERROR_RETRY_MIN_MS = 5_000;
 
+/**
+ * `preservesPitch` with its legacy vendor names (Safari `webkitPreservesPitch`,
+ * old Gecko `mozPreservesPitch`). Exported so the rate tests can assert that
+ * the engine really asks for pitch preservation — rendering-semantics §8.3.
+ */
+export function setPreservesPitch(el: HTMLMediaElement, value: boolean): void {
+  const target = el as unknown as Record<string, unknown>;
+  for (const key of ['preservesPitch', 'webkitPreservesPitch', 'mozPreservesPitch']) {
+    if (key in target) target[key] = value;
+  }
+}
+
 export class VideoPool {
   readonly slots: PoolSlot[] = [];
 
@@ -42,6 +54,12 @@ export class VideoPool {
       video.preload = 'auto';
       video.playsInline = true;
       video.muted = false; // audibility is governed by the Web Audio gain graph
+      // Clip speed is played back through playbackRate. The export chain
+      // time-stretches with `atempo`, which PRESERVES pitch (§8.3) — so the
+      // preview must too, or a 2x clip sounds like a chipmunk on screen and
+      // normal in the file. The spec default is already true, but it is
+      // vendor-prefixed on older engines and too load-bearing to assume.
+      setPreservesPitch(video, true);
       const slot: PoolSlot = {
         index: i,
         video,

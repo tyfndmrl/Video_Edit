@@ -223,9 +223,44 @@ public sealed class OverlayRasterPlannerTests : IDisposable
         Assert.Equal([withoutGlyphs], set.ClipsWithMissingGlyphs);
     }
 
-    private static RasterResult Raster(bool hasMissingGlyphs) => new(
+    [Fact]
+    public void SystemFontReport_NamesTheAffectedClipsAndDropsDeterminism()
+    {
+        // Sistem fontuyla çizilen klip işi DÜŞÜRMEZ (çıktı geçerlidir) ama defter bunu
+        // saklamaz: worker uyarı loglar, defter 'deterministik değil' der.
+        var curated = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var system = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var set = new OverlayRasterSet("d", new Dictionary<Guid, RasterResult>
+        {
+            [curated] = Raster(hasMissingGlyphs: false),
+            [system] = Raster(hasMissingGlyphs: false, source: FontSourceKind.System, warning: "sistem fontu"),
+        });
+
+        Assert.Equal([system], set.ClipsUsingSystemFont);
+        Assert.Equal(["sistem fontu"], set.SystemFontWarnings);
+        Assert.False(set.Deterministic);
+    }
+
+    [Fact]
+    public void CuratedOnlySet_IsDeterministic()
+    {
+        var set = new OverlayRasterSet("d", new Dictionary<Guid, RasterResult>
+        {
+            [Guid.Empty] = Raster(hasMissingGlyphs: false),
+        });
+
+        Assert.True(set.Deterministic);
+        Assert.Empty(set.ClipsUsingSystemFont);
+        Assert.Empty(set.SystemFontWarnings);
+    }
+
+    private static RasterResult Raster(
+        bool hasMissingGlyphs,
+        FontSourceKind? source = FontSourceKind.Curated,
+        string? warning = null) => new(
         Width: 2, Height: 2, Path: "x.png", RasterScale: 2,
         BboxWidthPx: 1, BboxHeightPx: 1, OriginXPx: 0, OriginYPx: 0,
         ByteSize: 10, Sha256: "abc", Lines: RasterResult.NoLines,
-        HasMissingGlyphs: hasMissingGlyphs, SyntheticItalic: false, SubstitutedWeight: false);
+        HasMissingGlyphs: hasMissingGlyphs, SyntheticItalic: false, SubstitutedWeight: false,
+        FontSource: source, FontFamily: "F", FontWarning: warning);
 }

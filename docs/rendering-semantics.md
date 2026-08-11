@@ -509,9 +509,42 @@ kesim noktasından **D/2 önce** başlar, D/2 sonra biter. Birleşik akışın t
 `Σ d_i`'ye eşit kalır → **sonraki kliplerin timeline pozisyonları kaymaz** (adjacency
 modelinin bütün amacı budur).
 
-Önizleme aynı pencereyi uygular: `[T - D/2, T + D/2]` aralığında A ve B birlikte decode
-edilir, karışım oranı `p = (t - (T - D/2)) / D` lineerdir (xfade `fade` ile aynı);
-tip başına karışım fonksiyonu ffmpeg xfade tanımına birebir yazılır.
+Önizleme aynı pencereyi uygular: `[T - D/2, T + D/2)` aralığında A ve B birlikte decode
+edilir, karışım oranı `p = (t - (T - D/2)) / D` lineerdir (xfade `fade` ile aynı).
+
+**Önizleme geçişleri (NORMATİF, M4 dalga 2'de uygulandı).** Pencere, ilerleme ve kaynak
+zamanı kuralları önizlemede de bağlayıcıdır:
+
+- Pencere **yarı açıktır**: `t ∈ [T - D/2, T + D/2)`. Kliplerin etkinlik aralığıyla aynı
+  uç kuralı (§1) — kapanış anında yalnız B görünür.
+- Pencere boyunca **iki klip de canlıdır**: `resolveVisualStack` o track için İKİ klip
+  döndürür (A önce), `computeSlotRequests` ikisini de `priority 0` yapar (geçiş çifti her
+  preload'ı yener) ve iki `<video>` elemanı da OYNAMAYA devam eder.
+- Her iki taraf da **handle malzemesi** okur: kaynak zamanı `[sourceIn, sourceOut]`
+  dışına, tam olarak `roundHalfUp((D/2)*rate)` kadar taşabilir — export compiler'ın
+  genişlettiği aralığın aynısı. Kelepçelenmiş (donmuş) bir kare ile yapılan geçiş
+  sözleşme ihlalidir.
+- Ses (§5.4): `[T - D/2, T + D/2]` boyunca A'nın kazancı lineer olarak 1→0, B'ninki 0→1
+  gider; toplam her an 1'dir. Geçişli kenarda §8.4'ün 5 ms mikro-fade'i **uygulanmaz**
+  (rampanın kendisi zaten fade'dir; içine 5 ms'lik çentik koymak duyulur).
+- Karışım **tek geçişte** (tek shader pass, iki sampler) yapılır: wipe/dissolve piksel
+  başına KAYNAK SEÇER, alpha karışımı değildir; iki ayrı çizimle taklit edilemez.
+
+**Önizleme yaklaşıklıkları (kapsam beyanı).** Aşağıdaki noktalarda önizleme, ffmpeg
+xfade'in birebir aynısı DEĞİLDİR; hepsi bilinçli ve `docs/backlog.md`'de izlenir:
+
+| Tip | Önizleme | ffmpeg xfade | Fark |
+|---|---|---|---|
+| `crossfade` | `mix(A, B, p)` (straight-alpha, premultiply→mix→unpremultiply) | `fade` | yok (aynı lineer ağırlık) |
+| `dissolve` | piksel başına hash eşiği `hash(uv) < p ? B : A` | `dissolve` | eşik **deseni** farklı (PRNG farkı); istatistiksel davranış aynı |
+| `fadeToBlack` | parça parça lineer: `p<0.5` → `A*(1-2p)`, `p>=0.5` → `B*(2p-1)` | `fadeblack` | ffmpeg kenarlarda `smoothstep` yumuşatması kullanır; önizleme lineerdir |
+| `wipeLeft` / `wipeRight` | kenar `x = 1-p` / `x = p` (sert kenar) | `wipeleft` / `wiperight` | yok (aynı kenar konumu) |
+| `slideUp` | iki görüntü de `p` kadar yukarı kayar, örnekleme noktası ötelenir | `slideup` | yok (aynı öteleme) |
+
+Ayrıca: geçiş pass'i tam kare bir dörtgen çizip her iki tarafı KENDİ yerleşim matrisinin
+tersiyle örneklediği için, karenin dışında kalan pikseller keskin kenarlıdır (normal
+çizim yolunda kenarı geometri verir). Tam kare kaplayan kliplerde farkı yoktur; küçük
+(ölçeklenmiş/döndürülmüş) bir katmanın geçişinde kenar hafif tırtıklı görünebilir.
 
 Tip eşlemesi:
 

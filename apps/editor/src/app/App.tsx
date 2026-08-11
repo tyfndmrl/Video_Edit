@@ -11,6 +11,7 @@ import { installShortcutDispatcher } from '../features/shortcuts/dispatcher';
 import { ShortcutsHelpOverlay } from '../features/shortcuts/ShortcutsHelpOverlay';
 import { ProjectPicker } from '../features/projects/ProjectPicker';
 import { useMediaUrlSync } from '../features/player/mediaUrls';
+import { bootstrapFontCatalogue } from '../features/text/fontCatalogue';
 import { useEditorStore } from '../state/editorStore';
 import { closeProject, openProject } from '../state/projectSession';
 
@@ -68,12 +69,20 @@ function AppContent() {
  * Editor-global side effects (behind the login gate so API calls carry auth):
  * - the single keyboard shortcut dispatcher,
  * - project session: load doc + arm autosave when a project is selected,
- * - presigned media URLs for filmstrip/waveform/proxy painters.
+ * - presigned media URLs for filmstrip/waveform/proxy painters,
+ * - the font catalogue (GET /api/fonts) + its @font-face rules.
  */
 function EditorBoot() {
   const projectId = useEditorStore((s) => s.activeProjectId);
 
   useEffect(() => installShortcutDispatcher(), []);
+
+  // Font catalogue FIRST: a new text clip is born with DEFAULT_FONT_ID and the
+  // preview measures with the curated @font-face file. Loading it late would
+  // mean the first text raster uses fallback metrics (it self-corrects — the
+  // raster key carries the catalogue revision — but the flash is avoidable).
+  // Failure is non-fatal: the editor keeps the last known / compiled-in list.
+  useEffect(() => bootstrapFontCatalogue(), []);
 
   useEffect(() => {
     if (projectId === null) {

@@ -12,6 +12,7 @@
  * - Web Audio gain envelopes (volume + linear fades + 5 ms micro-fades)
  */
 import type {
+  Clip,
   MediaClip,
   MicroSec,
   ShapeClip,
@@ -32,6 +33,7 @@ import {
 import type {
   AssetResolver,
   PlaybackEngine,
+  PreviewRateStatus,
   PreviewStatus,
   SeekOptions,
   SourceSize,
@@ -40,9 +42,10 @@ import type {
 import { createSubject } from '../engine';
 import { setIsPlayingSafe } from '../editorBridge';
 import { forceRefreshMediaUrls } from '../mediaUrls';
-import { Compositor, type DrawItem } from '../compositor/compositor';
+import { Compositor, type DrawItem, type RenderItem } from '../compositor/compositor';
 import {
   type ActiveClip,
+  type ActiveTransition,
   clipAudioOf,
   colorAdjustOf,
   effectiveOpacity,
@@ -52,6 +55,8 @@ import {
   resolveAudible,
   resolveVisualStack,
   sourceTimeUs,
+  sourceTimeUsInWindow,
+  transitionHandleUs,
 } from '../core/resolve';
 import {
   computeSlotRequests,
@@ -61,12 +66,24 @@ import {
   samePreviewCapacity,
   type PoolAssignment,
 } from '../core/scheduler';
-import { buildGainCurve, shouldMicroFadeIn, shouldMicroFadeOut } from '../core/gain';
+import {
+  buildGainCurve,
+  shouldMicroFadeIn,
+  shouldMicroFadeOut,
+  type TransitionRamp,
+} from '../core/gain';
 import { AudioGraph } from '../audio/audioGraph';
 import { VideoPool, type PoolSlot } from './videoPool';
 import { useDocStore } from '../../../state/docStore';
 
-/** <video>.playbackRate portable range (design §4.2 known limits). */
+/**
+ * <video>.playbackRate portable range (design §4.2 known limits).
+ *
+ * Clip speed alone can never leave it (the schema caps rate at 0.1..10), but
+ * the TRANSPORT multiplier stacks on top (J/K/L shuttle goes to 8x), so
+ * `10 * 8 = 80` is reachable — and silently clamping it would show a preview
+ * running at a different speed than the document. previewRate$ reports it.
+ */
 const MIN_ELEMENT_RATE = 0.0625;
 const MAX_ELEMENT_RATE = 16;
 /** Drift beyond this -> hard currentTime re-seek (design §4.2: 50 ms). */
@@ -128,6 +145,18 @@ interface OverlayEntry {
   baseScale: number;
 }
 
+/**
+ * The clip's own transition durations (§5.4 audio ramps), or undefined when it
+ * sits on hard cuts. Read off the clip itself: the schema keeps both sides of a
+ * cut deep-equal (symmetry invariant), so no neighbour lookup is needed.
+ */
+function transitionRampOf(clip: MediaClip): TransitionRamp | undefined {
+  const inUs = clip.transitionIn?.durationUs ?? 0;
+  const outUs = clip.transitionOut?.durationUs ?? 0;
+  if (inUs <= 0 && outUs <= 0) return undefined;
+  return { inUs, outUs };
+}
+
 function clampElementRate(rate: number): number {
   return Math.min(MAX_ELEMENT_RATE, Math.max(MIN_ELEMENT_RATE, rate));
 }
@@ -139,6 +168,8 @@ export class VideoPlaybackEngine implements PlaybackEngine {
   readonly blocked$: Subject<boolean> = createSubject<boolean>();
   /** Visual layers active vs composited — emits ONLY when the pair changes. */
   readonly previewStatus$: Subject<PreviewStatus> = createSubject<PreviewStatus>();
+  /** Element-rate clamping (clip speed x transport rate) — emits on change. */
+  readonly previewRate$: Subject<PreviewRateStatus> = createSubject<PreviewRateStatus>();
 
   private model: LoadedModel | null = null;
   private compositor: Compositor;
@@ -184,11 +215,29 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     dropped: [],
   };
 
+  /** Last emitted previewRate$ value — the change filter for the note. */
+  private rateStatus: PreviewRateStatus = { limited: false, requested: 1, applied: 1 };
+
   /** Clip ids with a scheduled audio envelope (rebuilt on play/seek/cuts). */
   private scheduledAudio = new Set<Uuid>();
 
   private scrubPendingUs: MicroSec | null = null;
   private scrubTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Pending one-pixel readbacks (E2E / debugging).
+   *
+   * Why a QUEUE and not a plain method: the drawing buffer is not preserved
+   * (`preserveDrawingBuffer: false`, kept that way for the copy it saves per
+   * frame), so `gl.readPixels` is only meaningful in the same rAF as the draw.
+   * Requests are therefore parked here and served right after the next
+   * `compositor.render`.
+   */
+  private pixelProbes: {
+    x: number;
+    y: number;
+    resolve: (value: [number, number, number, number]) => void;
+  }[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.compositor = new Compositor(canvas);
@@ -310,6 +359,9 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     this.pool.pauseAll();
     for (const slot of this.pool.slots) this.audio.cancelElement(slot.video);
     this.scheduledAudio.clear();
+    // Nothing is being played back at a clamped rate any more — a note left on
+    // screen after the pause would be a lie about the current state.
+    this.reportRateStatus({ limited: false, requested: this.rate, applied: this.rate });
     this.playState$.emit(false);
     setIsPlayingSafe(false);
   }
@@ -386,10 +438,15 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     for (const [, entry] of this.overlayTextures) this.compositor.deleteTexture(entry.texture);
     this.overlayTextures.clear();
     this.compositor.dispose();
+    // Pending probes can never be served now — resolve them so no caller is
+    // left awaiting a frame that will not come.
+    for (const probe of this.pixelProbes) probe.resolve([0, 0, 0, 0]);
+    this.pixelProbes = [];
     this.clock$.clear();
     this.playState$.clear();
     this.blocked$.clear();
     this.previewStatus$.clear();
+    this.previewRate$.clear();
   }
 
   // -------------------------------------------------------------------------
@@ -453,17 +510,32 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     this.refreshPool(targetUs);
   }
 
+  /**
+   * Where an element must sit for this instant. Inside a transition window the
+   * clip is showing HANDLE material (§5.3), i.e. source time deliberately
+   * outside [sourceIn, sourceOut] — clamping there would freeze one side of
+   * every crossfade on a single frame.
+   */
+  private elementSourceUs(clip: MediaClip, tUs: MicroSec, transition?: ActiveTransition): MicroSec {
+    if (!transition) return sourceTimeUs(clip, tUs);
+    return sourceTimeUsInWindow(
+      clip,
+      tUs,
+      transitionHandleUs(transition.durationUs, clip.speed.rate),
+    );
+  }
+
   /** Fast scrub: set currentTime on active elements without verification. */
   private applyScrub(): void {
     const target = this.scrubPendingUs;
     if (target === null || !this.model) return;
     this.scrubPendingUs = null;
     this.applySeek(target);
-    for (const { clip } of resolveVisualStack(this.model.doc, target)) {
+    for (const { clip, transition } of resolveVisualStack(this.model.doc, target)) {
       if (!isMediaClip(clip) || clip.kind === 'image') continue;
       const slot = this.pool.slotForClip(clip.id);
       if (!slot) continue;
-      const srcSec = sourceTimeUs(clip, target) / 1e6;
+      const srcSec = this.elementSourceUs(clip, target, transition) / 1e6;
       if (slot.video.readyState >= HTMLMediaElement.HAVE_METADATA) {
         try {
           slot.video.currentTime = srcSec;
@@ -497,20 +569,27 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     // a newer seek/play took over (seek contract).
     const stillValid = () => !this.disposed && seq === this.seekSeq;
     const jobs: Promise<void>[] = [];
-    for (const { clip } of resolveVisualStack(model.doc, targetUs)) {
+    for (const { clip, transition } of resolveVisualStack(model.doc, targetUs)) {
       if (!isMediaClip(clip) || clip.kind !== 'video') continue;
       const slot = this.pool.slotForClip(clip.id);
       if (!slot) continue;
       this.slotUploadedAt.delete(slot.index);
-      jobs.push(preciseSeekElement(slot.video, sourceTimeUs(clip, targetUs), tolerance, stillValid));
+      jobs.push(
+        preciseSeekElement(
+          slot.video,
+          this.elementSourceUs(clip, targetUs, transition),
+          tolerance,
+          stillValid,
+        ),
+      );
     }
     // Audio-only elements just get a plain position (no frame accuracy needed).
-    for (const { clip } of resolveAudible(model.doc, targetUs)) {
+    for (const { clip, transition } of resolveAudible(model.doc, targetUs)) {
       if (clip.kind !== 'audio') continue;
       const slot = this.pool.slotForClip(clip.id);
       if (slot && slot.video.readyState >= HTMLMediaElement.HAVE_METADATA) {
         try {
-          slot.video.currentTime = sourceTimeUs(clip, targetUs) / 1e6;
+          slot.video.currentTime = this.elementSourceUs(clip, targetUs, transition) / 1e6;
         } catch {
           // ignore
         }
@@ -575,15 +654,29 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     const model = this.model;
     if (!model) return;
     const t = this.currentClockUs();
-    const activeElementClips = new Map<Uuid, { clip: MediaClip; track: Track }>();
-    for (const { clip, track } of resolveVisualStack(model.doc, t)) {
-      if (isMediaClip(clip) && clip.kind === 'video') activeElementClips.set(clip.id, { clip, track });
-    }
-    for (const { clip, track } of resolveAudible(model.doc, t)) {
-      if (clip.kind !== 'image' && !activeElementClips.has(clip.id)) {
-        activeElementClips.set(clip.id, { clip, track });
+    // Both sides of a live transition window are here (resolveVisualStack /
+    // resolveAudible return the pair): the outgoing clip has to KEEP PLAYING
+    // past its own end for D/2, otherwise the crossfade mixes a live picture
+    // with a frozen one.
+    const activeElementClips = new Map<
+      Uuid,
+      { clip: MediaClip; track: Track; transition?: ActiveTransition }
+    >();
+    for (const { clip, track, transition } of resolveVisualStack(model.doc, t)) {
+      if (isMediaClip(clip) && clip.kind === 'video') {
+        activeElementClips.set(clip.id, { clip, track, transition });
       }
     }
+    for (const { clip, track, transition } of resolveAudible(model.doc, t)) {
+      if (clip.kind !== 'image' && !activeElementClips.has(clip.id)) {
+        activeElementClips.set(clip.id, { clip, track, transition });
+      }
+    }
+
+    // Worst rate clamp seen this tick (see previewRate$ / PreviewRateStatus).
+    let limitedRequested = 1;
+    let limitedApplied = 1;
+    let limited = false;
 
     for (const slot of this.pool.slots) {
       if (slot.clipId === null) continue;
@@ -594,10 +687,21 @@ export class VideoPlaybackEngine implements PlaybackEngine {
         if (!video.paused) video.pause();
         continue;
       }
-      const { clip, track } = entry;
-      const baseRate = clampElementRate(clip.speed.rate * this.rate);
+      const { clip, track, transition } = entry;
+      const requestedRate = clip.speed.rate * this.rate;
+      const baseRate = clampElementRate(requestedRate);
+      if (baseRate !== requestedRate) {
+        // Keep the biggest offender: the note quotes ONE pair of numbers and
+        // it should be the one that deviates most from the document.
+        const deviation = Math.abs(requestedRate - baseRate);
+        if (!limited || deviation > Math.abs(limitedRequested - limitedApplied)) {
+          limitedRequested = requestedRate;
+          limitedApplied = baseRate;
+        }
+        limited = true;
+      }
       if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
-        const expectedUs = sourceTimeUs(clip, t);
+        const expectedUs = this.elementSourceUs(clip, t, transition);
         const actualUs = video.currentTime * 1e6;
         const drift = actualUs - expectedUs;
         if (Math.abs(drift) > HARD_RESYNC_US || justStarted) {
@@ -619,6 +723,26 @@ export class VideoPlaybackEngine implements PlaybackEngine {
       }
       this.ensureAudioEnvelope(slot, clip, track, t);
     }
+
+    this.reportRateStatus({
+      limited,
+      requested: limited ? limitedRequested : this.rate,
+      applied: limited ? limitedApplied : this.rate,
+    });
+  }
+
+  /** previewRate$ change filter (same "emit only on change" rule as status). */
+  private reportRateStatus(next: PreviewRateStatus): void {
+    const prev = this.rateStatus;
+    if (
+      prev.limited === next.limited &&
+      prev.requested === next.requested &&
+      prev.applied === next.applied
+    ) {
+      return;
+    }
+    this.rateStatus = next;
+    this.previewRate$.emit(next);
   }
 
   // -------------------------------------------------------------------------
@@ -637,8 +761,15 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     }
 
     const clipDur = clip.timelineDurationUs;
-    const startClipUs = Math.min(clipDur, Math.max(0, tUs - clip.timelineStartUs));
-    const remainingUs = clipDur - startClipUs;
+    // §5.4: a transition extends this clip's audible life by D/2 on that edge
+    // (the handle the export's acrossfade overlaps) and replaces the hard cut
+    // with a linear ramp. Both are folded into the curve below.
+    const ramp = transitionRampOf(clip);
+    const halfIn = ramp ? ramp.inUs / 2 : 0;
+    const halfOut = ramp ? ramp.outUs / 2 : 0;
+    const startClipUs = Math.min(clipDur, Math.max(-halfIn, tUs - clip.timelineStartUs));
+    const endClipUs = clipDur + halfOut;
+    const remainingUs = endClipUs - startClipUs;
     if (remainingUs <= 0) {
       this.audio.setElementGain(slot.video, 0);
       return;
@@ -654,10 +785,11 @@ export class VideoPlaybackEngine implements PlaybackEngine {
 
     const durationSec = remainingUs / (1e6 * this.rate);
     const samples = Math.max(2, Math.min(2000, Math.ceil(durationSec * GAIN_SAMPLES_PER_SEC)));
-    const curve = buildGainCurve(audio, clipDur, startClipUs, clipDur, samples, {
+    const curve = buildGainCurve(audio, clipDur, startClipUs, endClipUs, samples, {
       microFadeIn,
       microFadeOut,
       volumeKeyframes: clip.keyframes.volume,
+      ...(ramp ? { transition: ramp } : {}),
     });
     this.audio.setElementGainCurve(slot.video, curve, durationSec);
   }
@@ -714,33 +846,73 @@ export class VideoPlaybackEngine implements PlaybackEngine {
   private renderFrame(tUs: MicroSec): void {
     const model = this.model;
     if (!model) return;
-    const items: DrawItem[] = [];
+    const items: RenderItem[] = [];
     // BOTTOM first — the compositor blends in array order (§6.3 draw order).
     // Every visible layer with an element gets composited: the pool feeds ALL
     // of them at once, not just the top one.
     const stack = resolveVisualStack(model.doc, tUs);
-    for (const { clip } of stack) {
-      if (isMediaClip(clip)) {
-        if (clip.kind === 'video') {
-          const item = this.videoDrawItem(clip, tUs);
-          if (item) items.push(item);
-        } else if (clip.kind === 'image') {
-          const item = this.imageDrawItem(clip, tUs);
-          if (item) items.push(item);
+    for (let i = 0; i < stack.length; i++) {
+      const entry = stack[i]!;
+      const active = entry.transition;
+      // A transition window contributes TWO consecutive stack entries from the
+      // same track (from, then to). They are composed in ONE pass so the §5.3
+      // mix function — which for a wipe/dissolve SELECTS a source per pixel —
+      // can be applied properly instead of faked with two alpha draws.
+      const partner = active?.role === 'from' ? stack[i + 1] : undefined;
+      if (
+        active &&
+        partner &&
+        partner.transition?.role === 'to' &&
+        partner.transition.partnerClipId === entry.clip.id
+      ) {
+        i++; // the incoming side is consumed here
+        const from = this.clipDrawItem(entry.clip, tUs);
+        const to = this.clipDrawItem(partner.clip, tUs);
+        if (from && to) {
+          items.push({
+            kind: 'transition',
+            from,
+            to,
+            type: active.type,
+            progress: active.p,
+          });
+        } else if (from ?? to) {
+          // One side has no frame yet (decoder warming up): show what exists.
+          // A black frame for D/2 would look like a broken preview.
+          items.push((from ?? to)!);
         }
-        // 'audio' never draws.
-      } else if (clip.kind === 'sticker') {
-        // A sticker is an image asset on an overlay track — same texture path.
-        const item = this.imageDrawItem(clip, tUs);
-        if (item) items.push(item);
-      } else {
-        // text / shape: client Canvas2D raster (§7 live-editing half).
-        const item = this.overlayDrawItem(clip, tUs);
-        if (item) items.push(item);
+        continue;
       }
+      const item = this.clipDrawItem(entry.clip, tUs);
+      if (item) items.push(item);
     }
     this.compositor.render(items, model.doc.settings.backgroundColor);
+    this.servePixelProbes();
     this.reportPreviewStatus(stack, resolveAudible(model.doc, tUs));
+  }
+
+  /**
+   * Composition pixel at (x, y) in PROJECT coordinates, sampled after the next
+   * composed frame. The only honest way to prove that an inspector value made
+   * it all the way to the shader uniforms (see Compositor.readPixel).
+   */
+  probePixel(x: number, y: number): Promise<[number, number, number, number]> {
+    return new Promise((resolve) => {
+      if (this.disposed) {
+        resolve([0, 0, 0, 0]);
+        return;
+      }
+      this.pixelProbes.push({ x, y, resolve });
+    });
+  }
+
+  private servePixelProbes(): void {
+    if (this.pixelProbes.length === 0) return;
+    const pending = this.pixelProbes;
+    this.pixelProbes = [];
+    for (const probe of pending) {
+      probe.resolve(this.compositor.readPixel(probe.x, probe.y) ?? [0, 0, 0, 0]);
+    }
   }
 
   /**
@@ -851,6 +1023,19 @@ export class VideoPlaybackEngine implements PlaybackEngine {
       opacity: effectiveOpacity(clip, tUs),
       colorAdjust: colorAdjustOf(clip),
     };
+  }
+
+  /** Draw item for any visual clip kind (null = nothing to draw right now). */
+  private clipDrawItem(clip: Clip, tUs: MicroSec): DrawItem | null {
+    if (isMediaClip(clip)) {
+      if (clip.kind === 'video') return this.videoDrawItem(clip, tUs);
+      if (clip.kind === 'image') return this.imageDrawItem(clip, tUs);
+      return null; // 'audio' never draws
+    }
+    // A sticker is an image asset on an overlay track — same texture path.
+    if (clip.kind === 'sticker') return this.imageDrawItem(clip, tUs);
+    // text / shape: client Canvas2D raster (§7 live-editing half).
+    return this.overlayDrawItem(clip, tUs);
   }
 
   private videoDrawItem(clip: MediaClip, tUs: MicroSec): DrawItem | null {

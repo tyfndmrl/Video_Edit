@@ -14,6 +14,14 @@
     "",
     "TTF DOSYALARI DEPOYA GİRMEZ (bkz. .gitignore) — kurulum için fonts/README.md.",
     "",
+    "ÜÇ MOD (fonts/README.md): (1) küratörlü TTF varsa daima o kullanılır — belirlenimci ve",
+    "piksel golden'larının tek geçerli kaynağı; (2) TTF indirilmemişse 'systemFallback' listesi",
+    "sırayla denenir ve YEREL sistem fontu kullanılır (dosya DEPOYA KOPYALANMAZ — sistem fontları",
+    "yeniden dağıtılamaz), sonuç FontSource=System işaretlenir + uyarı loglanır ve o render",
+    "BELİRLENİMCİ DEĞİLDİR; (3) o da yoksa eskisi gibi 'font-missing' hatası.",
+    "'systemFallback' appsettings 'Fonts:SystemFallback:<fontId>' (env Fonts__SystemFallback__<fontId>)",
+    "ile ezilebilir; tamamen kapatmak için 'Fonts:AllowSystemFallback' = false.",
+    "",
     "NOT (SkiaSharp 3.116.1): değişken (variable) fontlar DESTEKLENMEZ — bu SkiaSharp sürümünde",
     "eksen (wght) sabitleme API'si (SKFontArguments) yoktur, değişken dosya daima VARSAYILAN",
     "örneğiyle açılır ve fontWeight=700 sessizce Regular çizerdi. Bu yüzden set STATİK TTF'lerden",
@@ -38,7 +46,8 @@
         "700": "https://raw.githubusercontent.com/googlefonts/Roboto/main/src/hinted/Roboto-Bold.ttf",
         "700i": "https://raw.githubusercontent.com/googlefonts/Roboto/main/src/hinted/Roboto-BoldItalic.ttf"
       },
-      "sha256": {}
+      "sha256": {},
+      "systemFallback": ["Roboto", "Arial", "Liberation Sans", "DejaVu Sans"]
     },
 
     "open-sans": {
@@ -58,7 +67,8 @@
         "700": "https://raw.githubusercontent.com/googlefonts/opensans/main/fonts/ttf/OpenSans-Bold.ttf",
         "700i": "https://raw.githubusercontent.com/googlefonts/opensans/main/fonts/ttf/OpenSans-BoldItalic.ttf"
       },
-      "sha256": {}
+      "sha256": {},
+      "systemFallback": ["Open Sans", "Segoe UI", "DejaVu Sans", "Liberation Sans"]
     },
 
     "noto-sans": {
@@ -78,7 +88,8 @@
         "700": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSans/hinted/ttf/NotoSans-Bold.ttf",
         "700i": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSans/hinted/ttf/NotoSans-BoldItalic.ttf"
       },
-      "sha256": {}
+      "sha256": {},
+      "systemFallback": ["Noto Sans", "Segoe UI", "DejaVu Sans", "Liberation Sans"]
     },
 
     "noto-serif": {
@@ -98,7 +109,8 @@
         "700": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSerif/hinted/ttf/NotoSerif-Bold.ttf",
         "700i": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSerif/hinted/ttf/NotoSerif-BoldItalic.ttf"
       },
-      "sha256": {}
+      "sha256": {},
+      "systemFallback": ["Noto Serif", "Times New Roman", "Liberation Serif", "DejaVu Serif"]
     }
   }
 }

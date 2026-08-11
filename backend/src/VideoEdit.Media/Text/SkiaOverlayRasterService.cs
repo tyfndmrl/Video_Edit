@@ -17,8 +17,12 @@ namespace VideoEdit.Media.Text;
 ///   <item><b>Straight alpha (§6.4):</b> Skia içte PREMULTIPLIED çalışır; PNG daima straight
 ///     alpha taşır. Encode ÖNCESİ pikseller <see cref="SKAlphaType.Unpremul"/> yüzeye okunur.
 ///     Bu adım atlanırsa yarı saydam kenarlarda KOYU HALKA oluşur (§6.4 belirti sözlüğü).</item>
-///   <item><b>Belirlenimcilik:</b> aynı girdi → bayt bayt aynı PNG. Sistem fontu fallback'i
-///     manifest'te açıkça açılmadıkça KULLANILMAZ; hinting kapalı; Skia sürümü csproj'da pinli.</item>
+///   <item><b>Belirlenimcilik:</b> KÜRATÖRLÜ fontlarla aynı girdi → bayt bayt aynı PNG (hinting
+///     kapalı, Skia sürümü csproj'da pinli, glif düzeyi fallback kapalı). Küratörlü TTF hiç
+///     kurulu değilse <see cref="FontResolver"/> yapılandırılmış SİSTEM fontuna düşer: sonuç
+///     <see cref="RasterResult.FontSource"/> = <see cref="FontSourceKind.System"/> ile
+///     işaretlenir, <see cref="RasterResult.Deterministic"/> <c>false</c> olur ve uyarı
+///     yayılır — piksel golden'ları o modda ANLAMSIZDIR (fonts/README.md "üç mod").</item>
 ///   <item><b>Klip başına TEK PNG:</b> pozisyon/ölçek/rotasyon/opaklık animasyonları bu bitmap'e
 ///     §2 transformlarıyla uygulanır (§7 — "aynı bitmap'i transform etmek = garanti parity").</item>
 /// </list>
@@ -27,20 +31,40 @@ public sealed class SkiaOverlayRasterService : ITextRasterService, IDisposable
 {
     private readonly TextRasterOptions options;
     private readonly Lazy<FontManifest> manifest;
+    private readonly Lazy<FontResolver> resolver;
     private readonly ConcurrentDictionary<string, Lazy<SKTypeface>> typefaces = new(StringComparer.Ordinal);
     private bool disposed;
 
-    public SkiaOverlayRasterService(TextRasterOptions? options = null, FontManifest? manifest = null)
+    /// <param name="fontOptions">
+    /// Sistem fontu politikası (config section <c>Fonts</c>). Verilmezse ortam
+    /// değişkenlerinden okunur (<c>Fonts__SystemFallback__&lt;fontId&gt;</c>).
+    /// </param>
+    /// <param name="systemFonts">Sistem font kaynağı (testler sahte geçirir).</param>
+    /// <param name="onWarning">
+    /// Belirlenimcilik uyarılarının kanalı. Verilmezse <c>stderr</c>'e yazılır; host
+    /// <c>m =&gt; logger.LogWarning("{Msg}", m)</c> geçirerek worker log'una bağlayabilir.
+    /// </param>
+    public SkiaOverlayRasterService(
+        TextRasterOptions? options = null,
+        FontManifest? manifest = null,
+        FontOptions? fontOptions = null,
+        ISystemFontSource? systemFonts = null,
+        Action<string>? onWarning = null)
     {
         this.options = options ?? new TextRasterOptions();
         this.manifest = manifest is null
             ? new Lazy<FontManifest>(() => FontManifest.Load(
                 Path.Combine(FontRootLocator.Locate(this.options.FontRoot), TextRasterOptions.ManifestFileName)))
             : new Lazy<FontManifest>(manifest);
+        resolver = new Lazy<FontResolver>(
+            () => new FontResolver(this.manifest.Value, fontOptions, systemFonts, onWarning));
     }
 
     /// <summary>Kullanılan manifest (tanılama/log için; ilk erişimde yüklenir).</summary>
     public FontManifest Manifest => manifest.Value;
+
+    /// <summary>Üç modlu font çözümleyici (küratörlü → sistem → hata).</summary>
+    public FontResolver Fonts => resolver.Value;
 
     public Task<RasterResult> RenderAsync(
         Clip clip, ProjectSettings settings, string outputPath, CancellationToken ct = default)
@@ -110,14 +134,14 @@ public sealed class SkiaOverlayRasterService : ITextRasterService, IDisposable
         {
             canvas.Translate((float)layout.OriginXPx, (float)layout.OriginYPx);
 
-            if (background is { } b)
+            if (background is { } b && layout.BackgroundRect is { } bgBox)
             {
                 using var bgPaint = new SKPaint { Color = b.Color, IsAntialias = true, Style = SKPaintStyle.Fill };
+                // Dikdörtgen LAYOUT'tan gelir (içerik ± pay) — burada yeniden hesaplanmaz.
+                // Aynı kutuyu istemci de kullanır (textLayout.ts backgroundRect); iki tarafın
+                // kuralı test-vectors/text-layout-vectors.json ile kilitlidir.
                 var rect = new SKRect(
-                    (float)-b.Padding,
-                    (float)-b.Padding,
-                    (float)(layout.ContentWidthPx + b.Padding),
-                    (float)(layout.ContentHeightPx + b.Padding));
+                    (float)bgBox.Left, (float)bgBox.Top, (float)bgBox.Right, (float)bgBox.Bottom);
                 var radius = (float)Math.Clamp(b.Radius, 0d, Math.Min(rect.Width, rect.Height) / 2d);
                 canvas.DrawRoundRect(rect, radius, radius, bgPaint);
             }
@@ -157,7 +181,14 @@ public sealed class SkiaOverlayRasterService : ITextRasterService, IDisposable
             Lines: layout.Lines,
             HasMissingGlyphs: layout.HasMissingGlyphs,
             SyntheticItalic: fontFile.SyntheticItalic,
-            SubstitutedWeight: fontFile.SubstitutedWeight);
+            SubstitutedWeight: fontFile.SubstitutedWeight,
+            FontSource: fontFile.Source,
+            FontFamily: fontFile.Family,
+            // Sistem fontu kullanıldıysa uyarı SONUÇLA BİRLİKTE taşınır: worker log'a yazar,
+            // API/UI "bu export belirlenimci değil" diyebilir (uyarı kanalı ayrıca tetiklenir).
+            FontWarning: fontFile.Source == FontSourceKind.System
+                ? FontWarnings.SystemFontUsed(fontFile)
+                : null);
     }
 
     private static void DrawLines(SKCanvas canvas, TextLayout layout, SkiaGlyphMeasurer measurer, SKPaint paint)
@@ -390,7 +421,7 @@ public sealed class SkiaOverlayRasterService : ITextRasterService, IDisposable
     // ───────────────────────── Font çözümü ─────────────────────────
 
     private FontFile ResolveFont(TextClipText text) =>
-        Manifest.Resolve(text.FontId, text.FontWeight <= 0 ? 400 : text.FontWeight, text.Italic);
+        Fonts.Resolve(text.FontId, text.FontWeight <= 0 ? 400 : text.FontWeight, text.Italic);
 
     /// <summary>
     /// Typeface cache'i (servis SINGLETON'dır: TTF her export'ta yeniden parse edilmez).
@@ -419,6 +450,20 @@ public sealed class SkiaOverlayRasterService : ITextRasterService, IDisposable
     /// </summary>
     private static SKTypeface OpenTypeface(FontFile file)
     {
+        // Sistem fontu, dosya yolu OLMADAN (SKFontManager yolu): İSTENEN stil ile yeniden
+        // eşleştirilir — çözümlemedeki çağrının aynısı, dolayısıyla aynı süreçte aynı typeface.
+        if (file.Source == FontSourceKind.System && file.Path.Length == 0)
+        {
+            var style = new SKFontStyle(
+                file.RequestedWeight <= 0 ? 400 : file.RequestedWeight,
+                (int)SKFontStyleWidth.Normal,
+                file.RequestedItalic ? SKFontStyleSlant.Italic : SKFontStyleSlant.Upright);
+            return SKFontManager.Default.MatchFamily(file.Family, style)
+                ?? throw new FontLoadException(file.FontId,
+                    $"Sistem fontu ailesi '{file.Family}' çözümlemeden sonra kayboldu "
+                    + "(SKFontManager.MatchFamily null döndü).");
+        }
+
         if (file.Variations.Count > 0)
         {
             throw new FontLoadException(file.FontId,

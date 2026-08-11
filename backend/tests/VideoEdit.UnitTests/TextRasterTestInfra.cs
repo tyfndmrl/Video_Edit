@@ -84,10 +84,17 @@ internal static class TestFonts
             ? $"sistem fontu ({Fallback.Value.Fonts[FontId].Files["400"]})"
             : "(font yok)";
 
+    /// <summary>
+    /// Test servisi: SİSTEM FONTUNA DÜŞME KAPALI (<see cref="FontOptions.AllowSystemFallback"/>).
+    /// Bu testlerin iddiaları manifest'in gösterdiği dosya hakkındadır; dosya bir şekilde
+    /// kaybolursa test SESSİZCE makinedeki başka bir fonta kaymak yerine <c>font-missing</c>
+    /// ile düşmelidir. Sistem fontu yolunun kendi testleri <c>SystemFontFallbackTests</c>'tedir.
+    /// </summary>
     public static SkiaOverlayRasterService CreateService(TextRasterOptions? options = null) =>
         new(options ?? new TextRasterOptions(),
             Manifest ?? throw new InvalidOperationException(
-                "Font kaynağı yok — FontFactAttribute bu testi atlamalıydı."));
+                "Font kaynağı yok — FontFactAttribute bu testi atlamalıydı."),
+            new FontOptions { AllowSystemFallback = false });
 
     private static FontManifest? LoadCurated()
     {
@@ -174,7 +181,15 @@ public sealed class FontFactAttribute : FactAttribute
     }
 }
 
-/// <summary>Yalnız KÜRATÖRLÜ set kuruluyken anlamlı olan testler (piksel golden'ları).</summary>
+/// <summary>
+/// Yalnız KÜRATÖRLÜ set kuruluyken anlamlı olan testler (piksel golden'ları).
+/// <para>
+/// SİSTEM FONTU BU KAPIYI AÇMAZ: <see cref="TestFonts.CuratedAvailable"/> doğrudan
+/// <see cref="FontManifest.Resolve"/> (küratörlü yol) ile ölçülür ve
+/// <see cref="TestFonts.CreateService"/> sistem fallback'ini kapatır — makineye özel bir PNG'nin
+/// golden olarak depoya yazılması imkânsızdır.
+/// </para>
+/// </summary>
 public sealed class CuratedFontFactAttribute : FactAttribute
 {
     public CuratedFontFactAttribute()

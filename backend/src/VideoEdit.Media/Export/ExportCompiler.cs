@@ -46,11 +46,34 @@ public sealed record ExportPlan(
     int FpsNum,
     int FpsDen,
     int Width,
-    int Height);
+    int Height,
+    IReadOnlyList<Guid> LutAssetIds)
+{
+    /// <summary>
+    /// LUT (.cube) VARLIKLARI — <see cref="AssetIds"/>'ten AYRI tutulur (M5). Gerekçe:
+    /// AssetIds defteri worker'da ffprobe'dan geçer ve video stream'i şart koşulur;
+    /// .cube bir MEDYA DOSYASI DEĞİLDİR (probe'u anlamsızdır, "no video stream" ile tüm
+    /// export'u düşürürdü) ve kaynak-aralığı kapısına da girmez. Worker bu defteri de
+    /// indirip <c>sources</c> sözlüğüne YOL olarak koymalıdır (probe ETMEDEN).
+    /// </summary>
+    public IReadOnlyList<Guid> LutAssetIds { get; init; } = LutAssetIds;
+}
 
 /// <summary>
-/// FilterGraph Compiler v3 (M4 dalga 2 = metin/şekil/çıkartma overlay'leri + GEÇİŞLER;
-/// keyframe/efekt/hız hâlâ tipli hata — M5). TimelineDoc → deterministik CompiledExport. Kurallar:
+/// FilterGraph Compiler v4 (M5 = HIZ + RENK DÜZELTME/LUT + transform/opaklık KEYFRAME'leri;
+/// ses keyframe'i, hız rampası ve minterpolate hâlâ tipli hata).
+/// TimelineDoc → deterministik CompiledExport. Kurallar:
+///  - HIZ (tasarım 04 §2.4): video <c>fps → setpts=PTS/k → fps → trim</c> (ikinci fps çıktı
+///    ızgarasıdır), ses <c>atempo</c> katlaması; süre §1.3'ün tek formülünden gelir ve geçiş
+///    payı KAYNAK ekseninde <c>roundHalfUp((D/2)*rate)</c> ile ölçeklenir (§5.2);
+///  - EFEKTLER (§4): colorAdjust → lut, ÖLÇEKTEN SONRA kompozisyondan ÖNCE (yer ve gerekçe
+///    <c>EmitSegmentChain</c>'de ölçümüyle birlikte); LUT dosyası ayrı bir varlık defterindedir
+///    (<see cref="ExportPlan.LutAssetIds"/>) çünkü .cube probe edilemez;
+///  - KEYFRAME (§3, tasarım 04 §2.5): x/y overlay ifadesinde, scale/rotate kendi filtrelerinin
+///    ifadesinde, opaklık ya <c>fade</c> ya da AYNI LİNEER ZİNCİRDEKİ sendcmd ile sürülür.
+///    Lineer kanal keyframe'ler üstünde kapalı forma, eğrili kanal §3.4'ün frame örneklemesiyle
+///    dengeli karar ağacına derlenir (sendcmd overlay'i güvenilir SÜREMEZ — ölçüm
+///    <c>KeyframeCompiler.StepExpression</c>'da). Keyframe'li klip KENDİ run'ındadır;
 ///  - trim INPUT seviyesinde -ss/-t (tasarım 04 §2.1; -to ASLA); aynı asset'ten N klip = N giriş;
 ///    ZAMAN EKSENİ OLMAYAN klipte (görsel + metin/şekil/çıkartma rasteri) seek anlamsızdır →
 ///    -loop 1 -t &lt;süre&gt; (ExportInput.Loop);
@@ -207,6 +230,7 @@ public static class ExportCompiler
         var sourceRangeClips = new List<MediaClip>();
         var rasterClips = new List<ExportClipPlan>();
         var assetIds = new List<Guid>();
+        var lutAssetIds = new List<Guid>();
         long totalDurationUs = 0;
         for (var i = tracks.Count - 1; i >= 0; i--)
         {
@@ -269,6 +293,13 @@ public static class ExportCompiler
                     continue;
                 }
 
+                // LUT dosyası GÖRSEL bir katman değildir: yalnız GÖRÜNEN klipte indirilir
+                // (atıl klip yukarıda elenmiştir), ama raster/medya defterlerinden bağımsızdır.
+                if (clip.Effects.Lut is { } lut && !track.Hidden && clip.Kind != ExportClipKind.Audio)
+                {
+                    lutAssetIds.Add(lut.AssetId);
+                }
+
                 if (clip.NeedsServerRaster)
                 {
                     rasterClips.Add(clip);
@@ -295,7 +326,7 @@ public static class ExportCompiler
 
         return new ExportPlan(
             doc, trackPlans, sourceRangeClips, assetIds.Distinct().ToList(), rasterClips,
-            totalDurationUs, fpsNum, fpsDen, width, height);
+            totalDurationUs, fpsNum, fpsDen, width, height, lutAssetIds.Distinct().ToList());
     }
 
     /// <summary>
@@ -325,6 +356,19 @@ public static class ExportCompiler
             {
                 throw new ArgumentException(
                     $"no raster provided for {rasterClip.Kind} clip {rasterClip.Id}.", nameof(rasters));
+            }
+        }
+
+        // LUT dosyaları (§4.2): worker plan.LutAssetIds'i indirip AYNI sources defterine yol
+        // olarak koyar. Eksikse bu KULLANICI hatasıdır (silinmiş/başkasına ait .cube) —
+        // ArgumentException değil TİPLİ hata, çünkü 422/failed mesajı kullanıcıya gider.
+        foreach (var lutAssetId in plan.LutAssetIds)
+        {
+            if (!sources.ContainsKey(lutAssetId))
+            {
+                throw new UnsupportedFeatureException("lut-asset",
+                    $"Timeline'da kullanılan LUT dosyası (asset {lutAssetId}) bulunamadı — "
+                    + "LUT varlığı silinmiş olabilir. Efekti kaldırın ya da LUT'u yeniden yükleyin.");
             }
         }
 
@@ -418,11 +462,17 @@ public static class ExportCompiler
                             + "alın ya da geçişi kaldırın.");
                     }
 
+                    // KEYFRAME'li klip KENDİ run'ında yaşar (M5): run tuvale TEK overlay ile
+                    // biner ve o overlay'in konum/ölçek ifadesi RUN BAŞINA tektir — animasyonlu
+                    // bir klip komşularıyla aynı akışa katılırsa animasyon komşuya da sızardı.
+                    // Ayrıca animasyonlu ölçekte segment boyutu kare kare değişir, concat ise
+                    // sabit boyut ister.
+                    var animated = clip.Animation.Any;
                     if (joined)
                     {
                         open!.EndFrame = endFrame;
                     }
-                    else if (open is null || open.EndFrame != startFrame
+                    else if (animated || open is null || open.EndFrame != startFrame
                              || open.Placement != placement || !CanConcatRun(placement))
                     {
                         open = new LayerRun(placement, startFrame) { EndFrame = endFrame };
@@ -452,7 +502,15 @@ public static class ExportCompiler
                         StartFrame = clip.HeadInFrames - videoHeadIn,
                         Frames = videoHeadIn + clipFrames,
                         EnteringTransition = joined ? clip.TransitionIn : null,
+                        LutPath = clip.Effects.Lut is { } lutEffect
+                            ? sources[lutEffect.AssetId].Path
+                            : null,
                     });
+
+                    if (animated)
+                    {
+                        open = null; // sonraki klip bu run'a KATILAMAZ
+                    }
                 }
                 else
                 {
@@ -500,14 +558,26 @@ public static class ExportCompiler
             audioLines.Add(EmitAudioGroup(group, audioLines.Count));
         }
 
+        // ── 1b) Animasyon defterleri (§3.4). EĞRİLİ (non-linear easing) kanallar frame başına
+        //      örneklenip sendcmd komutlarına çevrilir; TAMAMI LİNEER kanallar ifadeyle çözülür
+        //      ve buradan hiç komut çıkmaz. Örnekleme tavanı bir kez, derleme genelinde ölçülür.
+        var sampleBudget = KeyframeCompiler.MaxSamples;
+        for (var n = 0; n < runs.Count; n++)
+        {
+            sampleBudget = BuildAnimationCommands(runs[n], n, plan, sampleBudget);
+        }
+
         // ── 2) Video grafiği. Tek katmanlı hızlı yol: TEK run timeline'ı baştan sona kaplıyor,
         //      yerleşim birim, opaklık 1 → kompozisyon YOK, dolayısıyla taban tuval ve overlay
         //      de yok (M3 hattı: scale + letterbox pad + concat/xfade).
+        //      ANİMASYON hızlı yolu KAPATIR: yerleşim kare kare değişiyorsa "tuvali baştan sona
+        //      kaplıyor" varsayımı düşer, opaklık animasyonu ise alfa taşıyan bir kompozisyon
+        //      ister (hızlı yol yuv420p'dir, alfa yoktur).
         var singleCover = runs.Count == 1
             && runs[0].StartFrame == 0
             && runs[0].EndFrame == totalFrames
             && CoversCanvas(runs[0].Placement, plan.Width, plan.Height)
-            && runs[0].Segments.All(s => s.Clip.Opacity >= 1d);
+            && runs[0].Segments.All(s => s.Clip.Opacity >= 1d && !s.Clip.Animation.Any);
 
         string composite;
         if (singleCover)
@@ -537,13 +607,18 @@ public static class ExportCompiler
                 var run = runs[n];
                 var label = EmitRun(videoLines, run, plan, fpsArg, background, opaque: false, n);
                 var next = $"c{n.ToString(CultureInfo.InvariantCulture)}";
-                var placement = run.Placement;
                 var startUs = UsOf(run.StartFrame, plan.FpsNum, plan.FpsDen);
                 var endEnableUs = UsOf(run.EndFrame, plan.FpsNum, plan.FpsDen) - halfFrameUs;
+
+                // Konum animasyonu overlay'e İFADE olarak girer, sendcmd ile DEĞİL: overlay iki
+                // girişli bir filtredir ve framesync ile tamponlar — komut, tuval karesi
+                // sendcmd'den geçtiği anda gönderilse bile o kare overlay'e gecikmeli girer ve
+                // konum kayar (ölçüm: 60 karenin 22-39'u yanlış konumda; ayrıntı
+                // KeyframeCompiler.StepExpression yorumunda).
                 videoLines.Add(
                     $"[{composite}][{label}]overlay="
-                    + $"x={OverlayCoordinate(placement.AnchorTargetX, placement.OverlayAnchorFactorX, "w")}"
-                    + $":y={OverlayCoordinate(placement.AnchorTargetY, placement.OverlayAnchorFactorY, "h")}"
+                    + $"x={OverlayCoordinateFor(run, horizontal: true)}"
+                    + $":y={OverlayCoordinateFor(run, horizontal: false)}"
                     + $":enable='between(t,{TimeFormat.Sec(startUs)},{TimeFormat.Sec(endEnableUs)})'"
                     + ":eval=frame"
                     // §6.3: kompozisyon DAİMA RGB'de — grafik başına tek mod (denetim #1/#15).
@@ -609,6 +684,9 @@ public static class ExportCompiler
         public required long Frames { get; set; }
 
         public Transition? EnteringTransition { get; init; }
+
+        /// <summary>LUT (.cube) dosyasının worker'daki yerel yolu; efekt yoksa null (§4.2).</summary>
+        public string? LutPath { get; init; }
     }
 
     /// <summary>
@@ -622,6 +700,184 @@ public static class ExportCompiler
         public long EndFrame { get; set; }
 
         public List<LayerSegment> Segments { get; } = [];
+
+        /// <summary>Animasyon defteri — animasyonsuz run'da <see cref="RunAnimation.None"/>.</summary>
+        public RunAnimation Animation { get; set; } = RunAnimation.None;
+
+        /// <summary>Animasyonlu run TEK segmentlidir (Compile bunu garanti eder).</summary>
+        public ExportClipPlan? AnimatedClip =>
+            Segments.Count == 1 && Segments[0].Clip.Animation.Any ? Segments[0].Clip : null;
+    }
+
+    /// <summary>
+    /// Bir run'ın DERLENMİŞ animasyonu: parametre başına hazır ffmpeg ifadesi (null = statik)
+    /// + opaklık için sendcmd komutları.
+    /// </summary>
+    private sealed record RunAnimation
+    {
+        public static readonly RunAnimation None = new();
+
+        /// <summary>overlay x/y — KOMPOZİT eksende <c>t</c> ifadesi (tırnaklı, virgül içerir).</summary>
+        public string? OverlayX { get; init; }
+
+        public string? OverlayY { get; init; }
+
+        /// <summary>scale w/h ve rotate a — KLİP ekseninde <c>t</c> ifadesi.</summary>
+        public string? ScaleWidth { get; init; }
+
+        public string? ScaleHeight { get; init; }
+
+        public string? Rotation { get; init; }
+
+        /// <summary>
+        /// Opaklık: <c>colorchannelmixer</c> ZAMAN İFADESİ ALMAZ (tasarım 04 §2.5 "opaklık
+        /// ffmpeg'in zayıf noktası") → tek yol sendcmd'dir. Komut AYNI LİNEER ZİNCİRDEKİ
+        /// filtreye gider, o yüzden kare-kesindir (bkz. KeyframeCompiler.StepExpression yorumu).
+        /// </summary>
+        public IReadOnlyList<string> OpacityCommands { get; init; } = [];
+
+        public string OpacityTag { get; init; } = "";
+
+        public double OpacityInitial { get; init; } = 1d;
+    }
+
+    /// <summary>
+    /// Animasyonlu run'ın ifade/komut defterini kurar (rendering-semantics §3 + tasarım 04 §2.5).
+    /// Kanal başına karar:
+    ///  - TAMAMI LİNEER → keyframe'ler üstünde piecewise-linear <c>if</c> zinciri (tasarım 04
+    ///    §2.5'in NORMATİF biçimi; iç içe geçme keyframe sayısı kadardır);
+    ///  - EĞRİLİ (easing) → §3.2'nin sabit 32-iterasyon bisection'ıyla FRAME BAŞINA örneklenmiş
+    ///    DEĞERLER, dengeli ikili karar ağacı ifadesine gömülür (§3.4'ün örnekleme kuralı;
+    ///    sendcmd yerine ifade kullanma gerekçesi StepExpression yorumundadır).
+    /// Opaklık ikisinden de ayrıdır: 0→1 / 1→0 lineer eğri <c>fade</c>'e map'lenir, diğer her
+    /// şey aynı frame örneklemesiyle sendcmd komutlarına yazılır.
+    /// </summary>
+    /// <returns>Kalan örnekleme bütçesi (tavan derleme genelindedir).</returns>
+    private static int BuildAnimationCommands(
+        LayerRun run, int index, ExportPlan plan, int sampleBudget)
+    {
+        if (run.AnimatedClip is not { } clip)
+        {
+            return sampleBudget;
+        }
+
+        var budget = sampleBudget;
+        var animation = clip.Animation;
+        var placement = run.Placement;
+        var halfFrameUs = UsOf(1, plan.FpsNum, plan.FpsDen) / 2;
+
+        run.Animation = new RunAnimation
+        {
+            // overlay x/y KOMPOZİT eksendedir (overlay'in t'si tuval karesinin zamanıdır).
+            OverlayX = Coordinate(animation.X, plan.Width,
+                placement.OverlayAnchorFactorX, "w"),
+            OverlayY = Coordinate(animation.Y, plan.Height,
+                placement.OverlayAnchorFactorY, "h"),
+            // scale/rotate KLİP eksenindedir (zincirin başındaki setpts=PTS-STARTPTS sayesinde).
+            ScaleWidth = Expression(animation.Scale, clipRelative: true,
+                v => ScaleBoxWidth(run, plan) * v),
+            ScaleHeight = Expression(animation.Scale, clipRelative: true,
+                v => ScaleBoxHeight(run, plan) * v),
+            Rotation = Expression(animation.Rotation, clipRelative: true,
+                v => v * Math.PI / 180d),
+        };
+
+        if (animation.Opacity is { } opacity && OpacityFadeFilter(clip, 0) is null)
+        {
+            var tag = $"@k{index.ToString(CultureInfo.InvariantCulture)}";
+            var samples = Sample(opacity, clipRelative: true);
+            run.Animation = run.Animation with
+            {
+                OpacityTag = tag,
+                OpacityInitial = opacity.Keys[0].Value,
+                OpacityCommands =
+                [
+                    .. samples.Select(s => KeyframeCompiler.Command(
+                        s.TimeUs, $"colorchannelmixer{tag}", "aa", Num(s.Value))),
+                ],
+            };
+        }
+
+        return budget;
+
+        string? Coordinate(AnimationTrack? track, int size, double anchorFactor, string dimension)
+        {
+            // §2.5 adım 4: overlay_x = P.x - anchor*w. P.x = W/2 + x*W.
+            var expression = Expression(track, clipRelative: false, v => (size / 2d) + (v * size));
+            if (expression is null)
+            {
+                return null;
+            }
+
+            return anchorFactor == 0
+                ? expression
+                : $"{expression}-{Num(anchorFactor)}*{dimension}";
+        }
+
+        string? Expression(AnimationTrack? track, bool clipRelative, Func<double, double> map)
+        {
+            if (track is null)
+            {
+                return null;
+            }
+
+            // Tamamı lineer: keyframe'ler üstünde kapalı biçim — kare başına maliyet yok.
+            if (track.AllLinear)
+            {
+                return KeyframeCompiler.LinearExpression(
+                    track, clipRelative ? 0 : clip.TimelineStartUs, map);
+            }
+
+            return KeyframeCompiler.StepExpression(Sample(track, clipRelative), halfFrameUs, map);
+        }
+
+        IReadOnlyList<(long TimeUs, double Value)> Sample(AnimationTrack track, bool clipRelative)
+        {
+            var samples = KeyframeCompiler.Samples(
+                track, clip.TimelineStartUs, run.StartFrame, run.EndFrame,
+                plan.FpsNum, plan.FpsDen, clipRelative ? -clip.TimelineStartUs : 0);
+            if (samples.Count > budget)
+            {
+                throw new UnsupportedFeatureException("keyframe-sample-budget",
+                    $"'{clip.Id}' klibindeki keyframe animasyonu çok fazla örnek üretiyor "
+                    + $"({samples.Count}). Eğrili (easing'li) animasyon KARE KARE örneklenir — "
+                    + "animasyonu kısaltın ya da lineer easing kullanın.");
+            }
+
+            budget -= samples.Count;
+            return samples;
+        }
+    }
+
+    /// <summary>
+    /// Animasyonlu ölçek kutusunun TABANI (<c>scale = 1</c> boyutu): medya/görsel/çıkartma
+    /// klibinde proje tuvali, metin/şekil rasterinde kendi bbox'ı (§7). Kutu bunun
+    /// <c>scale(t)</c> katıdır — statik yoldaki <c>roundHalfUp</c> yerine ham çarpım kullanılır
+    /// (yuvarlamayı ffmpeg'in force_divisible_by=2 kuralı devralır).
+    /// </summary>
+    private static double ScaleBoxWidth(LayerRun run, ExportPlan plan) =>
+        run.Segments[0].Raster?.NaturalWidthPx ?? plan.Width;
+
+    private static double ScaleBoxHeight(LayerRun run, ExportPlan plan) =>
+        run.Segments[0].Raster?.NaturalHeightPx ?? plan.Height;
+
+    /// <summary>
+    /// Run'ın overlay x/y argümanı. Statik yerleşimde tarihsel biçim AYNEN korunur
+    /// (snapshot'lar); animasyonlu kanalda ifade TIRNAK içine alınır — <c>if(...)</c> virgül
+    /// taşır ve tırnaksız yazılırsa filtergraph ayracı sanılır.
+    /// </summary>
+    private static string OverlayCoordinateFor(LayerRun run, bool horizontal)
+    {
+        var placement = run.Placement;
+        var expression = horizontal ? run.Animation.OverlayX : run.Animation.OverlayY;
+        if (expression is not null)
+        {
+            return $"'{expression}'";
+        }
+
+        return horizontal
+            ? OverlayCoordinate(placement.AnchorTargetX, placement.OverlayAnchorFactorX, "w")
+            : OverlayCoordinate(placement.AnchorTargetY, placement.OverlayAnchorFactorY, "h");
     }
 
     /// <summary>
@@ -703,12 +959,18 @@ public static class ExportCompiler
                 ? label
                 : $"s{index}_{i.ToString(CultureInfo.InvariantCulture)}";
             segmentLabels.Add(outLabel);
-            lines.Add(
-                $"[{segment.InputIndex.ToString(CultureInfo.InvariantCulture)}:v]"
-                + BuildVideoChain(segment, run.Placement, plan, fpsArg, background,
-                    opaque, normalizeToBox: !single)
-                + "," + SetPtsFilter(single ? startUs : 0)
-                + $"[{outLabel}]");
+
+            // Kuyruk: timeline ofseti + (varsa) opaklık fade'i. fade'in st'si KOMPOZİT
+            // zamandadır, o yüzden setpts'ten SONRA gelir. Alfa çarpanı geometrik dönüşümle
+            // yer değiştirebilir (lineer resample × sabit çarpan) — sıra güvenlidir.
+            var tail = SetPtsFilter(single ? startUs : 0);
+            if (single && OpacityFadeFilter(segment.Clip, startUs) is { } fade)
+            {
+                tail += "," + fade;
+            }
+
+            EmitSegmentChain(lines, run, segment, plan, fpsArg, background,
+                opaque, normalizeToBox: !single, index, i, tail, outLabel);
         }
 
         if (single)
@@ -801,21 +1063,81 @@ public static class ExportCompiler
     // ───────────────────────── Video katman zinciri ─────────────────────────
 
     /// <summary>
-    /// Katman zinciri (rendering-semantics §2.3 sırası + §6):
-    /// [HDR tonemap] → setparams(BT.709/tv, §6.1) → fps → trim=[start_frame:]end_frame →
-    /// scale(fit=contain × scale) → setsar=1 → format=rgba → [kutuya normalize pad] →
-    /// [colorchannelmixer=aa (opaklık, §6.3)] → [çapa pad'i] → [rotate c=none] → settb=AVTB.
-    /// Timeline ofseti (setpts) çağıran tarafta eklenir — run'da birleştirme SONRASINA taşınır.
-    /// <paramref name="opaque"/>: tek katmanlı hızlı yol — RGB kompozisyon yoktur, katman proje
-    /// tuvaline ARKA PLAN rengiyle letterbox pad'lenir ve yuv420p'de kalır (M3 hattı; alpha
-    /// taşımadığı için concat/encode zinciri hiç RGB'ye çıkmaz).
+    /// Segmenti grafiğe yazar. Normal durumda BİR satır üretir (tarihsel biçim bayt bayt
+    /// korunur); yalnız <c>intensity &lt; 1</c> olan LUT efektinde §4.2'nin split/blend deseni
+    /// için üç ek satır gerekir (lineer bir zincir "orijinal + LUT'lanmış"ı aynı anda taşıyamaz).
     /// </summary>
-    private static string BuildVideoChain(
-        LayerSegment segment, LayerPlacement placement, ExportPlan plan,
-        string fpsArg, string background, bool opaque, bool normalizeToBox)
+    private static void EmitSegmentChain(
+        List<string> lines, LayerRun run, LayerSegment segment, ExportPlan plan,
+        string fpsArg, string background, bool opaque, bool normalizeToBox,
+        string runIndex, int segmentIndex, string tail, string outLabel)
+    {
+        // Kaynak zinciri ölçeğe KADAR (ölçek dahil), sonra EFEKTLER, sonra yerleşimin geri kalanı.
+        var source = new List<string>();
+        BuildSourceChain(source, run, segment, plan, fpsArg);
+        if (segment.Clip.Effects.Any)
+        {
+            // §4 zinciri RGB'de çalışır. Dönüşüm ÖLÇEKTEN SONRA yapılır — bunun bir performans
+            // değil DOĞRULUK kararı olduğu ölçüldü: ffmpeg'in ÖRTÜK olarak eklediği dönüştürücü
+            // (auto_scale) zincirin başındaki setparams beyanını GÖRMEZ ve §6.1'in normatif
+            // "untagged SDR = BT.709/tv" varsayımı yerine SD varsayılanını (BT.601) kullanır.
+            // Gerçek ölçüm (input-level -ss/-t ile açılmış klip, düz renk 0x60A0C0):
+            //   setparams,fps,trim,format=rgba        -> (96,158,192)  ← beyan YOK SAYILDI
+            //   setparams,fps,trim,scale,format=rgba  -> (90,153,194)  ← beyan uygulandı
+            // Aradaki 6 kod değeri tam olarak §6.1'in engellemek için yazıldığı hatadır.
+            // Ayrıca bu sıra ÖNİZLEMEYE de daha yakındır: WebGL shader'ı efekti ÖRNEKLENMİŞ
+            // (yani ölçeklenmiş) texel'e uygular, kaynak pikseline değil.
+            source.Add("format=rgba");
+            if (segment.Clip.Effects.Color is { } color)
+            {
+                source.AddRange(ColorPipeline.ColorAdjustFilters(color));
+            }
+        }
+
+        var placementChain = new List<string>();
+        BuildPlacementChain(placementChain, run, segment, plan, background, opaque, normalizeToBox);
+        placementChain.Add(tail);
+
+        var input = $"[{segment.InputIndex.ToString(CultureInfo.InvariantCulture)}:v]";
+        var lut = segment.Clip.Effects.Lut;
+        if (lut is null)
+        {
+            lines.Add(input + string.Join(',', source) + "," + string.Join(',', placementChain)
+                      + $"[{outLabel}]");
+            return;
+        }
+
+        var lut3d = ColorPipeline.Lut3dFilter(segment.LutPath!);
+        if (lut.Intensity >= 1d)
+        {
+            // §4.2: intensity = 1 → split/blend ATLANIR, düz lut3d uygulanır.
+            lines.Add(input + string.Join(',', source) + "," + lut3d + ","
+                      + string.Join(',', placementChain) + $"[{outLabel}]");
+            return;
+        }
+
+        var tag = $"e{runIndex}_{segmentIndex.ToString(CultureInfo.InvariantCulture)}";
+        lines.Add(input + string.Join(',', source) + $"[{tag}]");
+        lines.Add($"[{tag}]split[{tag}a][{tag}b]");
+        lines.Add($"[{tag}b]{lut3d}[{tag}l]");
+        lines.Add($"[{tag}a][{tag}l]{ColorPipeline.LutBlendFilter(lut.Intensity)},"
+                  + string.Join(',', placementChain) + $"[{outLabel}]");
+    }
+
+    /// <summary>
+    /// KAYNAK zinciri (rendering-semantics §2.3 + §6 + tasarım 04 §2.4):
+    /// [HDR tonemap] → setparams(BT.709/tv, §6.1) → fps → [setpts=PTS/k → fps (HIZ)] →
+    /// trim=[start_frame:]end_frame → [setpts=PTS-STARTPTS (klip-göreli t)] →
+    /// scale(fit=contain × scale).
+    /// <para>
+    /// Efektler (§4) bu zincirin HEMEN ARDINDAN, kompozisyondan ÖNCE gelir — gerekçesi ve
+    /// ölçümü <c>EmitSegmentChain</c>'dedir.
+    /// </para>
+    /// </summary>
+    private static void BuildSourceChain(
+        List<string> chain, LayerRun run, LayerSegment segment, ExportPlan plan, string fpsArg)
     {
         var clip = segment.Clip;
-        var chain = new List<string>();
         if (segment.Asset is { IsHdr: true } hdr)
         {
             chain.Add(ColorChain.ForSource(hdr.ColorTransfer));
@@ -825,18 +1147,52 @@ public static class ExportCompiler
         // dönüşümü etkilemez, yalnız etiketi düzeltir (ve renkler kayar).
         chain.Add(SourceColorParams);
         chain.Add($"fps={fpsArg}");
+
+        // HIZ (tasarım 04 §2.4): fps normalize SONRASI setpts=PTS/k, ardından TEKRAR çıktı fps
+        // ızgarası — ikinci fps olmadan akış k katı yoğunlukta/seyrek kare taşır ve trim'in
+        // frame defteri (§1.4) anlamsızlaşır. Zaman ekseni olmayan girişte (görsel/raster)
+        // hız kavramı yoktur: -loop 1 -t zaten TIMELINE süresi kadar kare üretir.
+        if (clip.Rate != 1d && !clip.IsStillInput)
+        {
+            chain.Add($"setpts=PTS/{Num(clip.Rate)}");
+            chain.Add($"fps={fpsArg}");
+        }
+
         chain.Add(segment.StartFrame > 0
             ? $"trim=start_frame={segment.StartFrame.ToString(CultureInfo.InvariantCulture)}"
               + $":end_frame={(segment.StartFrame + segment.Frames).ToString(CultureInfo.InvariantCulture)}"
             : $"trim=end_frame={segment.Frames.ToString(CultureInfo.InvariantCulture)}");
 
+        // Katman zincirindeki animasyon (scale/rotate ifadesi + sendcmd) KLİP-GÖRELİ t ister.
+        // trim PTS'i sıfırlamaz; -ss ile açılmış giriş çoğu kaynakta 0'dan başlar ama bu bir
+        // GARANTİ DEĞİLDİR (edit list / B-frame ofseti) — açık setpts tüm belirsizliği kaldırır.
+        if (NeedsClipRelativeTime(run, clip))
+        {
+            chain.Add("setpts=PTS-STARTPTS");
+        }
+
         // fit=contain (§2.2) ve transform.scale (§2.3 adım 1-2) TEK ölçekte birleşir: hedef
         // kutu katmanın doğal boyutunun scale katıdır (medya/görsel/çıkartmada doğal boyut =
         // proje tuvali; metin/şekilde rasterin kendi bbox'ı — §7),
         // force_original_aspect_ratio=decrease aspect'i korur. Tek resample = tek yumuşama.
-        chain.Add($"scale={placement.BoxWidth.ToString(CultureInfo.InvariantCulture)}"
-                  + $":{placement.BoxHeight.ToString(CultureInfo.InvariantCulture)}"
-                  + ":force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic");
+        chain.Add(ScaleFilter(run, segment, plan));
+    }
+
+    /// <summary>
+    /// YERLEŞİM zinciri (rendering-semantics §2.3 sırası + §6), ölçekten SONRASI:
+    /// setsar=1 → format=rgba → [kutuya normalize pad] →
+    /// [colorchannelmixer=aa (opaklık, §6.3)] → [çapa pad'i] → [rotate c=none] → settb=AVTB.
+    /// Timeline ofseti (setpts) çağıran tarafta eklenir — run'da birleştirme SONRASINA taşınır.
+    /// <paramref name="opaque"/>: tek katmanlı hızlı yol — RGB kompozisyon yoktur, katman proje
+    /// tuvaline ARKA PLAN rengiyle letterbox pad'lenir ve yuv420p'de kalır (M3 hattı; alpha
+    /// taşımadığı için concat/encode zinciri hiç RGB'ye çıkmaz).
+    /// </summary>
+    private static void BuildPlacementChain(
+        List<string> chain, LayerRun run, LayerSegment segment, ExportPlan plan,
+        string background, bool opaque, bool normalizeToBox)
+    {
+        var clip = segment.Clip;
+        var placement = run.Placement;
 
         if (opaque)
         {
@@ -850,7 +1206,7 @@ public static class ExportCompiler
             chain.Add("setsar=1");
             chain.Add("format=yuv420p");
             chain.Add("settb=AVTB");
-            return string.Join(',', chain);
+            return;
         }
 
         chain.Add("setsar=1");
@@ -874,9 +1230,20 @@ public static class ExportCompiler
                       + $":color={TransparentPad}");
         }
 
-        if (clip.Opacity < 1)
+        // §6.3: src.a *= opacity (straight alpha). Keyframe'li opaklıkta değer sendcmd ile
+        // kare kare yazılır (colorchannelmixer ZAMAN İFADESİ ALMAZ) — filtre örneği o yüzden
+        // adlandırılır. 0→1 / 1→0 lineer eğri ise burada değil, kuyrukta 'fade' ile çözülür.
+        // sendcmd, hedefinin HEMEN ÖNÜNE konur: ikisi arasında iki girişli bir filtre
+        // (LUT'un split/blend'i gibi) kalırsa komut framesync tamponu yüzünden yanlış kareye
+        // düşerdi — aynı lineer zincirde kare eşzamanlı iletilir (ölçüldü: 60/60 doğru).
+        if (run.Animation.OpacityTag.Length > 0)
         {
-            // §6.3: src.a *= opacity (straight alpha), statik değer — keyframe'li opaklık M5.
+            chain.Add(KeyframeCompiler.SendCmdFilter(run.Animation.OpacityCommands));
+            chain.Add($"colorchannelmixer{run.Animation.OpacityTag}"
+                      + $"=aa={Num(run.Animation.OpacityInitial)}");
+        }
+        else if (clip.Animation.Opacity is null && clip.Opacity < 1)
+        {
             chain.Add($"colorchannelmixer=aa={Num(clip.Opacity)}");
         }
 
@@ -896,11 +1263,82 @@ public static class ExportCompiler
             // MaxLayerDimension'a karşı doğrulanmıştır (denetim #2) — buradaki ifade ffmpeg'in
             // gerçek iw/ih'siyle aynı değeri config anında bir kez üretir.
             // Filtergraph içinde argüman virgülü KAÇIRILMALIDIR (\,) — aksi halde filtre ayracı sanılır.
-            chain.Add($"rotate=a={Num(placement.RotationRad)}:c=none:ow=hypot(iw\\,ih):oh=ow");
+            chain.Add($"rotate=a={RotationArgument(run)}:c=none:ow=hypot(iw\\,ih):oh=ow");
         }
 
         chain.Add("settb=AVTB");
-        return string.Join(',', chain);
+    }
+
+    /// <summary>
+    /// Ölçek filtresi. Statik ölçekte tarihsel biçim AYNEN korunur; animasyonlu ölçekte kutu
+    /// kare kare değişir (<c>eval=frame</c>) — TAMAMI LİNEER kanalda ifadeyle, eğrili kanalda
+    /// sendcmd ile sürülür. force_original_aspect_ratio/force_divisible_by kuralları her karede
+    /// yeniden uygulanır (ffmpeg scale_eval_dimensions eval=frame modunda kare başına çalışır),
+    /// yani çift boyut garantisi animasyonlu yolda da geçerlidir.
+    /// </summary>
+    private static string ScaleFilter(LayerRun run, LayerSegment segment, ExportPlan plan)
+    {
+        var placement = run.Placement;
+        const string options =
+            "force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic";
+        if (run.Animation.ScaleWidth is not { } width || run.Animation.ScaleHeight is not { } height)
+        {
+            return $"scale={placement.BoxWidth.ToString(CultureInfo.InvariantCulture)}"
+                   + $":{placement.BoxHeight.ToString(CultureInfo.InvariantCulture)}:{options}";
+        }
+
+        // İfade virgül taşır → tırnaklanır. eval=frame olmadan ifade yalnız config anında
+        // değerlendirilir ve animasyon sabite düşerdi.
+        return $"scale=w='{width}':h='{height}':{options}:eval=frame";
+    }
+
+    /// <summary>
+    /// rotate açısı (radyan). Statikte sabit; animasyonlu kanalda <c>t</c> ifadesi (virgül
+    /// içerdiği için tırnaklanır). rotate ifadeyi KARE BAŞINA değerlendirir — ayrı bir eval
+    /// seçeneği yoktur.
+    /// </summary>
+    private static string RotationArgument(LayerRun run) =>
+        run.Animation.Rotation is { } expression
+            ? $"'{expression}'"
+            : Num(run.Placement.RotationRad);
+
+    /// <summary>
+    /// Katman zinciri KLİP-GÖRELİ <c>t</c> istiyor mu? scale/rotate ifadeleri ve opaklık
+    /// sendcmd'i klip ekseninde çalışır; overlay x/y KOMPOZİT eksendedir ve bu bayrağı
+    /// gerektirmez.
+    /// </summary>
+    private static bool NeedsClipRelativeTime(LayerRun run, ExportClipPlan clip) =>
+        clip.Animation.AnimatesLayerChain || run.Animation.OpacityTag.Length > 0;
+
+    /// <summary>
+    /// Opaklık keyframe'lerinin <c>fade</c> HIZLI YOLU (tasarım 04 §2.5 madde 1 —
+    /// "kullanımın %95'i"): tam iki keyframe, LİNEER easing ve değerler 0→1 (fade-in) ya da
+    /// 1→0 (fade-out) ise <c>fade=alpha=1</c> birebir aynı eğriyi verir ve kare başına komut
+    /// göndermeye gerek kalmaz. fade, st'den önce 0 (in) / 1 (out) tutar — §3.3'ün "ilk
+    /// keyframe'den önce ilk değer, son keyframe'den sonra son değer" kuralıyla ÖZDEŞTİR.
+    /// Diğer her eğri (0.2→0.8, çok keyframe'li, easing'li) sendcmd yoluna gider.
+    /// <paramref name="startUs"/> klibin KOMPOZİT başlangıcıdır — fade zinciri timeline
+    /// ofsetinden (setpts) SONRA çalışır.
+    /// </summary>
+    private static string? OpacityFadeFilter(ExportClipPlan clip, long startUs)
+    {
+        if (clip.Animation.Opacity is not { } track || track.Keys.Count != 2 || !track.AllLinear)
+        {
+            return null;
+        }
+
+        var (first, second) = (track.Keys[0], track.Keys[1]);
+        var type = (first.Value, second.Value) switch
+        {
+            (0d, 1d) => "in",
+            (1d, 0d) => "out",
+            _ => null,
+        };
+
+        return type is null
+            ? null
+            : $"fade=t={type}:st={TimeFormat.Sec(startUs + first.TimeUs)}"
+              + $":d={TimeFormat.Sec(second.TimeUs - first.TimeUs)}:alpha=1";
     }
 
     /// <summary>
@@ -924,8 +1362,9 @@ public static class ExportCompiler
         clip.IsStillInput
             ? new ExportInput(path, 0, UsOf(inputFrames + 1, plan.FpsNum, plan.FpsDen), Loop: true)
             : new ExportInput(path,
-                clip.SourceInUs - clip.HeadInUs,
-                (clip.SourceOutUs + clip.HeadOutUs) - (clip.SourceInUs - clip.HeadInUs));
+                clip.SourceInUs - clip.HeadInSourceUs,
+                (clip.SourceOutUs + clip.HeadOutSourceUs)
+                - (clip.SourceInUs - clip.HeadInSourceUs));
 
     /// <summary>overlay_x = P.x - anchorFactor * &lt;w|h&gt; (§2.5); çarpan 0 ise sade sabit.</summary>
     private static string OverlayCoordinate(double target, double anchorFactor, string dimension) =>
@@ -943,7 +1382,7 @@ public static class ExportCompiler
     {
         if (raster is null)
         {
-            return LayerGeometry.Compute(clip.Transform, plan.Width, plan.Height);
+            return LayerGeometry.Compute(PlacementTransform(clip), plan.Width, plan.Height);
         }
 
         if (!double.IsFinite(raster.NaturalWidthPx) || !double.IsFinite(raster.NaturalHeightPx)
@@ -955,7 +1394,8 @@ public static class ExportCompiler
         }
 
         var placement = LayerGeometry.Compute(
-            clip.Transform, plan.Width, plan.Height, raster.NaturalWidthPx, raster.NaturalHeightPx);
+            PlacementTransform(clip), plan.Width, plan.Height,
+            raster.NaturalWidthPx, raster.NaturalHeightPx);
         EnsureLayerFits(clip.Id, clip.KindTr, placement);
         return placement;
     }
@@ -1042,6 +1482,21 @@ public static class ExportCompiler
                     + $"kısa komşunun ({shorter}us) yarısını aşamaz.");
             }
 
+            // Geçiş + keyframe: geçişli kesimde run BÖLÜNEMEZ (iki klip TEK xfade akışına
+            // girer), dolayısıyla katmanın yerleşimi kesim boyunca SABİT olmalıdır — animasyon
+            // xfade'in "iki giriş aynı boyutta" şartını da kırardı. Sessiz yok sayma yerine
+            // tipli hata (M4'teki "geçişli kliplerin yerleşimi aynı olmalı" kuralının kardeşi).
+            foreach (var side in (ExportClipPlan[])[current, next])
+            {
+                if (side.Animation.Any)
+                {
+                    throw new UnsupportedFeatureException("transition-keyframes",
+                        $"'{side.Id}' klibinde hem geçiş hem keyframe animasyonu var — geçişli "
+                        + "kesimde iki klip tek akışa katlandığı için katmanın yerleşimi sabit "
+                        + "olmalıdır. Geçişi kaldırın ya da animasyonu başka bir klibe taşıyın.");
+                }
+            }
+
             var half = dFrames / 2;
             var halfUs = UsOf(half, fpsNum, fpsDen);
 
@@ -1050,12 +1505,15 @@ public static class ExportCompiler
             // uzatılmış aralık kaynak-aralığı defterine yazılır, worker'ın kapısı orada yakalar.
             // Zaman ekseni olmayan kaynakta (görsel) pay kavramı yoktur: -loop 1 istediği kadar
             // kare üretir.
-            if (!next.IsStillInput && next.SourceInUs < halfUs)
+            // §5.2 pay KAYNAK-DOMAIN'dedir ve HIZLA ölçeklenir: sourceIn' = sourceIn -
+            // roundHalfUp((D/2) * rate). rate=1'de iki eksen çakışır (tarihsel davranış).
+            var halfSourceUs = SourceHandleUs(halfUs, next.Rate);
+            if (!next.IsStillInput && next.SourceInUs < halfSourceUs)
             {
                 throw new UnsupportedFeatureException("transition-handle",
-                    $"'{next.Id}' klibinin başında geçiş payı yok: {halfUs}us (D/2) gerekiyor ama "
-                    + $"kaynak {next.SourceInUs}us'ten başlıyor. Geçişi kısaltın ya da klibi kaynakta "
-                    + "biraz ileriden başlatın.");
+                    $"'{next.Id}' klibinin başında geçiş payı yok: {halfSourceUs}us (D/2, kaynak "
+                    + $"ekseninde) gerekiyor ama kaynak {next.SourceInUs}us'ten başlıyor. Geçişi "
+                    + "kısaltın ya da klibi kaynakta biraz ileriden başlatın.");
             }
 
             outTransition[i] = transition;
@@ -1082,17 +1540,28 @@ public static class ExportCompiler
                 continue;
             }
 
+            var headInUs = UsOf(headInFrames, fpsNum, fpsDen);
+            var headOutUs = UsOf(headOutFrames, fpsNum, fpsDen);
             clips[i] = clips[i] with
             {
                 TransitionIn = inTransition[i],
                 TransitionOut = outTransition[i],
                 HeadInFrames = headInFrames,
                 HeadOutFrames = headOutFrames,
-                HeadInUs = UsOf(headInFrames, fpsNum, fpsDen),
-                HeadOutUs = UsOf(headOutFrames, fpsNum, fpsDen),
+                HeadInUs = headInUs,
+                HeadOutUs = headOutUs,
+                HeadInSourceUs = SourceHandleUs(headInUs, clips[i].Rate),
+                HeadOutSourceUs = SourceHandleUs(headOutUs, clips[i].Rate),
             };
         }
     }
+
+    /// <summary>
+    /// §5.2: timeline-domain D/2 payının kaynak-domain karşılığı —
+    /// <c>roundHalfUp((D/2) * rate)</c>. rate = 1'de kimliktir (tarihsel snapshot'lar korunur).
+    /// </summary>
+    private static long SourceHandleUs(long halfUs, double rate) =>
+        rate == 1d ? halfUs : (long)Math.Floor((halfUs * rate) + 0.5);
 
     /// <summary>
     /// Kaynak-aralığı defterine giren klip: geçiş payları UYGULANMIŞ aralık. Pay yoksa
@@ -1103,7 +1572,7 @@ public static class ExportCompiler
     private static MediaClip EffectiveRangeClip(ExportClipPlan clip)
     {
         var media = clip.Media!;
-        if (clip.HeadInUs == 0 && clip.HeadOutUs == 0)
+        if (clip.HeadInSourceUs == 0 && clip.HeadOutSourceUs == 0)
         {
             return media;
         }
@@ -1115,8 +1584,8 @@ public static class ExportCompiler
             AssetId = media.AssetId,
             TimelineStartUs = media.TimelineStartUs,
             TimelineDurationUs = media.TimelineDurationUs,
-            SourceInUs = media.SourceInUs - clip.HeadInUs,
-            SourceOutUs = media.SourceOutUs + clip.HeadOutUs,
+            SourceInUs = media.SourceInUs - clip.HeadInSourceUs,
+            SourceOutUs = media.SourceOutUs + clip.HeadOutSourceUs,
             Speed = media.Speed,
             Transform = media.Transform,
             Keyframes = media.Keyframes,
@@ -1187,19 +1656,26 @@ public static class ExportCompiler
                 + "dışa aktarıcı bu klibi işleyemiyor."),
         };
 
-        // ── Tüm klip türleri için ortak kapsam kapıları (M5'te açılacak özellikler).
-        if (HasAnyKeyframes(KeyframesOf(clip)))
+        // ── M5: efektler (§4) ve keyframe'ler (§3) artık DERLENİR; doğrulama tipli hatalar üretir.
+        planned = planned with
         {
-            throw new UnsupportedFeatureException("keyframes",
-                $"'{planned.Id}' klibinde keyframe animasyonu var — keyframe'ler henüz "
-                + "desteklenmiyor (M5'te geliyor).");
+            Effects = ColorPipeline.Parse(planned.Id, EffectsOf(clip)),
+            Animation = KeyframeCompiler.Parse(planned.Id, KeyframesOf(clip)),
+        };
+
+        // Ses klibi görsel katman üretmez → transform/opaklık keyframe'inin karşılığı yoktur.
+        // Sessizce yok saymak "animasyonum çalışmıyor" bug'ı üretirdi.
+        if (planned.Kind == ExportClipKind.Audio && planned.Animation.Any)
+        {
+            throw new UnsupportedFeatureException("keyframes-audio-clip",
+                $"'{planned.Id}' ses klibinde görsel keyframe animasyonu var — ses klibi "
+                + "görüntü üretmez, bu animasyonun karşılığı yoktur.");
         }
 
-        if (EffectsOf(clip) is { Count: > 0 } effects && effects.Any(e => e.Enabled))
+        if (planned.Kind == ExportClipKind.Audio && planned.Effects.Any)
         {
-            throw new UnsupportedFeatureException("effects",
-                $"'{planned.Id}' klibinde etkin efekt var — efektler henüz desteklenmiyor "
-                + "(M5'te geliyor). Efektleri kapatıp yeniden deneyin.");
+            throw new UnsupportedFeatureException("effects-audio-clip",
+                $"'{planned.Id}' ses klibinde renk efekti var — ses klibi görüntü üretmez.");
         }
 
         if (planned.TimelineDurationUs <= 0)
@@ -1223,13 +1699,18 @@ public static class ExportCompiler
         }
 
         // ── Yalnız medya kliplerine ait sözleşmeler (hız, kaynak aralığı, süre formülü, ses).
-        if (media2.Speed is not { Rate: 1 })
+        // M5: sabit hız DESTEKLENİR (tasarım 04 §2.4). Hız RAMPASI (keyframe'li hız) şemada
+        // yoktur ve kapsam dışıdır; şema rate'i [0.1..10] ile sınırlar — compiler aynı kapıyı
+        // ikinci kez kurar (doküman doğrudan API'ye de gelebilir).
+        var rate = media2.Speed?.Rate ?? 1d;
+        if (!double.IsFinite(rate) || rate is < 0.1 or > 10)
         {
-            throw new UnsupportedFeatureException("speed",
-                $"'{media2.Id}' klibinde hız değişimi var (speed.rate="
-                + $"{(media2.Speed?.Rate ?? 0).ToString(CultureInfo.InvariantCulture)}) — "
-                + "hız değişimi henüz desteklenmiyor (M5'te geliyor).");
+            throw new InvalidTimelineException(
+                $"'{media2.Id}' klibinin hızı [0.1..10] aralığında olmalı (gelen değer "
+                + $"{rate.ToString("0.######", CultureInfo.InvariantCulture)}).");
         }
+
+        planned = planned with { Rate = rate };
 
         if (media2.SourceInUs < 0 || media2.SourceOutUs <= media2.SourceInUs)
         {
@@ -1238,9 +1719,10 @@ public static class ExportCompiler
                 + $"[{media2.SourceInUs}..{media2.SourceOutUs}] us.");
         }
 
-        // Süre formülü (rendering-semantics §1.3); rate=1 olduğundan tam eşitlik beklenir.
+        // Süre formülü (rendering-semantics §1.3): timelineDurationUs = roundHalfUp((out-in)/rate).
+        // Şema ile BİREBİR aynı formül (packages/timeline-schema time.ts clipTimelineDurationUs).
         var expectedDurationUs = Timecode.ClipTimelineDurationUs(
-            media2.SourceInUs, media2.SourceOutUs, 1d);
+            media2.SourceInUs, media2.SourceOutUs, rate);
         if (media2.TimelineDurationUs != expectedDurationUs)
         {
             throw new InvalidTimelineException(
@@ -1332,13 +1814,63 @@ public static class ExportCompiler
                 + $"(gelen değer {transform.Scale.ToString(CultureInfo.InvariantCulture)}).");
         }
 
+        // ÖLÇEK ANİMASYONU + DÖNME birlikte kullanılamaz (M5 ölçümü). scale eval=frame katman
+        // boyutunu kare kare değiştirir; rotate ise ÇIKIŞ TUVALİNİ config anında bir kez kurar
+        // ve giriş büyüdüğünde YENİDEN YAPILANDIRMAZ — fazlalığı sessizce KIRPAR. Gerçek render:
+        // ölçek 0.25 → 0.75 animasyonunda katman 80x60'ta kurulan 100x100 tuvalde kalıyor, son
+        // karede 240x180'lik içeriğin yalnız ortası görünüyor (ow/oh'yi sabit sayı vermek de
+        // düzeltmiyor). Sessiz kırpma yerine tipli hata.
+        if (clip.Animation.Scale is not null
+            && (transform.RotationDeg % 360d != 0 || clip.Animation.Rotation is not null))
+        {
+            throw new UnsupportedFeatureException("scale-keyframes-with-rotation",
+                $"'{clip.Id}' klibinde hem ölçek animasyonu hem dönme var — bu bileşimde "
+                + "dışa aktarıcı katmanı kırpardı. Ölçek animasyonunu ya da dönmeyi kaldırın.");
+        }
+
         if (clip.NeedsServerRaster)
         {
             return; // kutu raster boyutundan türer → tavan Compile'da (PlacementOf)
         }
 
-        var placement = LayerGeometry.Compute(transform, width, height);
+        var placement = LayerGeometry.Compute(PlacementTransform(clip), width, height);
         EnsureLayerFits(clip.Id, clip.KindTr, placement);
+    }
+
+    /// <summary>
+    /// Sentinel dönme açısı: kanal ANİMASYONLU olduğunda yerleşimin "dönüyor" dalına
+    /// girmesi için kullanılır. Gerçek açı ifade/komutla beslenir; ara tuval
+    /// <c>ow=oh=hypot(iw,ih)</c> olduğu için açıdan BAĞIMSIZDIR, dolayısıyla sentinel'in
+    /// değeri bellek tavanını etkilemez.
+    /// </summary>
+    private const double RotationSentinelDeg = 90d;
+
+    /// <summary>
+    /// Yerleşim hesabına giren transform: keyframe'li kanallar statik alanı EZER (§3.3).
+    ///  - ölçek animasyonluysa kutu ve BELLEK TAVANI en büyük keyframe değerinden hesaplanır
+    ///    (ara tuval en büyük karede en büyüktür — denetim #2'nin aynı gerekçesi);
+    ///  - dönme animasyonluysa katman "dönüyor" sayılır: rotate filtresi üretilir, overlay
+    ///    çapa çarpanı 0.5'e düşer, gereken yerde çapa pad'i kurulur;
+    ///  - x/y animasyonu geometriyi DEĞİL yalnız overlay konumunu etkiler → burada rol almaz.
+    /// </summary>
+    private static Transform PlacementTransform(ExportClipPlan clip)
+    {
+        var transform = clip.Transform;
+        var animation = clip.Animation;
+        if (animation.Scale is null && animation.Rotation is null)
+        {
+            return transform;
+        }
+
+        return new Transform
+        {
+            X = transform.X,
+            Y = transform.Y,
+            Scale = animation.Scale is { } scale ? Math.Max(transform.Scale, scale.MaxValue) : transform.Scale,
+            RotationDeg = animation.Rotation is null ? transform.RotationDeg : RotationSentinelDeg,
+            AnchorX = transform.AnchorX,
+            AnchorY = transform.AnchorY,
+        };
     }
 
     /// <summary>
@@ -1377,14 +1909,33 @@ public static class ExportCompiler
             + $"{kindTr} klibinin ölçeğini (gerekirse dönme açısını) küçültüp yeniden deneyin.");
     }
 
-    private static bool HasAnyKeyframes(KeyframeTracks? keyframes) =>
-        keyframes is not null
-        && (keyframes.X is { Count: > 0 }
-            || keyframes.Y is { Count: > 0 }
-            || keyframes.Scale is { Count: > 0 }
-            || keyframes.RotationDeg is { Count: > 0 }
-            || keyframes.Opacity is { Count: > 0 }
-            || keyframes.Volume is { Count: > 0 });
+    /// <summary>
+    /// atempo katlama zinciri (tasarım 04 §2.4): filtrenin geçerli aralığı 0.5–100'dür,
+    /// dışına düşen k tekrarlı çarpanlara bölünür (k=0.25 → 0.5, 0.5). rate = 1 iken
+    /// zincir BOŞTUR — hiç filtre üretilmez (tarihsel snapshot'lar bayt bayt korunur).
+    /// </summary>
+    internal static IEnumerable<double> AtempoChain(double rate)
+    {
+        if (rate == 1d)
+        {
+            yield break;
+        }
+
+        var k = rate;
+        while (k < 0.5d)
+        {
+            yield return 0.5d;
+            k /= 0.5d;
+        }
+
+        while (k > 100d)
+        {
+            yield return 100d;
+            k /= 100d;
+        }
+
+        yield return k;
+    }
 
     // ───────────────────────── Ses zinciri ─────────────────────────
 
@@ -1544,6 +2095,15 @@ public static class ExportCompiler
         var headOutUs = segment.HeadOutUs;
 
         var parts = new List<string>();
+
+        // HIZ (tasarım 04 §2.4 + §8.3): atempo zinciri EN BAŞTADIR. Giriş KAYNAK ekseninde
+        // açılır (-ss/-t), atempo'dan sonra akış TIMELINE eksenindedir — aşağıdaki atrim,
+        // afade ve micro-fade pencerelerinin hepsi timeline-domain'dir, dolayısıyla atempo
+        // onlardan ÖNCE gelmek zorundadır.
+        foreach (var tempo in AtempoChain(clip.Rate))
+        {
+            parts.Add($"atempo={Num(tempo)}");
+        }
 
         // Girişin açtığı toplam pencere ile SESİN kullanacağı pencere farklıysa kırp.
         var trimStartUs = clip.HeadInUs - headInUs;

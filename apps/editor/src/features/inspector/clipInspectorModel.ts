@@ -22,6 +22,8 @@ import {
   isMediaClip,
   type Clip,
   type ClipAudio,
+  type Effect,
+  type MediaClip,
   type MicroSec,
   type Rational,
   type ShapeClip,
@@ -113,6 +115,50 @@ export interface ShapeSection {
   radiusPx: CommonNumber;
 }
 
+/**
+ * Speed section (M5). Only video/audio clips carry it — an image has no time
+ * axis, so "2x" there would silently be a duration edit (see
+ * timelineOps.clipSupportsSpeed).
+ *
+ * `nextGapUs` is what makes the panel honest BEFORE the click: it is how far
+ * the SHORTEST-headroom selected clip may grow before it hits its neighbour,
+ * which is exactly the bound `setClipSpeed` refuses against. null = unbounded
+ * (nothing after it on the track).
+ */
+export interface SpeedSection {
+  /** Clips this section writes to (video/audio clips). */
+  clipIds: Uuid[];
+  rate: CommonNumber;
+  /** Timeline duration at the current rate (mixed selection -> null). */
+  durationUs: CommonNumber;
+  /** Free space after the clip on its track, us; null = no clip follows. */
+  nextGapUs: CommonNumber;
+  /** Slowest rate that still fits without rippling (null = no bound). */
+  minRateWithoutRipple: number | null;
+  /** true when at least one selected clip has a transition on either edge. */
+  hasTransition: boolean;
+}
+
+/**
+ * colorAdjust section (M5, rendering-semantics §4.1). Offered for every DRAWN
+ * clip; `enabled: false` with all-zero values is the "no effect yet" state, so
+ * the section never has to disappear and reappear as the user works.
+ */
+export interface ColorSection {
+  /** Clips this section writes to (everything that is drawn). */
+  clipIds: Uuid[];
+  /** false = no colorAdjust effect at all, or one that is switched off. */
+  enabled: CommonBoolean;
+  /** True when at least one selected clip owns a colorAdjust effect. */
+  present: boolean;
+  brightness: CommonNumber;
+  contrast: CommonNumber;
+  saturation: CommonNumber;
+  temperature: CommonNumber;
+  tint: CommonNumber;
+  exposure: CommonNumber;
+}
+
 export interface ClipInspectorModel {
   /** Selected clips that still exist in the document. */
   count: number;
@@ -124,6 +170,8 @@ export interface ClipInspectorModel {
   visual: VisualSection | null;
   text: TextSection | null;
   shape: ShapeSection | null;
+  speed: SpeedSection | null;
+  color: ColorSection | null;
 }
 
 export interface AssetNameSource {
@@ -236,6 +284,8 @@ export function buildClipInspectorModel(
       visual: null,
       text: null,
       shape: null,
+      speed: null,
+      color: null,
     };
   }
 
@@ -346,7 +396,94 @@ export function buildClipInspectorModel(
           ),
         };
 
-  return { count: located.length, editable, identity, audio, visual, text, shape };
+  // Speed (M5): video/audio only. `nextGapUs` is derived from the TRACK, not
+  // from the clip, which is why this section cannot be built from the clip
+  // alone — the panel has to be able to say "0.5x will not fit" beforehand.
+  const speedClips = located.filter((l) => l.clip.kind === 'video' || l.clip.kind === 'audio');
+  const speed: SpeedSection | null =
+    speedClips.length === 0
+      ? null
+      : {
+          clipIds: speedClips.map((l) => l.clip.id),
+          rate: commonNumber(speedClips.map((l) => (l.clip as MediaClip).speed.rate)),
+          durationUs: commonNumber(speedClips.map((l) => l.clip.timelineDurationUs)),
+          nextGapUs: commonNumber(
+            speedClips
+              .map((l) => gapAfterClip(l.track, l.clip))
+              .filter((v): v is number => v !== null),
+          ),
+          minRateWithoutRipple: minRateWithoutRipple(speedClips),
+          hasTransition: speedClips.some(
+            (l) =>
+              (l.clip as MediaClip).transitionIn !== undefined ||
+              (l.clip as MediaClip).transitionOut !== undefined,
+          ),
+        };
+
+  // colorAdjust (M5 §4.1): every drawn clip. A clip with no effect reads as
+  // all-zero + disabled, so the section is stable while the user works.
+  const colorClips = located.map((l) => l.clip).filter((c) => c.kind !== 'audio');
+  const colorEffects = colorClips.map((c) => c.effects.find((e) => e.type === 'colorAdjust'));
+  const colorParam = (key: ColorParamKey): CommonNumber =>
+    commonNumber(colorEffects.map((e) => readColorParam(e, key)));
+  const color: ColorSection | null =
+    colorClips.length === 0
+      ? null
+      : {
+          clipIds: colorClips.map((c) => c.id),
+          enabled: commonBoolean(colorEffects.map((e) => e?.enabled === true)),
+          present: colorEffects.some((e) => e !== undefined),
+          brightness: colorParam('brightness'),
+          contrast: colorParam('contrast'),
+          saturation: colorParam('saturation'),
+          temperature: colorParam('temperature'),
+          tint: colorParam('tint'),
+          exposure: colorParam('exposure'),
+        };
+
+  return { count: located.length, editable, identity, audio, visual, text, shape, speed, color };
+}
+
+/** Free timeline space after `clip` on its track; null when nothing follows. */
+export function gapAfterClip(track: Track, clip: Clip): number | null {
+  const endUs = clip.timelineStartUs + clip.timelineDurationUs;
+  let nearest: number | null = null;
+  for (const other of track.clips) {
+    if (other.id === clip.id) continue;
+    if (other.timelineStartUs < endUs) continue;
+    if (nearest === null || other.timelineStartUs < nearest) nearest = other.timelineStartUs;
+  }
+  return nearest === null ? null : Math.max(0, nearest - endUs);
+}
+
+/**
+ * Slowest rate the selection can take WITHOUT rippling: a clip may grow into
+ * its gap only, and `duration = (out-in)/rate` means the bound is
+ * `rate >= (out-in) / (duration + gap)`. The strictest selected clip wins.
+ * null = nothing follows any of them, so slowing down is unbounded.
+ */
+function minRateWithoutRipple(clips: Located[]): number | null {
+  let bound: number | null = null;
+  for (const { clip, track } of clips) {
+    const gap = gapAfterClip(track, clip);
+    if (gap === null) continue;
+    const media = clip as MediaClip;
+    const room = clip.timelineDurationUs + gap;
+    if (room <= 0) continue;
+    const rate = (media.sourceOutUs - media.sourceInUs) / room;
+    if (bound === null || rate > bound) bound = rate;
+  }
+  // Round UP to the stored precision: a rate rounded DOWN would be one
+  // microsecond too slow and the op would refuse the value the panel offered.
+  return bound === null ? null : Math.ceil(bound * 1000) / 1000;
+}
+
+type ColorParamKey = 'brightness' | 'contrast' | 'saturation' | 'temperature' | 'tint' | 'exposure';
+
+/** A §4.1 param of an effect, defaulting to the identity 0 (same as the shader). */
+function readColorParam(effect: Effect | undefined, key: ColorParamKey): number {
+  const v = effect?.params[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -380,6 +517,16 @@ export function formatDb(volume: CommonNumber): string {
 /** "1.00×" — the raw linear factor next to the dB label. */
 export function formatGain(volume: CommonNumber): string {
   return volume === null ? MIXED_LABEL : `${volume.toFixed(2)}×`;
+}
+
+/**
+ * "2x" / "0.5x" / "1.25x" — the speed readout AND the timeline badge text.
+ * Trailing zeros are dropped so the common presets read as "2x", not "2.00x".
+ */
+export function formatSpeed(rate: CommonNumber): string {
+  if (rate === null) return MIXED_LABEL;
+  const rounded = Math.round(rate * 1000) / 1000;
+  return `${String(rounded)}x`;
 }
 
 /** Microseconds -> "1.25 s" (fade fields are edited in seconds). */

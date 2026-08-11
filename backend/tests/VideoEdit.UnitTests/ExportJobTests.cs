@@ -78,18 +78,22 @@ public sealed class ExportJobTests : IDisposable
     [Fact]
     public async Task Run_UnsupportedFeatureSnapshot_FailsWithoutRetry()
     {
-        // Çok katman (M4 dalga 1), metin/şekil/çıkartma ve geçişler (M4 dalga 2) ARTIK
-        // desteklenir; kapsam dışı kalan HIZ değişimiyle test edilir (M5).
-        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
-        clip.Speed = new VideoEdit.Contracts.Timeline.MediaClipSpeed { Rate = 2 };
-        clip.TimelineDurationUs = 500_000;
+        // Çok katman (M4 dalga 1), metin/şekil/çıkartma ve geçişler (M4 dalga 2), HIZ +
+        // renk düzeltme + transform/opaklık keyframe'leri (M5) ARTIK desteklenir; kapsam dışı
+        // kalan SES (volume) keyframe'iyle test edilir.
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000,
+            ExportTestDocs.Audio());
+        clip.Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks
+        {
+            Volume = [ExportTestDocs.Kf(0, 1), ExportTestDocs.Kf(500_000, 0)],
+        };
         var job = await SeedExportJobAsync(ExportTestDocs.ToJson(ExportTestDocs.Doc(clips: clip)));
 
         await CreateJobRunner().Run(job.Id, CancellationToken.None); // fırlatmamalı
 
         var reloaded = Reload(job.Id);
         Assert.Equal(JobStatus.Failed, reloaded.Status);
-        Assert.Contains("unsupported-feature:speed", reloaded.ErrorMessage);
+        Assert.Contains("unsupported-feature:keyframes-volume", reloaded.ErrorMessage);
         Assert.NotNull(reloaded.CompletedAt);
     }
 

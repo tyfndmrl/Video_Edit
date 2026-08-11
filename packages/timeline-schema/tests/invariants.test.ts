@@ -291,13 +291,29 @@ describe('transitions', () => {
     expectIssue(doc, 'outgoing clip needs sourceOutUs', { [ASSET_A]: 2_000_000, [ASSET_B]: 10_000_000 });
   });
 
-  it('skips the handle rule when asset durations are not provided', () => {
+  /**
+   * The HEAD handle is bounded by sourceInUs alone — no asset duration needed —
+   * and the export compiler enforces it unconditionally
+   * (`if (!next.IsStillInput && next.SourceInUs < halfSourceUs)` → 422). A
+   * validator that skipped it without durations would green-light a document
+   * the renderer rejects.
+   */
+  it('checks the incoming handle even when asset durations are NOT provided', () => {
     const doc = validDoc();
     const clipB = doc.tracks[1].clips[1] as MediaClip;
-    clipB.sourceInUs = 0; // would fail the handle rule if durations were known
+    clipB.sourceInUs = 0;
     clipB.sourceOutUs = 2_000_000;
+    expectIssue(doc, 'incoming clip needs sourceInUs >= 500000');
+    expectIssue(doc, 'incoming clip needs sourceInUs >= 500000', DURATIONS);
+  });
+
+  /** The TAIL handle genuinely needs the asset duration; without it, no check. */
+  it('skips the outgoing (tail) handle rule when asset durations are not provided', () => {
+    const doc = validDoc();
     expect(validateTimelineDoc(doc).success).toBe(true);
-    expect(validateTimelineDoc(doc, DURATIONS).success).toBe(false);
+    expect(
+      validateTimelineDoc(doc, { [ASSET_A]: 2_000_000, [ASSET_B]: 10_000_000 }).success,
+    ).toBe(false);
   });
 
   it('accepts a Map as the asset duration source', () => {
@@ -351,6 +367,97 @@ describe('transition handles are speed-aware (rendering-semantics §5.2)', () =>
   it('rejects an outgoing handle short of roundHalfUp((D/2)*rate) at rate 0.5', () => {
     const durations = { [ASSET_A]: 1_249_999, [ASSET_B]: 10_000_000 };
     expectIssue(docWithOutgoingHalfRate(), 'outgoing clip needs sourceOutUs + 250000', durations);
+  });
+});
+
+/**
+ * A still image has no source time axis, so it has no D/2 handle to run out of:
+ * the export compiler opens it with `-loop 1` and skips exactly these checks
+ * (`ExportClipPlan.IsStillInput`, `!next.IsStillInput && ...`). Applying the
+ * handle rule to images made the single most common transition — a crossfade
+ * between two photographs — impossible to express, while the renderer accepts
+ * it. These tests pin the three layers (invariants / editor ops / compiler) to
+ * the same reading.
+ */
+describe('transition handles skip sources with no time axis (image clips)', () => {
+  const IMG_A = uid(201);
+  const IMG_B = uid(202);
+
+  /** Two adjacent 4s image clips (sourceIn 0, sourceOut 4s) with a 1s crossfade. */
+  function slideshowDoc(): TimelineDoc {
+    const doc = validDoc();
+    doc.tracks[1].clips = [
+      mediaClip({
+        kind: 'image',
+        assetId: IMG_A,
+        timelineStartUs: 0,
+        timelineDurationUs: 4_000_000,
+        sourceInUs: 0,
+        sourceOutUs: 4_000_000,
+        transitionOut: { type: 'crossfade', durationUs: 1_000_000 },
+      }),
+      mediaClip({
+        kind: 'image',
+        assetId: IMG_B,
+        timelineStartUs: 4_000_000,
+        timelineDurationUs: 4_000_000,
+        sourceInUs: 0,
+        sourceOutUs: 4_000_000,
+        transitionIn: { type: 'crossfade', durationUs: 1_000_000 },
+      }),
+    ];
+    return doc;
+  }
+
+  it('accepts a crossfade between two photographs (sourceIn = 0 on both sides)', () => {
+    expect(validateTimelineDoc(slideshowDoc()).success).toBe(true);
+    // Even with the image "durations" known and exactly equal to sourceOut —
+    // there is no tail to reserve either.
+    expect(
+      validateTimelineDoc(slideshowDoc(), { [IMG_A]: 4_000_000, [IMG_B]: 4_000_000 }).success,
+    ).toBe(true);
+  });
+
+  it('still enforces the length cap on an image cut (D*2 <= shorter neighbor)', () => {
+    const doc = slideshowDoc();
+    const [a, b] = doc.tracks[1].clips as MediaClip[];
+    a.transitionOut = { type: 'crossfade', durationUs: 2_100_000 };
+    b.transitionIn = { type: 'crossfade', durationUs: 2_100_000 };
+    expectIssue(doc, 'exceeds half of the shorter neighboring clip');
+  });
+
+  it('checks ONLY the video side on a mixed image|video cut (video is incoming)', () => {
+    const doc = slideshowDoc();
+    const clips = doc.tracks[1].clips as MediaClip[];
+    // B becomes a VIDEO with no head handle -> that side must fail.
+    clips[1].kind = 'video';
+    clips[1].assetId = ASSET_B;
+    expectIssue(doc, 'incoming clip needs sourceInUs >= 500000');
+    // Give the video its handle: the image side (sourceOut == asset end) must
+    // NOT be asked for a tail.
+    clips[1].sourceInUs = 500_000;
+    clips[1].sourceOutUs = 4_500_000;
+    expect(validateTimelineDoc(doc, { [IMG_A]: 4_000_000, [ASSET_B]: 10_000_000 }).success).toBe(
+      true,
+    );
+  });
+
+  it('checks ONLY the video side on a mixed video|image cut (video is outgoing)', () => {
+    const doc = slideshowDoc();
+    const clips = doc.tracks[1].clips as MediaClip[];
+    // A becomes a VIDEO sitting exactly at the end of its asset -> no tail.
+    clips[0].kind = 'video';
+    clips[0].assetId = ASSET_A;
+    clips[0].sourceInUs = 0;
+    clips[0].sourceOutUs = 4_000_000;
+    expectIssue(doc, 'outgoing clip needs sourceOutUs', {
+      [ASSET_A]: 4_000_000,
+      [IMG_B]: 4_000_000,
+    });
+    // With tail slack the cut is legal although the incoming IMAGE has sourceIn 0.
+    expect(
+      validateTimelineDoc(doc, { [ASSET_A]: 10_000_000, [IMG_B]: 4_000_000 }).success,
+    ).toBe(true);
   });
 });
 

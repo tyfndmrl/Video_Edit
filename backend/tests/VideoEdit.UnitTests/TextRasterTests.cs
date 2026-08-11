@@ -277,6 +277,19 @@ public sealed class TextRasterTests : IDisposable
     // ---------- Font çözümü ----------
 
     [FontFact]
+    public async Task ManifestFont_IsMarkedCuratedAndDeterministic()
+    {
+        // Manifest'in gösterdiği dosya diskte VARSA sistem fontuna ASLA düşülmez: sonuç
+        // 'küratörlü' işaretlenir, belirlenimcidir ve uyarı taşımaz (fonts/README.md üç mod).
+        var result = await RenderAsync(OverlayTestDocs.Text("Küratörlü"), "curated.png");
+
+        Assert.Equal(FontSourceKind.Curated, result.FontSource);
+        Assert.True(result.Deterministic);
+        Assert.Null(result.FontWarning);
+        Assert.False(string.IsNullOrWhiteSpace(result.FontFamily));
+    }
+
+    [FontFact]
     public async Task UnknownFontId_FailsWithFontMissing()
     {
         var ex = await Assert.ThrowsAsync<FontNotFoundException>(() =>

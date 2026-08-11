@@ -279,6 +279,16 @@ public sealed class FontManifestTests : IDisposable
 
             // SkiaSharp 3.116.1'de eksen sabitleme yok → küratörlü set STATİK olmalı.
             Assert.Null(entry.VariableAxes);
+
+            // TTF indirilmemiş kurulumda metin export'unun düşmemesi için her fontId'nin
+            // sistem karşılığı TANIMLI olmalı; ilk aday fontun KENDİ ailesidir (kuruluysa
+            // görsel olarak en yakın sonuç) — fonts/README.md "üç mod".
+            Assert.NotNull(entry.SystemFallback);
+            Assert.NotEmpty(entry.SystemFallback!);
+            Assert.Equal(entry.Family, entry.SystemFallback![0]);
+            Assert.Equal(
+                entry.SystemFallback!,
+                FontFallbackPolicy.Candidates(fontId, new FontOptions(), entry));
         }
     }
 

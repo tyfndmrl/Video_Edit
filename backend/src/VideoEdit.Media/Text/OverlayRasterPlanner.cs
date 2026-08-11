@@ -24,6 +24,21 @@ public sealed record OverlayRasterSet(
     /// <summary>Eksik glif taşıyan klipler (emoji vb.) — worker uyarı loglar, iş DÜŞMEZ.</summary>
     public IReadOnlyList<Guid> ClipsWithMissingGlyphs =>
         Rasters.Where(kv => kv.Value.HasMissingGlyphs).Select(kv => kv.Key).Order().ToList();
+
+    /// <summary>
+    /// SİSTEM fontuyla çizilen klipler (küratörlü TTF kurulu değildi). İş DÜŞMEZ ve çıktı
+    /// GEÇERLİDİR, ama render belirlenimci değildir — worker uyarı loglar.
+    /// </summary>
+    public IReadOnlyList<Guid> ClipsUsingSystemFont =>
+        Rasters.Where(kv => kv.Value.FontSource == FontSourceKind.System).Select(kv => kv.Key).Order().ToList();
+
+    /// <summary>Tekilleştirilmiş sistem fontu uyarıları (log satırı başına bir kez).</summary>
+    public IReadOnlyList<string> SystemFontWarnings =>
+        Rasters.Values.Select(r => r.FontWarning).OfType<string>()
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+
+    /// <summary>Bu defterdeki tüm rasterler her makinede aynı baytları üretir mi.</summary>
+    public bool Deterministic => Rasters.Values.All(r => r.Deterministic);
 }
 
 /// <summary>

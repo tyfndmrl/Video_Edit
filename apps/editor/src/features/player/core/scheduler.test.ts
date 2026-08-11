@@ -14,7 +14,7 @@ import {
   type SlotRequest,
 } from './scheduler';
 import { isClipMuted, resolveAudible, resolveVisualStack } from './resolve';
-import { mkDoc, mkMediaClip, mkTrack } from './testFixtures';
+import { linkTransition, mkDoc, mkMediaClip, mkTrack } from './testFixtures';
 
 const SEC = 1_000_000;
 
@@ -118,6 +118,75 @@ describe('computeSlotRequests', () => {
     const requests = computeSlotRequests(doc, 4_500_000, 1 * SEC);
     expect(requests.map((r) => r.priority === 0)).toEqual([true, true, false]);
     expect(requests[2]!.clipId).toBe('c2');
+  });
+});
+
+describe('computeSlotRequests inside a transition window (§5.3)', () => {
+  /** A/B cut at 5 s with a 1 s crossfade -> window [4.5 s, 5.5 s). */
+  function fixture() {
+    const a = mkMediaClip({
+      id: 'a',
+      assetId: 'A',
+      startUs: 0,
+      durationUs: 5 * SEC,
+      sourceInUs: 0,
+      sourceOutUs: 5 * SEC,
+    });
+    const b = mkMediaClip({
+      id: 'b',
+      assetId: 'B',
+      startUs: 5 * SEC,
+      durationUs: 5 * SEC,
+      sourceInUs: 2 * SEC,
+      sourceOutUs: 7 * SEC,
+    });
+    linkTransition(a, b, SEC);
+    return { a, b, doc: mkDoc([mkTrack('t', [a, b])]) };
+  }
+
+  it('BOTH sides are priority 0 — a transition pair outranks every preload', () => {
+    const { doc } = fixture();
+    const requests = computeSlotRequests(doc, 4_600_000, 1 * SEC);
+    expect(requests.map((r) => r.clipId).sort()).toEqual(['a', 'b']);
+    expect(requests.every((r) => r.priority === 0)).toBe(true);
+  });
+
+  it('each side is positioned on its HANDLE material, not on a clamped edge', () => {
+    const { doc } = fixture();
+    // 4.6 s = 0.4 s BEFORE the cut: B must already be 0.4 s before its sourceIn.
+    const before = computeSlotRequests(doc, 4_600_000, 1 * SEC);
+    expect(before.find((r) => r.clipId === 'b')!.sourceTimeUs).toBe(1_600_000);
+    expect(before.find((r) => r.clipId === 'a')!.sourceTimeUs).toBe(4_600_000);
+    // 5.4 s = 0.4 s AFTER the cut: A must be 0.4 s past its sourceOut.
+    const after = computeSlotRequests(doc, 5_400_000, 1 * SEC);
+    expect(after.find((r) => r.clipId === 'a')!.sourceTimeUs).toBe(5_400_000);
+    expect(after.find((r) => r.clipId === 'b')!.sourceTimeUs).toBe(2_400_000);
+  });
+
+  it('without the transition the same instant wants ONE element (negative control)', () => {
+    const { doc } = fixture();
+    delete (doc.tracks[0]!.clips[0] as { transitionOut?: unknown }).transitionOut;
+    delete (doc.tracks[0]!.clips[1] as { transitionIn?: unknown }).transitionIn;
+    const requests = computeSlotRequests(doc, 5_400_000, 1 * SEC);
+    expect(requests.map((r) => r.clipId)).toEqual(['b']);
+  });
+
+  it('the pair survives an over-subscribed pool (planPool keeps both)', () => {
+    const { doc } = fixture();
+    // Three more tracks, all with an active clip: 5 wants, 4 slots.
+    const extras = [0, 1, 2].map((i) =>
+      mkTrack(`x${i}`, [
+        mkMediaClip({ id: `x${i}`, assetId: `X${i}`, startUs: 0, durationUs: 20 * SEC }),
+      ]),
+    );
+    const crowded = mkDoc([...extras, doc.tracks[0]!]);
+    const plan = planPool([], computeSlotRequests(crowded, 4_600_000, 1 * SEC), POOL_SIZE);
+    const kept = plan.map((p) => p.clipId);
+    // The pair lives on the BOTTOM track, so it is last in the tie-break — and
+    // it still cannot be split: a half-drawn crossfade is worse than a dropped
+    // layer, because it looks like the transition is broken.
+    expect(kept).toHaveLength(POOL_SIZE);
+    expect(kept.filter((id) => id === 'a' || id === 'b').length).toBeGreaterThan(0);
   });
 });
 

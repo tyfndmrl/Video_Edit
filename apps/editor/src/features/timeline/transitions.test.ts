@@ -32,6 +32,7 @@ import {
   evenFramesAtMost,
   evenFramesNearest,
   findTransitionCut,
+  IMAGE_DEFAULT_DURATION_US,
   knownAssetDurations,
   moveClips,
   planTransitionDuration,
@@ -54,6 +55,8 @@ const FPS2997: Rational = { num: 30000, den: 1001 };
 
 const PROJECT_ID = '01890000-0000-7000-8000-000000000001';
 const ASSET = '01890000-0000-7000-8000-00000000000a';
+const IMG_ASSET_1 = '01890000-0000-7000-8000-00000000000b';
+const IMG_ASSET_2 = '01890000-0000-7000-8000-00000000000c';
 const V1 = '01890000-0000-7000-8000-000000000101';
 const CLIP_A = '01890000-0000-7000-8000-000000000201';
 const CLIP_B = '01890000-0000-7000-8000-000000000202';
@@ -67,25 +70,43 @@ interface ClipSpec {
   sourceInUs: number;
   sourceOutUs: number;
   rate?: number;
+  kind?: 'video' | 'image';
+  assetId?: string;
 }
 
 function mediaClip(spec: ClipSpec): MediaClip {
   const rate = spec.rate ?? 1;
+  const kind = spec.kind ?? 'video';
   return {
     id: spec.id,
-    kind: 'video',
-    assetId: ASSET,
+    kind,
+    assetId: spec.assetId ?? ASSET,
     timelineStartUs: spec.startUs,
     timelineDurationUs: clipTimelineDurationUs(spec.sourceInUs, spec.sourceOutUs, rate),
     sourceInUs: spec.sourceInUs,
     sourceOutUs: spec.sourceOutUs,
     speed: { rate },
-    audio: { volume: 1, fadeInUs: 0, fadeOutUs: 0, muted: false },
+    audio: kind === 'image' ? null : { volume: 1, fadeInUs: 0, fadeOutUs: 0, muted: false },
     transform: { x: 0, y: 0, scale: 1, rotationDeg: 0, anchorX: 0.5, anchorY: 0.5 },
     keyframes: {},
     effects: [],
     opacity: 1,
   };
+}
+
+/**
+ * `addClipFromAsset` bir GÖRSELİ tam olarak böyle üretir: sourceIn 0,
+ * sourceOut = IMAGE_DEFAULT_DURATION_US (4 sn), hız 1, ses yok.
+ */
+function imageClip(id: string, startUs: number, assetId: string): MediaClip {
+  return mediaClip({
+    id,
+    startUs,
+    sourceInUs: 0,
+    sourceOutUs: IMAGE_DEFAULT_DURATION_US,
+    kind: 'image',
+    assetId,
+  });
 }
 
 function docWith(clips: MediaClip[], fps: Rational = FPS30): TimelineDoc {
@@ -444,6 +465,214 @@ describe('removeTransition / setTransitionType / setTransitionDuration', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 2a. NTSC (29.97) — tam olmayan ızgarada uçtan uca
+// ---------------------------------------------------------------------------
+
+/**
+ * Saf matematik testi `evenFramesAtMost`'un sınırı aşmadığını gösteriyor; burada
+ * asıl soru OP'un ürettiği DOKÜMANIN 30000/1001 ızgarasında şemanın kendi
+ * `frameToUs(usToFrame(D)) === D` kuralından geçip geçmediğidir. 29.97'de
+ * frameToUs kesirlidir ve yuvarlama tek karelik bir kayma bırakabilir —
+ * bırakırsa export 422 döner ("frame grid'inde değil").
+ */
+describe('NTSC (29.97) ızgarasında geçiş', () => {
+  function loadNtsc(): void {
+    load(
+      docWith(
+        [
+          mediaClip({ id: CLIP_A, startUs: 0, sourceInUs: 10 * US, sourceOutUs: 16 * US }),
+          mediaClip({ id: CLIP_B, startUs: 6 * US, sourceInUs: 20 * US, sourceOutUs: 26 * US }),
+        ],
+        FPS2997,
+      ),
+    );
+  }
+
+  it('istenen 1 sn ÇİFT kareye oturur ve doküman geçerli kalır', () => {
+    loadNtsc();
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US).ok).toBe(true);
+    const d = clipById(CLIP_A).transitionOut!.durationUs;
+    const frames = usToFrame(d, FPS2997);
+    expect(frameToUs(frames, FPS2997), 'D tam olarak ızgarada olmalı').toBe(d);
+    expect(frames % 2, 'D/2 tam kare olmalı').toBe(0);
+    expectDocValid();
+  });
+
+  it('üst sınıra dayanan istek kısaltılır ve sınırı BİR KARE bile aşmaz', () => {
+    loadNtsc();
+    // Üst sınır: min(6 sn, 6 sn)/2 = 3 sn. 10 sn istenirse kısalır.
+    const result = addTransition(CLIP_A, CLIP_B, 'crossfade', 10 * US);
+    expect(result.ok && result.notice).toBe(TRANSITION_SHORTENED_LENGTH);
+    const d = clipById(CLIP_A).transitionOut!.durationUs;
+    expect(d * 2).toBeLessThanOrEqual(6 * US);
+    expect(frameToUs(usToFrame(d, FPS2997) + 2, FPS2997) * 2).toBeGreaterThan(6 * US);
+    expectDocValid();
+  });
+
+  it('süre değişimi de ızgarada kalır (rastgele bir µs isteğiyle)', () => {
+    loadNtsc();
+    addTransition(CLIP_A, CLIP_B, 'crossfade', US);
+    expect(setTransitionDuration(CLIP_A, 'out', 1_234_567).ok).toBe(true);
+    const d = clipById(CLIP_A).transitionOut!.durationUs;
+    expect(frameToUs(usToFrame(d, FPS2997), FPS2997)).toBe(d);
+    expect(usToFrame(d, FPS2997) % 2).toBe(0);
+    expectDocValid();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2b. GÖRSEL klipler: kaynağında zaman ekseni olmayan taraf pay ARAMAZ
+// ---------------------------------------------------------------------------
+
+/**
+ * Denetim bulgusu (YÜKSEK): editör ve şema, D/2 kaynak payını HER medya klibine
+ * uyguluyordu. Görsel klip `sourceIn = 0, sourceOut = 4 sn` ile doğar, yani payı
+ * her zaman 0'dır → iki fotoğraf arasına geçiş "no room for a transition" ile
+ * reddediliyordu. OYSA compiler görseli AÇIKÇA muaf tutuyor
+ * (`ExportClipPlan.IsStillInput`, `!next.IsStillInput && next.SourceInUs < ...`):
+ * görsel `-loop 1` ile açılır, pencerenin istediği kadar kare üretir. Üç katman
+ * artık aynı yorumda — slayt gösterisi (geçişin en yaygın kullanımı) mümkün.
+ */
+describe('görsel kliplerde geçiş (slayt gösterisi)', () => {
+  /** İki BİTİŞİK 4 sn'lik fotoğraf; ikisinde de sourceIn = 0. */
+  function slideshow(): TimelineDoc {
+    return docWith([
+      imageClip(CLIP_A, 0, IMG_ASSET_1),
+      imageClip(CLIP_B, IMAGE_DEFAULT_DURATION_US, IMG_ASSET_2),
+    ]);
+  }
+
+  function loadSlideshow(imageDurationUs?: number): void {
+    useAssetStore.getState().setAssets([
+      { id: ASSET, kind: 'video', name: 'a.mp4', status: 'ready', durationUs: ASSET_DURATION_US },
+      { id: IMG_ASSET_1, kind: 'image', name: '1.jpg', status: 'ready', durationUs: imageDurationUs },
+      { id: IMG_ASSET_2, kind: 'image', name: '2.jpg', status: 'ready', durationUs: imageDurationUs },
+    ]);
+    load(slideshow());
+  }
+
+  it('iki fotoğraf arasına crossfade EKLENEBİLİR ve doküman geçerli kalır', () => {
+    loadSlideshow();
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US)).toEqual({ ok: true });
+    expect(clipById(CLIP_A).transitionOut).toEqual({ type: 'crossfade', durationUs: US });
+    expect(clipById(CLIP_B).transitionIn).toEqual({ type: 'crossfade', durationUs: US });
+    expectDocValid();
+  });
+
+  it('görsel varlığın süresi BİLİNSE bile kuyruk payı aranmaz', () => {
+    // Bazı prob'lar görsele süre yazar; sourceOut o sürenin TAM sonunda olsa
+    // dahi (kuyruk payı 0) geçiş kurulabilmeli — dosyada zaman ekseni yok.
+    loadSlideshow(IMAGE_DEFAULT_DURATION_US);
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US)).toEqual({ ok: true });
+    expectDocValid();
+  });
+
+  it('sağ tık menüsünde "Geçiş ekle" AKTİF (gerekçe yok)', () => {
+    loadSlideshow();
+    const entries = buildTimelineMenu({
+      target: { kind: 'clip', clipId: CLIP_A },
+      doc: currentDoc(),
+      selection: [CLIP_A],
+      playheadUs: US,
+      mutationAllowed: true,
+    });
+    const item = find(entries, 'addTransition');
+    expect(item.disabled).toBe(false);
+    expect(item.blockReason ?? null).toBeNull();
+    expect(addTransitionBlockReason(currentDoc(), CLIP_A, 'out', knownAssetDurations())).toBeNull();
+  });
+
+  it('KLİP UZUNLUĞU sınırı görselde de geçerli (D*2 <= kısa komşu)', () => {
+    loadSlideshow();
+    // 4 sn'lik komşular -> D en fazla 2 sn. 3 sn istenirse KISALIR, kabul edilmez.
+    const result = addTransition(CLIP_A, CLIP_B, 'crossfade', 3 * US);
+    expect(result.ok && result.notice).toBe(TRANSITION_SHORTENED_LENGTH);
+    expect(clipById(CLIP_A).transitionOut!.durationUs).toBe(2 * US);
+    expectDocValid();
+  });
+
+  it('karışık kenarda YALNIZ video tarafının payı denetlenir (video GELEN taraf)', () => {
+    useAssetStore.getState().setAssets([
+      { id: ASSET, kind: 'video', name: 'a.mp4', status: 'ready', durationUs: ASSET_DURATION_US },
+      { id: IMG_ASSET_1, kind: 'image', name: '1.jpg', status: 'ready' },
+    ]);
+    // A = görsel (kuyruk payı yok), B = video sourceIn 0 (baş payı yok) -> RED.
+    load(
+      docWith([
+        imageClip(CLIP_A, 0, IMG_ASSET_1),
+        mediaClip({
+          id: CLIP_B,
+          startUs: IMAGE_DEFAULT_DURATION_US,
+          sourceInUs: 0,
+          sourceOutUs: 6 * US,
+        }),
+      ]),
+    );
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US)).toEqual({
+      ok: false,
+      reason: 'no room for a transition',
+    });
+
+    // Videoya baş payı ver: görselin kuyruğu hâlâ 0 ama geçiş artık KURULUR.
+    load(
+      docWith([
+        imageClip(CLIP_A, 0, IMG_ASSET_1),
+        mediaClip({
+          id: CLIP_B,
+          startUs: IMAGE_DEFAULT_DURATION_US,
+          sourceInUs: 2 * US,
+          sourceOutUs: 8 * US,
+        }),
+      ]),
+    );
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US)).toEqual({ ok: true });
+    expectDocValid();
+  });
+
+  it('karışık kenarda YALNIZ video tarafının payı denetlenir (video GİDEN taraf)', () => {
+    useAssetStore.getState().setAssets([
+      { id: ASSET, kind: 'video', name: 'a.mp4', status: 'ready', durationUs: ASSET_DURATION_US },
+      { id: IMG_ASSET_2, kind: 'image', name: '2.jpg', status: 'ready' },
+    ]);
+    // A = video, kaynağın TAM sonunda biter (kuyruk payı 0) -> RED.
+    load(
+      docWith([
+        mediaClip({
+          id: CLIP_A,
+          startUs: 0,
+          sourceInUs: ASSET_DURATION_US - 6 * US,
+          sourceOutUs: ASSET_DURATION_US,
+        }),
+        imageClip(CLIP_B, 6 * US, IMG_ASSET_2),
+      ]),
+    );
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US)).toEqual({
+      ok: false,
+      reason: 'no room for a transition',
+    });
+
+    // Videoya kuyruk payı ver: görselin başı hâlâ 0 ama geçiş KURULUR.
+    load(
+      docWith([
+        mediaClip({ id: CLIP_A, startUs: 0, sourceInUs: 10 * US, sourceOutUs: 16 * US }),
+        imageClip(CLIP_B, 6 * US, IMG_ASSET_2),
+      ]),
+    );
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US)).toEqual({ ok: true });
+    expectDocValid();
+  });
+
+  it('geçişli görsel kesimi bozan taşıma yine BİLDİRİMLE temizlenir', () => {
+    loadSlideshow();
+    addTransition(CLIP_A, CLIP_B, 'crossfade', US);
+    const result = moveClips([CLIP_B], 2 * US);
+    expect(result.ok && result.notice).toBe(TRANSITION_DROPPED);
+    expect(clipById(CLIP_A).transitionOut).toBeUndefined();
+    expectDocValid();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 3. Kırpma / taşıma / bölme etkileşimi
 // ---------------------------------------------------------------------------
 
@@ -546,6 +775,52 @@ describe('düzenleme sonrası uzlaştırma', () => {
     expect(transition, 'geçiş kaldırılmak yerine kısaltılmalı').toBeDefined();
     expect(transition!.durationUs * 2).toBeLessThanOrEqual(400_000);
     expect(result.ok && result.notice).toBeDefined();
+    expectDocValid();
+  });
+
+  /**
+   * Denetim bulgusu (ripple/split sonrası ARTIK metadata): ortadaki klip ripple
+   * ile silinince `A -crossfade- B -dissolve- C` dizisinde A'nın çıkış geçişi
+   * ile C'nin giriş geçişi YENİ bir A|C kesiminde karşı karşıya kalır. İkisinden
+   * yalnız biri yaşayabilir; öteki YOK OLUR. Eskiden bu sessizdi (`{ok:true}`,
+   * bildirim yok) — kullanıcının kurduğu bir geçiş haber verilmeden siliniyordu.
+   */
+  it('ripple silme iki geçişi tek kesimde birleştirdiğinde KAYBI BİLDİRİR', () => {
+    const CLIP_C = '01890000-0000-7000-8000-000000000203';
+    load(
+      docWith([
+        mediaClip({ id: CLIP_A, startUs: 0, sourceInUs: 10 * US, sourceOutUs: 16 * US }),
+        mediaClip({ id: CLIP_B, startUs: 6 * US, sourceInUs: 20 * US, sourceOutUs: 26 * US }),
+        mediaClip({ id: CLIP_C, startUs: 12 * US, sourceInUs: 30 * US, sourceOutUs: 36 * US }),
+      ]),
+    );
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US).ok).toBe(true);
+    expect(addTransition(CLIP_B, CLIP_C, 'dissolve', US).ok).toBe(true);
+
+    const result = deleteClips([CLIP_B], { ripple: true });
+    expect(result.ok && result.notice, 'kayıp sessiz kalmamalı').toBe(TRANSITION_DROPPED);
+    // Kesim yaşamaya devam eder ve SİMETRİKTİR — yalnız biri hayatta kalır.
+    expect(clipById(CLIP_A).transitionOut).toEqual({ type: 'crossfade', durationUs: US });
+    expect(clipById(CLIP_C).transitionIn).toEqual({ type: 'crossfade', durationUs: US });
+    expectDocValid();
+  });
+
+  /** Tek taraflı devir (öteki kesimde geçiş yoktu) bir KAYIP değildir: bildirim yok. */
+  it('ripple silme tek geçişi yeni kesime taşırsa gereksiz bildirim ÜRETMEZ', () => {
+    const CLIP_C = '01890000-0000-7000-8000-000000000203';
+    load(
+      docWith([
+        mediaClip({ id: CLIP_A, startUs: 0, sourceInUs: 10 * US, sourceOutUs: 16 * US }),
+        mediaClip({ id: CLIP_B, startUs: 6 * US, sourceInUs: 20 * US, sourceOutUs: 26 * US }),
+        mediaClip({ id: CLIP_C, startUs: 12 * US, sourceInUs: 30 * US, sourceOutUs: 36 * US }),
+      ]),
+    );
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US).ok).toBe(true);
+
+    const result = deleteClips([CLIP_B], { ripple: true });
+    expect(result).toEqual({ ok: true });
+    expect(clipById(CLIP_A).transitionOut).toEqual({ type: 'crossfade', durationUs: US });
+    expect(clipById(CLIP_C).transitionIn).toEqual({ type: 'crossfade', durationUs: US });
     expectDocValid();
   });
 

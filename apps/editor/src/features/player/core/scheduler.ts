@@ -12,7 +12,16 @@
 import type { ActiveClip } from './resolve';
 import type { MediaClip, MicroSec, TimelineDoc, Track, Uuid } from '@videoedit/timeline-schema';
 import { isMediaClip } from '@videoedit/timeline-schema';
-import { clipAudioOf, clipEndUs, isClipActiveAt, isClipMuted, sourceTimeUs } from './resolve';
+import {
+  clipAudioOf,
+  clipEndUs,
+  isClipActiveAt,
+  isClipMuted,
+  sourceTimeUs,
+  sourceTimeUsInWindow,
+  transitionHandleUs,
+  transitionWindowAt,
+} from './resolve';
 
 export const POOL_SIZE = 4;
 /** Start preparing the next clip ~1 s before the cut (design §4.2). */
@@ -90,16 +99,38 @@ export function computeSlotRequests(
   const requests: SlotRequest[] = [];
   for (let trackIndex = 0; trackIndex < doc.tracks.length; trackIndex++) {
     const track = doc.tracks[trackIndex]!;
+    /**
+     * Inside a transition window BOTH clips are on screen and audible
+     * (rendering-semantics §5.3/§5.4), so both are priority 0 — a transition
+     * pair OUTRANKS every preload. Only one of them is `isClipActiveAt` (the
+     * other one is either not started yet or already over), which is exactly
+     * why the pair has to be recognised here: as a plain preload the incoming
+     * clip would lose its element to a nearer preload on another track and the
+     * crossfade would half-vanish.
+     */
+    const window = transitionWindowAt(track, tUs);
     for (const clip of track.clips) {
       if (!isMediaClip(clip) || !needsElement(clip)) continue;
-      if (isClipActiveAt(clip, tUs)) {
+      // null unless THIS clip is one of the two sides of the open window.
+      const side =
+        window !== null && (clip.id === window.from.id || clip.id === window.to.id)
+          ? window
+          : null;
+      if (side !== null || isClipActiveAt(clip, tUs)) {
         requests.push({
           clipId: clip.id,
           assetId: clip.assetId,
           priority: 0,
           hidden: track.hidden,
           trackIndex,
-          sourceTimeUs: sourceTimeUs(clip, tUs),
+          sourceTimeUs:
+            side !== null
+              ? sourceTimeUsInWindow(
+                  clip,
+                  tUs,
+                  transitionHandleUs(side.durationUs, clip.speed.rate),
+                )
+              : sourceTimeUs(clip, tUs),
           rate: clip.speed.rate,
         });
       } else if (clip.timelineStartUs > tUs && clip.timelineStartUs - tUs <= lookaheadUs) {

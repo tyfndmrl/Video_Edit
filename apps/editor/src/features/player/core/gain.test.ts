@@ -13,6 +13,7 @@ import {
   MICRO_FADE_US,
   shouldMicroFadeIn,
   shouldMicroFadeOut,
+  transitionGainAt,
   spliceEdgeToleranceUs,
 } from './gain';
 import { mkMediaClip, UNITY_AUDIO } from './testFixtures';
@@ -257,5 +258,89 @@ describe('micro-fade decisions at splice edges (clip-boundary based, §8.4)', ()
     expect(shouldMicroFadeOut(a, b)).toBe(false); // a -> b is seamless
     expect(shouldMicroFadeOut(a, other)).toBe(true);
     expect(shouldMicroFadeOut(a, null)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Transitions (rendering-semantics §5.4) — the acrossfade equivalent
+// ---------------------------------------------------------------------------
+
+describe('transitionGainAt (§5.4 linear ramp, window [T-D/2, T+D/2])', () => {
+  const D = 1 * SEC;
+
+  it('an OUT edge ramps 1 -> 0 across the window and is silent past it', () => {
+    const ramp = { inUs: 0, outUs: D };
+    expect(transitionGainAt(DUR - D, DUR, ramp), 'before the window: untouched').toBe(1);
+    expect(transitionGainAt(DUR - D / 2, DUR, ramp)).toBeCloseTo(1, 9);
+    expect(transitionGainAt(DUR, DUR, ramp), 'at the cut: half').toBeCloseTo(0.5, 9);
+    expect(transitionGainAt(DUR + D / 2, DUR, ramp), 'window end: silent').toBeCloseTo(0, 9);
+    expect(transitionGainAt(DUR + D, DUR, ramp), 'past the handle: nothing left').toBe(0);
+  });
+
+  it('an IN edge ramps 0 -> 1, starting D/2 BEFORE the clip', () => {
+    const ramp = { inUs: D, outUs: 0 };
+    expect(transitionGainAt(-D, DUR, ramp), 'before the handle').toBe(0);
+    expect(transitionGainAt(-D / 2, DUR, ramp)).toBeCloseTo(0, 9);
+    expect(transitionGainAt(0, DUR, ramp), 'at the cut: half').toBeCloseTo(0.5, 9);
+    expect(transitionGainAt(D / 2, DUR, ramp)).toBeCloseTo(1, 9);
+    expect(transitionGainAt(2 * SEC, DUR, ramp)).toBe(1);
+  });
+
+  it('the two sides of a cut sum to 1 at every instant (constant-gain crossfade)', () => {
+    const outRamp = { inUs: 0, outUs: D };
+    const inRamp = { inUs: D, outUs: 0 };
+    for (const offset of [-D / 2, -D / 4, 0, D / 4, D / 2]) {
+      // A's local time at the cut is DUR, B's is 0 — same instant on both clips.
+      const a = transitionGainAt(DUR + offset, DUR, outRamp);
+      const b = transitionGainAt(offset, DUR, inRamp);
+      expect(a + b, `linear pair at offset ${offset}`).toBeCloseTo(1, 9);
+    }
+  });
+
+  it('no ramp = plain clip life (the hard-cut behaviour is unchanged)', () => {
+    expect(transitionGainAt(0, DUR)).toBe(1);
+    expect(transitionGainAt(DUR, DUR)).toBe(1);
+    expect(transitionGainAt(DUR + 1, DUR)).toBe(0);
+    expect(transitionGainAt(-1, DUR)).toBe(0);
+  });
+});
+
+describe('buildGainCurve with a transition ramp', () => {
+  const D = 1 * SEC;
+
+  it('an outgoing clip fades to zero over the window instead of stopping dead', () => {
+    const curve = buildGainCurve(audio(), DUR, DUR - D, DUR + D / 2, 4, {
+      transition: { inUs: 0, outUs: D },
+    });
+    // samples at DUR-D, DUR-D/2, DUR, DUR+D/2
+    expect(curve[0]).toBeCloseTo(1, 6);
+    expect(curve[1]).toBeCloseTo(1, 6);
+    expect(curve[2]).toBeCloseTo(0.5, 6);
+    expect(curve[3]).toBeCloseTo(0, 6);
+  });
+
+  it('handle material plays at the clip volume, not at the envelope edge value', () => {
+    // fadeOut 0 and volume 0.5: past the clip end the plain envelope is 0,
+    // the transition-aware one is 0.5 x ramp.
+    const plain = buildGainCurve(audio({ volume: 0.5 }), DUR, DUR, DUR, 2, {});
+    expect(plain[0]).toBeCloseTo(0.5, 6);
+    const withRamp = buildGainCurve(audio({ volume: 0.5 }), DUR, DUR, DUR + D / 2, 3, {
+      transition: { inUs: 0, outUs: D },
+    });
+    expect(withRamp[0], 'at the cut: half of the ramp').toBeCloseTo(0.25, 6);
+    expect(withRamp[1]).toBeCloseTo(0.125, 6);
+    expect(withRamp[2]).toBeCloseTo(0, 6);
+  });
+
+  it('a transition edge SUPPRESSES the 5 ms micro-fade (a notch inside a crossfade is audible)', () => {
+    const withRamp = buildGainCurve(audio(), DUR, 0, DUR, 200, {
+      microFadeIn: true,
+      transition: { inUs: D, outUs: 0 },
+    });
+    // At clip-local 0 the ramp is exactly 0.5; a micro-fade would drive the
+    // first sample to 0 instead.
+    expect(withRamp[0]).toBeCloseTo(0.5, 3);
+    const hardCut = buildGainCurve(audio(), DUR, 0, DUR, 200, { microFadeIn: true });
+    expect(hardCut[0], 'hard cut keeps the click guard').toBe(0);
   });
 });

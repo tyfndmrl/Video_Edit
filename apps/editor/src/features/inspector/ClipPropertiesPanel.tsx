@@ -16,13 +16,15 @@
  * linear ramps in microseconds, §2 transform is normalized around the
  * composition center with scale=1 meaning "fit".
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MAX_LAYER_DIMENSION } from '@videoedit/timeline-schema';
 import { useDocStore } from '../../state/docStore';
 import { useEditorStore } from '../../state/editorStore';
 import { useAssetStore } from '../../state/assetStore';
 import { useProjectSession } from '../../state/projectSession';
 import {
+  COLOR_ADJUST_MAX,
+  COLOR_ADJUST_MIN,
   POSITION_LIMIT,
   POSITION_DECIMALS,
   ROTATION_DECIMALS,
@@ -31,6 +33,10 @@ import {
   SCALE_MIN,
   SHAPE_RADIUS_MAX,
   SHAPE_STROKE_WIDTH_MAX,
+  SPEED_DECIMALS,
+  SPEED_MAX,
+  SPEED_MIN,
+  SPEED_PRESETS,
   TEXT_BACKGROUND_PADDING_MAX,
   TEXT_LINE_HEIGHT_MAX,
   TEXT_LINE_HEIGHT_MIN,
@@ -40,31 +46,44 @@ import {
   VOLUME_MAX,
   VOLUME_MIN,
   applyClipAudioToDraft,
+  applyClipColorAdjustToDraft,
   applyClipOpacityToDraft,
   applyClipShapeToDraft,
   applyClipTextToDraft,
   applyClipTransformToDraft,
   maxClipScale,
+  resetClipColorAdjust,
   resetClipTransform,
   setClipAudio,
+  setClipColorAdjust,
+  setClipColorAdjustEnabled,
   setClipOpacity,
   setClipShape,
+  setClipSpeed,
   setClipText,
   setClipTransform,
   type ClipAudioPatch,
   type ClipShapePatch,
   type ClipTextPatch,
   type ClipTransformPatch,
+  type ColorAdjustPatch,
+  type OpResult,
 } from '../../state/timelineOps';
-import { FONT_MANIFEST, weightsFor } from '../text/fontManifest';
+import { inspectorFailureMessage, inspectorNoticeMessage } from './inspectorFeedback';
+import { useKeyframeInspector } from '../keyframes/useKeyframeInspector';
+import { weightsFor } from '../text/fontManifest';
+import { useFontCatalogue } from '../text/fontCatalogue';
 import {
   buildClipInspectorModel,
   formatDb,
   formatGain,
   formatNumber,
   formatSeconds,
+  formatSpeed,
   MIXED_LABEL,
+  type ColorSection,
   type ShapeSection,
+  type SpeedSection,
   type TextSection,
 } from './clipInspectorModel';
 import { isBurstEditOpen, isLiveEditOpen, updateBurstEdit, updateLiveEdit } from './liveEdit';
@@ -82,6 +101,34 @@ import {
 
 const US = 1_000_000;
 
+/** An op result the user has to see, tagged with the section that caused it. */
+interface OpMessage {
+  source: 'speed' | 'color';
+  text: string;
+  kind: 'error' | 'notice';
+}
+
+/**
+ * The refusal/repair line. Rendered INSIDE the section that produced it (see
+ * ClipPropertiesPanel) with `role="status"` so a screen reader announces it
+ * without stealing focus.
+ */
+function OpMessageLine({ message }: { message: OpMessage }) {
+  return (
+    <p
+      role="status"
+      data-testid="clip-inspector-message"
+      data-kind={message.kind}
+      data-source={message.source}
+      className={`text-[11px] leading-snug ${
+        message.kind === 'error' ? 'text-red-400' : 'text-amber-400'
+      }`}
+    >
+      {message.text}
+    </p>
+  );
+}
+
 export function ClipPropertiesPanel() {
   const doc = useDocStore((s) => s.doc);
   const selection = useEditorStore((s) => s.selection);
@@ -92,6 +139,41 @@ export function ClipPropertiesPanel() {
     () => buildClipInspectorModel(doc, selection, assets),
     [doc, selection, assets],
   );
+
+  /**
+   * Keyframe layer (features/keyframes). It answers three things per field:
+   * what to render next to it, which number to show (an ANIMATED channel shows
+   * the sample at the playhead, not the static base the compositor ignores) and
+   * whether an edit belongs to a keyframe instead of the base value.
+   */
+  const kf = useKeyframeInspector(sessionReady);
+
+  /**
+   * Inline op feedback for the sections that can REFUSE (speed) or repair
+   * something the user did not ask for (transition shortened, keyframes
+   * merged). The timeline has a bubble for this; the panel needs its own,
+   * because a click on "0.5x" that does nothing reads as a broken button.
+   *
+   * The message carries its SOURCE and is rendered inside that section: the
+   * panel scrolls, and a refusal printed 400 px above the button the user just
+   * pressed is the same silence it was meant to break.
+   */
+  const [opMessage, setOpMessage] = useState<OpMessage | null>(null);
+  // Any selection change invalidates the message (it described other clips).
+  useEffect(() => setOpMessage(null), [selection]);
+  const reportFrom =
+    (source: OpMessage['source']) =>
+    (result: OpResult): OpResult => {
+      if (!result.ok) {
+        setOpMessage({ source, text: inspectorFailureMessage(result.reason), kind: 'error' });
+      } else {
+        const notice = inspectorNoticeMessage(result.notice);
+        setOpMessage(notice === null ? null : { source, text: notice, kind: 'notice' });
+      }
+      return result;
+    };
+  const reportSpeed = reportFrom('speed');
+  const reportColor = reportFrom('color');
 
   /**
    * Scale ceiling is a PROJECT property, not a constant: the export compiler
@@ -112,7 +194,11 @@ export function ClipPropertiesPanel() {
   }
 
   const editable = model.editable && sessionReady;
-  const { audio, visual, identity, text, shape } = model;
+  const { audio, visual, identity, text, shape, speed, color } = model;
+
+  // Animated channels show the SAMPLE at the playhead (see useKeyframeInspector).
+  const opacityShown = visual === null ? null : kf.display('opacity', visual.opacity);
+  const volumeShown = audio === null ? null : kf.display('volume', audio.volume);
 
   /**
    * Routes a value to the document: inside a pointer gesture it coalesces into
@@ -120,19 +206,41 @@ export function ClipPropertiesPanel() {
    */
   const writeAudio = (patch: ClipAudioPatch): void => {
     if (audio === null || !editable) return;
+    // An ANIMATED volume must not have its base written: sampleKeyframes wins,
+    // so the slider would move and the sound would not change.
+    if (
+      patch.volume !== undefined &&
+      Object.keys(patch).length === 1 &&
+      kf.writeChannel('volume', patch.volume)
+    ) {
+      return;
+    }
     if (isLiveEditOpen()) updateLiveEdit((d) => void applyClipAudioToDraft(d, audio.clipIds, patch));
     else setClipAudio(audio.clipIds, patch);
   };
   const writeTransform = (patch: ClipTransformPatch): void => {
     if (visual === null || !editable) return;
+    // Split per channel: animated -> keyframe at the playhead, static -> base
+    // value exactly as before (a clip nobody animated behaves identically).
+    const rest: ClipTransformPatch = {};
+    let restKeys = 0;
+    for (const channel of ['x', 'y', 'scale', 'rotationDeg'] as const) {
+      const value = patch[channel];
+      if (value === undefined) continue;
+      if (kf.writeChannel(channel, value)) continue;
+      rest[channel] = value;
+      restKeys++;
+    }
+    if (restKeys === 0) return;
     if (isLiveEditOpen()) {
-      updateLiveEdit((d) => void applyClipTransformToDraft(d, visual.clipIds, patch));
+      updateLiveEdit((d) => void applyClipTransformToDraft(d, visual.clipIds, rest));
     } else {
-      setClipTransform(visual.clipIds, patch);
+      setClipTransform(visual.clipIds, rest);
     }
   };
   const writeOpacity = (opacity: number): void => {
     if (visual === null || !editable) return;
+    if (kf.writeChannel('opacity', opacity)) return;
     if (isLiveEditOpen()) updateLiveEdit((d) => void applyClipOpacityToDraft(d, visual.clipIds, opacity));
     else setClipOpacity(visual.clipIds, opacity);
   };
@@ -148,6 +256,20 @@ export function ClipPropertiesPanel() {
     if (isBurstEditOpen()) updateBurstEdit((d) => void applyClipTextToDraft(d, text.clipIds, patch));
     else if (isLiveEditOpen()) updateLiveEdit((d) => void applyClipTextToDraft(d, text.clipIds, patch));
     else setClipText(text.clipIds, patch);
+  };
+  /**
+   * colorAdjust: the six §4.1 sliders. Same three routes as everything else,
+   * except the value is a plain number the OP clamps — the panel never does
+   * colour math (the shader, the reference and ffmpeg must all see the same
+   * number).
+   */
+  const writeColor = (patch: ColorAdjustPatch): void => {
+    if (color === null || !editable) return;
+    if (isLiveEditOpen()) {
+      updateLiveEdit((d) => void applyClipColorAdjustToDraft(d, color.clipIds, patch));
+    } else {
+      reportColor(setClipColorAdjust(color.clipIds, patch));
+    }
   };
   const writeShape = (patch: ClipShapePatch): void => {
     if (shape === null || !editable) return;
@@ -195,16 +317,17 @@ export function ClipPropertiesPanel() {
             id="clip-volume"
             testId="clip-volume"
             label="Seviye"
-            value={audio.volume}
+            value={volumeShown}
             neutral={1}
             min={VOLUME_MIN}
             max={VOLUME_MAX}
             step={0.01}
-            valueText={formatGain(audio.volume)}
-            hint={formatDb(audio.volume)}
+            valueText={formatGain(volumeShown)}
+            hint={formatDb(volumeShown)}
             disabled={!editable}
             gesture={{ actionType: 'clipAudio', label: 'Ses seviyesi değiştirildi' }}
             onChange={(v) => writeAudio({ volume: v })}
+            adornment={kf.adornment('volume')}
           />
           <SliderField
             id="clip-fade-in"
@@ -272,7 +395,7 @@ export function ClipPropertiesPanel() {
             id="clip-x"
             testId="clip-x"
             label="Konum X"
-            value={visual.x}
+            value={kf.display('x', visual.x)}
             min={-POSITION_LIMIT}
             max={POSITION_LIMIT}
             step={0.01}
@@ -281,12 +404,13 @@ export function ClipPropertiesPanel() {
             disabled={!editable}
             gesture={{ actionType: 'clipTransform', label: 'Konum değiştirildi' }}
             onChange={(v) => writeTransform({ x: v })}
+            adornment={kf.adornment('x')}
           />
           <NumberField
             id="clip-y"
             testId="clip-y"
             label="Konum Y"
-            value={visual.y}
+            value={kf.display('y', visual.y)}
             min={-POSITION_LIMIT}
             max={POSITION_LIMIT}
             step={0.01}
@@ -295,12 +419,13 @@ export function ClipPropertiesPanel() {
             disabled={!editable}
             gesture={{ actionType: 'clipTransform', label: 'Konum değiştirildi' }}
             onChange={(v) => writeTransform({ y: v })}
+            adornment={kf.adornment('y')}
           />
           <NumberField
             id="clip-scale"
             testId="clip-scale"
             label="Ölçek"
-            value={visual.scale}
+            value={kf.display('scale', visual.scale)}
             min={SCALE_MIN}
             max={scaleMax}
             step={0.01}
@@ -309,12 +434,13 @@ export function ClipPropertiesPanel() {
             disabled={!editable}
             gesture={{ actionType: 'clipTransform', label: 'Ölçek değiştirildi' }}
             onChange={(v) => writeTransform({ scale: v })}
+            adornment={kf.adornment('scale')}
           />
           <NumberField
             id="clip-rotation"
             testId="clip-rotation"
             label="Döndürme"
-            value={visual.rotationDeg}
+            value={kf.display('rotationDeg', visual.rotationDeg)}
             min={-ROTATION_LIMIT}
             max={ROTATION_LIMIT}
             step={1}
@@ -324,25 +450,35 @@ export function ClipPropertiesPanel() {
             disabled={!editable}
             gesture={{ actionType: 'clipTransform', label: 'Döndürme değiştirildi' }}
             onChange={(v) => writeTransform({ rotationDeg: v })}
+            adornment={kf.adornment('rotationDeg')}
           />
           <SliderField
             id="clip-opacity"
             testId="clip-opacity"
             label="Opaklık"
-            value={visual.opacity}
+            value={opacityShown}
             neutral={1}
             min={0}
             max={1}
             step={0.01}
             valueText={
-              visual.opacity === null
-                ? MIXED_LABEL
-                : `${Math.round(visual.opacity * 100)}%`
+              opacityShown === null ? MIXED_LABEL : `${Math.round(opacityShown * 100)}%`
             }
             disabled={!editable}
             gesture={{ actionType: 'clipOpacity', label: 'Opaklık değiştirildi' }}
             onChange={(v) => writeOpacity(v)}
+            adornment={kf.adornment('opacity')}
           />
+          {kf.summary !== null && (
+            <p
+              className="text-[10px] leading-snug text-accent"
+              data-testid="clip-kf-summary"
+              data-channels={kf.model.animated.join(',')}
+            >
+              Animasyonlu: {kf.summary}. Gösterilen değerler playhead anındaki örneklerdir;
+              alanı değiştirmek o andaki keyframe'i yazar (yoksa ekler).
+            </p>
+          )}
           <p className="text-[10px] leading-snug text-fg-muted" data-testid="clip-scale-limit-note">
             Konum kompozisyon merkezine göre normalize (0 = ortada, 0.5 = yarım kompozisyon
             kadar sağ/aşağı); Ölçek 1 = sığdır. Bu projede ölçek en fazla{' '}
@@ -353,6 +489,31 @@ export function ClipPropertiesPanel() {
       )}
 
       {/*
+        Sıra bilinçli: kimlik -> ses -> biçim -> geometri -> HIZ -> RENK.
+        Hız ve renk en sonda çünkü ikisi de UZUN bölümler (5 ön ayar + 6 slider)
+        ve panel kaydırmalı: yukarı konsalardı her klip için en çok kullanılan
+        Görüntü alanlarını ekranın dışına iterlerdi (ölçüldü: +638 px).
+      */}
+      {speed !== null && (
+        <SpeedPropertiesSection
+          section={speed}
+          editable={editable}
+          report={reportSpeed}
+          message={opMessage?.source === 'speed' ? opMessage : null}
+        />
+      )}
+
+      {color !== null && (
+        <ColorPropertiesSection
+          section={color}
+          editable={editable}
+          write={writeColor}
+          report={reportColor}
+          message={opMessage?.source === 'color' ? opMessage : null}
+        />
+      )}
+
+      {/*
         Kapsam dürüstlüğü (review-gate kural 4): panelin kapsamadığı klip
         alanları burada AÇIKÇA yazılır. Sessizce eksik bırakmak, kullanıcının
         "neden yok?" diye aramasına ve denetimde kapsam kayması bulgusuna yol
@@ -360,12 +521,213 @@ export function ClipPropertiesPanel() {
       */}
       <PropertySection title="Kapsam" testId="clip-inspector-scope">
         <p className="text-[10px] leading-snug text-fg-muted">
-          Bu panel klibin sesini, dönüşümünü ve metin/şekil biçimini düzenler. Henüz burada
-          olmayanlar: çapa (anchor) noktası — merkezde sabit; hız (slow-mo/timelapse), renk
-          düzeltme/efektler ve keyframe animasyonu → M5.
+          Bu panel klibin hızını, rengini, sesini, dönüşümünü ve metin/şekil biçimini düzenler.
+          Keyframe animasyonu artık burada: alanların yanındaki elmas düğmesi playhead'e keyframe
+          yazar, eğri timeline'daki keyframe şeridinden düzenlenir. Henüz burada olmayanlar: çapa
+          (anchor) noktası — merkezde sabit; LUT efekti → M6. Efekt parametreleri (fx.*) MVP
+          şemasında keyframe'lenemez (bilinçli karar). Hız ve renk düzeltme önizlemede ve dışa
+          aktarımda AYNI normatif formüllerle uygulanır (süre = kaynak ÷ hız; renk sırası
+          pozlama → sıcaklık → ton → kontrast+parlaklık → doygunluk); dışa aktarım tarafını M5’in
+          sunucu dilimi karşılar — sunucu bir özelliği desteklemiyorsa gerekçe “Dışa Aktarmalar”
+          kartında görünür, sessizce düşmez.
         </p>
       </PropertySection>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Speed section (M5) — rendering-semantics §1.3
+// ---------------------------------------------------------------------------
+
+/**
+ * Speed is a LAYOUT edit, so this section is deliberately not a slider: every
+ * value is one discrete, refusable op with its own history entry. Dragging
+ * would mean re-laying out the track (and reconciling transitions) per pixel.
+ *
+ * "Sonrakileri kaydır" (ripple) is a sticky choice rather than a second set of
+ * buttons: the user decides ONCE whether slowing a clip pushes the rest of the
+ * timeline, and every preset then obeys it.
+ */
+function SpeedPropertiesSection({
+  section,
+  editable,
+  report,
+  message,
+}: {
+  section: SpeedSection;
+  editable: boolean;
+  report: (result: OpResult) => OpResult;
+  message: OpMessage | null;
+}) {
+  const [ripple, setRipple] = useState(false);
+  const apply = (rate: number): void => {
+    if (!editable) return;
+    report(setClipSpeed(section.clipIds, rate, { ripple }));
+  };
+
+  // What the panel can promise without rippling: a clip may only grow into the
+  // gap after it. Shown so a refusal is never the first time the user hears it.
+  const bound = section.minRateWithoutRipple;
+  const limited = !ripple && bound !== null && bound > SPEED_MIN;
+
+  return (
+    <PropertySection
+      title="Hız"
+      testId="clip-inspector-speed"
+      action={
+        <span className="font-mono text-[11px] text-fg" data-testid="clip-speed-value">
+          {formatSpeed(section.rate)}
+        </span>
+      }
+    >
+      <div className="flex gap-1" role="group" aria-label="Hız ön ayarları" data-testid="clip-speed-presets">
+        {SPEED_PRESETS.map((preset) => (
+          <button
+            key={preset}
+            type="button"
+            data-testid={`clip-speed-preset-${preset}`}
+            aria-pressed={section.rate === preset}
+            disabled={!editable}
+            onClick={() => apply(preset)}
+            className={`min-w-0 flex-1 rounded border px-1 py-1 text-[11px] disabled:pointer-events-none disabled:opacity-40 ${
+              section.rate === preset
+                ? 'border-accent/60 bg-accent/10 text-fg'
+                : 'border-edge bg-surface-2 text-fg-muted hover:text-fg'
+            }`}
+          >
+            {formatSpeed(preset)}
+          </button>
+        ))}
+      </div>
+
+      <NumberField
+        id="clip-speed"
+        testId="clip-speed"
+        label="Hız"
+        value={section.rate}
+        min={SPEED_MIN}
+        max={SPEED_MAX}
+        step={0.05}
+        decimals={SPEED_DECIMALS}
+        perPixel={0}
+        // Typing only: a speed drag would re-lay out the track (and reconcile
+        // transitions) per pixel, and the write cannot live inside a liveEdit
+        // transaction because it goes through a refusable plain op.
+        scrubbable={false}
+        unit="x"
+        disabled={!editable}
+        gesture={{ actionType: 'clipSpeed', label: 'Klip hızı değiştirildi' }}
+        onChange={(rate) => apply(rate)}
+      />
+
+      <ToggleField
+        label="Sonrakileri kaydır"
+        testId="clip-speed-ripple"
+        value={ripple}
+        disabled={!editable}
+        onChange={setRipple}
+      />
+
+      <ReadonlyRow label="Süre" value={formatSeconds(section.durationUs, 2)} />
+      {section.nextGapUs !== null && (
+        <ReadonlyRow label="Boşluk" value={formatSeconds(section.nextGapUs, 2)} />
+      )}
+
+      {message !== null && <OpMessageLine message={message} />}
+
+      <p className="text-[10px] leading-snug text-fg-muted" data-testid="clip-speed-note">
+        Süre = (kaynak çıkış − kaynak giriş) ÷ hız; kaynak aralığı değişmez. Ses tonu korunur
+        (önizlemede tarayıcı, dışa aktarımda <code>atempo</code>).
+        {limited && (
+          <>
+            {' '}
+            Sonraki klibe kadar boşluk sınırlı: kaydırmadan en yavaş{' '}
+            <strong data-testid="clip-speed-min-rate">{formatSpeed(bound)}</strong> olabilir.
+          </>
+        )}
+        {section.hasTransition && (
+          <> Kenarda geçiş var: hız arttıkça geçişin kaynak payı da artar, gerekirse kısaltılır.</>
+        )}
+      </p>
+    </PropertySection>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Colour correction section (M5) — rendering-semantics §4.1
+// ---------------------------------------------------------------------------
+
+/** The six §4.1 params, in the order a colourist reaches for them. */
+const COLOR_FIELDS = [
+  { key: 'exposure' as const, label: 'Pozlama', testId: 'clip-color-exposure' },
+  { key: 'brightness' as const, label: 'Parlaklık', testId: 'clip-color-brightness' },
+  { key: 'contrast' as const, label: 'Kontrast', testId: 'clip-color-contrast' },
+  { key: 'saturation' as const, label: 'Doygunluk', testId: 'clip-color-saturation' },
+  { key: 'temperature' as const, label: 'Sıcaklık', testId: 'clip-color-temperature' },
+  { key: 'tint' as const, label: 'Ton', testId: 'clip-color-tint' },
+];
+
+function ColorPropertiesSection({
+  section,
+  editable,
+  write,
+  report,
+  message,
+}: {
+  section: ColorSection;
+  editable: boolean;
+  write: (patch: ColorAdjustPatch) => void;
+  report: (result: OpResult) => OpResult;
+  message: OpMessage | null;
+}) {
+  return (
+    <PropertySection
+      title="Renk"
+      testId="clip-inspector-color"
+      action={
+        <button
+          type="button"
+          data-testid="clip-color-reset"
+          disabled={!editable || !section.present}
+          onClick={() => report(resetClipColorAdjust(section.clipIds))}
+          className="rounded border border-edge bg-surface-2 px-1.5 py-0.5 text-[10px] text-fg-muted hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+        >
+          Sıfırla
+        </button>
+      }
+    >
+      <ToggleField
+        label="Renk düzeltme"
+        testId="clip-color-enabled"
+        value={section.enabled}
+        disabled={!editable}
+        onChange={(enabled) => report(setClipColorAdjustEnabled(section.clipIds, enabled))}
+      />
+      {COLOR_FIELDS.map((field) => (
+        <SliderField
+          key={field.key}
+          id={field.testId}
+          testId={field.testId}
+          label={field.label}
+          value={section[field.key]}
+          neutral={0}
+          min={COLOR_ADJUST_MIN}
+          max={COLOR_ADJUST_MAX}
+          step={0.01}
+          valueText={formatNumber(section[field.key], 2)}
+          disabled={!editable}
+          gesture={{ actionType: 'clipColor', label: `${field.label} değiştirildi` }}
+          onChange={(v) => write({ [field.key]: v })}
+        />
+      ))}
+      {message !== null && <OpMessageLine message={message} />}
+      <p className="text-[10px] leading-snug text-fg-muted" data-testid="clip-color-note">
+        Değerler −1..1 (0 = etkisiz) ve sıra sabittir: pozlama → sıcaklık → ton →
+        kontrast+parlaklık → doygunluk. Önizleme bunu tek geçişli shader ile, dışa aktarım aynı
+        formüllerle ffmpeg tarafında uygular; ±1/255 kanal farkı beklenir.
+      </p>
+    </PropertySection>
   );
 }
 
@@ -388,6 +750,10 @@ function TextPropertiesSection({
   editable: boolean;
   write: (patch: ClipTextPatch) => void;
 }) {
+  // The picker lists what the SERVER can resolve (GET /api/fonts). It used to
+  // list a hard-coded set whose default ('inter') did not exist server-side, so
+  // every text clip exported with `font-missing` (M4 dalga-2, KRİTİK bulgu #1).
+  const { entries: fonts, failed: fontsUnavailable } = useFontCatalogue();
   const weightOptions = weightsFor(section.fontId ?? '').map((w) => ({
     value: String(w),
     label: w >= 700 ? `${w} (Kalın)` : `${w}`,
@@ -411,7 +777,9 @@ function TextPropertiesSection({
         testId="clip-text-font"
         label="Yazı tipi"
         value={section.fontId}
-        options={FONT_MANIFEST.map((f) => ({ value: f.id, label: f.label }))}
+        options={fonts
+          .filter((f) => !f.deprecated || f.id === section.fontId)
+          .map((f) => ({ value: f.id, label: f.label }))}
         disabled={!editable}
         onChange={(fontId) => write({ fontId })}
       />
@@ -566,17 +934,27 @@ function TextPropertiesSection({
       )}
 
       {/*
-        Dürüstlük notu (rendering-semantics §7): önizlemedeki metin rasterı
-        TARAYICININ Canvas2D ölçümüyle çizilir; BAĞLAYICI ölçüm sunucudaki
-        SkiaSharp'tır. Sunucu bbox/raster ucu (TODO) bağlanana kadar satır
-        genişlikleri export'ta birkaç piksel kayabilir — kullanıcının bunu
-        ekranda görmesi, sonradan "neden farklı?" diye aramasından iyidir.
+        Dürüstlük notu (rendering-semantics §7; M4 dalga-2 denetimi bulgu #3c).
+        ESKİ not "küçük farklar olabilir" diyordu ve YANLIŞTI: kutu kuralları iki
+        tarafta farklıydı (kontur 6'da 32×24 / 26×14), üstelik önizleme sistem
+        fontuyla ölçüyordu. İkisi de düzeltildi — kural tek (test-vectors/
+        text-layout-vectors.json), font AYNI TTF (@font-face, /api/fonts) — ama
+        SATIR KIRILIMI/shaping hâlâ iki ayrı motorda (Canvas2D vs HarfBuzz)
+        koşuyor. Not bu KALAN farkı söylüyor; sunucu ölçüm ucu (POST
+        /api/overlays/measure) bağlanana kadar abartmadan, küçültmeden.
       */}
       <p className="text-[10px] leading-snug text-fg-muted" data-testid="clip-text-raster-note">
-        Önizleme metni tarayıcı yazı tipiyle çizilir; dışa aktarımda metni sunucu (SkiaSharp)
-        aynı yazı tipi kimliğiyle yeniden çizer — satır genişliklerinde küçük farklar olabilir.
-        Sunucu ölçümü (bbox) bağlandığında bu fark kapanır.
+        Kutu ve arka plan kuralları önizleme ile dışa aktarımda AYNIDIR ve aynı yazı tipi
+        dosyası kullanılır. Kalan fark shaping/kerning düzeyindedir: karmaşık yazımlarda
+        (bitişik harfler, RTL, emoji) satır genişliği birkaç piksel kayabilir — bağlayıcı
+        ölçüm sunucudur (SkiaSharp + HarfBuzz).
       </p>
+      {fontsUnavailable && (
+        <p className="text-[10px] leading-snug text-accent" data-testid="clip-text-font-offline-note">
+          Yazı tipi listesi sunucudan alınamadı; son bilinen liste gösteriliyor. Önizleme
+          yerel bir yazı tipiyle çizilebilir — dışa aktarım yine sunucudaki dosyayı kullanır.
+        </p>
+      )}
     </PropertySection>
   );
 }

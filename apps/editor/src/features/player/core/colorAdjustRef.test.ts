@@ -170,3 +170,56 @@ describe('shader-drift alarm: GLSL constants match the reference (§4.1)', () =>
     expect(clampCount).toBeGreaterThanOrEqual(6);
   });
 });
+
+// ---------------------------------------------------------------------------
+// M5: the inspector now WRITES these params, so two more things have to hold
+// ---------------------------------------------------------------------------
+
+describe('document -> shader chain (M5: the inspector drives these params)', () => {
+  const CA_KEYS: (keyof ColorAdjust)[] = [
+    'exposure',
+    'temperature',
+    'tint',
+    'brightness',
+    'contrast',
+    'saturation',
+  ];
+
+  it('the shader declares a uniform for EVERY §4.1 param and no ghost ones', () => {
+    const declared = [...FRAGMENT_SHADER.matchAll(/uniform\s+float\s+(u[A-Za-z]+)\s*;/g)].map(
+      (m) => m[1]!,
+    );
+    for (const key of CA_KEYS) {
+      const name = `u${key[0]!.toUpperCase()}${key.slice(1)}`;
+      expect(declared, `${key} has no uniform — the inspector would write into a void`).toContain(
+        name,
+      );
+    }
+    // uOpacity is the only extra float uniform (§6.3); anything else is drift.
+    expect(declared.filter((n) => n !== 'uOpacity')).toHaveLength(CA_KEYS.length);
+  });
+
+  it('every param actually MOVES the pixel (a param wired to nothing would not)', () => {
+    // Mid grey with a colour cast: no channel sits on a clamp, so each stage
+    // has room to show itself in both directions.
+    const source = rgb(0.4, 0.5, 0.6);
+    for (const key of CA_KEYS) {
+      const up = applyColorAdjustRef(source, params({ [key]: 0.5 } as Partial<ColorAdjust>));
+      const down = applyColorAdjustRef(source, params({ [key]: -0.5 } as Partial<ColorAdjust>));
+      const moved = (a: Rgb, b: Rgb): boolean =>
+        Math.abs(a.r - b.r) > 1e-6 || Math.abs(a.g - b.g) > 1e-6 || Math.abs(a.b - b.b) > 1e-6;
+      expect(moved(up, source), `+0.5 ${key} must change the colour`).toBe(true);
+      expect(moved(down, source), `-0.5 ${key} must change the colour`).toBe(true);
+      expect(moved(up, down), `${key} must be signed, not symmetric`).toBe(true);
+    }
+  });
+
+  it('the identity is EXACTLY reachable — "reset" must not leave a tint behind', () => {
+    // The inspector removes the effect on reset, but a clip may also sit at all
+    // zeros while the effect is enabled; that has to be a true no-op.
+    for (const channel of [0, 0.25, 0.5, 0.75, 1]) {
+      const c = rgb(channel, 1 - channel, 0.5);
+      expectRgbCloseTo(applyColorAdjustRef(c, IDENTITY_COLOR_ADJUST), c, 12);
+    }
+  });
+});

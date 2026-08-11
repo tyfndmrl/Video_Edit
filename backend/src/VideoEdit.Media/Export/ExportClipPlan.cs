@@ -55,15 +55,40 @@ public sealed record ExportClipPlan
 
     public long SourceOutUs { get; init; }
 
+    /// <summary>
+    /// Sabit hız çarpanı (<c>speed.rate</c>); zaman ekseni olmayan kliplerde daima 1.
+    /// Süre sözleşmesi <c>timelineDurationUs = roundHalfUp((sourceOut-sourceIn)/rate)</c>
+    /// (rendering-semantics §1.3) BURADAKİ değerle doğrulanır.
+    /// </summary>
+    public double Rate { get; init; } = 1d;
+
+    /// <summary>DOĞRULANMIŞ efektler (§4) — kapalı/etkisiz olanlar ayıklanmıştır.</summary>
+    public ClipEffects Effects { get; init; } = ClipEffects.None;
+
+    /// <summary>DOĞRULANMIŞ keyframe defteri (§3) — boş kanal null'dır.</summary>
+    public ClipAnimation Animation { get; init; } = ClipAnimation.None;
+
     /// <summary>DOĞRULANMIŞ geçişler (simetri + bitişiklik + D kuralları geçmiş olanlar).</summary>
     public Transition? TransitionIn { get; init; }
 
     public Transition? TransitionOut { get; init; }
 
-    /// <summary>D/2 kaynak payı (µs) — frame defterinden türetilir, sıfırsa geçiş yok.</summary>
+    /// <summary>
+    /// D/2 payının TIMELINE-domain karşılığı (µs) — frame defterinden türetilir, sıfırsa
+    /// geçiş yok. Video zinciri ve ses penceresi bu eksende çalışır.
+    /// </summary>
     public long HeadInUs { get; init; }
 
     public long HeadOutUs { get; init; }
+
+    /// <summary>
+    /// Aynı payın KAYNAK-domain karşılığı: <c>roundHalfUp((D/2) * rate)</c>
+    /// (rendering-semantics §5.2). Input-level <c>-ss/-t</c> ve kaynak-aralığı defteri
+    /// bu eksende çalışır; <c>rate = 1</c> iken <see cref="HeadInUs"/> ile AYNIDIR.
+    /// </summary>
+    public long HeadInSourceUs { get; init; }
+
+    public long HeadOutSourceUs { get; init; }
 
     public long HeadInFrames { get; init; }
 

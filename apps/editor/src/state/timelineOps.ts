@@ -22,10 +22,12 @@ import {
   snapUsToFrameGrid,
   usToFrame,
   validateTimelineDoc,
+  hasSourceTimeAxis,
   isMediaClip,
   TRANSFORM_SCALE_DECIMALS,
   TRANSFORM_SCALE_MIN,
   type Clip,
+  type Effect,
   type Keyframe,
   type KeyframeTracks,
   type MediaClip,
@@ -203,6 +205,11 @@ function transitionHandleUs(durationUs: MicroSec, rate: number): MicroSec {
  * duration means "no tail constraint" — the same thing the invariant does, so
  * the editor never writes a document its own validator would reject and never
  * refuses one the validator would accept.
+ *
+ * A side with no source time axis (still image) is exempt, per side: the export
+ * compiler opens it with `-loop 1` and skips the same two checks
+ * (ExportClipPlan.IsStillInput). This is what makes a photo-to-photo crossfade —
+ * a slideshow — possible at all.
  */
 function transitionHandleFits(
   durationUs: MicroSec,
@@ -210,7 +217,10 @@ function transitionHandleFits(
   b: MediaClip,
   assetDurations: ReadonlyMap<string, MicroSec>,
 ): boolean {
-  if (b.sourceInUs < transitionHandleUs(durationUs, b.speed.rate)) return false;
+  if (hasSourceTimeAxis(b) && b.sourceInUs < transitionHandleUs(durationUs, b.speed.rate)) {
+    return false;
+  }
+  if (!hasSourceTimeAxis(a)) return true;
   const assetDurationA = assetDurations.get(a.assetId);
   return (
     assetDurationA === undefined ||
@@ -240,7 +250,9 @@ export interface TransitionPlan {
  * Two caps, both from the normative doc:
  *  - length: `D * 2 <= min(A.timelineDurationUs, B.timelineDurationUs)`
  *  - handle: `D <= 2 * min(availA / rateA, availB / rateB)` where
- *    `availA = assetDurA - A.sourceOut` and `availB = B.sourceIn`
+ *    `availA = assetDurA - A.sourceOut` and `availB = B.sourceIn`, and a side
+ *    with no source time axis (still image) contributes NO limit — its file has
+ *    no source clock to run out of (see transitionHandleFits).
  * The analytic caps only NARROW the search; the returned duration is always
  * re-checked with the invariant's own predicate before it is handed back.
  */
@@ -254,10 +266,11 @@ export function planTransitionDuration(
   const lengthCapUs = Math.floor(Math.min(a.timelineDurationUs, b.timelineDurationUs) / 2);
   const assetDurationA = assetDurations.get(a.assetId);
   const availA =
-    assetDurationA === undefined
+    !hasSourceTimeAxis(a) || assetDurationA === undefined
       ? Number.POSITIVE_INFINITY
       : Math.max(0, assetDurationA - a.sourceOutUs);
-  const handleCapUs = 2 * Math.min(availA / a.speed.rate, b.sourceInUs / b.speed.rate);
+  const availB = hasSourceTimeAxis(b) ? b.sourceInUs : Number.POSITIVE_INFINITY;
+  const handleCapUs = 2 * Math.min(availA / a.speed.rate, availB / b.speed.rate);
 
   const wantedFrames = evenFramesNearest(requestedUs, fps);
   const lengthFrames = evenFramesAtMost(lengthCapUs, fps);
@@ -366,6 +379,22 @@ function reconcileTransitions(
       delete b.transitionIn;
       report.removed++;
       continue;
+    }
+    // Both sides present AND disagreeing means two DIFFERENT cuts collapsed
+    // into one: ripple-deleting the middle clip of `A -crossfade- B -dissolve- C`
+    // leaves A.transitionOut (crossfade) facing C.transitionIn (dissolve) across
+    // a brand-new A|C cut. Only one of them can survive (the outgoing side, per
+    // the rule above), so the other ceases to exist — and a transition the user
+    // built disappearing without a word is exactly the "it changed something I
+    // did not ask for" complaint. Count it as a removal so the caller raises
+    // the bubble; the cut itself survives, which is why this is not the
+    // `plan === null` branch.
+    const facing = a.transitionOut !== undefined ? b.transitionIn : undefined;
+    if (
+      facing !== undefined &&
+      (facing.type !== wanted.type || facing.durationUs !== wanted.durationUs)
+    ) {
+      report.removed++;
     }
     if (plan.durationUs !== wanted.durationUs) {
       report.shortened++;
@@ -2611,5 +2640,427 @@ export function setClipShape(clipIds: readonly Uuid[], patch: ClipShapePatch): O
     result = applyClipShapeToDraft(d, clipIds, patch);
   });
   assertDocValidDev('setClipShape');
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Clip speed (M5) — rendering-semantics §1.3 + design 04 §2.4
+//
+// Speed is the ONE clip property that changes the timeline layout, so it is
+// the one op that cannot be a per-clip patch: the new duration comes from the
+// contract formula (`timelineDurationUs = roundHalfUp((out-in)/rate)`) and
+// everything that hangs off the duration has to move with it —
+//   - the clips AFTER it (reject on collision, or ripple),
+//   - keyframe times (clip-relative TIMELINE time, so they rescale),
+//   - audio fades (invariant 8: in+out <= duration),
+//   - transitions on both edges (the source handle is `(D/2)*rate`, so a
+//     faster clip needs MORE source slack for the same transition).
+//
+// Everything is PLANNED first and only then written: a half-applied speed
+// change (duration moved, neighbour not) is a document the validator rejects,
+// and `mutate` would already have committed it to history.
+// ---------------------------------------------------------------------------
+
+/** Schema bounds for `speed.rate` (MediaClipSchema: 0.1 .. 10). */
+export const SPEED_MIN = 0.1;
+export const SPEED_MAX = 10;
+/** Preset buttons offered by the inspector (0.25x .. 4x). */
+export const SPEED_PRESETS = [0.25, 0.5, 1, 2, 4] as const;
+/** Rates are stored rounded so undo patches (and the duration) stay stable. */
+export const SPEED_DECIMALS = 3;
+
+/** Notice code: the new duration forced two keyframes onto the same instant. */
+export const SPEED_KEYFRAMES_MERGED = 'keyframes merged by speed change';
+
+/**
+ * Speed applies to clips with real temporal media only.
+ *
+ * Images are excluded ON PURPOSE even though the duration formula would work:
+ * an image has no time axis, so "2x" would silently mean "half as long on the
+ * timeline" — that is a DURATION edit and the user has trimming for it.
+ */
+export function clipSupportsSpeed(clip: Clip): clip is MediaClip {
+  return clip.kind === 'video' || clip.kind === 'audio';
+}
+
+/** Clamp + round a requested rate into the schema range (null = not a number). */
+export function normalizeSpeedRate(rate: number): number | null {
+  return clampFinite(rate, SPEED_MIN, SPEED_MAX, SPEED_DECIMALS);
+}
+
+/**
+ * Keyframe times are clip-relative TIMELINE time (schema KeyframeSchema), so a
+ * clip that becomes half as long has to carry its animation into the new
+ * length: `t' = roundHalfUp(t * newDur / oldDur)`, clamped to [0, newDur].
+ *
+ * Rounding can collapse two neighbouring keyframes onto one instant, which
+ * invariant 4 forbids (strictly sorted, unique). The FIRST one wins — mapped
+ * times are non-decreasing, so first-wins keeps the array strictly sorted and
+ * preserves the value the segment STARTS from. The caller turns a collapse
+ * into a user-visible notice; silently dropping animation is exactly the
+ * "it did something I did not ask for" complaint.
+ */
+function rescaleKeyframes(clip: Clip, oldDurationUs: MicroSec, newDurationUs: MicroSec): boolean {
+  if (oldDurationUs <= 0 || oldDurationUs === newDurationUs) return false;
+  let merged = false;
+  const tracks = clip.keyframes;
+  for (const key of Object.keys(tracks) as (keyof KeyframeTracks)[]) {
+    const kfs = tracks[key];
+    if (!kfs || kfs.length === 0) continue;
+    const mapped: Keyframe[] = [];
+    let lastTime = -1;
+    for (const kf of kfs) {
+      const t = clamp(roundHalfUp((kf.timeUs * newDurationUs) / oldDurationUs), 0, newDurationUs);
+      if (t === lastTime) {
+        merged = true;
+        continue;
+      }
+      lastTime = t;
+      mapped.push({ ...kf, timeUs: t });
+    }
+    if (mapped.length > 0) tracks[key] = mapped;
+    else delete tracks[key];
+  }
+  return merged;
+}
+
+interface SpeedClipPlan {
+  clipId: Uuid;
+  startUs: MicroSec;
+  durationUs: MicroSec;
+  /** true = this clip's rate changes (the others only ripple-shift). */
+  target: boolean;
+}
+
+interface SpeedTrackPlan {
+  trackIndex: number;
+  clips: SpeedClipPlan[];
+}
+
+export interface SpeedPlan {
+  tracks: SpeedTrackPlan[];
+  /** How many clips actually get the new rate. */
+  targetCount: number;
+}
+
+export type SpeedPlanResult = SpeedPlan | { reason: string };
+
+/**
+ * Lays out every affected track at the new rate WITHOUT touching the document.
+ *
+ * `ripple` decides what happens to the clips after a target: shift them by the
+ * duration delta (gaps preserved, adjacency — hence transitions — preserved),
+ * or leave them and refuse when the longer clip would collide. Refusing is the
+ * default because moving clips the user did not select is a bigger surprise
+ * than "did not fit".
+ */
+export function planClipSpeed(
+  d: TimelineDoc,
+  clipIds: readonly Uuid[],
+  rate: number,
+  ripple: boolean,
+): SpeedPlanResult {
+  const normalized = normalizeSpeedRate(rate);
+  if (normalized === null) return { reason: 'invalid speed' };
+  const ids = new Set(clipIds);
+  const minDurationUs = minClipDurationUs(d.settings.fps);
+  const tracks: SpeedTrackPlan[] = [];
+  let targetCount = 0;
+  let sawSupported = false;
+
+  for (let ti = 0; ti < d.tracks.length; ti++) {
+    const track = d.tracks[ti];
+    if (!track.clips.some((c) => ids.has(c.id))) continue;
+    if (track.locked) return { reason: 'track is locked' };
+
+    const plans: SpeedClipPlan[] = [];
+    let shiftUs = 0;
+    for (const clip of track.clips) {
+      const target = ids.has(clip.id) && clipSupportsSpeed(clip);
+      if (target) sawSupported = true;
+      const startUs = clip.timelineStartUs + shiftUs;
+      let durationUs = clip.timelineDurationUs;
+      if (target) {
+        durationUs = clipTimelineDurationUs(
+          (clip as MediaClip).sourceInUs,
+          (clip as MediaClip).sourceOutUs,
+          normalized,
+        );
+        if (durationUs < minDurationUs) return { reason: 'speed leaves less than one frame' };
+        if (ripple) shiftUs += durationUs - clip.timelineDurationUs;
+        targetCount++;
+      }
+      if (startUs < 0) return { reason: 'before timeline start' };
+      plans.push({ clipId: clip.id, startUs, durationUs, target });
+    }
+
+    // Layout check — run for BOTH modes. Ripple cannot overlap by
+    // construction, so here it is a guard; non-ripple needs it as the rule.
+    for (let i = 0; i + 1 < plans.length; i++) {
+      if (plans[i].startUs + plans[i].durationUs > plans[i + 1].startUs) {
+        return { reason: 'speed change overlaps the next clip' };
+      }
+    }
+    tracks.push({ trackIndex: ti, clips: plans });
+  }
+
+  if (!sawSupported) return { reason: 'no video/audio clip in selection' };
+  return { tracks, targetCount };
+}
+
+/**
+ * Writes a planned speed change into a DRAFT document (inside mutate).
+ *
+ * Order matters: duration first, then everything derived from it — keyframes
+ * (rescaled), fades (re-clamped), and finally the track's transitions
+ * (reconciled against the new durations AND the new `(D/2)*rate` handles).
+ */
+export function applyClipSpeedToDraft(
+  d: TimelineDoc,
+  clipIds: readonly Uuid[],
+  rate: number,
+  opts: { ripple?: boolean } = {},
+): OpResult {
+  const plan = planClipSpeed(d, clipIds, rate, opts.ripple === true);
+  if ('reason' in plan) return fail(plan.reason);
+  const normalized = normalizeSpeedRate(rate);
+  if (normalized === null) return fail('invalid speed');
+
+  const assetDurations = knownAssetDurations();
+  let report = NO_TRANSITION_CHANGE;
+  let merged = false;
+
+  for (const trackPlan of plan.tracks) {
+    const track = d.tracks[trackPlan.trackIndex];
+    const byId = new Map(track.clips.map((c) => [c.id, c] as const));
+    for (const entry of trackPlan.clips) {
+      const clip = byId.get(entry.clipId);
+      if (!clip) continue;
+      const oldDurationUs = clip.timelineDurationUs;
+      clip.timelineStartUs = entry.startUs;
+      if (!entry.target) continue;
+      (clip as MediaClip).speed = { rate: normalized };
+      clip.timelineDurationUs = entry.durationUs;
+      if (rescaleKeyframes(clip, oldDurationUs, entry.durationUs)) merged = true;
+      clampAudioFadesToDuration(clip);
+    }
+    report = mergeTransitionReports(
+      report,
+      reconcileTransitions(track, d.settings.fps, assetDurations),
+    );
+  }
+
+  // A transition repair is the louder news (it changed something the user did
+  // not touch); the keyframe merge only reports when nothing else did.
+  return okWith(transitionReconcileNotice(report) ?? (merged ? SPEED_KEYFRAMES_MERGED : undefined));
+}
+
+/** Inspector speed field / preset buttons. ONE history entry per call. */
+export function setClipSpeed(
+  clipIds: readonly Uuid[],
+  rate: number,
+  opts: { ripple?: boolean } = {},
+): OpResult {
+  let result: OpResult = fail('no video/audio clip in selection');
+  useDocStore.getState().mutate('clipSpeed', 'Klip hızı değiştirildi', (d) => {
+    result = applyClipSpeedToDraft(d, clipIds, rate, opts);
+  });
+  assertDocValidDev('setClipSpeed');
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// colorAdjust effect (M5) — rendering-semantics §4.1
+//
+// ONE colorAdjust effect per clip, by contract: the preview is a single
+// uber-shader pass (compositor/shaders.ts) and `colorAdjustOf` reads the FIRST
+// enabled one, so a second effect would be in the document, in the export, and
+// invisible on screen. Writes therefore normalize the clip to a single effect.
+//
+// Params are the six §4.1 keys, each in [-1..1] with 0 = identity — exactly
+// what invariant rule 6 allows; anything else makes the document unexportable.
+// ---------------------------------------------------------------------------
+
+export const COLOR_ADJUST_MIN = -1;
+export const COLOR_ADJUST_MAX = 1;
+/** Stored precision (undo patches stay clean; well under the ±1/255 §4.1 note). */
+export const COLOR_ADJUST_DECIMALS = 3;
+
+/** The six §4.1 params, in the order the panel shows them. */
+export const COLOR_ADJUST_KEYS = [
+  'brightness',
+  'contrast',
+  'saturation',
+  'temperature',
+  'tint',
+  'exposure',
+] as const;
+
+export type ColorAdjustKey = (typeof COLOR_ADJUST_KEYS)[number];
+export type ColorAdjustPatch = Partial<Record<ColorAdjustKey, number>>;
+
+/** Notice code: the clip carried more than one colorAdjust; the extras went. */
+export const COLOR_ADJUST_DEDUPED = 'duplicate colorAdjust effects merged';
+
+/** All six params at 0 — the identity the shader and the compiler agree on. */
+export function identityColorAdjustParams(): Record<ColorAdjustKey, number> {
+  return { brightness: 0, contrast: 0, saturation: 0, temperature: 0, tint: 0, exposure: 0 };
+}
+
+/** Audio clips draw nothing, so colour has nowhere to land. */
+export function clipSupportsColorAdjust(clip: Clip): boolean {
+  return isVisualClip(clip);
+}
+
+/** The clip's single colorAdjust effect, or null. Extras are NOT returned. */
+export function colorAdjustEffectOf(clip: Clip): Effect | null {
+  return clip.effects.find((e) => e.type === 'colorAdjust') ?? null;
+}
+
+/**
+ * Guarantees the invariant shape on a DRAFT clip: exactly one colorAdjust
+ * effect, params = the six keys and nothing else. Returns the effect plus
+ * whether duplicates had to be dropped.
+ */
+function ensureColorAdjustEffect(
+  clip: Clip,
+  create: boolean,
+): { effect: Effect | null; deduped: boolean } {
+  const found = clip.effects.filter((e) => e.type === 'colorAdjust');
+  let deduped = false;
+  if (found.length > 1) {
+    // Keep the first (the one the preview shader was already showing).
+    const keep = found[0];
+    clip.effects = clip.effects.filter((e) => e.type !== 'colorAdjust' || e === keep);
+    deduped = true;
+  }
+  let effect = clip.effects.find((e) => e.type === 'colorAdjust') ?? null;
+  if (effect === null) {
+    if (!create) return { effect: null, deduped };
+    effect = { id: uuidv7(), type: 'colorAdjust', enabled: true, params: identityColorAdjustParams() };
+    clip.effects.push(effect);
+    return { effect, deduped };
+  }
+  // Normalize params: fill missing keys with 0, drop anything invariant rule 6
+  // would reject (a foreign key makes the WHOLE document unexportable).
+  const params = identityColorAdjustParams();
+  for (const key of COLOR_ADJUST_KEYS) {
+    const v = effect.params[key];
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      params[key] = roundTo(clamp(v, COLOR_ADJUST_MIN, COLOR_ADJUST_MAX), COLOR_ADJUST_DECIMALS);
+    }
+  }
+  effect.params = params;
+  return { effect, deduped };
+}
+
+export function applyClipColorAdjustToDraft(
+  d: TimelineDoc,
+  clipIds: readonly Uuid[],
+  patch: ColorAdjustPatch,
+): OpResult {
+  let touched = 0;
+  let deduped = false;
+  for (const clipId of clipIds) {
+    const loc = locateClip(d, clipId);
+    if (!loc || loc.track.locked) continue;
+    if (!clipSupportsColorAdjust(loc.clip)) continue;
+    const ensured = ensureColorAdjustEffect(loc.clip, true);
+    if (ensured.deduped) deduped = true;
+    const effect = ensured.effect;
+    if (effect === null) continue;
+    for (const key of COLOR_ADJUST_KEYS) {
+      const raw = patch[key];
+      if (raw === undefined) continue;
+      const v = clampFinite(raw, COLOR_ADJUST_MIN, COLOR_ADJUST_MAX, COLOR_ADJUST_DECIMALS);
+      if (v !== null) effect.params[key] = v;
+    }
+    // Touching a slider on a disabled effect turns it back on: the user is
+    // asking to SEE the change, and an edit with no visible result reads as
+    // a broken control.
+    effect.enabled = true;
+    touched++;
+  }
+  if (touched === 0) return fail('no visual clip in selection');
+  return okWith(deduped ? COLOR_ADJUST_DEDUPED : undefined);
+}
+
+const COLOR_ADJUST_LABELS: Record<ColorAdjustKey, string> = {
+  brightness: 'Parlaklık değiştirildi',
+  contrast: 'Kontrast değiştirildi',
+  saturation: 'Doygunluk değiştirildi',
+  temperature: 'Renk sıcaklığı değiştirildi',
+  tint: 'Renk tonu değiştirildi',
+  exposure: 'Pozlama değiştirildi',
+};
+
+function colorAdjustLabel(patch: ColorAdjustPatch): string {
+  const keys = Object.keys(patch) as ColorAdjustKey[];
+  if (keys.length !== 1) return 'Renk düzeltme değiştirildi';
+  return COLOR_ADJUST_LABELS[keys[0]] ?? 'Renk düzeltme değiştirildi';
+}
+
+export function setClipColorAdjust(
+  clipIds: readonly Uuid[],
+  patch: ColorAdjustPatch,
+): OpResult {
+  let result: OpResult = fail('no visual clip in selection');
+  useDocStore.getState().mutate('clipColor', colorAdjustLabel(patch), (d) => {
+    result = applyClipColorAdjustToDraft(d, clipIds, patch);
+  });
+  assertDocValidDev('setClipColorAdjust');
+  return result;
+}
+
+/**
+ * Effect on/off. Turning it ON with no effect yet creates the identity one, so
+ * the toggle is never a dead control; turning it OFF keeps the params (the
+ * user is comparing, not discarding — that is what "Sıfırla" is for).
+ */
+export function setClipColorAdjustEnabled(
+  clipIds: readonly Uuid[],
+  enabled: boolean,
+): OpResult {
+  let result: OpResult = fail('no visual clip in selection');
+  useDocStore
+    .getState()
+    .mutate('clipColor', enabled ? 'Renk düzeltme açıldı' : 'Renk düzeltme kapatıldı', (d) => {
+      let touched = 0;
+      for (const clipId of clipIds) {
+        const loc = locateClip(d, clipId);
+        if (!loc || loc.track.locked) continue;
+        if (!clipSupportsColorAdjust(loc.clip)) continue;
+        const { effect } = ensureColorAdjustEffect(loc.clip, enabled);
+        if (effect !== null) effect.enabled = enabled;
+        touched++;
+      }
+      result = touched > 0 ? OK : fail('no visual clip in selection');
+    });
+  assertDocValidDev('setClipColorAdjustEnabled');
+  return result;
+}
+
+/**
+ * "Sıfırla": REMOVES the colorAdjust effect instead of zeroing it.
+ *
+ * An all-zero effect is identity for the shader and produces no ffmpeg filter
+ * (§4.1), but it is still an enabled effect in the document — and the export
+ * compiler's feature gate reads `effects.Any(e => e.Enabled)`. Removing it
+ * leaves the clip exactly as it was before the user ever touched colour.
+ */
+export function resetClipColorAdjust(clipIds: readonly Uuid[]): OpResult {
+  let result: OpResult = fail('no visual clip in selection');
+  useDocStore.getState().mutate('clipColor', 'Renk düzeltme sıfırlandı', (d) => {
+    let touched = 0;
+    for (const clipId of clipIds) {
+      const loc = locateClip(d, clipId);
+      if (!loc || loc.track.locked) continue;
+      if (!clipSupportsColorAdjust(loc.clip)) continue;
+      loc.clip.effects = loc.clip.effects.filter((e) => e.type !== 'colorAdjust');
+      touched++;
+    }
+    result = touched > 0 ? OK : fail('no visual clip in selection');
+  });
+  assertDocValidDev('resetClipColorAdjust');
   return result;
 }
