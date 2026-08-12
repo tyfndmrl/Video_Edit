@@ -1,9 +1,11 @@
 /**
  * timelineOps — every timeline document mutation goes through here.
  *
- * All ops run through docStore's mutate/transaction API (patch-based undo) and
- * every committed op is followed by a dev-mode validateTimelineDoc assert
- * (structure + document invariants + source bounds from the assetStore).
+ * All ops run through docStore's mutate/transaction API (patch-based undo), and
+ * THAT is where the dev-mode document gate runs (docStore.assertDocGateDev:
+ * structure + document invariants + source bounds from the assetStore + the
+ * export frame-grid rule). Ops do not assert for themselves — a check the op
+ * author has to remember is a check the interactive drag paths never got.
  *
  * Time math uses ONLY the shared schema package helpers (roundHalfUp grid,
  * duration formula) so the editor stays bit-identical with the export
@@ -15,7 +17,6 @@
  */
 import {
   clipTimelineDurationUs,
-  exportFrameGridIssues,
   floorDurationToFrameSpan,
   frameSpanCount,
   frameSpanUs,
@@ -29,7 +30,6 @@ import {
   snapUsToFrameGrid,
   solveSpeedChange,
   usToFrame,
-  validateTimelineDoc,
   hasSourceTimeAxis,
   isMediaClip,
   TRANSFORM_SCALE_DECIMALS,
@@ -54,7 +54,7 @@ import {
 } from '@videoedit/timeline-schema';
 import { uuidv7 } from '../lib/uuid';
 import { useAssetStore, type AssetSummary } from './assetStore';
-import { useDocStore } from './docStore';
+import { assertDocGateDev, useDocStore } from './docStore';
 import { useEditorStore } from './editorStore';
 
 // ---------------------------------------------------------------------------
@@ -147,40 +147,22 @@ function locateClip(d: TimelineDoc, clipId: Uuid): ClipLocation | null {
 }
 
 /**
- * Dev-mode invariant assert — run after EVERY committed op. Throws so tests
- * and dev sessions cannot silently produce a contract-violating document.
+ * Dev-mode invariant assert on the CURRENT document — a compatibility shim.
  *
- * TWO gates, because the export compiler has two: the document invariants
- * (`validateTimelineDoc`) AND the frame-grid edge rule
- * (`exportFrameGridIssues`, ExportCompiler.Validate). The second one used to
- * exist in the schema package without a single caller in the app, which is how
- * ops shipped that wrote documents the editor accepted and the render worker
- * rejected with HTTP 422. Asserting it here makes every op test in the suite a
- * frame-grid test as well.
+ * The gate itself moved to the commit point (`docStore.assertDocGateDev`, run
+ * by `mutate` and by transaction `commit`), because as a per-call-site line it
+ * only ever guarded the paths whose author remembered to write it: the ops
+ * below called it, the interactive drags (which write through a transaction,
+ * not through an op) did not. Every op in this file therefore no longer calls
+ * it — the store runs the same two checks on the document each op commits.
+ *
+ * The function stays for the few call sites outside this module that assert
+ * again after their own gesture (features/timeline, features/keyframes,
+ * features/inspector); those are now redundant re-checks of the same gate, not
+ * a second implementation of it.
  */
 export function assertDocValidDev(context: string): void {
-  if (!import.meta.env?.DEV) return;
-  const d = useDocStore.getState().doc;
-  const result = validateTimelineDoc(d, knownAssetDurations());
-  if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `${i.path.join('.')}: ${i.message}`)
-      .join('\n  ');
-    throw new Error(`Timeline invariant violation after "${context}":\n  ${issues}`);
-  }
-  const gridIssues = exportFrameGridIssues(d);
-  if (gridIssues.length > 0) {
-    const detail = gridIssues
-      .map(
-        (i) =>
-          `tracks.${i.trackIndex}.clips.${i.clipIndex} (${i.clipId}): ` +
-          `${i.field}=${i.valueUs} is off the project frame grid (nearest ${i.snappedUs})`,
-      )
-      .join('\n  ');
-    throw new Error(
-      `Export frame-grid violation after "${context}" — this document would fail export with HTTP 422:\n  ${detail}`,
-    );
-  }
+  assertDocGateDev(useDocStore.getState().doc, context);
 }
 
 function trackTypeForClipKind(kind: Clip['kind']): TrackType {
@@ -551,7 +533,6 @@ export function addTrack(type: TrackType, name?: string): Uuid {
   useDocStore.getState().mutate('addTrack', 'Track eklendi', (d) => {
     d.tracks.push(track);
   });
-  assertDocValidDev('addTrack');
   return track.id;
 }
 
@@ -562,7 +543,6 @@ function toggleTrackFlag(trackId: Uuid, flag: 'muted' | 'hidden' | 'locked', lab
     const t = d.tracks.find((x) => x.id === trackId);
     if (t) t[flag] = !t[flag];
   });
-  assertDocValidDev('toggleTrackFlag');
   return OK;
 }
 
@@ -609,7 +589,6 @@ export function deleteTrack(trackId: Uuid): OpResult {
     const i = dd.tracks.findIndex((t) => t.id === trackId);
     if (i >= 0) dd.tracks.splice(i, 1);
   });
-  assertDocValidDev('deleteTrack');
 
   // Selection may not survive its clips.
   const editor = useEditorStore.getState();
@@ -706,7 +685,6 @@ export function addClipFromAsset(
       const t = dd.tracks.find((x) => x.id === target.trackId);
       if (t) insertClipSorted(t, clip);
     });
-    assertDocValidDev('addClipFromAsset');
     useEditorStore.getState().setSelection([clip.id]);
     return { ok: true, clipId: clip.id, trackId: target.trackId };
   }
@@ -716,7 +694,6 @@ export function addClipFromAsset(
     newTrack.clips.push(clip);
     dd.tracks.push(newTrack);
   });
-  assertDocValidDev('addClipFromAsset(newTrack)');
   useEditorStore.getState().setSelection([clip.id]);
   return { ok: true, clipId: clip.id, trackId: newTrack.id };
 }
@@ -1050,7 +1027,6 @@ export function moveClips(clipIds: readonly Uuid[], deltaUs: MicroSec, trackDelt
       );
     }
   });
-  assertDocValidDev('moveClips');
   return okWith(transitionReconcileNotice(report));
 }
 
@@ -1063,11 +1039,135 @@ export type TrimMode = 'normal' | 'ripple' | 'roll';
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
+/** First frame boundary at or after `us` / last one at or before it. */
+function ceilUsToFrameGrid(us: MicroSec, fps: Rational): MicroSec {
+  let frame = usToFrame(us, fps);
+  while (frameToUs(frame, fps) < us) frame++;
+  return frameToUs(frame, fps);
+}
+function floorUsToFrameGrid(us: MicroSec, fps: Rational): MicroSec {
+  let frame = usToFrame(us, fps);
+  while (frame > 0 && frameToUs(frame, fps) > us) frame--;
+  return frameToUs(frame, fps);
+}
+
+// ---------------------------------------------------------------------------
+// Grid-first span fitting
+//
+// Every trim clamps its edge against the SOURCE — `assetDurationUs` on the
+// right, `sourceInUs >= 0` on the left. Those bounds are raw container
+// microseconds (ffprobe reports 7.307300 s for a real file), never frame
+// boundaries, and when the clamp bit, the grid-snapped target the user dragged
+// to was thrown away: the length got re-derived from source microseconds and
+// the clip's far edge landed OFF the project frame grid. The export compiler
+// rejects exactly that (HTTP 422) and the editor said nothing — measured on
+// "over-trim, then drag the edge back out" gestures, 1602 of 1604 across the
+// four project rates produced such a document.
+//
+// The order of derivation is therefore inverted here, the same way
+// `solveSpeedChange` inverts it for speed edits: pick the LENGTH AS A WHOLE
+// FRAME SPAN first (measured from whichever edge stays put), then find the
+// source span the duration formula maps exactly onto it. Both export gates
+// then hold by construction — the frame grid because the length IS a span
+// between two grid edges, and the duration formula because
+// `sourceSpanForDuration` decides the span with the compiler's own expression
+// instead of `roundHalfUp(duration * rate)`, which only inverts at rate >= 1.
+// ---------------------------------------------------------------------------
+
+/** A clip length as a frame span, plus the source span that produces it. */
+interface FittedSpan {
+  durationUs: MicroSec;
+  /** `sourceOutUs - sourceInUs` for that duration — exact, never rounded. */
+  sourceSpanUs: number;
+}
+
+/**
+ * How many frames the fit may walk DOWN from the requested count. Only rates
+ * below 1x ever need more than a step or two: there the admissible source
+ * window (`rate*(D-0.5) <= span < rate*(D+0.5)`) is narrower than a
+ * microsecond, so some frame counts have no source span at all — the same
+ * effect `solveSpeedChange` walks around, where a 792 080-case sweep needed at
+ * most 22 frames.
+ */
+const SPAN_FIT_MAX_STEPS = 64;
+
+/**
+ * Largest whole-frame span that is no longer than `capUs`, no longer than the
+ * user asked for (`wantFrames`), and REACHABLE at `rate`.
+ *
+ * @param spanUsAt microseconds of `frames` whole frames measured from the edge
+ *   that stays put — must be monotone increasing in `frames`.
+ * @param maxSourceSpanUs hard ceiling on `sourceOut - sourceIn` (the media tail
+ *   on a right trim, `sourceOutUs` itself on a left one).
+ */
+function fitFrameSpan(
+  spanUsAt: (frames: number) => MicroSec,
+  wantFrames: number,
+  capUs: MicroSec,
+  rate: number,
+  maxSourceSpanUs: number,
+): FittedSpan | null {
+  if (maxSourceSpanUs < 1) return null;
+  let frames = Math.max(1, wantFrames);
+  // The caps the caller clamped against can be off-grid values, so the frame
+  // count they name may sit a fraction of a frame above them.
+  while (frames > 1 && spanUsAt(frames) > capUs) frames--;
+  for (let step = 0; step < SPAN_FIT_MAX_STEPS && frames >= 1; step++, frames--) {
+    const durationUs = spanUsAt(frames);
+    if (durationUs <= 0 || durationUs > capUs) continue;
+    const sourceSpanUs = sourceSpanForDuration(durationUs, rate, maxSourceSpanUs);
+    if (sourceSpanUs !== null && sourceSpanUs >= 1) return { durationUs, sourceSpanUs };
+  }
+  return null;
+}
+
+/** Fit measured from a fixed START edge (right trims, ripple left trims). */
+function fitSpanFromStart(
+  startUs: MicroSec,
+  wantDurationUs: MicroSec,
+  capUs: MicroSec,
+  rate: number,
+  maxSourceSpanUs: number,
+  fps: Rational,
+): FittedSpan | null {
+  return fitFrameSpan(
+    (frames) => frameSpanUs(startUs, frames, fps),
+    frameSpanCount(startUs, Math.max(0, wantDurationUs), fps),
+    capUs,
+    rate,
+    maxSourceSpanUs,
+  );
+}
+
+/**
+ * Fit measured back from a fixed END edge (normal left trims). With the end
+ * pinned it is the new START that has to land on a frame boundary, so the span
+ * is counted backwards from the end frame.
+ */
+function fitSpanToEnd(
+  endUs: MicroSec,
+  wantDurationUs: MicroSec,
+  capUs: MicroSec,
+  rate: number,
+  maxSourceSpanUs: number,
+  fps: Rational,
+): FittedSpan | null {
+  const endFrame = usToFrame(endUs, fps);
+  const wantStartUs = Math.max(0, endUs - Math.max(0, wantDurationUs));
+  return fitFrameSpan(
+    (frames) => (frames > endFrame ? -1 : endUs - frameToUs(endFrame - frames, fps)),
+    Math.min(endFrame, endFrame - usToFrame(wantStartUs, fps)),
+    capUs,
+    rate,
+    maxSourceSpanUs,
+  );
+}
+
 /**
  * Right-edge trim of a media clip toward `targetEndUs` (already clamped by
- * the caller into a feasible window). Mutates the clip so the duration
- * invariant holds EXACTLY: sourceOut is derived first, then
- * timelineDurationUs = round((out-in)/rate). Returns the actual new end.
+ * the caller into a feasible window). Mutates the clip so BOTH export gates
+ * hold: the new end is a whole-frame span from the clip's start, and
+ * timelineDurationUs = round((out-in)/rate) exactly. Returns the actual new end.
  */
 function trimMediaRight(
   clip: MediaClip,
@@ -1075,9 +1175,33 @@ function trimMediaRight(
   maxEndUs: MicroSec,
   minDurUs: MicroSec,
   assetDurationUs: MicroSec | undefined,
+  fps: Rational,
 ): MicroSec {
   const start = clip.timelineStartUs;
   const rate = clip.speed.rate;
+
+  // Grid first (see the block comment above). `maxSourceSpanUs` keeps the
+  // derived out point inside the media even when the timeline cap is looser —
+  // clamping the OUT POINT after the fact is what broke the grid before.
+  const fitted = fitSpanFromStart(
+    start,
+    targetEndUs - start,
+    maxEndUs - start,
+    rate,
+    (assetDurationUs ?? Number.MAX_SAFE_INTEGER) - clip.sourceInUs,
+    fps,
+  );
+  if (fitted !== null) {
+    clip.sourceOutUs = clip.sourceInUs + fitted.sourceSpanUs;
+    clip.timelineDurationUs = fitted.durationUs;
+    remapKeyframes(clip, 0, fitted.durationUs);
+    clampAudioFadesToDuration(clip);
+    return start + fitted.durationUs;
+  }
+
+  // No frame count in range has an admissible source span (only reachable
+  // below 1x). Fall back to the source-derived length: it still satisfies the
+  // duration formula, and refusing the drag outright would be worse.
   let newOut = clip.sourceInUs + roundHalfUp((targetEndUs - start) * rate);
   if (assetDurationUs !== undefined) newOut = Math.min(newOut, assetDurationUs);
   newOut = Math.max(newOut, clip.sourceInUs + 1);
@@ -1111,12 +1235,41 @@ function trimMediaLeft(
   minStartUs: MicroSec,
   minDurUs: MicroSec,
   anchor: 'end' | 'start',
+  fps: Rational,
 ): { newStartUs: MicroSec; durationDeltaUs: MicroSec } {
   const oldStart = clip.timelineStartUs;
   const oldDur = clip.timelineDurationUs;
   const end = oldStart + oldDur;
   const rate = clip.speed.rate;
 
+  // Grid first (see the block comment above the fitters). WHICH edge has to
+  // land on a frame boundary depends on the anchor: with the end pinned
+  // (normal trim) it is the new START, with the start pinned (ripple trim) it
+  // is the new END. The source ceiling is the same either way — `sourceInUs`
+  // floors at 0, so the window can never be longer than `sourceOutUs`, and it
+  // is exactly that floor that used to hand back an off-grid length.
+  const fitted =
+    anchor === 'end'
+      ? fitSpanToEnd(end, end - targetStartUs, end - minStartUs, rate, clip.sourceOutUs, fps)
+      : fitSpanFromStart(
+          oldStart,
+          end - targetStartUs,
+          Number.MAX_SAFE_INTEGER,
+          rate,
+          clip.sourceOutUs,
+          fps,
+        );
+  if (fitted !== null) {
+    clip.sourceInUs = clip.sourceOutUs - fitted.sourceSpanUs;
+    clip.timelineDurationUs = fitted.durationUs;
+    if (anchor === 'end') clip.timelineStartUs = end - fitted.durationUs;
+    remapKeyframes(clip, fitted.durationUs - oldDur, fitted.durationUs);
+    clampAudioFadesToDuration(clip);
+    return { newStartUs: clip.timelineStartUs, durationDeltaUs: fitted.durationUs - oldDur };
+  }
+
+  // No reachable frame count (only possible below 1x) — source-derived
+  // fallback, which still satisfies the duration formula.
   let newIn = clip.sourceInUs + roundHalfUp((targetStartUs - oldStart) * rate);
   newIn = clamp(newIn, 0, clip.sourceOutUs - 1);
   let newDur = clipTimelineDurationUs(newIn, clip.sourceOutUs, rate);
@@ -1187,16 +1340,29 @@ export function applyTrimToDraft(
     const aAssetDur = assetDurations.get(a.assetId);
     const aMaxEnd =
       aAssetDur !== undefined
-        ? aStart + clipTimelineDurationUs(a.sourceInUs, aAssetDur, a.speed.rate)
+        ? aStart +
+          floorDurationToFrameSpan(
+            aStart,
+            clipTimelineDurationUs(a.sourceInUs, aAssetDur, a.speed.rate),
+            fps,
+          )
         : Number.MAX_SAFE_INTEGER;
     const bMinStart = bEnd - clipTimelineDurationUs(0, b.sourceOutUs, b.speed.rate);
-    const lo = Math.max(aStart + minDur, bMinStart);
-    const hi = Math.min(bEnd - minDur, aMaxEnd);
+    // The cut is SHARED — A's end and B's start are the same instant — so the
+    // bounds are rounded INWARD onto the grid before the clamp. Both source
+    // limits above are raw container microseconds; clamping the cut to one of
+    // them puts BOTH clips off the grid, and rounding outward instead would
+    // hand back a cut one of the two sides has no source for.
+    const lo = ceilUsToFrameGrid(Math.max(aStart + frameSpanUs(aStart, 1, fps), bMinStart), fps);
+    const hi = floorUsToFrameGrid(
+      Math.min(frameToUs(usToFrame(bEnd, fps) - 1, fps), aMaxEnd),
+      fps,
+    );
     if (lo > hi) return fail('no room to roll');
     target = clamp(target, lo, hi);
 
-    const newCut = trimMediaRight(a, target, hi, minDur, aAssetDur);
-    trimMediaLeft(b, newCut, newCut, minDur, 'end');
+    const newCut = trimMediaRight(a, target, hi, minDur, aAssetDur, fps);
+    trimMediaLeft(b, newCut, newCut, minDur, 'end', fps);
     // Rounding may leave B starting 1 us before A's end — push B's in-point.
     for (let guard = 0; guard < 32 && b.timelineStartUs < newCut && b.sourceInUs < b.sourceOutUs - 1; guard++) {
       b.sourceInUs += 1;
@@ -1213,12 +1379,25 @@ export function applyTrimToDraft(
 
   if (edge === 'right') {
     const start = clip.timelineStartUs;
-    const minEnd = start + minDur;
+    // One whole frame AT THIS START. `minDur` is the length of a frame at time
+    // zero, and outside integer fps that is a microsecond off the span here —
+    // clamping to it would put the end off the grid all by itself.
+    const minEnd = start + frameSpanUs(start, 1, fps);
     let maxEnd = Number.MAX_SAFE_INTEGER;
     if (isMediaClip(clip)) {
       const assetDur = assetDurations.get(clip.assetId);
       if (assetDur !== undefined) {
-        maxEnd = start + clipTimelineDurationUs(clip.sourceInUs, assetDur, clip.speed.rate);
+        // The source limit is a raw container duration (ffprobe: 7.307300 s) —
+        // NOT a frame boundary. Floor it to a whole frame span from this clip's
+        // start; clamping the drag to the unfloored value is what pushed the
+        // clip's end off the grid and its export to HTTP 422.
+        maxEnd =
+          start +
+          floorDurationToFrameSpan(
+            start,
+            clipTimelineDurationUs(clip.sourceInUs, assetDur, clip.speed.rate),
+            fps,
+          );
       }
     }
     if (effectiveMode === 'normal' && next) maxEnd = Math.min(maxEnd, next.timelineStartUs);
@@ -1228,12 +1407,23 @@ export function applyTrimToDraft(
     const oldEnd = clipEndUs(clip);
     let newEnd: MicroSec;
     if (isMediaClip(clip)) {
-      newEnd = trimMediaRight(clip, target, maxEnd, minDur, assetDurations.get(clip.assetId));
+      newEnd = trimMediaRight(clip, target, maxEnd, minDur, assetDurations.get(clip.assetId), fps);
     } else {
-      clip.timelineDurationUs = target - start;
-      remapKeyframes(clip, 0, clip.timelineDurationUs);
+      // No source to run out of, but the same grid rule: the length is a whole
+      // frame span from the start (rate 1 makes the source span its identity).
+      const fitted = fitSpanFromStart(
+        start,
+        target - start,
+        maxEnd - start,
+        1,
+        Number.MAX_SAFE_INTEGER,
+        fps,
+      );
+      const newDur = fitted?.durationUs ?? target - start;
+      clip.timelineDurationUs = newDur;
+      remapKeyframes(clip, 0, newDur);
       clampAudioFadesToDuration(clip);
-      newEnd = target;
+      newEnd = start + newDur;
     }
     if (effectiveMode === 'ripple'
       && !rippleFollowers(track, clipIndex + 1, oldEnd, newEnd, fps, assetDurations)) {
@@ -1246,7 +1436,9 @@ export function applyTrimToDraft(
 
   // edge === 'left'
   const end = clipEndUs(clip);
-  const maxStart = end - minDur;
+  // Last frame boundary before the end: a clip has to keep one whole frame,
+  // and with the end anchored that minimum is a grid position, not `minDur`.
+  const maxStart = frameToUs(Math.max(0, usToFrame(end, fps) - 1), fps);
   let minStart = effectiveMode === 'normal' && prev ? clipEndUs(prev) : 0;
   if (isMediaClip(clip)) {
     minStart = Math.max(
@@ -1259,17 +1451,26 @@ export function applyTrimToDraft(
 
   if (isMediaClip(clip)) {
     if (effectiveMode === 'ripple') {
-      trimMediaLeft(clip, target, 0, minDur, 'start');
+      trimMediaLeft(clip, target, 0, minDur, 'start', fps);
       if (!rippleFollowers(track, clipIndex + 1, end, clipEndUs(clip), fps, assetDurations)) {
         return fail('no room to ripple the following clips');
       }
     } else {
-      trimMediaLeft(clip, target, minStart, minDur, 'end');
+      trimMediaLeft(clip, target, minStart, minDur, 'end', fps);
     }
   } else {
     const oldDur = clip.timelineDurationUs;
     if (effectiveMode === 'ripple') {
-      const newDur = end - target;
+      // Start pinned: the END is the edge that has to stay on the grid.
+      const fitted = fitSpanFromStart(
+        clip.timelineStartUs,
+        end - target,
+        Number.MAX_SAFE_INTEGER,
+        1,
+        Number.MAX_SAFE_INTEGER,
+        fps,
+      );
+      const newDur = fitted?.durationUs ?? end - target;
       clip.timelineDurationUs = newDur;
       remapKeyframes(clip, newDur - oldDur, newDur);
       clampAudioFadesToDuration(clip);
@@ -1277,9 +1478,19 @@ export function applyTrimToDraft(
         return fail('no room to ripple the following clips');
       }
     } else {
-      clip.timelineStartUs = target;
-      clip.timelineDurationUs = end - target;
-      remapKeyframes(clip, clip.timelineDurationUs - oldDur, clip.timelineDurationUs);
+      // End pinned: the new START is the edge that has to stay on the grid.
+      const fitted = fitSpanToEnd(
+        end,
+        end - target,
+        end - minStart,
+        1,
+        Number.MAX_SAFE_INTEGER,
+        fps,
+      );
+      const newDur = fitted?.durationUs ?? end - target;
+      clip.timelineStartUs = end - newDur;
+      clip.timelineDurationUs = newDur;
+      remapKeyframes(clip, newDur - oldDur, newDur);
       clampAudioFadesToDuration(clip);
     }
   }
@@ -1298,7 +1509,6 @@ export function trimClip(
   useDocStore.getState().mutate('trim', 'Klip kırpıldı', (d) => {
     result = applyTrimToDraft(d, clipId, edge, targetEdgeUs, mode, durations);
   });
-  assertDocValidDev('trimClip');
   return result;
 }
 
@@ -1466,7 +1676,6 @@ export function splitClipAt(clipId: Uuid, timeUs: MicroSec): OpResult {
   useDocStore.getState().mutate('split', 'Klip bölündü', (d) => {
     result = applySplitToDraft(d, clipId, timeUs, durations);
   });
-  assertDocValidDev('splitClipAt');
   return result;
 }
 
@@ -1546,7 +1755,6 @@ export function splitAtPlayhead(timeUs?: MicroSec): OpResult {
     });
   }
   tx.commit();
-  assertDocValidDev('splitAtPlayhead');
   return any ? OK : fail('split failed');
 }
 
@@ -1571,7 +1779,6 @@ export function trimSelectedToPlayhead(edge: TrimEdge, timeUs?: MicroSec): OpRes
     });
   }
   tx.commit();
-  assertDocValidDev('trimSelectedToPlayhead');
   return any ? OK : fail('trim failed');
 }
 
@@ -1634,7 +1841,6 @@ export function deleteClips(clipIds: readonly Uuid[], opts: { ripple?: boolean }
       );
     }
   });
-  assertDocValidDev('deleteClips');
 
   const editor = useEditorStore.getState();
   const nextSelection = [...editor.selection].filter((id) => !removing.has(id));
@@ -1940,7 +2146,6 @@ export function addTransition(
     writeTransition(target, type, plan.durationUs);
     result = okWith(planNotice(plan));
   });
-  assertDocValidDev('addTransition');
   return result;
 }
 
@@ -1969,7 +2174,6 @@ export function removeTransition(clipId: Uuid, edge: TransitionEdge): OpResult {
     delete cut.b.transitionIn;
     result = OK;
   });
-  assertDocValidDev('removeTransition');
   return result;
 }
 
@@ -1990,7 +2194,6 @@ export function setTransitionType(
     writeTransition(cut, type, existing.durationUs);
     result = OK;
   });
-  assertDocValidDev('setTransitionType');
   return result;
 }
 
@@ -2022,7 +2225,6 @@ export function setTransitionDuration(
     writeTransition(cut, existing.type, plan.durationUs);
     result = okWith(planNotice(plan));
   });
-  assertDocValidDev('setTransitionDuration');
   return result;
 }
 
@@ -2157,7 +2359,6 @@ function insertBatch(
       if (track) insertClipSorted(track, clip);
     }
   });
-  assertDocValidDev(actionType);
   useEditorStore.getState().setSelection(batch.map((b) => b.clip.id));
   return OK;
 }
@@ -2421,7 +2622,6 @@ export function setClipAudio(clipIds: readonly Uuid[], patch: ClipAudioPatch): O
   useDocStore.getState().mutate('clipAudio', audioLabel(patch), (d) => {
     result = applyClipAudioToDraft(d, clipIds, patch);
   });
-  assertDocValidDev('setClipAudio');
   return result;
 }
 
@@ -2493,7 +2693,6 @@ export function setClipTransform(
   useDocStore.getState().mutate('clipTransform', transformLabel(patch), (d) => {
     result = applyClipTransformToDraft(d, clipIds, patch);
   });
-  assertDocValidDev('setClipTransform');
   return result;
 }
 
@@ -2520,7 +2719,6 @@ export function setClipOpacity(clipIds: readonly Uuid[], opacity: number): OpRes
   useDocStore.getState().mutate('clipOpacity', 'Opaklık değiştirildi', (d) => {
     result = applyClipOpacityToDraft(d, clipIds, opacity);
   });
-  assertDocValidDev('setClipOpacity');
   return result;
 }
 
@@ -2548,7 +2746,6 @@ export function resetClipTransform(clipIds: readonly Uuid[]): OpResult {
           ? okWith(TRANSFORM_APPLIED_TO_TRANSITION_CHAIN)
           : OK;
   });
-  assertDocValidDev('resetClipTransform');
   return result;
 }
 
@@ -2666,7 +2863,6 @@ export function detachAudio(clipId: Uuid): OpResult {
     const t = dd.tracks.find((x) => x.id === target!.id);
     if (t) insertClipSorted(t, audioClip);
   });
-  assertDocValidDev('detachAudio');
   return OK;
 }
 
@@ -2682,7 +2878,6 @@ export function addMarkerAtPlayhead(atUs?: MicroSec): void {
   useDocStore.getState().mutate('marker', 'Marker eklendi', (dd) => {
     dd.markers.push({ id: uuidv7(), timeUs });
   });
-  assertDocValidDev('addMarkerAtPlayhead');
 }
 
 /** All clip starts/ends, sorted unique — ↑/↓ cut-point navigation. */
@@ -2787,7 +2982,6 @@ function insertOverlayClip(
       const t = dd.tracks.find((x) => x.id === target.trackId);
       if (t) insertClipSorted(t, clip);
     });
-    assertDocValidDev('insertOverlayClip');
     useEditorStore.getState().setSelection([clip.id]);
     return { ok: true, clipId: clip.id, trackId: target.trackId };
   }
@@ -2802,7 +2996,6 @@ function insertOverlayClip(
     // from "text does not work".
     dd.tracks.unshift(newTrack);
   });
-  assertDocValidDev('insertOverlayClip(newTrack)');
   useEditorStore.getState().setSelection([clip.id]);
   return { ok: true, clipId: clip.id, trackId: newTrack.id };
 }
@@ -3035,7 +3228,6 @@ export function setClipText(clipIds: readonly Uuid[], patch: ClipTextPatch): OpR
   useDocStore.getState().mutate('clipText', textLabel(patch), (d) => {
     result = applyClipTextToDraft(d, clipIds, patch);
   });
-  assertDocValidDev('setClipText');
   return result;
 }
 
@@ -3105,7 +3297,6 @@ export function setClipShape(clipIds: readonly Uuid[], patch: ClipShapePatch): O
   useDocStore.getState().mutate('clipShape', shapeLabel(patch), (d) => {
     result = applyClipShapeToDraft(d, clipIds, patch);
   });
-  assertDocValidDev('setClipShape');
   return result;
 }
 
@@ -3425,7 +3616,6 @@ export function setClipSpeed(
   useDocStore.getState().mutate('clipSpeed', 'Klip hızı değiştirildi', (d) => {
     result = applyClipSpeedToDraft(d, clipIds, rate, opts);
   });
-  assertDocValidDev('setClipSpeed');
   return result;
 }
 
@@ -3568,7 +3758,6 @@ export function setClipColorAdjust(
   useDocStore.getState().mutate('clipColor', colorAdjustLabel(patch), (d) => {
     result = applyClipColorAdjustToDraft(d, clipIds, patch);
   });
-  assertDocValidDev('setClipColorAdjust');
   return result;
 }
 
@@ -3596,7 +3785,6 @@ export function setClipColorAdjustEnabled(
       }
       result = touched > 0 ? OK : fail('no visual clip in selection');
     });
-  assertDocValidDev('setClipColorAdjustEnabled');
   return result;
 }
 
@@ -3621,6 +3809,5 @@ export function resetClipColorAdjust(clipIds: readonly Uuid[]): OpResult {
     }
     result = touched > 0 ? OK : fail('no visual clip in selection');
   });
-  assertDocValidDev('resetClipColorAdjust');
   return result;
 }

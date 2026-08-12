@@ -1110,7 +1110,7 @@
       }
     },
     {
-      "label": "30: add @33_333",
+      "label": "30: right edge back out past the source end @0",
       "fps": "30/1",
       "doc": {
         "schemaVersion": 1,
@@ -1135,6 +1135,1037 @@
             "clips": [
               {
                 "id": "00000000-0000-7000-8000-000000000011",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7300000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7300000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: ripple right edge back out past the source end @0",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000010",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000011",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7300000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7300000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: right edge back out past the source end @33333",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000012",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000013",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 33333,
+                "timelineDurationUs": 7300000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7300000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: ripple right edge back out past the source end @33333",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000012",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000013",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 33333,
+                "timelineDurationUs": 7300000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7300000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: right edge back out past the source end @1234567",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000014",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000015",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1233333,
+                "timelineDurationUs": 7300000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7300000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: ripple right edge back out past the source end @1234567",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000014",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000015",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1233333,
+                "timelineDurationUs": 7300000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7300000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: ripple left back out past the source start (len 4000000 handle 1000000)",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000016",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000017",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1000000,
+                "timelineDurationUs": 4000000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4000000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: ripple left back out past the source start (len 4000000 handle 1033333)",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000018",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000019",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1033333,
+                "timelineDurationUs": 4000000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4000000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: ripple left back out past the source start (len 4000000 handle 1500000)",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000020",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000021",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1500000,
+                "timelineDurationUs": 4000000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4000000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: left trim in at 1.235x (normal)",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000022",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000023",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3000000,
+                "timelineDurationUs": 3900000,
+                "sourceInUs": 2470000,
+                "sourceOutUs": 7286500,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: left edge back out at 1.235x (normal)",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000022",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000023",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1000000,
+                "timelineDurationUs": 5900000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7286500,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: left trim in at 1.235x (ripple)",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000024",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000025",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3000000,
+                "timelineDurationUs": 3900000,
+                "sourceInUs": 2470000,
+                "sourceOutUs": 7286500,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: left edge back out at 1.235x (ripple)",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000024",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000025",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3000000,
+                "timelineDurationUs": 5900000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7286500,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: split before roll",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000026",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000027",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 3000000,
+                "sourceInUs": 0,
+                "sourceOutUs": 3000000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000028",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3000000,
+                "timelineDurationUs": 4300000,
+                "sourceInUs": 3000000,
+                "sourceOutUs": 7300000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: roll to A's source end",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000026",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000027",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7266667,
+                "sourceInUs": 0,
+                "sourceOutUs": 7266667,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000028",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 7266667,
+                "timelineDurationUs": 33333,
+                "sourceInUs": 7266667,
+                "sourceOutUs": 7300000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: roll to B's source start",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000026",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000027",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 33333,
+                "sourceInUs": 0,
+                "sourceOutUs": 33333,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000028",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 33333,
+                "timelineDurationUs": 7266667,
+                "sourceInUs": 33333,
+                "sourceOutUs": 7300000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "30: add @33_333",
+      "fps": "30/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000029",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000030",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 33333,
@@ -1186,7 +2217,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000012",
+            "id": "00000000-0000-7000-8000-000000000031",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -1194,7 +2225,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000013",
+                "id": "00000000-0000-7000-8000-000000000032",
                 "timelineStartUs": 1500000,
                 "timelineDurationUs": 5000000,
                 "transform": {
@@ -1223,14 +2254,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000010",
+            "id": "00000000-0000-7000-8000-000000000029",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000011",
+                "id": "00000000-0000-7000-8000-000000000030",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 33333,
@@ -1282,7 +2313,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000012",
+            "id": "00000000-0000-7000-8000-000000000031",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -1290,7 +2321,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000013",
+                "id": "00000000-0000-7000-8000-000000000032",
                 "timelineStartUs": 1500000,
                 "timelineDurationUs": 5000000,
                 "transform": {
@@ -1319,14 +2350,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000010",
+            "id": "00000000-0000-7000-8000-000000000029",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000011",
+                "id": "00000000-0000-7000-8000-000000000030",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 33333,
@@ -1378,7 +2409,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000012",
+            "id": "00000000-0000-7000-8000-000000000031",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -1386,7 +2417,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000013",
+                "id": "00000000-0000-7000-8000-000000000032",
                 "timelineStartUs": 1500000,
                 "timelineDurationUs": 5000000,
                 "transform": {
@@ -1415,14 +2446,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000010",
+            "id": "00000000-0000-7000-8000-000000000029",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000011",
+                "id": "00000000-0000-7000-8000-000000000030",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 33333,
@@ -1474,7 +2505,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000012",
+            "id": "00000000-0000-7000-8000-000000000031",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -1482,7 +2513,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000013",
+                "id": "00000000-0000-7000-8000-000000000032",
                 "timelineStartUs": 1500000,
                 "timelineDurationUs": 5000000,
                 "transform": {
@@ -1511,14 +2542,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000010",
+            "id": "00000000-0000-7000-8000-000000000029",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000011",
+                "id": "00000000-0000-7000-8000-000000000030",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 33333,
@@ -1570,14 +2601,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000014",
+            "id": "00000000-0000-7000-8000-000000000033",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000015",
+                "id": "00000000-0000-7000-8000-000000000034",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -1629,14 +2660,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000014",
+            "id": "00000000-0000-7000-8000-000000000033",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000015",
+                "id": "00000000-0000-7000-8000-000000000034",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -1665,7 +2696,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000016",
+                "id": "00000000-0000-7000-8000-000000000035",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000b",
                 "timelineStartUs": 9109100,
@@ -1717,14 +2748,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000017",
+            "id": "00000000-0000-7000-8000-000000000036",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000018",
+                "id": "00000000-0000-7000-8000-000000000037",
                 "kind": "image",
                 "assetId": "01890000-0000-7000-8000-00000000000c",
                 "timelineStartUs": 1234567,
@@ -1771,14 +2802,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000019",
+            "id": "00000000-0000-7000-8000-000000000038",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000020",
+                "id": "00000000-0000-7000-8000-000000000039",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -1807,7 +2838,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000021",
+                "id": "00000000-0000-7000-8000-000000000040",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3136467,
@@ -1859,14 +2890,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000019",
+            "id": "00000000-0000-7000-8000-000000000038",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000020",
+                "id": "00000000-0000-7000-8000-000000000039",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -1895,7 +2926,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000021",
+                "id": "00000000-0000-7000-8000-000000000040",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3136467,
@@ -1924,7 +2955,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000022",
+                "id": "00000000-0000-7000-8000-000000000041",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5005000,
@@ -1976,14 +3007,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000019",
+            "id": "00000000-0000-7000-8000-000000000038",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000020",
+                "id": "00000000-0000-7000-8000-000000000039",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -2012,7 +3043,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000021",
+                "id": "00000000-0000-7000-8000-000000000040",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3503500,
@@ -2041,7 +3072,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000022",
+                "id": "00000000-0000-7000-8000-000000000041",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5005000,
@@ -2093,14 +3124,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000019",
+            "id": "00000000-0000-7000-8000-000000000038",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000020",
+                "id": "00000000-0000-7000-8000-000000000039",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -2129,7 +3160,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000021",
+                "id": "00000000-0000-7000-8000-000000000040",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3503500,
@@ -2158,7 +3189,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000022",
+                "id": "00000000-0000-7000-8000-000000000041",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5005000,
@@ -2210,14 +3241,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000019",
+            "id": "00000000-0000-7000-8000-000000000038",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000020",
+                "id": "00000000-0000-7000-8000-000000000039",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -2246,7 +3277,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000021",
+                "id": "00000000-0000-7000-8000-000000000040",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 2369033,
@@ -2275,7 +3306,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000022",
+                "id": "00000000-0000-7000-8000-000000000041",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3870533,
@@ -2327,14 +3358,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000019",
+            "id": "00000000-0000-7000-8000-000000000038",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000020",
+                "id": "00000000-0000-7000-8000-000000000039",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -2363,7 +3394,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000021",
+                "id": "00000000-0000-7000-8000-000000000040",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 2369033,
@@ -2392,7 +3423,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000022",
+                "id": "00000000-0000-7000-8000-000000000041",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 4571233,
@@ -2444,14 +3475,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000019",
+            "id": "00000000-0000-7000-8000-000000000038",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000020",
+                "id": "00000000-0000-7000-8000-000000000039",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 1234567,
@@ -2480,7 +3511,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000021",
+                "id": "00000000-0000-7000-8000-000000000040",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3603600,
@@ -2509,7 +3540,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000022",
+                "id": "00000000-0000-7000-8000-000000000041",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5805800,
@@ -2561,14 +3592,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000019",
+            "id": "00000000-0000-7000-8000-000000000038",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000020",
+                "id": "00000000-0000-7000-8000-000000000039",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 900900,
@@ -2597,7 +3628,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000021",
+                "id": "00000000-0000-7000-8000-000000000040",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3269933,
@@ -2626,12 +3657,1043 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000022",
+                "id": "00000000-0000-7000-8000-000000000041",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5472133,
                 "timelineDurationUs": 2302300,
                 "sourceInUs": 5005000,
+                "sourceOutUs": 7307300,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: right edge back out past the source end @0",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000042",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000043",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7307300,
+                "sourceInUs": 0,
+                "sourceOutUs": 7307300,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: ripple right edge back out past the source end @0",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000042",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000043",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7307300,
+                "sourceInUs": 0,
+                "sourceOutUs": 7307300,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: right edge back out past the source end @33333",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000044",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000045",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 33367,
+                "timelineDurationUs": 7307300,
+                "sourceInUs": 0,
+                "sourceOutUs": 7307300,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: ripple right edge back out past the source end @33333",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000044",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000045",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 33367,
+                "timelineDurationUs": 7307300,
+                "sourceInUs": 0,
+                "sourceOutUs": 7307300,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: right edge back out past the source end @1234567",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000046",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000047",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1234567,
+                "timelineDurationUs": 7307300,
+                "sourceInUs": 0,
+                "sourceOutUs": 7307300,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: ripple right edge back out past the source end @1234567",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000046",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000047",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1234567,
+                "timelineDurationUs": 7307300,
+                "sourceInUs": 0,
+                "sourceOutUs": 7307300,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: ripple left back out past the source start (len 4000000 handle 1000000)",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000048",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000049",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1001000,
+                "timelineDurationUs": 4004000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4004000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: ripple left back out past the source start (len 4000000 handle 1033333)",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000050",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000051",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1034367,
+                "timelineDurationUs": 4004000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4004000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: ripple left back out past the source start (len 4000000 handle 1500000)",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000052",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000053",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1501500,
+                "timelineDurationUs": 4004000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4004000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: left trim in at 1.235x (normal)",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000054",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000055",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3003000,
+                "timelineDurationUs": 3903900,
+                "sourceInUs": 2472471,
+                "sourceOutUs": 7293787,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: left edge back out at 1.235x (normal)",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000054",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000055",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1001000,
+                "timelineDurationUs": 5905900,
+                "sourceInUs": 0,
+                "sourceOutUs": 7293787,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: left trim in at 1.235x (ripple)",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000056",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000057",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3003000,
+                "timelineDurationUs": 3903900,
+                "sourceInUs": 2472471,
+                "sourceOutUs": 7293787,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: left edge back out at 1.235x (ripple)",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000056",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000057",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3003000,
+                "timelineDurationUs": 5905900,
+                "sourceInUs": 0,
+                "sourceOutUs": 7293787,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: split before roll",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000058",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000059",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 3003000,
+                "sourceInUs": 0,
+                "sourceOutUs": 3003000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000060",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3003000,
+                "timelineDurationUs": 4304300,
+                "sourceInUs": 3003000,
+                "sourceOutUs": 7307300,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: roll to A's source end",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000058",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000059",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7273933,
+                "sourceInUs": 0,
+                "sourceOutUs": 7273933,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000060",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 7273933,
+                "timelineDurationUs": 33367,
+                "sourceInUs": 7273933,
+                "sourceOutUs": 7307300,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "29.97: roll to B's source start",
+      "fps": "30000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 30000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000058",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000059",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 33367,
+                "sourceInUs": 0,
+                "sourceOutUs": 33367,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000060",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 33367,
+                "timelineDurationUs": 7273933,
+                "sourceInUs": 33367,
                 "sourceOutUs": 7307300,
                 "speed": {
                   "rate": 1
@@ -2678,14 +4740,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000023",
+            "id": "00000000-0000-7000-8000-000000000061",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000024",
+                "id": "00000000-0000-7000-8000-000000000062",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 33367,
@@ -2737,7 +4799,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000025",
+            "id": "00000000-0000-7000-8000-000000000063",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -2745,7 +4807,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000026",
+                "id": "00000000-0000-7000-8000-000000000064",
                 "timelineStartUs": 1501500,
                 "timelineDurationUs": 5005000,
                 "transform": {
@@ -2774,14 +4836,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000023",
+            "id": "00000000-0000-7000-8000-000000000061",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000024",
+                "id": "00000000-0000-7000-8000-000000000062",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 33367,
@@ -2833,7 +4895,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000025",
+            "id": "00000000-0000-7000-8000-000000000063",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -2841,7 +4903,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000026",
+                "id": "00000000-0000-7000-8000-000000000064",
                 "timelineStartUs": 1501500,
                 "timelineDurationUs": 5005000,
                 "transform": {
@@ -2870,14 +4932,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000023",
+            "id": "00000000-0000-7000-8000-000000000061",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000024",
+                "id": "00000000-0000-7000-8000-000000000062",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 33367,
@@ -2929,7 +4991,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000025",
+            "id": "00000000-0000-7000-8000-000000000063",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -2937,7 +4999,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000026",
+                "id": "00000000-0000-7000-8000-000000000064",
                 "timelineStartUs": 1501500,
                 "timelineDurationUs": 5005000,
                 "transform": {
@@ -2966,14 +5028,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000023",
+            "id": "00000000-0000-7000-8000-000000000061",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000024",
+                "id": "00000000-0000-7000-8000-000000000062",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 33367,
@@ -3025,7 +5087,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000025",
+            "id": "00000000-0000-7000-8000-000000000063",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -3033,7 +5095,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000026",
+                "id": "00000000-0000-7000-8000-000000000064",
                 "timelineStartUs": 1501500,
                 "timelineDurationUs": 5005000,
                 "transform": {
@@ -3062,14 +5124,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000023",
+            "id": "00000000-0000-7000-8000-000000000061",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000024",
+                "id": "00000000-0000-7000-8000-000000000062",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 33367,
@@ -3121,14 +5183,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000027",
+            "id": "00000000-0000-7000-8000-000000000065",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000028",
+                "id": "00000000-0000-7000-8000-000000000066",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -3180,14 +5242,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000027",
+            "id": "00000000-0000-7000-8000-000000000065",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000028",
+                "id": "00000000-0000-7000-8000-000000000066",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -3216,7 +5278,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000029",
+                "id": "00000000-0000-7000-8000-000000000067",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000b",
                 "timelineStartUs": 9120000,
@@ -3268,14 +5330,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000030",
+            "id": "00000000-0000-7000-8000-000000000068",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000031",
+                "id": "00000000-0000-7000-8000-000000000069",
                 "kind": "image",
                 "assetId": "01890000-0000-7000-8000-00000000000c",
                 "timelineStartUs": 1240000,
@@ -3322,14 +5384,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000032",
+            "id": "00000000-0000-7000-8000-000000000070",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000033",
+                "id": "00000000-0000-7000-8000-000000000071",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -3358,7 +5420,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000034",
+                "id": "00000000-0000-7000-8000-000000000072",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3160000,
@@ -3410,14 +5472,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000032",
+            "id": "00000000-0000-7000-8000-000000000070",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000033",
+                "id": "00000000-0000-7000-8000-000000000071",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -3446,7 +5508,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000034",
+                "id": "00000000-0000-7000-8000-000000000072",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3160000,
@@ -3475,7 +5537,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000035",
+                "id": "00000000-0000-7000-8000-000000000073",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5000000,
@@ -3527,14 +5589,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000032",
+            "id": "00000000-0000-7000-8000-000000000070",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000033",
+                "id": "00000000-0000-7000-8000-000000000071",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -3563,7 +5625,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000034",
+                "id": "00000000-0000-7000-8000-000000000072",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3520000,
@@ -3592,7 +5654,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000035",
+                "id": "00000000-0000-7000-8000-000000000073",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5000000,
@@ -3644,14 +5706,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000032",
+            "id": "00000000-0000-7000-8000-000000000070",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000033",
+                "id": "00000000-0000-7000-8000-000000000071",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -3680,7 +5742,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000034",
+                "id": "00000000-0000-7000-8000-000000000072",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3520000,
@@ -3709,7 +5771,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000035",
+                "id": "00000000-0000-7000-8000-000000000073",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5000000,
@@ -3761,14 +5823,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000032",
+            "id": "00000000-0000-7000-8000-000000000070",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000033",
+                "id": "00000000-0000-7000-8000-000000000071",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -3797,7 +5859,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000034",
+                "id": "00000000-0000-7000-8000-000000000072",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 2360000,
@@ -3826,7 +5888,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000035",
+                "id": "00000000-0000-7000-8000-000000000073",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3840000,
@@ -3878,14 +5940,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000032",
+            "id": "00000000-0000-7000-8000-000000000070",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000033",
+                "id": "00000000-0000-7000-8000-000000000071",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -3914,7 +5976,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000034",
+                "id": "00000000-0000-7000-8000-000000000072",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 2360000,
@@ -3943,7 +6005,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000035",
+                "id": "00000000-0000-7000-8000-000000000073",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 4560000,
@@ -3995,14 +6057,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000032",
+            "id": "00000000-0000-7000-8000-000000000070",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000033",
+                "id": "00000000-0000-7000-8000-000000000071",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 1240000,
@@ -4031,7 +6093,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000034",
+                "id": "00000000-0000-7000-8000-000000000072",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3600000,
@@ -4060,7 +6122,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000035",
+                "id": "00000000-0000-7000-8000-000000000073",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5800000,
@@ -4112,14 +6174,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000032",
+            "id": "00000000-0000-7000-8000-000000000070",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000033",
+                "id": "00000000-0000-7000-8000-000000000071",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 920000,
@@ -4148,7 +6210,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000034",
+                "id": "00000000-0000-7000-8000-000000000072",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3280000,
@@ -4177,12 +6239,1043 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000035",
+                "id": "00000000-0000-7000-8000-000000000073",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5480000,
                 "timelineDurationUs": 2280000,
                 "sourceInUs": 5000000,
+                "sourceOutUs": 7280000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: right edge back out past the source end @0",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000074",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000075",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7280000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7280000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: ripple right edge back out past the source end @0",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000074",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000075",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7280000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7280000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: right edge back out past the source end @33333",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000076",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000077",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 40000,
+                "timelineDurationUs": 7280000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7280000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: ripple right edge back out past the source end @33333",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000076",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000077",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 40000,
+                "timelineDurationUs": 7280000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7280000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: right edge back out past the source end @1234567",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000078",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000079",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1240000,
+                "timelineDurationUs": 7280000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7280000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: ripple right edge back out past the source end @1234567",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000078",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000079",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1240000,
+                "timelineDurationUs": 7280000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7280000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: ripple left back out past the source start (len 4000000 handle 1000000)",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000080",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000081",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1000000,
+                "timelineDurationUs": 4000000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4000000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: ripple left back out past the source start (len 4000000 handle 1033333)",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000082",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000083",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1040000,
+                "timelineDurationUs": 4000000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4000000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: ripple left back out past the source start (len 4000000 handle 1500000)",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000084",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000085",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1520000,
+                "timelineDurationUs": 4000000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4000000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: left trim in at 1.235x (normal)",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000086",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000087",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3000000,
+                "timelineDurationUs": 3880000,
+                "sourceInUs": 2470000,
+                "sourceOutUs": 7261800,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: left edge back out at 1.235x (normal)",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000086",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000087",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1000000,
+                "timelineDurationUs": 5880000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7261800,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: left trim in at 1.235x (ripple)",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000088",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000089",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3000000,
+                "timelineDurationUs": 3880000,
+                "sourceInUs": 2470000,
+                "sourceOutUs": 7261800,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: left edge back out at 1.235x (ripple)",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000088",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000089",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3000000,
+                "timelineDurationUs": 5880000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7261800,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: split before roll",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000090",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000091",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 3000000,
+                "sourceInUs": 0,
+                "sourceOutUs": 3000000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000092",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3000000,
+                "timelineDurationUs": 4280000,
+                "sourceInUs": 3000000,
+                "sourceOutUs": 7280000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: roll to A's source end",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000090",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000091",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7240000,
+                "sourceInUs": 0,
+                "sourceOutUs": 7240000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000092",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 7240000,
+                "timelineDurationUs": 40000,
+                "sourceInUs": 7240000,
+                "sourceOutUs": 7280000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "25: roll to B's source start",
+      "fps": "25/1",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 25,
+            "den": 1
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000090",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000091",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 40000,
+                "sourceInUs": 0,
+                "sourceOutUs": 40000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000092",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 40000,
+                "timelineDurationUs": 7240000,
+                "sourceInUs": 40000,
                 "sourceOutUs": 7280000,
                 "speed": {
                   "rate": 1
@@ -4229,14 +7322,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000036",
+            "id": "00000000-0000-7000-8000-000000000093",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000037",
+                "id": "00000000-0000-7000-8000-000000000094",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 40000,
@@ -4288,7 +7381,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000038",
+            "id": "00000000-0000-7000-8000-000000000095",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -4296,7 +7389,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000039",
+                "id": "00000000-0000-7000-8000-000000000096",
                 "timelineStartUs": 1520000,
                 "timelineDurationUs": 5000000,
                 "transform": {
@@ -4325,14 +7418,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000036",
+            "id": "00000000-0000-7000-8000-000000000093",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000037",
+                "id": "00000000-0000-7000-8000-000000000094",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 40000,
@@ -4384,7 +7477,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000038",
+            "id": "00000000-0000-7000-8000-000000000095",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -4392,7 +7485,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000039",
+                "id": "00000000-0000-7000-8000-000000000096",
                 "timelineStartUs": 1520000,
                 "timelineDurationUs": 5000000,
                 "transform": {
@@ -4421,14 +7514,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000036",
+            "id": "00000000-0000-7000-8000-000000000093",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000037",
+                "id": "00000000-0000-7000-8000-000000000094",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 40000,
@@ -4480,7 +7573,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000038",
+            "id": "00000000-0000-7000-8000-000000000095",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -4488,7 +7581,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000039",
+                "id": "00000000-0000-7000-8000-000000000096",
                 "timelineStartUs": 1520000,
                 "timelineDurationUs": 5000000,
                 "transform": {
@@ -4517,14 +7610,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000036",
+            "id": "00000000-0000-7000-8000-000000000093",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000037",
+                "id": "00000000-0000-7000-8000-000000000094",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 40000,
@@ -4576,7 +7669,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000038",
+            "id": "00000000-0000-7000-8000-000000000095",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -4584,7 +7677,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000039",
+                "id": "00000000-0000-7000-8000-000000000096",
                 "timelineStartUs": 1520000,
                 "timelineDurationUs": 5000000,
                 "transform": {
@@ -4613,14 +7706,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000036",
+            "id": "00000000-0000-7000-8000-000000000093",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000037",
+                "id": "00000000-0000-7000-8000-000000000094",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 40000,
@@ -4672,14 +7765,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000040",
+            "id": "00000000-0000-7000-8000-000000000097",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000041",
+                "id": "00000000-0000-7000-8000-000000000098",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -4731,14 +7824,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000040",
+            "id": "00000000-0000-7000-8000-000000000097",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000041",
+                "id": "00000000-0000-7000-8000-000000000098",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -4767,7 +7860,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000042",
+                "id": "00000000-0000-7000-8000-000000000099",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000b",
                 "timelineStartUs": 9134125,
@@ -4819,14 +7912,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000043",
+            "id": "00000000-0000-7000-8000-000000000100",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000044",
+                "id": "00000000-0000-7000-8000-000000000101",
                 "kind": "image",
                 "assetId": "01890000-0000-7000-8000-00000000000c",
                 "timelineStartUs": 1251250,
@@ -4873,14 +7966,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000045",
+            "id": "00000000-0000-7000-8000-000000000102",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000046",
+                "id": "00000000-0000-7000-8000-000000000103",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -4909,7 +8002,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000047",
+                "id": "00000000-0000-7000-8000-000000000104",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3128125,
@@ -4961,14 +8054,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000045",
+            "id": "00000000-0000-7000-8000-000000000102",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000046",
+                "id": "00000000-0000-7000-8000-000000000103",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -4997,7 +8090,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000047",
+                "id": "00000000-0000-7000-8000-000000000104",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3128125,
@@ -5026,7 +8119,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000048",
+                "id": "00000000-0000-7000-8000-000000000105",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5005000,
@@ -5078,14 +8171,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000045",
+            "id": "00000000-0000-7000-8000-000000000102",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000046",
+                "id": "00000000-0000-7000-8000-000000000103",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -5114,7 +8207,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000047",
+                "id": "00000000-0000-7000-8000-000000000104",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3503500,
@@ -5143,7 +8236,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000048",
+                "id": "00000000-0000-7000-8000-000000000105",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5005000,
@@ -5195,14 +8288,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000045",
+            "id": "00000000-0000-7000-8000-000000000102",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000046",
+                "id": "00000000-0000-7000-8000-000000000103",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -5231,7 +8324,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000047",
+                "id": "00000000-0000-7000-8000-000000000104",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3503500,
@@ -5260,7 +8353,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000048",
+                "id": "00000000-0000-7000-8000-000000000105",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5005000,
@@ -5312,14 +8405,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000045",
+            "id": "00000000-0000-7000-8000-000000000102",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000046",
+                "id": "00000000-0000-7000-8000-000000000103",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -5348,7 +8441,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000047",
+                "id": "00000000-0000-7000-8000-000000000104",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 2377375,
@@ -5377,7 +8470,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000048",
+                "id": "00000000-0000-7000-8000-000000000105",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3878875,
@@ -5429,14 +8522,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000045",
+            "id": "00000000-0000-7000-8000-000000000102",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000046",
+                "id": "00000000-0000-7000-8000-000000000103",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 0,
@@ -5465,7 +8558,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000047",
+                "id": "00000000-0000-7000-8000-000000000104",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 2377375,
@@ -5494,7 +8587,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000048",
+                "id": "00000000-0000-7000-8000-000000000105",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 4587917,
@@ -5546,14 +8639,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000045",
+            "id": "00000000-0000-7000-8000-000000000102",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000046",
+                "id": "00000000-0000-7000-8000-000000000103",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 1251250,
@@ -5582,7 +8675,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000047",
+                "id": "00000000-0000-7000-8000-000000000104",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3628625,
@@ -5611,7 +8704,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000048",
+                "id": "00000000-0000-7000-8000-000000000105",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5839167,
@@ -5663,14 +8756,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000045",
+            "id": "00000000-0000-7000-8000-000000000102",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000046",
+                "id": "00000000-0000-7000-8000-000000000103",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 917583,
@@ -5699,7 +8792,7 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000047",
+                "id": "00000000-0000-7000-8000-000000000104",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 3294958,
@@ -5728,12 +8821,1043 @@
                 "opacity": 1
               },
               {
-                "id": "00000000-0000-7000-8000-000000000048",
+                "id": "00000000-0000-7000-8000-000000000105",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 5505500,
                 "timelineDurationUs": 2293958,
                 "sourceInUs": 5005000,
+                "sourceOutUs": 7298958,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: right edge back out past the source end @0",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000106",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000107",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7298958,
+                "sourceInUs": 0,
+                "sourceOutUs": 7298958,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: ripple right edge back out past the source end @0",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000106",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000107",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7298958,
+                "sourceInUs": 0,
+                "sourceOutUs": 7298958,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: right edge back out past the source end @33333",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000108",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000109",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 41708,
+                "timelineDurationUs": 7298959,
+                "sourceInUs": 0,
+                "sourceOutUs": 7298959,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: ripple right edge back out past the source end @33333",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000108",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000109",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 41708,
+                "timelineDurationUs": 7298959,
+                "sourceInUs": 0,
+                "sourceOutUs": 7298959,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: right edge back out past the source end @1234567",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000110",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000111",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1251250,
+                "timelineDurationUs": 7298958,
+                "sourceInUs": 0,
+                "sourceOutUs": 7298958,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: ripple right edge back out past the source end @1234567",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000110",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000111",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1251250,
+                "timelineDurationUs": 7298958,
+                "sourceInUs": 0,
+                "sourceOutUs": 7298958,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: ripple left back out past the source start (len 4000000 handle 1000000)",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000112",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000113",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1001000,
+                "timelineDurationUs": 4004000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4004000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: ripple left back out past the source start (len 4000000 handle 1033333)",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000114",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000115",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1042708,
+                "timelineDurationUs": 4004000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4004000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: ripple left back out past the source start (len 4000000 handle 1500000)",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000116",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000117",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000b",
+                "timelineStartUs": 1501500,
+                "timelineDurationUs": 4004000,
+                "sourceInUs": 0,
+                "sourceOutUs": 4004000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: left trim in at 1.235x (normal)",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000118",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000119",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3003000,
+                "timelineDurationUs": 3878875,
+                "sourceInUs": 2472470,
+                "sourceOutUs": 7262881,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: left edge back out at 1.235x (normal)",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000118",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000119",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 1001000,
+                "timelineDurationUs": 5880875,
+                "sourceInUs": 0,
+                "sourceOutUs": 7262881,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: left trim in at 1.235x (ripple)",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000120",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000121",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3003000,
+                "timelineDurationUs": 3878875,
+                "sourceInUs": 2472470,
+                "sourceOutUs": 7262881,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: left edge back out at 1.235x (ripple)",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000120",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000121",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3003000,
+                "timelineDurationUs": 5880875,
+                "sourceInUs": 0,
+                "sourceOutUs": 7262881,
+                "speed": {
+                  "rate": 1.235
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: split before roll",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000122",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000123",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 3003000,
+                "sourceInUs": 0,
+                "sourceOutUs": 3003000,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000124",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 3003000,
+                "timelineDurationUs": 4295958,
+                "sourceInUs": 3003000,
+                "sourceOutUs": 7298958,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: roll to A's source end",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000122",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000123",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 7257250,
+                "sourceInUs": 0,
+                "sourceOutUs": 7257250,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000124",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 7257250,
+                "timelineDurationUs": 41708,
+                "sourceInUs": 7257250,
+                "sourceOutUs": 7298958,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              }
+            ]
+          }
+        ],
+        "markers": []
+      }
+    },
+    {
+      "label": "23.976: roll to B's source start",
+      "fps": "24000/1001",
+      "doc": {
+        "schemaVersion": 1,
+        "projectId": "01890000-0000-7000-8000-000000000001",
+        "settings": {
+          "width": 1920,
+          "height": 1080,
+          "fps": {
+            "num": 24000,
+            "den": 1001
+          },
+          "audioSampleRate": 48000,
+          "backgroundColor": "#000000"
+        },
+        "tracks": [
+          {
+            "id": "00000000-0000-7000-8000-000000000122",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "locked": false,
+            "clips": [
+              {
+                "id": "00000000-0000-7000-8000-000000000123",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 0,
+                "timelineDurationUs": 41708,
+                "sourceInUs": 0,
+                "sourceOutUs": 41708,
+                "speed": {
+                  "rate": 1
+                },
+                "audio": {
+                  "volume": 1,
+                  "fadeInUs": 0,
+                  "fadeOutUs": 0,
+                  "muted": false
+                },
+                "transform": {
+                  "x": 0,
+                  "y": 0,
+                  "scale": 1,
+                  "rotationDeg": 0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5
+                },
+                "keyframes": {},
+                "effects": [],
+                "opacity": 1
+              },
+              {
+                "id": "00000000-0000-7000-8000-000000000124",
+                "kind": "video",
+                "assetId": "01890000-0000-7000-8000-00000000000a",
+                "timelineStartUs": 41708,
+                "timelineDurationUs": 7257250,
+                "sourceInUs": 41708,
                 "sourceOutUs": 7298958,
                 "speed": {
                   "rate": 1
@@ -5780,14 +9904,14 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000049",
+            "id": "00000000-0000-7000-8000-000000000125",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000050",
+                "id": "00000000-0000-7000-8000-000000000126",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 41708,
@@ -5839,7 +9963,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000051",
+            "id": "00000000-0000-7000-8000-000000000127",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -5847,7 +9971,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000052",
+                "id": "00000000-0000-7000-8000-000000000128",
                 "timelineStartUs": 1501500,
                 "timelineDurationUs": 5005000,
                 "transform": {
@@ -5876,14 +10000,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000049",
+            "id": "00000000-0000-7000-8000-000000000125",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000050",
+                "id": "00000000-0000-7000-8000-000000000126",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 41708,
@@ -5935,7 +10059,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000051",
+            "id": "00000000-0000-7000-8000-000000000127",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -5943,7 +10067,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000052",
+                "id": "00000000-0000-7000-8000-000000000128",
                 "timelineStartUs": 1501500,
                 "timelineDurationUs": 5005000,
                 "transform": {
@@ -5972,14 +10096,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000049",
+            "id": "00000000-0000-7000-8000-000000000125",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000050",
+                "id": "00000000-0000-7000-8000-000000000126",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 41708,
@@ -6031,7 +10155,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000051",
+            "id": "00000000-0000-7000-8000-000000000127",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -6039,7 +10163,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000052",
+                "id": "00000000-0000-7000-8000-000000000128",
                 "timelineStartUs": 1501500,
                 "timelineDurationUs": 5005000,
                 "transform": {
@@ -6068,14 +10192,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000049",
+            "id": "00000000-0000-7000-8000-000000000125",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000050",
+                "id": "00000000-0000-7000-8000-000000000126",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 41708,
@@ -6127,7 +10251,7 @@
         },
         "tracks": [
           {
-            "id": "00000000-0000-7000-8000-000000000051",
+            "id": "00000000-0000-7000-8000-000000000127",
             "type": "overlay",
             "name": "Katman",
             "muted": false,
@@ -6135,7 +10259,7 @@
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000052",
+                "id": "00000000-0000-7000-8000-000000000128",
                 "timelineStartUs": 1501500,
                 "timelineDurationUs": 5005000,
                 "transform": {
@@ -6164,14 +10288,14 @@
             ]
           },
           {
-            "id": "00000000-0000-7000-8000-000000000049",
+            "id": "00000000-0000-7000-8000-000000000125",
             "type": "video",
             "muted": false,
             "hidden": false,
             "locked": false,
             "clips": [
               {
-                "id": "00000000-0000-7000-8000-000000000050",
+                "id": "00000000-0000-7000-8000-000000000126",
                 "kind": "video",
                 "assetId": "01890000-0000-7000-8000-00000000000a",
                 "timelineStartUs": 41708,

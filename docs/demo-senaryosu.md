@@ -1,7 +1,8 @@
 # POC Demo Senaryosu
 
 Ürünü canlı gösterirken izlenecek, **adım adım koşulmuş ve doğrulanmış** akış.
-Toplam **~11 dakika** (hazırlanmış proje ile ~10 dk).
+Toplam **~12,5 dakika** (Mod B — proje ve medya hazır — ile **~11,5 dk**); kısa sürümde
+**~10 dk** / **~9,5 dk**. Adım adım döküm §5'te.
 
 Bu dosyadaki her adım, çalışan uygulamada (Vite 5173 + API 5000 + worker + MinIO)
 **gerçek fare ve gerçek klavye** ile iki kez ardışık koşuldu; ikisinde de 41/41
@@ -121,8 +122,11 @@ oynatma için proxy, timeline için filmstrip şeridi ve ses için dalga formu
 üretir. Kart "Hazır" olana kadar klip timeline'a eklenemez — yarım medya ile
 kurgu yapılmaz. Desteklenen formatlar: MP4/MOV/WebM, MP3/M4A/WAV, PNG/JPEG/WebP.
 
-> PNG'yi bu adımda **sadece kütüphanede** gösterin, timeline'a eklemeyin
-> (sebep: §6, kısıt 1).
+> PNG bu adımda kütüphanede görünür. Timeline'a da eklenebilir — fotoğraf ve
+> çıkartma klipleri önizlemede **çiziliyor** (`poc-bilinen-sinirlar.md` §1.1).
+> Senaryonun ana hattı yine de **şekil** katmanıyla ilerler (adım 11): §7'deki
+> 41 adımlık koşum bu hat üzerinde ölçüldü. Görseli göstermek isterseniz adım
+> 11'in altındaki nota bakın.
 
 ---
 
@@ -267,8 +271,14 @@ duraklayınca geri gelir. Sürükleme ortasında `Esc` jesti iptal eder. Metin v
 şekil aynı overlay hattını paylaşır: ikisi de videonun üstünde, ikisi de aynı
 transform kurallarıyla.
 
-> Bu adım bilerek **şekil** ile yapılıyor; görsel/çıkartma katmanı önizlemede
-> henüz çizilmiyor (§6, kısıt 1).
+> **Görsel katmanı da gösterilebilir (isteğe bağlı, ~20 sn).** Kitaplıkta
+> `demo-03-logo.png` satırındaki **Çıkartma** düğmesine basmak logoyu overlay
+> katmanına koyar; poster indirilir indirilmez önizlemede görünür ve aynı gizmo ile
+> taşınabilir.
+> Ana hat bilerek **şekil** ile yazıldı — §7'deki 41 adımlık koşum onun üzerinde
+> ölçüldü. Görsel/çıkartma yolunun önizlemede çizildiğini tutan kanıt, o koşum
+> değil kalıcı e2e paketidir: `e2e/image-preview.spec.ts` fotoğrafın ve
+> çıkartmanın tuvale çizildiğini **gerçek piksel okuyarak** doğrular.
 
 ---
 
@@ -281,8 +291,10 @@ klip uzar, isim çubuğunda hız rozeti belirir.
 
 **Anlat:** Hız kaynağın in/out aralığını değil süresini yeniden ölçekler;
 sonraki klibe çarpacaksa değişiklik **reddedilir** ve "Sonrakileri kaydır"
-seçeneği önerilir. Tarayıcı önizlemesi 0,0625x–16x aralığında çalışır, dışa
-aktarımda bu sınır yoktur.
+seçeneği önerilir. Ürünün hız aralığı **0,1x – 10x**'tir; bunu şema dayatır
+(`schema.ts:195`), yani önizleme ve dışa aktarma aynı aralıkta çalışır.
+Tarayıcının `<video>` elemanı 0,0625x–16x arasını kabul eder — yani motor
+tarafı hiçbir zaman sınırlayıcı değildir.
 
 ---
 
@@ -405,52 +417,49 @@ hız ve renk düzeltmesi vardır — önizleme ile çıktı aynı kurallarla ür
 | 15 Oynat | 25 sn |
 | 16 Sürüm kayıt noktası | 30 sn |
 | 17 Export + indir | 85 sn |
-| **Toplam** | **~11 dk 55 sn** (Mod B: ~11 dk) |
+| **Toplam** | **12 dk 20 sn** (Mod B — adım 3 ≈ 15 sn: **11 dk 25 sn**) |
 
-Kısa sürüm gerekiyorsa **7, 12, 13, 16** numaralı adımlar çıkarılabilir
-(~8 dk 15 sn kalır).
+Kısa sürüm gerekiyorsa **7, 12, 13, 16** numaralı adımlar çıkarılabilir (−2 dk 5 sn):
+Mod A'da **10 dk 15 sn**, Mod B'de **9 dk 20 sn** kalır. §4'teki kapanış cümlesi (15 sn)
+ve adım 11'in isteğe bağlı görsel notu (~20 sn) bu toplamların dışındadır.
+
+> Bu satırlar sütunun **aritmetiği**dir, ayrı bir ölçüm değil. Önceki sürümde toplam
+> "~11 dk 55 sn" ve kısa sürüm "~8 dk 15 sn" yazıyordu; ikisi de sütunla tutmuyordu ve
+> düzeltildi.
 
 ---
 
 ## 6. Bilinen kısıtlar — demoda dikkat
 
-Aşağıdakiler bu senaryo koşulurken **ölçülen** davranışlardır; sürpriz olmasın.
+1–4 bu senaryo koşulurken **ölçülen** davranışlardır; 5 ölçülmedi (senaryo sınıra
+girmiyor) ama demoyu doğaçlama genişletirseniz karşınıza çıkabilir, o yüzden burada.
+Sürpriz olmasın.
 
-1. **Görsel (PNG/JPEG) klipler ve çıkartmalar ÖNİZLEMEDE çizilmiyor**
-   (ayrıntı: `docs/poc-bilinen-sinirlar.md` §1.1).
-   Bu senaryo hazırlanırken bağımsız olarak da ölçüldü: video + PNG çıkartma
-   içeren bir projede önizleme kompozitöründen 27 noktalık piksel taraması
-   alındı, çıkartma eklenmeden önce ve sonra **tek piksel bile değişmedi**;
-   aynı proje dışa aktarıldığında ise logo çıktıda **doğru ve alfa kanalıyla**
-   görünüyor (5. saniyeden çıkarılan kare ile doğrulandı).
-   **Demoda:** PNG'yi kütüphanede gösterin, timeline'a **eklemeyin**; ikinci
-   katmanı **Şekil ekle** ile gösterin (adım 11).
-2. **Görsel klip eklenirse doküman değişmezini (invariant) ihlal ediyor** ve
-   DEV yapısında her sonraki düzenlemede konsola
-   `Timeline invariant violation … sourceOutUs (…) exceeds asset duration (null)`
-   düşüyor (bu senaryonun hazırlığında bulundu; `poc-bilinen-sinirlar.md`'de
-   henüz yok). Yan etkisi görünür: hata mutasyondan sonra atıldığı için **yeni
-   eklenen klip artık otomatik seçilmiyor** (ör. "Metin ekle"den sonra
-   Özellikler paneli eski klipte kalır). Sebep: API görseller için
-   `durationMicros: null` döndürüyor, istemci bunu "bilinmiyor" değil "0" gibi
-   okuyor. Bu senaryo görseli timeline'a hiç koymadığı için etkilenmez.
-3. **Aynı klipte hem geçiş hem keyframe → dışa aktarma reddedilir** (adım 14
+> **Bu listeden iki madde ÇIKTI** (teslim düzeltme turlarında düzeltildiler, artık
+> demoda kaçınılacak bir şey değiller): görsel/çıkartma kliplerinin önizlemede
+> çizilmemesi ve görsel eklerken doküman değişmezinin ihlal edilmesi. Kaydı
+> `poc-bilinen-sinirlar.md` §1.1'de.
+
+1. **Aynı klipte hem geçiş hem keyframe → dışa aktarma reddedilir** (adım 14
    notu). Ekranda gerekçesiyle söylenir, sessiz hata değildir.
-4. **Bitişik iki klibin ortak kenarı "roll" kırpmadır**; kaynak payı yoksa
+2. **Bitişik iki klibin ortak kenarı "roll" kırpmadır**; kaynak payı yoksa
    hareket reddedilir (adım 8 notu).
-5. **Videonun ÜSTÜNE bir katman koymanın UI'daki yolu overlay katmanlarıdır**
+3. **Videonun ÜSTÜNE bir katman koymanın UI'daki yolu overlay katmanlarıdır**
    (**Metin ekle / Şekil ekle / Çıkartma**). Ölçüldü: dışa aktarılan karede
-   overlay katmanı videonun üstünde çiziliyor — `tracks[0]` en üst katman.
+   overlay katmanı videonun üstünde çiziliyor — `tracks[0]` en üst katman
+   (derleyici track'leri sondan başa gezer: `ExportCompiler.cs:238`).
    `+V` ile açılan video track'i ve "son track'in altına bırak" jesti diziye
    **sona** eklenir, yani görsel yığında **arkaya** düşer (kod okumasıyla:
-   `timelineOps.addTrack` → `tracks.push`); video-üstü-video PiP bu yüzden
-   şu an UI'dan kurulamıyor.
-6. **Dar pencerede** kesim rozeti ve kırpma tutamakları küçülür — 1440 px veya
+   `timelineOps.addTrack` → `d.tracks.push`);
+   video-üstü-video PiP bu yüzden şu an UI'dan kurulamıyor. Track'leri sonradan
+   yeniden sıralamak da mümkün değil (`poc-bilinen-sinirlar.md` §1.7).
+4. **Dar pencerede** kesim rozeti ve kırpma tutamakları küçülür — 1440 px veya
    üzeri kullanın.
-7. Demo **DEV** sunucusunda (Vite 5173) anlatılır; 2. maddedeki konsol hatası
-   yalnız DEV'de görünür (denetim üretimde derlenmiyor) — ama dokümanın
-   ihlali gerçektir, düzeltilmeden üretime alınmamalı. Demo sırasında tarayıcı
-   konsolunu açmayın.
+5. **Kalabalık kompozisyonda önizleme katman düşürebilir** — gizli `<video>`
+   havuzu 4 elemanlıdır ve geçiş penceresi ikisini birden yer. Sessiz değil:
+   oynatıcıda bir rozet bildirir. **Dışa aktarma etkilenmez.** Bu senaryo en
+   fazla 2 eşzamanlı video kullandığı için sınıra girmez
+   (`poc-bilinen-sinirlar.md` §2.2).
 
 ---
 
@@ -463,6 +472,13 @@ doğrulandı. Uygulama durumu yalnızca **doğrulama için** okundu
 `probePixel` köprüsünden alındı.
 
 **Koşum sonucu: iki ardışık tam koşum, her ikisinde de 41/41 adım geçti.**
+
+> **Bu koşum ne zaman yapıldı, sonra ne değişti.** Kayıt, teslim düzeltme turlarından
+> ÖNCEKİ koşuma aittir. O turlarda **senaryonun adımları değişmedi** — değişenler §3'teki
+> notlar, §5'teki süre aritmetiği ve §6'nın kısıt listesidir (iki madde düzeltildiği için
+> çıktı). Adımların kendisi aynı olduğu için koşum kaydı geçerliliğini korur; buna karşılık
+> **düzeltmelerin kanıtı bu koşum değil**, aşağıdaki kalıcı e2e paketidir
+> (`image-preview.spec.ts`, `frame-grid.spec.ts`).
 
 | Senaryo adımı | Nasıl doğrulandı | Ölçülen |
 |---|---|---|
@@ -501,4 +517,7 @@ döndürme tutamakları ve oynatmada gizlenme (`player-gizmo.spec.ts`), geçiş
 elmas taşıma/silme (`keyframes.spec.ts`), şekil türü/dolgu değişimi
 (`text.spec.ts`), "Bu sürüme dön" akışı
 (`versions.spec.ts`), export iptali ve indirilen dosyanın oynatılabilirliği
-(`export-flow.spec.ts`).
+(`export-flow.spec.ts`), fotoğraf/çıkartma kliplerinin önizleme tuvaline
+çizilmesi (`image-preview.spec.ts` — gerçek piksel), kırpma/bölme/asset ekleme
+sonrası klip kenarlarının proje kare ızgarasında kalması
+(`frame-grid.spec.ts`).

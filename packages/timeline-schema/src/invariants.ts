@@ -538,10 +538,17 @@ export function frameGridIssueSummary(issues: readonly FrameGridIssue[]): string
   if (issues.length === 0) return '';
   const first = issues[0];
   const edge = first.field === 'timelineStartUs' ? 'başlangıcı' : 'bitişi';
+  const handle = first.field === 'timelineStartUs' ? 'sol' : 'sağ';
   const more = issues.length > 1 ? ` (+${issues.length - 1} klip daha)` : '';
+  // The advice has to be one that ACTUALLY fixes it. "Move the clip one frame"
+  // (what this used to say) moves BOTH edges by the same microseconds, so an
+  // off-grid edge stays off-grid — the grid is not closed under addition
+  // outside integer fps. Re-dragging the offending EDGE is: every trim path
+  // re-fits the length onto a whole frame span of the project grid.
   return (
     `Bir klibin ${edge} proje kare ızgarasına oturmuyor ` +
     `(${first.valueUs}µs, en yakın kare ${first.snappedUs}µs)${more}. ` +
-    'Bu belge dışa aktarımda reddedilir; klibi bir kare kaydırıp tekrar deneyin.'
+    `Bu belge dışa aktarımda reddedilir; klibin ${handle} kenarını bir kare içeri çekip ` +
+    'bırakın (klibi kaydırmak iki kenarı birden ötelediği için sorunu çözmez).'
   );
 }

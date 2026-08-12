@@ -1,15 +1,60 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { MediaClip, TimelineDoc } from '@videoedit/timeline-schema';
 import {
   createEmptyDoc,
   defaultProjectSettings,
+  docGateAssetDurations,
   HISTORY_LIMIT,
   useDocStore,
 } from './docStore';
+import { useAssetStore } from './assetStore';
+import { applyTrimToDraft, knownAssetDurations } from './timelineOps';
 
 const PROJECT_ID = '01890000-0000-7000-8000-000000000000';
+const TRACK_ID = '01890000-0000-7000-8000-0000000000a0';
+const CLIP_ID = '01890000-0000-7000-8000-0000000000c0';
+const ASSET_ID = '01890000-0000-7000-8000-0000000000e0';
 
 function freshDoc() {
   return createEmptyDoc(PROJECT_ID, { ...defaultProjectSettings });
+}
+
+/**
+ * One 30 fps video track with one clip on the grid: start = frame 30
+ * (1_000_000 µs), end = frame 90 (3_000_000 µs). Both edges are frame
+ * boundaries, so the document passes the gate as-is and any violation below is
+ * the one the test wrote.
+ */
+function docWithClip(): TimelineDoc {
+  const clip: MediaClip = {
+    id: CLIP_ID,
+    kind: 'video',
+    assetId: ASSET_ID,
+    timelineStartUs: 1_000_000,
+    timelineDurationUs: 2_000_000,
+    sourceInUs: 0,
+    sourceOutUs: 2_000_000,
+    speed: { rate: 1 },
+    audio: { volume: 1, fadeInUs: 0, fadeOutUs: 0, muted: false },
+    transform: { x: 0, y: 0, scale: 1, rotationDeg: 0, anchorX: 0.5, anchorY: 0.5 },
+    keyframes: {},
+    effects: [],
+    opacity: 1,
+  };
+  return {
+    ...freshDoc(),
+    tracks: [
+      {
+        id: TRACK_ID,
+        type: 'video',
+        name: 'V1',
+        muted: false,
+        hidden: false,
+        locked: false,
+        clips: [clip],
+      },
+    ],
+  };
 }
 
 function snapshot(): unknown {
@@ -19,6 +64,7 @@ function snapshot(): unknown {
 beforeEach(() => {
   useDocStore.getState().setLocked(false);
   useDocStore.getState().loadDoc(freshDoc());
+  useAssetStore.getState().setAssets([]);
 });
 
 describe('docStore.mutate', () => {
@@ -323,5 +369,131 @@ describe('docStore history limit', () => {
     // undoing everything that remains lands on the state after the dropped entries
     useDocStore.getState().jumpTo(-1);
     expect(useDocStore.getState().doc.settings.width).toBe(total - HISTORY_LIMIT);
+  });
+});
+
+/**
+ * The document gate at the COMMIT POINT.
+ *
+ * Why these tests exist: the gate used to be a line every op wrote after its
+ * own mutation (`assertDocValidDev`). The ops did write it — and the paths that
+ * do NOT go through an op did not: an interactive drag is
+ * `beginTransaction` -> `tx.update(...)` -> `commit()`, and nothing in that
+ * chain was checked. The unit suite could not see the hole either, because unit
+ * tests call the op wrappers (which were checked) while the user's mouse takes
+ * the transaction path (which was not).
+ *
+ * So the assertions below are deliberately written at the TRANSACTION level,
+ * not through an op: they fail the moment the check leaves `commit()`.
+ */
+describe('docStore document gate (dev)', () => {
+  /** End of the clip after the edit, in µs. */
+  function clipEnd(): number {
+    const clip = useDocStore.getState().doc.tracks[0]!.clips[0]!;
+    return clip.timelineStartUs + clip.timelineDurationUs;
+  }
+
+  it('commit() REFUSES a transaction that pushed a clip edge off the frame grid (drag path)', () => {
+    useDocStore.getState().loadDoc(docWithClip());
+    const tx = useDocStore.getState().beginTransaction('trim', 'Klip kırpıldı');
+    // What a pointermove writes: an absolute edge. 3_000_040 µs is 40 µs past
+    // frame 90 and 33_293 µs short of frame 91 — a value no export accepts.
+    // sourceOut follows the duration so ONLY the grid rule can fail here.
+    tx.update((d) => {
+      const clip = d.tracks[0]!.clips[0]! as MediaClip;
+      clip.timelineDurationUs = 2_000_040;
+      clip.sourceOutUs = 2_000_040;
+    });
+
+    expect(
+      () => tx.commit(),
+      'Sürükleme yolu (transaction) kapıdan geçmiyor: kapı çağrı noktalarına ' +
+        'geri taşınmış olabilir.',
+    ).toThrow(/Export frame-grid violation/);
+  });
+
+  it('mutate() REFUSES a single-step op that violates the document invariants', () => {
+    useDocStore.getState().loadDoc(docWithClip());
+    expect(() =>
+      useDocStore.getState().mutate('trim', 'Klip kırpıldı', (d) => {
+        const clip = d.tracks[0]!.clips[0]! as MediaClip;
+        // Duration formula (invariant 3) broken: duration != (out - in) / rate.
+        clip.timelineDurationUs = 2_000_000;
+        clip.sourceOutUs = 1_500_000;
+      }),
+    ).toThrow(/Timeline invariant violation/);
+  });
+
+  it('binds the source bound to the SAME asset map the ops plan with', () => {
+    useAssetStore.getState().setAssets([
+      { id: ASSET_ID, kind: 'video', name: 'a.mp4', status: 'ready', durationUs: 7_320_000 },
+      // A still image has no source clock; ffprobe's 0.04 s for a JPEG must not
+      // become a bound (this exclusion is why the map is not just "durationUs").
+      { id: '01890000-0000-7000-8000-0000000000e1', kind: 'image', name: 'a.jpg', status: 'ready', durationUs: 40_000 },
+      // A null off the wire types as a number and compares as `x > null`.
+      {
+        id: '01890000-0000-7000-8000-0000000000e2',
+        kind: 'video',
+        name: 'b.mp4',
+        status: 'processing',
+        durationUs: null as unknown as undefined,
+      },
+    ]);
+    // Two maps, one rule: if timelineOps.knownAssetDurations ever changes, the
+    // gate must change with it (they are separate copies to keep the store from
+    // importing the ops layer — see docGateAssetDurations).
+    expect([...docGateAssetDurations()]).toEqual([...knownAssetDurations()]);
+    expect([...docGateAssetDurations()]).toEqual([[ASSET_ID, 7_320_000]]);
+  });
+
+  it('the REAL trim chain (beginTransaction -> applyTrimToDraft -> commit) survives a misaligned source', () => {
+    // 7.320000 s is what ffprobe reports for the e2e fixture built by
+    // e2e/support/media.ts (25 fps source, 30 fps project): pulling the right
+    // edge past the end of the source lands on the source cap, and that cap is
+    // NOT a frame boundary. This is the exact shape the gate exists for.
+    useAssetStore.getState().setAssets([
+      { id: ASSET_ID, kind: 'video', name: 'misaligned.mp4', status: 'ready', durationUs: 7_320_000 },
+    ]);
+    useDocStore.getState().loadDoc(docWithClip());
+
+    const tx = useDocStore.getState().beginTransaction('trim', 'Klip kırpıldı');
+    // Drag far past the end of the source — the clamp is what produces the
+    // off-grid edge if the trim math does not floor to the grid.
+    tx.update((d) => {
+      applyTrimToDraft(d, CLIP_ID, 'right', 20_000_000, 'normal', knownAssetDurations());
+    });
+    expect(() => tx.commit()).not.toThrow();
+
+    // And it really did grow (the trim was not silently a no-op).
+    expect(clipEnd()).toBeGreaterThan(3_000_000);
+  });
+
+  it('does NOT judge a gesture that changed nothing (a pre-existing violation is not the click\'s fault)', () => {
+    // A document from an older revision / another project fps: off the grid on
+    // arrival. loadDoc accepts it (the gate is for EDITS, not for the server).
+    const legacy = docWithClip();
+    (legacy.tracks[0]!.clips[0] as MediaClip).timelineDurationUs = 2_000_040;
+    (legacy.tracks[0]!.clips[0] as MediaClip).sourceOutUs = 2_000_040;
+    expect(() => useDocStore.getState().loadDoc(legacy)).not.toThrow();
+
+    // TimelinePanel opens a trim transaction on pointerdown and commits it on
+    // pointerup even when the pointer never moved: that click must not explode.
+    const tx = useDocStore.getState().beginTransaction('trim', 'Klip kırpıldı');
+    expect(() => tx.commit()).not.toThrow();
+  });
+
+  it('does NOT judge a document that arrived from the server mid-gesture', () => {
+    useDocStore.getState().loadDoc(docWithClip());
+    const incoming = docWithClip();
+    (incoming.tracks[0]!.clips[0] as MediaClip).timelineDurationUs = 2_000_040;
+    (incoming.tracks[0]!.clips[0] as MediaClip).sourceOutUs = 2_000_040;
+
+    const tx = useDocStore.getState().beginTransaction('move', 'Klip taşındı');
+    tx.update((d) => void (d.tracks[0]!.clips[0]!.timelineStartUs = 2_000_000));
+    useDocStore.getState().loadDoc(incoming); // queued: applied by commit()
+    // The gesture's own document is legal; the queued load's is not — and the
+    // load is not the gesture's doing, so commit() must not throw over it.
+    expect(() => tx.commit()).not.toThrow();
+    expect(useDocStore.getState().doc.tracks[0]!.clips[0]!.timelineDurationUs).toBe(2_000_040);
   });
 });

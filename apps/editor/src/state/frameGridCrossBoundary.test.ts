@@ -32,6 +32,7 @@ import { dirname } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   exportFrameGridIssues,
+  floorDurationToFrameSpan,
   validateTimelineDoc,
   type MediaClip,
   type ProjectSettings,
@@ -180,6 +181,151 @@ describe.each(FPS_CASES)('frame-grid cross-boundary @ $label fps', ({ label, fps
     record(`${label}: move selection`, fps);
     expect(moveClips([...all].reverse(), -333_333).ok).toBe(true);
     record(`${label}: move selection back`, fps);
+  });
+
+  /**
+   * SOURCE-BOUND CLAMPS (2nd review round, blocker 1).
+   *
+   * Every trim path clamps the edge against the SOURCE — `assetDurationUs` on
+   * the right, `sourceInUs >= 0` on the left. Those bounds are raw ffprobe
+   * microseconds (7.307300 s), never frame boundaries, and the clamp used to
+   * run AFTER the grid snap: the snapped target was thrown away and the
+   * duration re-derived from source microseconds, so the clip's far edge landed
+   * off the grid — measured at 99.9% of "over-trim, then drag the edge back
+   * out" gestures (1602/1604 across the four rates) and rejected by the export
+   * compiler with HTTP 422.
+   *
+   * The gesture is reproduced here with the ops themselves, so the corpus
+   * carries it into ExportCompiler.Validate on the C# side as well.
+   */
+  it('the right edge dragged back out to the source end stays on the grid', () => {
+    // Three starts, because "one frame" is a different number of microseconds
+    // depending on where the clip sits (the grid is not closed under addition):
+    // time zero, the first frame boundary, and an arbitrary drop position.
+    for (const dropUs of [0, 33_333, 1_234_567]) {
+      useDocStore.getState().loadDoc(createEmptyDoc(PROJECT_ID, settingsFor(fps)));
+      const trackId = addTrack('video');
+      expect(addClipFromAsset(ASSET_A, { trackId }, dropUs).ok).toBe(true);
+      const clip = firstClip();
+      const start = clip.timelineStartUs;
+
+      expect(trimClip(clip.id, 'right', start + 3_000_000).ok).toBe(true);
+      expectGates(`${label}: over-trim right @${dropUs}`);
+      // ... and back out, well past the end of the media.
+      expect(trimClip(clip.id, 'right', start + 30_000_000).ok).toBe(true);
+      record(`${label}: right edge back out past the source end @${dropUs}`, fps);
+
+      const grown = firstClip();
+      expect(grown.sourceOutUs).toBeLessThanOrEqual(DURATION_A);
+      expect(grown.timelineStartUs).toBe(start);
+      // The clip reaches as far as the media allows AND no further: the whole
+      // remaining source, floored to a whole frame span at this start. (Up to
+      // one frame of media is unusable there — the honest price of an end that
+      // the export ledger can name.)
+      expect(grown.timelineDurationUs).toBe(
+        floorDurationToFrameSpan(start, DURATION_A - grown.sourceInUs, fps),
+      );
+
+      // Ripple mode takes the same clamp path (and drags followers with it).
+      expect(trimClip(grown.id, 'right', start + 2_500_000, 'ripple').ok).toBe(true);
+      expectGates(`${label}: ripple over-trim right @${dropUs}`);
+      expect(trimClip(grown.id, 'right', start + 30_000_000, 'ripple').ok).toBe(true);
+      record(`${label}: ripple right edge back out past the source end @${dropUs}`, fps);
+      expect(firstClip().sourceOutUs).toBeLessThanOrEqual(DURATION_A);
+    }
+  });
+
+  it('the left edge dragged back out to the source start stays on the grid', () => {
+    // A SWEEP, not one shape: with the start anchored (ripple) the far edge is
+    // `start + <the whole source window>`, and whether that sum is a frame
+    // boundary depends on BOTH the clip's length and the size of the source
+    // handle — the grid is not closed under addition, so two grid values can
+    // add up to a non-grid one (30 fps: 1_033_333 + 4_033_333 = 5_066_666,
+    // nearest frame 5_066_667). Which pairs are unlucky differs per rate.
+    // Every op below runs docStore's dev gate (both export gates, every
+    // commit); the first three shapes also go into the corpus for the C# side.
+    let recorded = 0;
+    for (const lengthUs of [4_000_000, 4_033_333, 5_566_667, 6_100_000]) {
+      for (const handleUs of [1_000_000, 1_033_333, 1_500_000, 2_166_667]) {
+        useDocStore.getState().loadDoc(createEmptyDoc(PROJECT_ID, settingsFor(fps)));
+        const trackId = addTrack('video');
+        expect(addClipFromAsset(ASSET_B, { trackId }, 0).ok).toBe(true);
+        const clip = firstClip();
+        const shape = `len ${lengthUs} handle ${handleUs}`;
+
+        expect(trimClip(clip.id, 'right', lengthUs).ok, shape).toBe(true);
+        // Trim IN so there is a source handle to give back.
+        expect(trimClip(clip.id, 'left', handleUs).ok, shape).toBe(true);
+        // RIPPLE (start anchored): the start stays put, so the far edge is the
+        // END, and it is the source floor (`sourceInUs >= 0`) that decides it.
+        expect(trimClip(clip.id, 'left', 0, 'ripple').ok, shape).toBe(true);
+
+        const back = firstClip();
+        // Everything the source has, floored to a whole frame span at the
+        // (pinned) start — `sourceInUs` lands at 0 or at most one frame above.
+        expect(back.timelineDurationUs, shape).toBe(
+          floorDurationToFrameSpan(back.timelineStartUs, back.sourceOutUs, fps),
+        );
+        expect(back.sourceInUs, shape).toBe(back.sourceOutUs - back.timelineDurationUs);
+        expect(back.sourceOutUs, shape).toBeLessThanOrEqual(DURATION_B);
+        if (recorded < 3) {
+          record(`${label}: ripple left back out past the source start (${shape})`, fps);
+          recorded++;
+        }
+      }
+    }
+  });
+
+  it('a left trim back out at a non-1x rate keeps both edges on the grid', () => {
+    // At rate != 1 the source window is no longer a frame span of the timeline,
+    // so `end - clipTimelineDurationUs(0, sourceOut, rate)` (the left trim's
+    // source floor) is an arbitrary microsecond value in both anchor modes.
+    for (const mode of ['normal', 'ripple'] as const) {
+      useDocStore.getState().loadDoc(createEmptyDoc(PROJECT_ID, settingsFor(fps)));
+      const trackId = addTrack('video');
+      expect(addClipFromAsset(ASSET_A, { trackId }, 1_000_000).ok).toBe(true);
+      const clip = firstClip();
+      expect(setClipSpeed([clip.id], 1.235).ok).toBe(true);
+      expectGates(`${label}: speed 1.235 before left trim (${mode})`);
+
+      const spedUp = firstClip();
+      const start = spedUp.timelineStartUs;
+      expect(trimClip(spedUp.id, 'left', start + 2_000_000).ok).toBe(true);
+      record(`${label}: left trim in at 1.235x (${mode})`, fps);
+      expect(trimClip(spedUp.id, 'left', 0, mode).ok).toBe(true);
+      record(`${label}: left edge back out at 1.235x (${mode})`, fps);
+
+      const out = firstClip();
+      expect(out.sourceInUs).toBeGreaterThanOrEqual(0);
+      expect(out.sourceOutUs).toBeLessThanOrEqual(DURATION_A);
+    }
+  });
+
+  it('a roll pushed to the source limit keeps the shared cut on the grid', () => {
+    const trackId = addTrack('video');
+    expect(addClipFromAsset(ASSET_A, { trackId }, 0).ok).toBe(true);
+    const whole = firstClip();
+    expect(splitClipAt(whole.id, 3_000_000).ok).toBe(true);
+    record(`${label}: split before roll`, fps);
+
+    const [a, b] = currentDoc().tracks[0].clips;
+    // Roll the shared cut as far right as A's source allows — the clamp lands
+    // on the raw asset duration, which is not a frame boundary.
+    expect(trimClip(a.id, 'right', 30_000_000, 'roll').ok).toBe(true);
+    record(`${label}: roll to A's source end`, fps);
+    const rolled = currentDoc().tracks[0].clips as MediaClip[];
+    // A roll keeps the cut SHARED: no gap, no overlap.
+    expect(rolled[0].timelineStartUs + rolled[0].timelineDurationUs).toBe(
+      rolled[1].timelineStartUs,
+    );
+    expect(rolled[0].id).toBe(a.id);
+    expect(rolled[1].id).toBe(b.id);
+
+    // ... and as far left as B's source allows.
+    expect(trimClip(a.id, 'right', 0, 'roll').ok).toBe(true);
+    record(`${label}: roll to B's source start`, fps);
+    const back = currentDoc().tracks[0].clips as MediaClip[];
+    expect(back[0].timelineStartUs + back[0].timelineDurationUs).toBe(back[1].timelineStartUs);
   });
 
   it('overlay insert and speed changes stay on the grid', () => {

@@ -10,7 +10,8 @@ M4 dalga 1 denetimi, seçilen MVP özelliklerinden altısının "eksik **ve kay�
 tespit etti. Aşağıdaki tablo bundan sonra her teslim notunun kaynağıdır; buraya yazılmadan
 hiçbir özellik ertelenmiş sayılmaz.
 
-**Son doğrulama: 2026-08-12, commit `f39e0b4` — her satır KODDA denetlendi.** "✅ tam"
+**Son doğrulama: 2026-08-12, `df799df` + teslim düzeltme turu — her satır KODDA
+denetlendi.** "✅ tam"
 yalnızca özelliğin uçtan uca (editör + şema + export) erişilebilir olduğu anlamına gelir;
 bilinen sınırlar `⚠︎` dipnotlarıyla ve
 [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) ile birlikte okunmalıdır.
@@ -18,13 +19,13 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 | MVP özelliği (kullanıcı seçimi) | Durum | Hedef |
 |---|---|---|
 | Çoklu katman timeline | ✅ tam ⚠︎ track yeniden sıralama/adlandırma yok | sonraki dilim |
-| Kırpma/kesme/ayırma/taşıma/katman | ✅ tam ⚠︎ 30 fps'te bazı kırpmalar export'ta 422 | **sonraki dilim (YÜKSEK)** |
+| Kırpma/kesme/ayırma/taşıma/katman | ✅ tam (frame ızgarası çelişkisi teslim düzeltme turunda kapandı — aşağıya bakınız) | — |
 | Frame, zoom, timecode, player, kısayollar | ✅ tam | — |
 | Undo/Redo + işlem geçmişi | ✅ tam | — |
 | Hesap + proje yönetimi, autosave | ✅ tam (versiyon geçmişi UI'ı M6'da geldi) | — |
 | **Ses katmanları** (waveform, seviye, fade, detach) | ✅ tam (M4 dalga 1) | — |
 | **Çoklu katman export + transform** | ✅ tam (M4 dalga 1) | — |
-| **Görseller (PNG/JPG/WebP)** | ⚠️ export doğru, **ÖNİZLEMEDE ÇİZİLMİYOR** (aşağıya bakınız) | **sonraki dilim (YÜKSEK)** |
+| **Görseller (PNG/JPG/WebP)** | ✅ tam (önizleme kusuru teslim düzeltme turunda kapandı — aşağıya bakınız) | — |
 | **Yazı & overlay** (metin, sticker, şekil) | ✅ tam (M4 dalga 2) ⚠︎ emoji yok; shaping iki motorda | sonraki dilim |
 | **Geçişler** (xfade/acrossfade) | ✅ tam (M4 dalga 2 — doküman/op/export + oynatıcı önizlemesi) ⚠︎ dissolve/fadeToBlack önizlemesi piksel-eşit değil | parity → dalga 3 |
 | Pis-dosya korpusu (iPhone HDR/VFR/döndürülmüş) testleri | ❌ yok | **M4 dalga 3** |
@@ -43,10 +44,19 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 > [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §1.3, §4.3, §4.5, §4.6'da
 > kullanıcıya da anlatıldı.
 
-> **Görseller satırı, POC dokümantasyon turu (2026-08-12).** Satır M4 dalga 1'den beri
-> "✅ tam" diyordu; **yanlıştı**. Export doğru çalışıyor (canlı doğrulandı), ama görsel ve
-> sticker klipleri **oynatıcı önizlemesinde hiç çizilmiyor**. Kök neden ve gerçek tarayıcı
-> kanıtı aşağıda, "POC dokümantasyon turunda kayda geçenler" bölümünde.
+> **Görseller satırının hikâyesi (kayda geçer).** Satır M4 dalga 1'den beri "✅ tam" diyordu;
+> POC dokümantasyon turu bunun **yanlış** olduğunu buldu: export doğruydu ama görsel ve sticker
+> klipleri oynatıcı önizlemesinde hiç çizilmiyordu. Teslim düzeltme turunda kapandı —
+> `features/player/previewSource.ts` kaynağı asset KIND'ına göre seçiyor (görsel → poster) ve
+> `e2e/image-preview.spec.ts` bunu **gerçek piksel okuyarak** tutuyor. Aynı düzeltmede görsel
+> klibin doküman değişmezini ihlal etmesi de kapandı (`knownAssetDurations` görselleri haritaya
+> koymuyor). Ayrıntı: [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §1.1.
+>
+> **Alınacak ders (silmeyin).** Satır M4 dalga 1'den POC dokümantasyon turuna kadar "✅ tam"
+> kaldı, çünkü kabul kriteri "doküman doğru mu + export doğru mu" idi; **kullanıcının GÖRDÜĞÜ
+> yüzey hiç okunmuyordu.**
+> Dört bacaklı kural (şema / editör UI / önizleme / export — §1.3) bu yüzden bağlayıcıdır ve
+> önizleme bacağının kanıtı ancak PİKSEL olabilir.
 
 > **Renk satırının ikiye ayrılma gerekçesi (M5 denetimi, 2026-08-12).** Tek satır "⚠️ motor
 > hazır, UI yok" iki farklı gerçeği gizliyordu. `colorAdjust` M5'te uçtan uca kapandı: altı
@@ -68,8 +78,16 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 > (`packages/timeline-schema/src/time.ts`) ile ÇÖZÜLÜYOR: compiler klibi iki bağımsız kapıdan
 > geçiriyor (süre formülü **ve** proje frame ızgarası) ve yalnız formülü uygulamak
 > ızgara dışı süre üretip export'u 422 ile düşürüyordu (30 fps'te 3 sn @ 0.7x → 4_285_714 µs,
-> ızgara komşusu 4_300_000 µs). Sınır: **hız rampası yok** (tek klip = tek sabit oran);
-> compiler zaten `speed-ramp` tipli hatasıyla reddediyor.
+> ızgara komşusu 4_300_000 µs). Sınır: **hız rampası yok** (tek klip = tek sabit oran).
+>
+> **DÜZELTME (bu tur).** Bu paragrafın eski hali "compiler zaten `speed-ramp` tipli hatasıyla
+> reddediyor" diyordu — **öyle bir hata tipi YOK.** `VideoEdit.Media` altındaki tipli export
+> hatalarının tamamı: `easing-type`, `effect-type`, `effects-audio-clip`,
+> `keyframe-sample-budget`, `keyframes-audio-clip`, `lut-asset`,
+> `scale-keyframes-with-rotation`, `transform-scale`, `transition-handle`,
+> `transition-keyframes`, `transition-type`, `unknown-clip`. Rampa **şema düzeyinde**
+> imkânsızdır (`speed` tek skaler), yani compiler'ın reddedeceği bir rampa hiç doğmaz —
+> sınır gerçek, gerekçesi yanlış yazılmıştı.
 
 > **Keyframe satırının SINIRLARI (kayda geçer).** Kanallar yalnız
 > `x / y / scale / rotationDeg / opacity / volume` (şema `KeyframeTracks` STRICT). Bilinçli
@@ -77,7 +95,8 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 > (b) **hız rampası**, (c) geçişli kesimde keyframe (compiler `transition-keyframes` tipli
 > hatası). Erişim yüzeyleri: Inspector her kanal için elmas düğmesi + (playhead keyframe
 > üstündeyken) easing seçici; timeline şeridi en fazla 2 kanal satırı çizer, kalanlar "+N"
-> çipinden satır alır. `fx.*` keyframe'i M6'ya yazılıdır (aşağıdaki M6 bölümü).
+> çipinden satır alır. `fx.*` keyframe'i M6'ya yazılmıştı ama M6'da **yapılmadı**; aşağıdaki
+> "M6 (Dayanıklılık)" bölümünde açık duruyor.
 
 > **Görseller satırının geçmişi (kayda geçer).** M4 dalga 1'de ürün kullanıcıyı görsel
 > yüklemeye AKTİF olarak yönlendiriyordu (`fileTypes.ts` PNG/JPG/WebP diyor, worker işliyor,
@@ -126,10 +145,13 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 ## Fontlar (M4'te açılan üç modlu politika)
 
 - **Üretim dağıtımı öncesi küratörlü font seti KURULMALI** (`fonts/fetch-fonts.ps1` /
-  `fetch-fonts.sh`) ve worker'da `Fonts:AllowSystemFallback = false` yapılmalıdır. Bugün TTF'ler
-  depoda olmadığından metin klipleri **sistem fontuyla** çiziliyor (2. mod, `fonts/README.md`):
-  export başarılı ve uyarılı, ama **belirlenimci değil** (iki worker farklı piksel üretebilir)
-  ve sistem fontları **yeniden dağıtılamaz** (lisans). POC için kabul, üretim için blocker.
+  `fetch-fonts.sh`) ve worker'da `Fonts:AllowSystemFallback = false` yapılmalıdır. TTF'ler
+  **depoda değildir** (`fonts/.gitignore`: `*.ttf`) — betiği koşmayan bir kurulumda metin
+  klipleri **sistem fontuyla** çizilir (2. mod, `fonts/README.md`): export başarılı ve uyarılı,
+  ama **belirlenimci değil** (iki worker farklı piksel üretebilir) ve sistem fontları
+  **yeniden dağıtılamaz** (lisans). POC için kabul, üretim için blocker.
+  *Bu makinede set kurulu ve API `"pinned":true` döndürüyor (16 TTF, 7.8 MB) — yani mod 1'de
+  koşuyor; borç, kurulumu bir DAĞITIM KAPISI yapmaktır, bugünkü makinenin durumu değil.*
 - **Worker uyarı kanalı `ILogger`'a bağlanmalı**: `SkiaOverlayRasterService` belirlenimcilik
   uyarısını `onWarning` geri çağrısıyla yayar; bağlanmadığında `stderr`'e yazar. Worker DI'da
   tek satır: `new SkiaOverlayRasterService(opts, onWarning: m => logger.LogWarning("{Msg}", m))`.
@@ -223,102 +245,120 @@ yazılı ve motorda uygulanıyor. Aşağıdakiler bilerek dışarıda bırakıld
   pencereye SIKIŞTIRILIYOR (`menuPosition.ts`): Inspector sağ sütunda olduğu için menü
   viewport dışına taşıyor ve gerçek fareyle tıklanamıyordu.
 
-### Açık kalan (bu dilimin ALANI DIŞINDA — compiler/trim sahibi kapatmalı)
+### M5'te açık bırakılanların bugünkü durumu (compiler/trim sahibi kapattı)
 
-> **DURUM `f39e0b4` (2026-08-12): İKİSİ DE HÂLÂ AÇIK.** M6 bu iki maddeye dokunmadı.
-> Frame-ızgarası çelişkisi CANLI API'de yeniden üretildi (kayıt geçiyor, export 422 veriyor)
-> ve ölçüldü: 30 fps'te kenarları ızgarada olan 144 klip kombinasyonundan **32'si (%22)**
-> ızgara dışı süre üretiyor; 25 fps'te 0. Kullanıcıya
-> [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §1.1'de anlatıldı.
-- **[YÜKSEK] Frame-ızgarası sözleşmesi kendi içinde çelişkili.** Compiler her klipte HEM
-  `timelineStartUs` HEM `timelineDurationUs` için ızgara hizası istiyor; ama 25 fps dışında
-  ızgara toplama altında KAPALI DEĞİLDİR (30 fps: frame 1 = 33_333 µs, frame 2 = 66_667 µs,
-  33_333 + 33_333 = 66_666 ızgarada yok). Sonuç: BİTİŞİK klip zinciri (geçiş sözleşmesinin
-  şartı) iki kuralı aynı anda sağlayamaz. Ölçülen mevcut ihlal: 30 fps'te frame 1'de başlayan
-  bir klibi frame 2'ye kadar kırpmak (rate 1, hızla İLGİSİZ) `timelineDurationUs = 33_334`
-  üretiyor → ızgara dışı → export 422. Denenen 6 kırpma çiftinin 4'ü ızgara dışı süre verdi
-  (`applyTrimToDraft`, `apps/editor/src/state/timelineOps.ts`).
-  Tutarlı sözleşme KENARLARI ızgaraya oturtmaktır (`start` ve `start+duration`), çünkü frame
-  defterinin ihtiyacı `startFrame`/`endFrame`'dir; süreyi ızgarada istemek yanlış invaryant.
-  Düzeltme compiler'da tek koşul + editörde kenar disiplini demek — bu dilimin alanı değil.
-  Şema tarafındaki kapı `exportFrameGridIssues()` hazır ve BİLEREK `superRefine`'a
-  bağlanmadı (bağlansaydı meşru kırpmalar dev'de throw ederdi; gerekçe invariants.ts'te).
-- **[ORTA] Inspector'ın "ripple'sız en yavaş hız" sınırı yarım kare eksik.**
-  `clipInspectorModel.minRateWithoutRipple` sınırı İDEAL süreden türetiyor; ızgara snap'i
-  yarım kare ekleyebildiği için panelin önerdiği oran reddedilebiliyor. Ölçülen vaka
-  (30 fps): klip frame 2'de (66_667 µs), 1 kare kaynak, sonraki klip frame 4'te
+- **[YÜKSEK — KAPANDI, teslim düzeltme turu] Frame-ızgarası sözleşmesi kendi içinde
+  çelişkiliydi.** Compiler her klipte HEM `timelineStartUs` HEM `timelineDurationUs` için
+  ızgara hizası istiyordu; ama 25 fps dışında ızgara toplama altında KAPALI DEĞİLDİR
+  (30 fps: frame 1 = 33_333 µs, frame 2 = 66_667 µs, 33_333 + 33_333 = 66_666 ızgarada yok).
+  Sonuç: BİTİŞİK klip zinciri (geçiş sözleşmesinin şartı) iki kuralı aynı anda sağlayamıyordu;
+  30 fps'te kenarları ızgarada olan 144 klip kombinasyonundan **32'si (%22)** ızgara dışı süre
+  üretiyordu. Kapsam yalnız kırpma değildi: **bölme** ve **asset ekleme** de bir SÜREYE karar
+  verdiği için aynı kapıya çarpıyordu.
+  **Düzeltme, 1. tur:** (a) compiler kapısı kenarlara alındı — `ExportCompiler.cs:258-267`,
+  artık `timelineStartUs` VE `timelineStartUs + timelineDurationUs` denetleniyor, hata metni
+  *"clip … edges are not on the project frame grid"*; (b) editör süreyi kendi başlangıcına göre
+  TAM KARE seçiyor (`packages/timeline-schema/src/time.ts`: `frameSpanUs`, `frameSpanCount`,
+  `snapDurationToFrameSpan`, `floorDurationToFrameSpan`, `isClipOnFrameGrid`).
+  **2. tur (1. tur denetimde RED aldı — iki gerçek boşluk):** (c) *kırpma niceleme hatası* —
+  sağ tutamağı kaynağın sonuna kadar çekmek süreyi `min(hedef, kaynak süresi)` ile kırpıyordu
+  ve kaynağın süresi bir kare sınırı DEĞİLDİR; her kırpma artık sabit kenardan sayılan bir tam
+  kare aralığı seçiyor (`fitFrameSpan`/`fitSpanFromStart`/`fitSpanToEnd`, `timelineOps.ts`) ve
+  kaynak tavanı da kare aralığına yuvarlanıyor. (d) *kapı yerleşimi* — kapı, op
+  sarmalayıcılarının sonuna elle yazılan `assertDocValidDev` satırlarıydı; kırpma sürüklemesi,
+  gizmo ve Inspector slider'ı `beginTransaction → tx.update → commit` yolundan geçtiği için
+  kapıya HİÇ uğramıyordu (gerçek fare, birim testlerin reddedeceği dokümanı yazabiliyordu).
+  Kapı artık **commit noktasında**: `docStore.assertDocGateDev`, her `mutate`/`commit` sonrası
+  `validateTimelineDoc` + `exportFrameGridIssues`, yalnız `import.meta.env.DEV` altında.
+  Kanıt: `e2e/frame-grid.spec.ts` (gerçek fare + ölçülmüş ızgara dışı kaynak → export 202).
+  Kullanıcı anlatımı: [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) **§1.2**
+  (eski metinde yanlışlıkla "§1.1" yazıyordu).
+- **[ORTA — AÇIK] Inspector'ın "ripple'sız en yavaş hız" sınırı yarım kare eksik.**
+  `clipInspectorModel.minRateWithoutRipple` (`clipInspectorModel.ts:465`) sınırı İDEAL süreden
+  türetiyor (`(sourceOut − sourceIn) / (süre + boşluk)`, sonra 3 ondalığa yukarı yuvarlama);
+  ızgara snap'i yarım kare ekleyebildiği için panelin önerdiği oran reddedilebiliyor. Ölçülen
+  vaka (30 fps): klip frame 2'de (66_667 µs), 1 kare kaynak, sonraki klip frame 4'te
   (133_333 µs) → oda 66_666 µs, panel 0.5x öneriyor, op "sonraki klibe giriyor" diyor.
   Ret ATOMİK ve gerekçesi doğru (UI "Sonrakileri kaydır" sunuyor), veri kaybı yok; doğru
   düzeltme sınırı ızgaraya göre hesaplamaktır — `features/inspector` alanı.
-  Davranış testle SABİTLENDİ (`speedColorOps.test.ts`, "a half-frame snap that overruns
-  the neighbour REFUSES"), böylece sessizce overlap'e dönüşemez.
+  Davranış testle SABİTLENDİ (`speedColorOps.test.ts`: *"a slow-down that does NOT fit refuses
+  atomically — it never overlaps, and never quietly shortens"*), böylece sessizce overlap'e
+  dönüşemez.
 
-## POC dokümantasyon turunda kayda geçenler (2026-08-12, `f39e0b4`)
+## POC dokümantasyon turunda kayda geçenler (2026-08-12)
 
 Kapsam tablosunun satır satır kod doğrulaması sırasında bulunan, daha önce **hiçbir yerde
 yazılı olmayan** sınırlar. Hepsi kullanıcıya
 [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) ile anlatıldı.
 
-### [YÜKSEK] Görsel/sticker klipleri ÖNİZLEMEDE çizilmiyor — "Görseller ✅ tam" satırı yanlıştı
+### [YÜKSEK — KAPANDI, teslim düzeltme turu] Görsel/sticker klipleri ÖNİZLEMEDE çizilmiyordu
 
-Zincir üç yerde birden tutarsız ve hiçbir test bunu yakalamıyordu:
+Zincir üç yerde birden tutarsızdı ve hiçbir test bunu yakalamıyordu:
 
 1. `Worker/Jobs/ProcessAssetJob.cs:392` — görsel asset için **proxy üretilmez** (yorum bunu
-   açıkça söylüyor); yalnız `ThumbnailKey` (poster) yazılır.
-2. `Api/Endpoints/AssetMediaUrlBuilder.cs:37` — dolayısıyla `media-urls` görsel için
-   `proxy: null` döner (canlı doğrulandı).
-3. `apps/editor/src/features/player/PlayerPanel.tsx:44` — oynatıcı çözücüsü YALNIZ
-   `proxyUrl` okur → `url = null` → `engineV1.ts:1095` `imageDrawItem` çizmeden döner.
+   açıkça söylüyor); yalnız `ThumbnailKey` (poster) yazılır. *Bu hâlâ böyle; değişen, önizleme
+   tarafının ne istediğidir.*
+2. `Api/Endpoints/AssetMediaUrlBuilder.cs` — dolayısıyla `media-urls` görsel için
+   `proxy: null` döner.
+3. `features/player/PlayerPanel.tsx` — oynatıcı çözücüsü KOŞULSUZ `proxyUrl` okuyordu →
+   `url = null` → `engineV1.ts:1076` `imageDrawItem` çizmeden dönüyordu.
 
-**Kanıt (gerçek tarayıcı, gerçek PNG, 2026-08-12).** 1920×1080 macenta PNG, 5 sn'lik image
-klibi, playhead 0'da, `window.__videoeditTest` ile doğrulanan store: `session=ready`,
-`tracks=1`, `clip={kind:image,start:0}`, `asset.proxyUrl=null`, `asset.posterUrl=VAR`.
-Oynatıcı canvas'ı **tamamen siyah**. Aynı projenin export'u ise doğru: 2. saniyedeki kare
-`YAVG=104 UAVG=210 VAVG=234` (macenta).
+**Düzeltme.** Kaynak seçimi asset KIND'ına göre karar veren tek bir saf fonksiyona alındı:
+`apps/editor/src/features/player/previewSource.ts` (video/ses → `proxy`, görsel → `poster`);
+`PlayerPanel.tsx:51` bunu çağırıyor. Poster her hazır görselde zaten var, `PosterRecipe`
+genişliği 1280 px'e sınırlıyor ve HDR'de proxy/export ile aynı tonemap zincirini koşuyor.
+Sticker'ın ayrı vakası yok — karar klip türüne değil ASSET türüne göre veriliyor.
 
-**Neden test yakalamadı.** `e2e/transitions-image.spec.ts` ve
-`ExportImageTransitionTests` doküman durumu ve export tarafını doğruluyor; **hiçbir test
-görsel klibin oynatıcı tuvaline çizildiğini kontrol etmiyor**. Golden-frame paketi de
-export tarafındadır.
+**Kanıt — piksel.** `apps/editor/e2e/image-preview.spec.ts`: gerçek fare + worker'ın gerçekten
+işlediği iki görsel; önizleme kompozitöründen `probePixel` (çizimle aynı karede `gl.readPixels`)
+ile okuma. 25/25 nokta siyah değil, ≥ 4 farklı renk (düz dolgu yanlış-pozitifini keser),
+letterbox bandı hâlâ siyah, macenta PNG macenta okunuyor, overlay'e eklenen çıkartma fotoğrafın
+üstünde görünüyor. Birim tarafı: `previewSource.test.ts`.
 
-**Düzeltme yönü.** `resolveAsset` (`PlayerPanel.tsx:39`) `kind === 'image'` için
-`posterUrl`'e düşmeli — poster en fazla 1280 px genişlikte JPEG'dir
-(`PosterRecipe.MaxWidth`), yani görselin "proxy" karşılığıdır. Alternatif: worker görsel için
-de bir proxy (webp/png, 540p kısa kenar) üretsin. Hangisi seçilirse seçilsin, **düzeltmeyle
-birlikte bir e2e piksel testi** eklenmelidir (gerçek görsel → tuvalde beklenen renk).
+**Aynı düzeltmede kapandı:** görsel klip eklemek doküman değişmezini ihlal ediyordu
+(`sourceOutUs (4000000) exceeds asset duration (…)`). API görsel süresini PNG'de `null`,
+JPEG'de `40000` µs bildiriyor — yalnız `null`'a bakan bir düzeltme JPEG'i kaçırırdı.
+`knownAssetDurations()` artık görselleri haritaya hiç koymuyor
+(`timelineOps.knownAssetDurations`) ve sayı olmayan `durationUs` değerlerini düşürüyor.
 
-### Diğerleri (düşük/orta)
+**Neden test yakalamamıştı.** `e2e/transitions-image.spec.ts` ve `ExportImageTransitionTests`
+doküman durumunu ve export tarafını doğruluyordu; **hiçbir test görsel klibin oynatıcı tuvaline
+çizildiğini kontrol etmiyordu**. Golden-frame paketi de export tarafındadır.
+
+### Diğerleri (düşük/orta) — hepsi HÂLÂ AÇIK
 
 - **Track yeniden sıralama / yeniden adlandırma yok.** `timelineOps` yalnız `addTrack`
-  (`:492`) ve `deleteTrack` (`:541`) sunar; sağ tık menüsü (`contextMenu.ts:262`) bayrak
-  değiştirme + silme ile sınırlı. Katman sırası ancak track'leri doğru sırada ekleyerek
+  (`:549`) ve `deleteTrack` (`:598`) sunar; track sağ tık menüsü (`contextMenu.ts:262`)
+  yapıştır + üç bayrak + silme ile sınırlı. `addTrack` diziye **sona** ekler (`d.tracks.push`),
+  `tracks[0]` en üst katmandır — yani katman sırası ancak track'leri doğru sırada ekleyerek
   kurulabiliyor.
 - **Ölçek animasyonu + dönme bileşimi export'ta reddediliyor**
-  (`ExportCompiler.cs:1831`, `scale-keyframes-with-rotation`). Gerekçe doğru (ffmpeg `rotate`
+  (`ExportCompiler.cs:1837`, `scale-keyframes-with-rotation`). Gerekçe doğru (ffmpeg `rotate`
   çıkış tuvalini bir kez kurar, büyüyen girişi sessizce kırpardı) ve hata tipli — ama
   **editör bunu önceden uyarmıyor**, kullanıcı 422'yi export anında görüyor. Proaktif rozet
   M3 backlog'undaki "kapsam haritasının UI'da gösterimi" maddesiyle aynı ailedendir.
 - **Keyframe örnek bütçesi 60 000** (`ClipAnimation.cs:83`) ve **katman boyut tavanı 8192 px**
   (`LayerGeometry.cs:81`) — ikisi de tipli hata verir, editörde önden uyarı yok.
-- **Tek export profili.** `ExportProfiles` yalnız `1080p` tanır; 720p/4K/dikey ön ayarı yok.
-- **Ses klibinde görsel keyframe / renk efekti reddediliyor** (`ExportCompiler.cs:1675`,
-  `:1682`) — doğru davranış, editörde önden engellenmiyor.
+- **Tek export profili.** `ExportProfiles.cs` yalnız `Hd1080p` tanır; 720p/4K/dikey ön ayarı yok.
+- **Ses klibinde görsel keyframe / renk efekti reddediliyor**
+  (`ExportCompiler.cs:1681` `keyframes-audio-clip`, `:1688` `effects-audio-clip`) — doğru
+  davranış, editörde önden engellenmiyor.
 
 ## M6 (Dayanıklılık / hardening)
 
 > **M6 TESLİM EDİLDİ ama bu listeden HİÇBİRİ değil.** M6 dilimi iki başka maddeyi kapattı:
-> **sürüm geçmişi UI'ı** ve **kota/silme UX'i** (yukarıdaki kapsam kaydı). Aşağıdaki maddeler
-> `f39e0b4` itibarıyla **AÇIKTIR** — her biri kodda doğrulandı:
+> **sürüm geçmişi UI'ı** ve **kota/silme UX'i** (yukarıdaki kapsam kaydı). Aşağıdaki maddelerin
+> hepsi **HÂLÂ AÇIKTIR** — her biri bu turda yeniden kodda doğrulandı:
 
-| Madde | Doğrulama (`f39e0b4`) |
+| Madde | Doğrulama (2026-08-12) |
 |---|---|
 | `fx.*` keyframe'i | `packages/timeline-schema/src/schema.ts:109` `KeyframeTracksSchema` hâlâ STRICT, 6 kanal |
-| LUT editör yüzeyi **+ önizleme shader'ı** | `apps/editor/src/features/library/fileTypes.ts` whitelist'inde `.cube` yok; ayrıca `rendering-semantics.md` §4.2'nin NORMATİF önizleme uniform'ları (`uLut3D`, `uLutScale`, `uLutOffset`) `apps/`+`packages/` altında **0 kez** geçiyor — `player/core/resolve.ts` `lut` efektini atlar |
+| LUT editör yüzeyi **+ önizleme shader'ı** | `apps/editor/src/features/library/fileTypes.ts:12` `SUPPORTED_EXTENSIONS` içinde `.cube` yok; ayrıca `rendering-semantics.md` §4.2'nin NORMATİF önizleme uniform'ları (`uLut3D`, `uLutScale`, `uLutOffset`) `apps/`+`packages/` altında **0 kez** geçiyor — `player/core/resolve.ts:391` `colorAdjustOf` yalnız `colorAdjust` okur |
 | Revision retention job | `backend/src/VideoEdit.Worker/Program.cs:155` — kayıtlı tek yinelenen iş `asset-reaper` |
-| Container hardening | `Api/Dockerfile` + `Worker/Dockerfile` içinde `USER` direktifi yok |
+| Container hardening | `Api/Dockerfile` + `Worker/Dockerfile` içinde `USER` direktifi **0 kez** geçiyor |
 | Per-device logout | `AuthEndpoints.cs:169` `RevokeAllForUserAsync` — tüm cihazlar düşer |
-| Dockerfile restore (sln üyesi tüm csproj) | `Api/Dockerfile:11-16` — 6 csproj kopyalanıyor, SchemaGen/UnitTests yok |
-| `tsconfig.node.json` tip denetimi | `.github/workflows/ci.yml` ve `apps/editor/package.json` içinde geçmiyor |
+| Dockerfile restore (sln üyesi tüm csproj) | `Api/Dockerfile:11-16` — 6 csproj kopyalanıyor; sln'de **8** csproj var (SchemaGen + UnitTests eksik) |
+| `tsconfig.node.json` tip denetimi | `.github/workflows/ci.yml` ve `apps/editor/package.json` içinde geçmiyor (`build` = `check-public-assets` + `tsc -b` + `vite build`) |
 
 - **fx.\* keyframe'i** (colorAdjust/LUT parametrelerinin animasyonu): şema `KeyframeTracks`
   STRICT olduğu için doküman düzeyinde de yok; kanal listesi + örnekleme + compiler ifadesi
@@ -336,7 +376,11 @@ birlikte bir e2e piksel testi** eklenmelidir (gerçek görsel → tuvalde beklen
 - **apps/editor `tsconfig.node.json` tip-denetimi** build zincirine eklenmeli (denetim #36).
 
 ## M1 denetiminden ertelenenler (2026-08-07, 37 bulgu; kritik+yüksek tümü M1'de düzeltildi)
-- **M2**: IDOR korumaları kod olarak doğru ama regresyon test paketi yok — sahiplik ihlali senaryolarını (başka kullanıcının assetId/projectId'si) kapsayan endpoint testleri eklenmeli. SignalR progress kanalı gelince `refetchIntervalInBackground` geçici çözümü kaldırılacak.
+- **M2 (KISMEN AÇIK)**: IDOR korumaları kod olarak doğru ama regresyon test paketi **hâlâ
+  eksik**. Bugün yalnız iki sahiplik testi var (`AssetUsageQuotaTests.Usage_OtherUsersAsset_Returns404`
+  ve `Usage_IgnoresOtherUsersAndDeletedProjects`); projects/exports/timeline uçlarında başka
+  kullanıcının `projectId`/`jobId`'siyle çağrı senaryoları **yok**. SignalR progress kanalı
+  gelince `refetchIntervalInBackground` geçici çözümü kaldırılacak.
 - **M6**: Kota kontrolü check-then-act (bilinçli MVP kabulü) — eşzamanlı init'lerle sınırlı aşım mümkün; transactional/advisory-lock çözümü. Upload resume sertleştirme: dosya-değişti tespiti (ilk 1 MiB parmak izi), IndexedDB hayalet satırlarının tam yaşam döngüsü, FileSystemFileHandle akışı.
 - **Not (KAPANDI, teslim düzeltme turu 2026-08-12)**: E2E/ölçüm fixture'ı 122 MB ile
   `apps/editor/public/` altında duruyordu ve `vite build` onu `dist/`e kopyalıyordu (üretim

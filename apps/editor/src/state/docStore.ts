@@ -5,10 +5,23 @@
  * patch-based undo/redo history. Everything in here is subject to undo AND to
  * autosave. View state (selection, playhead, zoom) lives in editorStore and is
  * deliberately NOT here (design doc 01-frontend-editor.md §2.1).
+ *
+ * It is also where the DOCUMENT GATE lives (assertDocGateDev): every write path
+ * — single-step ops, keyboard shortcuts, inspector edits and every pointer drag
+ * — ends in `mutate` or in a transaction `commit`, so validating there is the
+ * only way to make the check impossible to forget. See assertDocGateDev.
  */
 import { enablePatches, produceWithPatches, applyPatches, type Patch } from 'immer';
 import { create } from 'zustand';
-import type { TimelineDoc, ProjectSettings, Uuid } from '@videoedit/timeline-schema';
+import {
+  exportFrameGridIssues,
+  validateTimelineDoc,
+  type MicroSec,
+  type TimelineDoc,
+  type ProjectSettings,
+  type Uuid,
+} from '@videoedit/timeline-schema';
+import { useAssetStore } from './assetStore';
 
 // produceWithPatches requires the immer patches plugin.
 enablePatches();
@@ -64,9 +77,17 @@ export interface DocStore {
    */
   loadSeq: number;
 
-  /** Single-step mutation: one recipe -> one undo entry (no entry if the recipe changed nothing). */
+  /**
+   * Single-step mutation: one recipe -> one undo entry (no entry if the recipe
+   * changed nothing). Passes the dev document gate (assertDocGateDev).
+   */
   mutate(actionType: string, label: string, recipe: (draft: TimelineDoc) => void): void;
-  /** Multi-step coalescing (drags, sliders, text bursts): one entry per transaction. */
+  /**
+   * Multi-step coalescing (drags, sliders, text bursts): one entry per
+   * transaction. `commit()` passes the dev document gate — which is what puts
+   * every INTERACTIVE path (mouse drags included) behind the same check as the
+   * single-step ops.
+   */
   beginTransaction(actionType: string, label: string): Transaction;
 
   undo(): void;
@@ -121,6 +142,89 @@ const NOOP_TRANSACTION: Transaction = {
   commit() {},
   abort() {},
 };
+
+// ---------------------------------------------------------------------------
+// Dev document gate (runs at the COMMIT POINT — see assertDocGateDev)
+// ---------------------------------------------------------------------------
+
+/**
+ * Source bounds for the gate: assetId -> durationUs, for assets that HAVE a
+ * source time axis and a known duration.
+ *
+ * Deliberately a local copy of `timelineOps.knownAssetDurations` rather than an
+ * import: the gate lives in the store, and the store is the LOWER layer — the
+ * ops module imports it, so importing back would close a module cycle around
+ * `useDocStore` itself. The two exclusions below are the ones that matter and
+ * `docStore.test.ts` asserts the two maps are identical for the same asset
+ * store, so this copy cannot silently drift from the one the ops plan with:
+ *
+ *  - STILL IMAGES are never in the map. A still has no source clock to run out
+ *    of (the export compiler opens it with `-loop 1`), and ffprobe reports a
+ *    meaningless 0.04 s for a JPEG — constraining a 4 s image clip against that
+ *    number made "add a photo" fail.
+ *  - NON-NUMBERS are dropped rather than trusted: a JSON `null` off the wire
+ *    types as `number | undefined` and compares as `4000000 > null === true`.
+ */
+export function docGateAssetDurations(): Map<string, MicroSec> {
+  const map = new Map<string, MicroSec>();
+  for (const a of useAssetStore.getState().assets.values()) {
+    if (a.kind === 'image') continue;
+    const durationUs: number | null | undefined = a.durationUs;
+    if (typeof durationUs === 'number' && Number.isFinite(durationUs)) {
+      map.set(a.id, durationUs);
+    }
+  }
+  return map;
+}
+
+/**
+ * THE document gate — dev-mode only, and the single place every write path is
+ * forced through (`mutate` and transaction `commit`; see the calls below).
+ *
+ * Why it lives HERE and not at the call sites: it used to be an
+ * `assertDocValidDev(...)` line that each op in timelineOps had to remember to
+ * write after its own mutation. Single-step ops did; the INTERACTIVE paths did
+ * not go through them at all — a timeline trim drag is
+ * `beginTransaction` -> `tx.update(applyTrimToDraft)` -> `commit`, a gizmo drag
+ * and an inspector slider are the same shape — so the gate depended on every
+ * gesture author remembering to bolt it on afterwards. That is how a real
+ * mouse drag could write a document the unit tests (which call the op wrappers)
+ * would have rejected. At the commit point it cannot be forgotten: there is no
+ * way to change the document without passing through `mutate` or `commit`.
+ *
+ * TWO gates, because the export compiler has two:
+ *  1. `validateTimelineDoc` — the document invariants (structure, duration
+ *     formula, source bounds against the asset durations above),
+ *  2. `exportFrameGridIssues` — the compiler's frame-grid edge rule verbatim
+ *     (ExportCompiler.Validate). A document that fails it saves fine (PUT 200)
+ *     and comes back HTTP 422 from the render worker.
+ *
+ * Prod is untouched: the whole body is behind `import.meta.env.DEV`, so a user
+ * never pays for a full zod parse per edit and never sees a throw.
+ */
+export function assertDocGateDev(d: TimelineDoc, context: string): void {
+  if (!import.meta.env?.DEV) return;
+  const result = validateTimelineDoc(d, docGateAssetDurations());
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((i) => `${i.path.join('.')}: ${i.message}`)
+      .join('\n  ');
+    throw new Error(`Timeline invariant violation after "${context}":\n  ${issues}`);
+  }
+  const gridIssues = exportFrameGridIssues(d);
+  if (gridIssues.length > 0) {
+    const detail = gridIssues
+      .map(
+        (i) =>
+          `tracks.${i.trackIndex}.clips.${i.clipIndex} (${i.clipId}): ` +
+          `${i.field}=${i.valueUs} is off the project frame grid (nearest ${i.snappedUs})`,
+      )
+      .join('\n  ');
+    throw new Error(
+      `Export frame-grid violation after "${context}" — this document would fail export with HTTP 422:\n  ${detail}`,
+    );
+  }
+}
 
 export const useDocStore = create<DocStore>()((set, get) => {
   /**
@@ -193,6 +297,9 @@ export const useDocStore = create<DocStore>()((set, get) => {
       if (patches.length === 0) return; // no-op recipes never pollute history
       set({ doc: nextDoc });
       pushEntry({ label, actionType, patches, inversePatches, timestamp: Date.now() });
+      // The gate, after the store is fully consistent (doc + history written):
+      // a throw here is a dev-time alarm, not a half-applied edit.
+      assertDocGateDev(nextDoc, `mutate(${actionType})`);
     },
 
     beginTransaction(actionType, label) {
@@ -220,7 +327,13 @@ export const useDocStore = create<DocStore>()((set, get) => {
           if (!open) return;
           open = false;
           activeTransaction = null;
-          if (patches.length > 0) {
+          // The document the GESTURE produced, captured before a queued load can
+          // replace it: the gate judges what the drag wrote. A document that
+          // arrived from the server is not the gesture's doing and may
+          // legitimately be legacy/off-grid (see loadDoc — deliberately ungated).
+          const gestureDoc = get().doc;
+          const changed = patches.length > 0;
+          if (changed) {
             pushEntry({ label, actionType, patches, inversePatches, timestamp: Date.now() });
           }
           // A queued load supersedes the gesture: apply it BEFORE announcing
@@ -228,6 +341,13 @@ export const useDocStore = create<DocStore>()((set, get) => {
           // and do not schedule a save of the now-replaced document.
           applyPendingLoadIfAny();
           set({ transactionOpen: false });
+          // Every interactive gesture (timeline trim drag, gizmo drag, inspector
+          // slider, keyframe drag) ends HERE — this is the single point where a
+          // drag-written document can be caught. A transaction that produced no
+          // patch changed nothing, so it is not judged: a click that opens and
+          // closes a trim transaction without moving must not blow up on a
+          // pre-existing violation it did not cause.
+          if (changed) assertDocGateDev(gestureDoc, `commit(${actionType})`);
         },
         abort() {
           if (!open) return;

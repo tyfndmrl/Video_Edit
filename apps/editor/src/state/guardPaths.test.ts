@@ -161,11 +161,26 @@ function expectDocValid(): void {
 
 /** Dokümanı yükler ve `mutate` ile (gerçek yolla) bir klibi düzenler. */
 function editClip(clipId: string, fn: (c: MediaClip) => void): void {
+  editClips((find) => fn(find(clipId)));
+}
+
+/**
+ * Aynı `mutate` içinde BİRDEN ÇOK klibi düzenler.
+ *
+ * Neden gerekli: geçiş metadata'sı iki klibe birden yazılır ve simetrik OLMAK
+ * ZORUNDADIR (invariant 5). İki ayrı `mutate` ile yazıldığında aradaki an
+ * asimetriktir ve docStore'un taahhüt kapısı (assertDocGateDev) o yarım belgeyi
+ * — haklı olarak — reddeder. Kurulum tek parça yazılır.
+ */
+function editClips(fn: (find: (clipId: string) => MediaClip) => void): void {
   useDocStore.getState().mutate('test', 'test kurulum', (d) => {
-    for (const t of d.tracks) {
-      const c = t.clips.find((x) => x.id === clipId);
-      if (c) fn(c as MediaClip);
-    }
+    fn((clipId) => {
+      for (const t of d.tracks) {
+        const c = t.clips.find((x) => x.id === clipId);
+        if (c) return c as MediaClip;
+      }
+      throw new Error(`Test kurulumu: ${clipId} klibi dokümanda yok.`);
+    });
   });
 }
 
@@ -256,13 +271,14 @@ describe('(a) geçiş + keyframe', () => {
   });
 
   it('ESKİ projeden gelen yasak bileşimden ÇIKIŞ yolu açık kalır (kaldır/temizle)', () => {
-    // Kapı yokken kurulmuş bir doküman: hem geçiş hem keyframe.
-    editClip(CLIP_A, (c) => {
-      c.keyframes.opacity = [kf(0, 1), kf(2 * US, 0)];
-      c.transitionOut = { type: 'crossfade', durationUs: US };
-    });
-    editClip(CLIP_B, (c) => {
-      c.transitionIn = { type: 'crossfade', durationUs: US };
+    // Kapı yokken kurulmuş bir doküman: hem geçiş hem keyframe. Geçişin iki
+    // yarısı TEK yazımda kurulur (bkz. editClips): yarım yazılmış bir geçiş
+    // simetri invariant'ını çiğner ve taahhüt kapısı belgeyi reddeder.
+    editClips((find) => {
+      const a = find(CLIP_A);
+      a.keyframes.opacity = [kf(0, 1), kf(2 * US, 0)];
+      a.transitionOut = { type: 'crossfade', durationUs: US };
+      find(CLIP_B).transitionIn = { type: 'crossfade', durationUs: US };
     });
 
     expect(addKeyframeBlockReason(currentDoc(), CLIP_A, 'opacity')).toBe(

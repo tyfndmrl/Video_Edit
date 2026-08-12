@@ -28,12 +28,14 @@ Medyanı yükle, zaman çizgisinde kes, katmanla, metin ve geçiş ekle, renk ve
 ### Medya
 - **Yükleme**: MP4 / MOV / WebM, MP3 / M4A / WAV, PNG / JPG / WebP —
   tarayıcıdan doğrudan depoya çok parçalı yükleme (sabit 64 MiB parça), duraklat / devam et
-- Worker her medya için **540p proxy, filmstrip, waveform ve poster** üretir; önizleme
-  proxy'den oynar (orijinal dosya tarayıcıya hiç inmez)
+- Worker türe göre türev üretir: **video** → 540p proxy + filmstrip + waveform (sesliyse) +
+  poster; **ses** → AAC proxy + waveform; **görsel** → yalnız poster. Önizleme hep bu
+  türevlerden oynar — **orijinal dosya tarayıcıya hiç inmez**
 - **Görsel klipler** (fotoğraf) — süresi ayarlanabilir, diğer katmanlarla aynı geometri
-  zincirinden geçer, aralarına geçiş kurulabilir (slayt gösterisi).
-  ⚠️ **Bilinen kusur:** görsel ve sticker klipleri **önizlemede çizilmiyor** (export doğru) —
-  [poc-bilinen-sinirlar.md §1.1](docs/poc-bilinen-sinirlar.md)
+  zincirinden geçer, aralarına geçiş kurulabilir (slayt gösterisi). Önizlemede de export'ta da
+  çizilir; önizleme kaynağı görselde **poster**, video/seste **proxy**'dir
+  (`features/player/previewSource.ts`) ve bunu gerçek piksel okuyan bir e2e testi tutar
+  (`e2e/image-preview.spec.ts`)
 - Depolama **kotası göstergesi**, asset silme akışı ("bu asset şu projelerde kullanılıyor"
   uyarısıyla), eksik medya bildirimi
 
@@ -44,11 +46,14 @@ Medyanı yükle, zaman çizgisinde kes, katmanla, metin ve geçiş ekle, renk ve
 
 ### Kompozisyon ve efektler
 - **Transform gizmo** — oynatıcı üzerinde doğrudan taşıma / ölçekleme / döndürme;
-  Inspector'da sayısal alanlar (x, y, ölçek, açı, çapa, opaklık)
+  Inspector'da sayısal alanlar: Konum X, Konum Y, Ölçek, Döndürme, Opaklık.
+  *Çapa (anchor) noktası merkezde sabittir — panelde alanı yoktur; uygulama bunu
+  Özellikler → "Kapsam" bölümünde kendisi söyler*
 - **Metin katmanları** — küratörlü font seti (Roboto, Open Sans, Noto Sans, Noto Serif;
   4 ağırlık/stil), boyut, hizalama, satır aralığı, dolgu / kenarlık / arka plan.
   Tarayıcı ve sunucu **aynı TTF dosyasını** kullanır
-- **Şekiller** (dikdörtgen, elips, çizgi, ok) ve **sticker** (statik PNG/WebP) katmanları
+- **Şekiller** (dikdörtgen, elips, çizgi, ok) ve **sticker** katmanları (sticker = overlay
+  katmanına konmuş, hazır bir görsel asset'i — PNG / JPG / WebP)
 - **Geçişler** — `crossfade`, `fadeToBlack`, `wipeLeft`, `wipeRight`, `slideUp`, `dissolve`;
   kesim rozetinden veya sağ tık menüsünden, süre ayarlanabilir, **oynatıcıda önizlenir**
 - **Renk düzeltme** — parlaklık, kontrast, doygunluk, sıcaklık, ton, pozlama; aynı matematik
@@ -133,7 +138,8 @@ pnpm install
 # 2) Altyapı: postgres + redis + minio
 docker compose -f compose.dev.yml up -d
 
-# 3) Fontlar — küratörlü set (16 TTF, ~9.5 MB). TTF'ler depoda YOKTUR, bir kez indirilir.
+# 3) Fontlar — küratörlü set (4 aile x 4 stil = 16 TTF, ~7.8 MB). TTF'ler depoda YOKTUR
+#    (fonts/.gitignore: *.ttf), bir kez indirilir.
 #    Script manifest.json'daki resmî adreslerden indirir ve manifest.lock.json'a sha256 yazar.
 pwsh fonts/fetch-fonts.ps1        # Windows
 ./fonts/fetch-fonts.sh            # Linux / macOS (curl + jq gerekir)
@@ -173,15 +179,15 @@ klipleri **sistem fontuyla** çizilir; o zaman render **belirlenimci değildir**
 
 ## Testler
 
-Tümü **2026-08-12 / `f39e0b4`** üzerinde bizzat koşuldu:
+Tümü **2026-08-12**, `df799df` + teslim düzeltme turu üzerinde bizzat koşuldu:
 
 ```bash
-# Backend — 834 test.  MinIO ayaktaysa env değişkenini VERİN, yoksa 13 test Skip olur
+# Backend — 966 test.  MinIO ayaktaysa env değişkenini VERİN, yoksa 13 test Skip olur
 #   (ProcessAssetPipelineTests, MinioStorageSmokeTests, ExportJobPipelineTests).
-MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 834/834 ✓
+MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 966/966 ✓
 
 # Editör + şema paketi birlikte
-pnpm -r test                                                 # editor 1048 ✓ · schema 169 ✓
+pnpm -r test                                                 # editor 1156 ✓ · schema 180 ✓
 
 # Tip denetimi
 pnpm --filter @videoedit/editor exec tsc -b
@@ -193,7 +199,7 @@ pnpm --filter @videoedit/editor build
 # E2E — GERÇEK tarayıcıda GERÇEK fare/klavye ile (page.mouse / page.keyboard).
 # API (5000), worker ve Vite (5173) AYAKTA olmalı; Playwright hiçbir süreci
 # başlatmaz/öldürmez, ayakta olanlara bağlanır.
-pnpm --filter @videoedit/editor test:e2e                     # 118/118 ✓ (4.9 dk)
+pnpm --filter @videoedit/editor test:e2e                     # 126/126 ✓ (27 spec, 6.4 dk)
 ```
 
 > **Neden gerçek fare?** Teslim edilen ilk sürümde "E2E" testleri store'u doğrudan
@@ -202,10 +208,10 @@ pnpm --filter @videoedit/editor test:e2e                     # 118/118 ✓ (4.9 
 > `dispatchEvent` ve store'u doğrudan çağırmak **kanıt sayılmaz**
 > ([docs/review-gate.md](docs/review-gate.md) kural 3).
 
-CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) üç paralel iş koşar: Node
-(testler + tip denetimi + production build + şema drift), .NET (gerçek ffmpeg + gerçek MinIO
-konteyneri + golden/snapshot drift + contracts drift), E2E (Playwright, gerçek medya üreterek
-uçtan uca transcode + export).
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) dört paralel iş koşar: **node**
+(testler + tip denetimi + production build + şema drift), **dotnet** (gerçek ffmpeg + gerçek
+MinIO konteyneri + golden/snapshot drift + contracts drift), **e2e** (Playwright, gerçek medya
+üreterek uçtan uca transcode + export) ve **docker** (Api + Worker imaj build'i, matris).
 
 ---
 
@@ -235,7 +241,9 @@ backend/
   src/VideoEdit.Infrastructure/  EF Core, R2/S3 istemcisi, JWT
   src/VideoEdit.Media/           ffmpeg reçeteleri, probe, Export/ (FilterGraph compiler), Text/ (SkiaSharp)
   src/VideoEdit.Worker/          Hangfire: ProcessAssetJob, ExportJob, AssetReaperJob
-  tests/VideoEdit.UnitTests/     834 test + ExportSnapshots/ + GoldenFrames/ + RasterGoldens/
+  tests/VideoEdit.UnitTests/     966 test + ExportSnapshots/ (filtre grafiği metin snapshot'ları)
+  tests/GoldenFrames/            export karesi piksel golden'ları (11 PNG)
+  tests/RasterGoldens/           SkiaSharp şekil rasteri golden'ları (4 PNG)
   tools/SchemaGen/               JSON Schema → C# DTO üretici
 
 fonts/                           küratörlü set: manifest.json + sha256 lock + fetch scriptleri
@@ -252,17 +260,23 @@ oynatıcı + autosave → **M3** export → **M4** çok katman, klip özellikler
 görseller, metin/şekil/sticker, geçişler → **M5** hız, renk, keyframe → **M6** sürüm geçmişi
 UI, kota/silme UX.
 
+Teslim düzeltme turlarında kapandı (bu listede DEĞİL, kaydı
+[poc-bilinen-sinirlar.md](docs/poc-bilinen-sinirlar.md) §1.1 / §1.2'de):
+görsel ve sticker kliplerinin önizlemede çizilmesi, frame ızgarası sözleşmesinin kenarlara
+alınması.
+
 Sıradaki (öncelik sırasıyla, gerekçeleriyle
 [docs/backlog.md](docs/backlog.md) ve [docs/poc-bilinen-sinirlar.md](docs/poc-bilinen-sinirlar.md)):
 
-1. **Görsel/sticker kliplerinin önizlemede çizilmesi** — çözücü `posterUrl`'e düşmeli
-2. **Frame ızgarası sözleşmesinin düzeltilmesi** — 30 fps'te bazı kırpmalar export'ta 422 alıyor
-3. **LUT (.cube) editör yüzeyi** — motor hazır, yükleme yolu ve UI yok
-4. **Pis-dosya korpusu** — iPhone HDR/HLG, VFR, döndürülmüş MOV ile uçtan uca testler
-5. **`fx.*` keyframe'i** — renk/LUT parametrelerinin animasyonu
-6. **Tarayıcı yeniden başlatma sonrası upload resume**
-7. **Revision retention job** + container sertleştirme (non-root, kaynak sınırları)
-8. **WebCodecs (v2) oynatıcı motoru** — kare-kesin önizleme (±1 kare toleransını kaldırır)
+1. **LUT (.cube) editör yüzeyi + önizleme shader'ı** — export motoru hazır, yükleme yolu, efekt
+   UI'ı ve WebGL2 3D doku örneklemesi yok (iki ayrı iş kalemi — §1.3)
+2. **Pis-dosya korpusu** — iPhone HDR/HLG, VFR, döndürülmüş MOV ile uçtan uca testler
+3. **`fx.*` keyframe'i** — renk/LUT parametrelerinin animasyonu
+4. **Track yeniden sıralama / yeniden adlandırma** — bugün katman sırası ancak track'leri doğru
+   sırada ekleyerek kurulabiliyor
+5. **Tarayıcı yeniden başlatma sonrası upload resume**
+6. **Revision retention job** + container sertleştirme (non-root, kaynak sınırları)
+7. **WebCodecs (v2) oynatıcı motoru** — kare-kesin önizleme (±1 kare toleransını kaldırır)
 
 Her iş dilimi, adversarial baş mimar denetiminden geçmeden "tamam" sayılmaz:
 [docs/review-gate.md](docs/review-gate.md) (bağlayıcı), denetim arşivi
