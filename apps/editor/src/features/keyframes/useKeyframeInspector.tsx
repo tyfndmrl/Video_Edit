@@ -34,6 +34,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useDocStore } from '../../state/docStore';
 import { useEditorStore } from '../../state/editorStore';
 import { isLiveEditOpen, updateLiveEdit } from '../inspector/liveEdit';
+import { KeyframeEasingPicker } from './KeyframeEasingPicker';
 import { AnimatedBadge, KeyframeToggle } from './KeyframeToggle';
 import {
   CHANNEL_META,
@@ -144,6 +145,22 @@ export function useKeyframeInspector(sessionReady: boolean): KeyframeInspector {
             if (clipId !== null) clearChannel(clipId, channel, timeNow());
           }}
         />
+        {/*
+          Easing is per KEYFRAME, so the control only exists when the playhead
+          sits exactly on one. It lives here — next to the channel's own field —
+          because the timeline strip shows at most two channels: on a clip with
+          three or more animated channels the strip's right-click menu is not
+          reachable for the folded ones, and easing would be un-editable.
+        */}
+        {state.atTime !== null && clipId !== null && (
+          <KeyframeEasingPicker
+            clipId={clipId}
+            channel={channel}
+            timeUs={model.clipTimeUs}
+            current={state.atTime.easing}
+            enabled={enabled}
+          />
+        )}
       </span>
     );
   };

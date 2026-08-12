@@ -60,8 +60,8 @@ public sealed record ExportPlan(
 }
 
 /// <summary>
-/// FilterGraph Compiler v4 (M5 = HIZ + RENK DÜZELTME/LUT + transform/opaklık KEYFRAME'leri;
-/// ses keyframe'i, hız rampası ve minterpolate hâlâ tipli hata).
+/// FilterGraph Compiler v4 (M5 = HIZ + RENK DÜZELTME/LUT + transform/opaklık/SES SEVİYESİ
+/// KEYFRAME'leri; hız rampası ve minterpolate hâlâ tipli hata).
 /// TimelineDoc → deterministik CompiledExport. Kurallar:
 ///  - HIZ (tasarım 04 §2.4): video <c>fps → setpts=PTS/k → fps → trim</c> (ikinci fps çıktı
 ///    ızgarasıdır), ses <c>atempo</c> katlaması; süre §1.3'ün tek formülünden gelir ve geçiş
@@ -130,8 +130,11 @@ public sealed record ExportPlan(
 ///    (CLI bayrakları emniyet kemeri olarak kalır);
 ///  - ses: TÜM track'lerin klipleri mikslenir. hidden track SES ÜRETMEYE DEVAM EDER
 ///    (hidden = yalnız görsel gizleme — apps/editor resolve.ts semantiği), muted track ve
-///    muted klip ses üretmez. Zincir: [atrim] → asetpts → aformat(48k fltp stereo) → volume(lineer)
-///    → afade in/out (curve=tri, §8.2) → 5 ms micro-fade (§8.4) → [acrossfade zinciri] → adelay;
+///    muted klip ses üretmez. Zincir: [atempo] → [atrim] → asetpts → [adelay = atempo WSOLA
+///    telafisi, AtempoCompensationMs] → aformat(48k fltp stereo) → apad + atrim=end (UZUNLUK
+///    KİLİDİ: akış sözleşme penceresine sabitlenir) → volume (sabit ya da §8.1 keyframe eğrisi
+///    asendcmd ile) → afade in/out (curve=tri, §8.2) → 5 ms micro-fade (§8.4)
+///    → [acrossfade zinciri] → adelay(timeline ofseti);
 ///    miks amix=normalize=0 + alimiter=limit=0.98 (§8.3); hiç ses yoksa anullsrc;
 ///  - tüm sayısal literal'ler InvariantCulture (TimeFormat) — TR locale'de virgül SIZAMAZ.
 /// </summary>
@@ -553,15 +556,17 @@ public static class ExportCompiler
             }
         }
 
+        // Örnekleme tavanı DERLEME GENELİNDEDİR (görsel + ses keyframe'leri aynı bütçeyi paylaşır)
+        // — ses zinciri de §3.4'ün frame örneklemesini kullanır (volume keyframe'i, §8.1).
+        var sampleBudget = KeyframeCompiler.MaxSamples;
         foreach (var group in audioGroups)
         {
-            audioLines.Add(EmitAudioGroup(group, audioLines.Count));
+            audioLines.Add(EmitAudioGroup(group, audioLines.Count, plan, ref sampleBudget));
         }
 
         // ── 1b) Animasyon defterleri (§3.4). EĞRİLİ (non-linear easing) kanallar frame başına
         //      örneklenip sendcmd komutlarına çevrilir; TAMAMI LİNEER kanallar ifadeyle çözülür
-        //      ve buradan hiç komut çıkmaz. Örnekleme tavanı bir kez, derleme genelinde ölçülür.
-        var sampleBudget = KeyframeCompiler.MaxSamples;
+        //      ve buradan hiç komut çıkmaz.
         for (var n = 0; n < runs.Count; n++)
         {
             sampleBudget = BuildAnimationCommands(runs[n], n, plan, sampleBudget);
@@ -1937,6 +1942,55 @@ public static class ExportCompiler
         yield return k;
     }
 
+    /// <summary>
+    /// atempo'nun WSOLA hazırlık gecikmesi (µs, GİRİŞ ekseninde) — <see cref="AtempoCompensationMs"/>
+    /// formülünün <c>A</c> katsayısı. Ölçülmüş değerdir, tahmin DEĞİL.
+    /// </summary>
+    internal const double AtempoPrimingUs = 8430d;
+
+    /// <summary>Aynı formülün ÇIKIŞ ekseninde sabit kalan payı (µs) — <c>B</c> katsayısı.</summary>
+    internal const double AtempoPrimingTailUs = 1120d;
+
+    /// <summary>
+    /// atempo zincirinin A/V senkron telafisi (ms, <c>adelay</c> için).
+    /// <para>
+    /// <b>NEDEN GEREKLİ (gerçek ölçüm, ffmpeg 8.0, 48 kHz).</b> atempo WSOLA'dır ve akışın
+    /// BAŞINDAN sabit bir pay yutar: kapılanmış burst kaynağı (8 sn, 1 kHz × 100 ms patlamalar,
+    /// 0.5 sn'de bir) enerji-ağırlıklı patlama MERKEZİ ile ölçüldüğünde ses TIMELINE ekseninde
+    /// ERKENE kayıyor. Telafi ÖNCESİ / SONRASI en büyük sapma (aynı ölçüm, aynı kaynak):
+    /// <code>
+    ///   rate 2     8.71 ms  →  3.71 ms      akış eksiği 10.7 ms → 0 (tam kilit)
+    ///   rate 4     6.99 ms  →  3.99 ms      akış eksiği 16.0 ms → 0
+    ///   rate 0.5  18.83 ms  →  1.63 ms      akış eksiği 53.3 ms → 0
+    ///   rate 0.25 46.54 ms  → 11.54 ms      akış eksiği 160.0 ms → 0
+    /// </code>
+    /// 30 fps'te bir çıkış karesi 33.33 ms'tir: telafisiz hâlde rate 0.25 bunu 1.4 kare aşıyordu.
+    /// </para>
+    /// <para>
+    /// <b>FORMÜL AMPİRİKTİR — kapalı formu yoktur ve tahmin edilmemiştir.</b> tempo taraması
+    /// (0.5, 0.6, 0.75, 0.9, 1.25, 1.5, 2, 3, 4, 8) ölçülen kaymanın <c>A/rate + B</c> biçimine
+    /// ±1 ms içinde oturduğunu gösterdi (A = 8.43 ms giriş ekseninde, B = 1.12 ms çıkış
+    /// ekseninde). Pay filtrenin İÇ pencere/priming davranışından gelir, ffmpeg sürümüne
+    /// bağlıdır ve bu yüzden <b>gerçek render ölçen bir regresyon testine bağlanmıştır</b>
+    /// (ExportM5GoldenTests.Speed_KeepsAudioOnTheTimeline_MeasuredOnsets): ffmpeg davranışı
+    /// değişirse test kırmızıya döner, sabit sessizce bayatlamaz.
+    /// </para>
+    /// <para>
+    /// Zincirin katlanmış olması (0.25 → 0.5,0.5) formülü değiştirmez: TOPLAM rate üstünden
+    /// hesaplanır; iki aşamalı zincirde ölçülen artık sapma 11.5 ms'tir (bir karenin ~%35'i).
+    /// </para>
+    /// </summary>
+    internal static int AtempoCompensationMs(double rate)
+    {
+        if (rate == 1d)
+        {
+            return 0; // atempo hiç üretilmez → telafi edilecek gecikme de yok
+        }
+
+        var us = (AtempoPrimingUs / rate) + AtempoPrimingTailUs;
+        return (int)Math.Round(us / 1000d, MidpointRounding.AwayFromZero);
+    }
+
     // ───────────────────────── Ses zinciri ─────────────────────────
 
     /// <summary>
@@ -1974,7 +2028,8 @@ public static class ExportCompiler
     /// acrossfade ile katlanır, timeline ofseti (adelay) EN SONDA bir kez uygulanır —
     /// acrossfade toplam süreyi Σd'de tuttuğu için A/V senkronu korunur (§5.4).
     /// </summary>
-    private static string EmitAudioGroup(AudioGroup group, int audioIndex)
+    private static string EmitAudioGroup(
+        AudioGroup group, int audioIndex, ExportPlan plan, ref int sampleBudget)
     {
         var label = $"a{audioIndex.ToString(CultureInfo.InvariantCulture)}";
         var delayMs = (group.StartUs + 500) / 1000; // µs → ms, half-up
@@ -1984,7 +2039,7 @@ public static class ExportCompiler
 
         if (group.Segments.Count == 1)
         {
-            var only = BuildAudioChain(group.Segments[0]);
+            var only = BuildAudioChain(group.Segments[0], audioIndex, 0, plan, ref sampleBudget);
             var parts = delay is null ? only : only + "," + delay;
             return $"[{group.Segments[0].InputIndex.ToString(CultureInfo.InvariantCulture)}:a]"
                    + parts + $"[{label}]";
@@ -1998,7 +2053,8 @@ public static class ExportCompiler
                                + $"_{i.ToString(CultureInfo.InvariantCulture)}";
             segmentLabels.Add(segmentLabel);
             lines.Add($"[{group.Segments[i].InputIndex.ToString(CultureInfo.InvariantCulture)}:a]"
-                      + BuildAudioChain(group.Segments[i]) + $"[{segmentLabel}]");
+                      + BuildAudioChain(group.Segments[i], audioIndex, i, plan, ref sampleBudget)
+                      + $"[{segmentLabel}]");
         }
 
         var acc = segmentLabels[0];
@@ -2071,8 +2127,10 @@ public static class ExportCompiler
 
     /// <summary>
     /// Klip ses zinciri (rendering-semantics §8 + görev sözleşmesi):
-    /// [atrim] → asetpts → aformat → volume → afade in/out (curve=tri) → 5 ms micro-fade (§8.4).
-    /// adelay ve acrossfade GRUP seviyesindedir (EmitAudioGroup).
+    /// [atempo] → [atrim] → asetpts → [adelay = atempo telafisi] → aformat → apad + atrim=end
+    /// (UZUNLUK KİLİDİ) → volume (sabit ya da asendcmd'li keyframe) → afade in/out (curve=tri)
+    /// → 5 ms micro-fade (§8.4). Timeline ofseti (adelay) ve acrossfade GRUP seviyesindedir
+    /// (EmitAudioGroup).
     /// No-op filtreler (volume=1, fade=0, delay=0) determinism ve hız için ÜRETİLMEZ — snapshot
     /// sabitler.
     /// Micro-fade kuralı (§8.4, preview'daki gain.ts ile aynı mantık): her sert kesim kenarına
@@ -2086,7 +2144,9 @@ public static class ExportCompiler
     /// duyulabilir ses komşunun timeline bölgesine taşardı.
     /// </para>
     /// </summary>
-    private static string BuildAudioChain(AudioSegment segment)
+    private static string BuildAudioChain(
+        AudioSegment segment, int audioIndex, int segmentIndex, ExportPlan plan,
+        ref int sampleBudget)
     {
         var clip = segment.Clip;
         var audio = segment.Audio;
@@ -2116,9 +2176,66 @@ public static class ExportCompiler
         }
 
         parts.Add("asetpts=PTS-STARTPTS");
+
+        // atempo TELAFİSİ (§8.3, GERÇEK ÖLÇÜM — AtempoCompensationMs yorumundaki tablo):
+        // WSOLA zinciri akışın BAŞINDAN sabit bir pay yutar, yani atempo'dan geçen ses TIMELINE
+        // ekseninde ERKENE kayar. Telafi asetpts'ten SONRA yazılır: adelay'i asetpts'in ÖNÜNE
+        // koymak ölçülen tuzaktır — asetpts=PTS-STARTPTS eklenen sessizliği PTS'ten geri düşer,
+        // örnekler yerinde kalır ama aşağıdaki atrim=end penceresi telafi kadar UZAR
+        // (ölçüldü: 4 sn hedefte 4.005 sn).
+        var compensationMs = AtempoCompensationMs(clip.Rate);
+        if (compensationMs > 0)
+        {
+            // all=1: kanal sayısı burada henüz kaynağınkidir (aformat AŞAĞIDA) — iki değerli
+            // biçim 5.1 kaynakta yalnız ilk iki kanalı geciktirir ve kanalları AYRIŞTIRIRDI.
+            parts.Add($"adelay={compensationMs.ToString(CultureInfo.InvariantCulture)}:all=1");
+        }
+
         parts.Add("aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000");
 
-        if (audio.Volume != 1)
+        // UZUNLUK KİLİDİ (§8.3): akış, sözleşmedeki pencereye (headIn + süre + headOut) SABİTLENİR.
+        // Gerekçe ÖLÇÜM: atempo zinciri kuyruktan da yutuyor (ffmpeg 8.0, 8 sn kaynak → rate
+        // 2/4/0.5/0.25 için sırasıyla 10.7/16.0/53.3/160.0 ms EKSİK akış) ve kaynağın ses
+        // stream'i videosundan kısa bitebilir. apad sonsuz sessizlik üretir, atrim onu kesip
+        // EOF verir → hem eksik kuyruk dolar hem de fazlalık kırpılır; acrossfade'in Σd
+        // sözleşmesi de ancak segment uzunlukları kesinken tutar.
+        parts.Add("apad");
+        parts.Add($"atrim=end={TimeFormat.Sec(trimDurationUs)}");
+
+        // §8.1 volume: sabit çarpan ya da §3.4 frame örneklemesiyle sürülen keyframe eğrisi.
+        // Komut, filtreyle AYNI LİNEER ZİNCİRDEDİR → kare-kesindir (StepExpression yorumundaki
+        // framesync tuzağı yalnız çok girişli filtrelerde vardır); ses zincirinde sendcmd DEĞİL
+        // asendcmd kullanılır (medya tipi uyuşmazlığı ölçüldü).
+        if (clip.Animation.Volume is { } volumeTrack)
+        {
+            var tag = $"@v{audioIndex.ToString(CultureInfo.InvariantCulture)}"
+                      + $"s{segmentIndex.ToString(CultureInfo.InvariantCulture)}";
+            var samples = KeyframeCompiler.Samples(
+                volumeTrack,
+                clip.TimelineStartUs,
+                FrameOf(clip.TimelineStartUs, plan.FpsNum, plan.FpsDen),
+                FrameOf(clip.TimelineEndUs, plan.FpsNum, plan.FpsDen),
+                plan.FpsNum, plan.FpsDen,
+                // Komut ekseni ZİNCİR eksenidir: t=0 pencerenin başıdır, klip timeline başı
+                // headIn kadar sonradır (geçiş payı) → offset = headIn - timelineStart.
+                headInUs - clip.TimelineStartUs);
+            if (samples.Count > sampleBudget)
+            {
+                throw new UnsupportedFeatureException("keyframe-sample-budget",
+                    $"'{clip.Id}' klibindeki ses seviyesi animasyonu çok fazla örnek üretiyor "
+                    + $"({samples.Count.ToString(CultureInfo.InvariantCulture)}). Ses keyframe'leri "
+                    + "KARE KARE örneklenir — animasyonu kısaltın ya da keyframe sayısını azaltın.");
+            }
+
+            sampleBudget -= samples.Count;
+            parts.Add(KeyframeCompiler.ASendCmdFilter(
+                samples.Select(s => KeyframeCompiler.Command(
+                    s.TimeUs, $"volume{tag}", "volume", Num(s.Value)))));
+            // Taban değer İLK keyframe'dir: ilk komut kendi karesinde uygulanır, ondan önceki
+            // kareler (geçiş payı) §3.3 gereği ilk keyframe değerini görür.
+            parts.Add($"volume{tag}={Num(volumeTrack.Keys[0].Value)}");
+        }
+        else if (audio.Volume != 1)
         {
             parts.Add($"volume={Num(audio.Volume)}");
         }

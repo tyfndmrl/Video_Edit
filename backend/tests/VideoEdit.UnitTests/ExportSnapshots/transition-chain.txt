@@ -10,9 +10,9 @@
 [s0_0][s0_1]xfade=transition=fade:duration=0.400000:offset=1.800000[x0_1];
 [x0_1][s0_2]xfade=transition=wipeleft:duration=0.200000:offset=3.900000[v0];
 [v0]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv[vout];
-[0:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000,afade=t=in:st=0:d=0.005000:curve=tri[g0_0];
-[1:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000[g0_1];
-[2:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000,afade=t=out:st=2.095000:d=0.005000:curve=tri[g0_2];
+[0:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000,apad,atrim=end=2.200000,afade=t=in:st=0:d=0.005000:curve=tri[g0_0];
+[1:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000,apad,atrim=end=2.300000[g0_1];
+[2:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000,apad,atrim=end=2.100000,afade=t=out:st=2.095000:d=0.005000:curve=tri[g0_2];
 [g0_0][g0_1]acrossfade=d=0.400000:c1=tri:c2=tri[f0_1];
 [f0_1][g0_2]acrossfade=d=0.200000:c1=tri:c2=tri[a0];
 [a0]amix=inputs=1:duration=longest:normalize=0,alimiter=limit=0.98[aout]

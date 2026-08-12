@@ -121,13 +121,123 @@ public sealed class ExportM5GoldenTests : IDisposable
         var output = await RenderAsync(compiled, "speed-audio");
         var probe = await new FfprobeService(_options).ProbeAsync(output);
         Assert.True(probe.HasAudio);
-        // atempo WSOLA penceresi kuyrukta birkaç ms yutar; A/V sapması bir kareden küçük olmalı.
-        Assert.InRange(probe.DurationUs!.Value, 3_950_000, 4_050_000);
         foreach (var at in (double[])[0.2, 1.5, 3.0])
         {
             Assert.True(MaxVolumeDb(output, at, 0.2) > -25d,
                 $"{at.ToString(CultureInfo.InvariantCulture)} sn'de ses duyulmalı (atempo zinciri çukur açtı)");
         }
+    }
+
+    [FfmpegFact]
+    public async Task Speed_PutsAudioOnTheTimeline_MeasuredStreamLengthAndBurstPositions()
+    {
+        // GERÇEK ÖLÇÜM (görev sözleşmesi): kapılanmış BURST kaynağı + patlama konumu tespiti.
+        // İki AYRI iddia ölçülür ve İKİSİ DE daha önce ölçülmüyordu:
+        //  (a) SES AKIŞININ uzunluğu (ffprobe -select_streams a:0) sözleşme süresine eşit mi —
+        //      kapsayıcı süresi VİDEODAN gelir ve ses akışının kısalığını GİZLER;
+        //  (b) her patlamanın çıktı zamanı beklenen yerde mi — atempo (WSOLA) akışın başından
+        //      sabit bir pay yutuyor ve sesi timeline'da ERKENE kaydırıyordu.
+        // Ölçüm enerji-ağırlıklı patlama MERKEZİdir: eşik tabanlı onset tespiti WSOLA'nın atak
+        // yaymasından etkilenir ve gerçekte olduğundan BÜYÜK sapma raporlar, merkez etkilenmez.
+        var source = BurstAudioSource();
+        var sources = new Dictionary<Guid, ExportAssetSource>
+        {
+            [ExportTestDocs.AssetA] = new(source, true, "bt709", "bt709"),
+        };
+
+        // Sözleşmenin sapma tavanı: BİR ÇIKIŞ KARESİ (30 fps → 33.33 ms).
+        const double FrameSec = 1 / 30d;
+
+        (double Rate, long SourceOutUs)[] cases =
+            [(2d, 4_000_000), (4d, 4_000_000), (0.5d, 2_000_000), (0.25d, 1_000_000)];
+        foreach (var (rate, sourceOutUs) in cases)
+        {
+            var name = "burst-" + rate.ToString("0.##", CultureInfo.InvariantCulture);
+            var compiled = ExportCompiler.Compile(
+                SpeedDoc(0, sourceOutUs, rate), sources, ExportProfile.Hd1080p);
+            var output = await RenderAsync(compiled, name);
+            var expectedSec = compiled.ExpectedDurationUs / 1_000_000d;
+
+            // (a) apad + atrim=end kilidi olmadan atempo zinciri burada rate 0.25'te 160 ms
+            //     (≈5 kare) EKSİK ses akışı üretiyordu.
+            var audioSec = AudioStreamDurationSec(output);
+            Assert.True(Math.Abs(audioSec - expectedSec) <= FrameSec,
+                $"rate {rate.ToString(CultureInfo.InvariantCulture)}: ses AKIŞI "
+                + $"{audioSec.ToString("0.####", CultureInfo.InvariantCulture)} sn, sözleşme "
+                + $"{expectedSec.ToString("0.####", CultureInfo.InvariantCulture)} sn "
+                + "(fark bir çıkış karesini aşıyor)");
+
+            // (b) Patlama konumları: kaynakta 0.5 sn'de bir, merkezleri 0.25 + 0.5k.
+            var pcm = DecodeMonoPcm(output, name);
+            for (var k = 0; (0.25 + (0.5 * k)) < sourceOutUs / 1_000_000d; k++)
+            {
+                var sourceCentre = 0.25 + (0.5 * k);
+                var expected = sourceCentre / rate;
+                var measured = BurstCentreSec(pcm, expected, 0.20 / rate);
+                Assert.True(Math.Abs(measured - expected) <= FrameSec,
+                    $"rate {rate.ToString(CultureInfo.InvariantCulture)}: kaynağın "
+                    + $"{sourceCentre.ToString("0.###", CultureInfo.InvariantCulture)} sn'deki patlaması "
+                    + $"{expected.ToString("0.####", CultureInfo.InvariantCulture)} sn'de olmalı, "
+                    + $"{measured.ToString("0.####", CultureInfo.InvariantCulture)} sn ölçüldü "
+                    + $"({((measured - expected) * 1000).ToString("+0.0;-0.0", CultureInfo.InvariantCulture)} ms)");
+            }
+        }
+    }
+
+    // ───────────────────── SES SEVİYESİ KEYFRAME'İ (§8.1 + §3.4) ─────────────────────
+
+    [FfmpegFact]
+    public async Task VolumeKeyframes_DriveTheRenderedGainCurve_AtTheRightTimes()
+    {
+        // §8.1: volume LİNEER genlik çarpanıdır ve §3.4 kuralıyla proje fps'inde örneklenir.
+        // İDDİA KENDİ KENDİNİ KALİBRE EDER: aynı doküman önce SABİT volume ile render edilir
+        // (taban), sonra keyframe'li sürümün aynı zaman penceresindeki tepe genliği tabana
+        // ORANLANIR — kaynak genliği, AAC kodlaması ve alimiter denklemin dışında kalır.
+        var source = ToneSource();
+        var sources = new Dictionary<Guid, ExportAssetSource>
+        {
+            [ExportTestDocs.AssetA] = new(source, true, "bt709", "bt709"),
+        };
+
+        var flat = DecodeMonoPcm(
+            await RenderAsync(
+                ExportCompiler.Compile(VolumeDoc(null), sources, ExportProfile.Hd1080p), "vol-flat"),
+            "vol-flat");
+
+        // "V" eğrisi: 1 → 0 (2 sn) → 1 (4 sn). Tam ortadaki SIFIR, komutun DOĞRU ZAMANA
+        // düştüğünün en sert kanıtıdır — eksen kaysaydı dip de kayardı.
+        var compiled = ExportCompiler.Compile(
+            VolumeDoc(
+            [
+                ExportTestDocs.Kf(0, 1),
+                ExportTestDocs.Kf(2_000_000, 0),
+                ExportTestDocs.Kf(4_000_000, 1),
+            ]), sources, ExportProfile.Hd1080p);
+        // Ses zincirinde komut filtresi ASENDCMD'dir: 'sendcmd' (video tipi) grafiği
+        // "Media type mismatch" ile kurulmadan düşürürdü.
+        Assert.Contains("asendcmd=c='", compiled.FilterGraphScript);
+        Assert.Contains("volume@v0s0=1", compiled.FilterGraphScript);
+        var curved = DecodeMonoPcm(await RenderAsync(compiled, "vol-curve"), "vol-curve");
+
+        // Tolerans BEYANI: ffmpeg ses zincirinde komutlar SES KARESİ sınırında (1024 örnek =
+        // 21.3 ms @48 kHz) uygulanır, §3.4 örneği ise proje karesindedir (33.3 ms). İkisinin
+        // birleşimi eğriyi ZAMANDA en fazla ~50 ms geciktirir; bu eğimde (0.5/sn) 0.025'lik
+        // gain payına karşılık gelir. AAC payıyla birlikte tavan 0.04 alınmıştır.
+        foreach (var at in (double[])[0.5, 1.0, 1.5, 2.5, 3.0, 3.5])
+        {
+            var expected = at <= 2 ? (2 - at) / 2 : (at - 2) / 2;
+            var reference = WindowRms(flat, at, 0.005);
+            Assert.True(reference > 0.05, "taban render'da bu pencerede ses yok — fixture bozuk");
+            var ratio = WindowRms(curved, at, 0.005) / reference;
+            Assert.True(Math.Abs(ratio - expected) <= 0.04,
+                $"{at.ToString(CultureInfo.InvariantCulture)} sn: §3.3 lineer interpolasyon "
+                + $"{expected.ToString("0.###", CultureInfo.InvariantCulture)} diyor, "
+                + $"ölçülen oran {ratio.ToString("0.###", CultureInfo.InvariantCulture)}");
+        }
+
+        // Eğrinin dibi: 2.000 sn'de gain 0 → pencere pratikte SESSİZ olmalı.
+        Assert.True(WindowRms(curved, 2.0, 0.005) / WindowRms(flat, 2.0, 0.005) < 0.04,
+            "2 sn'deki sıfır keyframe'i sesi kısmadı (komut yanlış zamana düştü)");
     }
 
     // ───────────────────────── RENK DÜZELTME (§4.1) ─────────────────────────
@@ -657,6 +767,146 @@ public sealed class ExportM5GoldenTests : IDisposable
         ]);
         RunFfmpeg([.. args]);
         return path;
+    }
+
+    /// <summary>
+    /// Tek klipli SES SEVİYESİ dokümanı: 2 sn video + gömülü ses. <paramref name="keyframes"/>
+    /// null ise sabit volume (taban render), doluysa §8.1 keyframe eğrisi.
+    /// </summary>
+    private static TimelineDoc VolumeDoc(
+        IReadOnlyList<VideoEdit.Contracts.Timeline.Keyframe>? keyframes)
+    {
+        var clip = ExportTestDocs.VideoClip(
+            ExportTestDocs.AssetA, 0, 0, 4_000_000, ExportTestDocs.Audio());
+        if (keyframes is not null)
+        {
+            clip.Keyframes = new KeyframeTracks { Volume = [.. keyframes] };
+        }
+
+        return ExportTestDocs.MultiTrackDoc(
+            [ExportTestDocs.VideoTrack(clips: [clip])],
+            width: CanvasWidth, height: CanvasHeight);
+    }
+
+    /// <summary>
+    /// 4 sn, 30 fps video + KAPILANMIŞ BURST sesi: 0.5 sn'de bir 100 ms'lik 1 kHz patlama,
+    /// merkezleri 0.25 + 0.5k. Aradaki mutlak sessizlik sayesinde her patlamanın enerji
+    /// merkezi tek başına ölçülebilir → "ses timeline'da nereye düştü" sorusu doğrudan
+    /// yanıtlanır (sürekli sinüs bu soruyu SORAMAZ, eski test bu yüzden defekti göremedi).
+    /// </summary>
+    private string BurstAudioSource()
+    {
+        var path = Path.Combine(_dir, "bursts.mp4");
+        if (File.Exists(path))
+        {
+            return path;
+        }
+
+        RunFfmpeg([
+            "-y",
+            "-f", "lavfi", "-i", $"testsrc2=duration=4:size={CanvasWidth}x{CanvasHeight}:rate=30",
+            "-f", "lavfi",
+            "-i", "aevalsrc=exprs='0.8*sin(2*PI*1000*t)*between(mod(t\\,0.5)\\,0.2\\,0.3)'"
+                  + ":d=4:s=48000:c=stereo",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
+            "-c:a", "aac", "-ar", "48000", "-shortest", path,
+        ]);
+        return path;
+    }
+
+    /// <summary>4 sn, 30 fps video + SABİT genlikli 1 kHz ton (ses seviyesi eğrisi ölçümü).</summary>
+    private string ToneSource()
+    {
+        var path = Path.Combine(_dir, "tone.mp4");
+        if (File.Exists(path))
+        {
+            return path;
+        }
+
+        RunFfmpeg([
+            "-y",
+            "-f", "lavfi", "-i", $"testsrc2=duration=4:size={CanvasWidth}x{CanvasHeight}:rate=30",
+            // Genlik 0.5: alimiter=0.98 tavanına DEĞMEZ, yani ölçülen oran yalnız volume'dur.
+            "-f", "lavfi", "-i", "aevalsrc=exprs='0.5*sin(2*PI*1000*t)':d=4:s=48000:c=stereo",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
+            "-c:a", "aac", "-ar", "48000", "-shortest", path,
+        ]);
+        return path;
+    }
+
+    // ───────────────────────── Ses ölçüm yardımcıları ─────────────────────────
+
+    /// <summary>SES AKIŞININ kendi süresi (saniye) — kapsayıcı/video süresi DEĞİL.</summary>
+    private static double AudioStreamDurationSec(string mediaPath)
+    {
+        using var json = FfprobeJson.Run(
+            "-select_streams", "a:0", "-show_entries", "stream=duration", mediaPath);
+        var streams = json.RootElement.GetProperty("streams");
+        Assert.True(streams.GetArrayLength() > 0, $"{mediaPath}: ses akışı yok");
+        return double.Parse(
+            streams[0].GetProperty("duration").GetString()!, CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Çıktının sol kanalı, 48 kHz float örnekler (-1..1) — edit list uygulanmış.</summary>
+    private float[] DecodeMonoPcm(string mediaPath, string name)
+    {
+        var rawPath = Path.Combine(_dir, name + "-audio.raw");
+        RunFfmpeg([
+            "-y", "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-i", mediaPath, "-map", "0:a:0",
+            "-f", "s16le", "-ac", "1", "-ar", "48000", rawPath,
+        ]);
+        var bytes = File.ReadAllBytes(rawPath);
+        var samples = new float[bytes.Length / 2];
+        for (var i = 0; i < samples.Length; i++)
+        {
+            samples[i] = BitConverter.ToInt16(bytes, i * 2) / 32768f;
+        }
+
+        return samples;
+    }
+
+    private const int AudioRate = 48000;
+
+    /// <summary>
+    /// <paramref name="centreSec"/> ± <paramref name="halfSec"/> penceresindeki ENERJİ
+    /// MERKEZİ (saniye). Patlama tek başına olduğu için bu, patlamanın konumudur.
+    /// </summary>
+    private static double BurstCentreSec(float[] pcm, double centreSec, double halfSec)
+    {
+        var lo = Math.Max(0, (int)((centreSec - halfSec) * AudioRate));
+        var hi = Math.Min(pcm.Length, (int)((centreSec + halfSec) * AudioRate));
+        double weighted = 0, energy = 0;
+        for (var i = lo; i < hi; i++)
+        {
+            var e = (double)pcm[i] * pcm[i];
+            weighted += e * i;
+            energy += e;
+        }
+
+        Assert.True(energy > 1e-6,
+            $"{centreSec.ToString("0.###", CultureInfo.InvariantCulture)} sn civarında patlama "
+            + "bulunamadı (ses hiç yok ya da bir pencere ötede)");
+        return weighted / energy / AudioRate;
+    }
+
+    /// <summary>
+    /// Pencere içindeki RMS genlik. Tepe DEĞİL: gain merdiveni pencere içinde bir basamak
+    /// atlarsa tepe DAİMA yüksek basamağı seçer (yanlı), RMS ortalar. Pencere ±5 ms = 1 kHz
+    /// tonun 10 çevrimidir → AAC'nin spektral gürültüsü de ortalanır.
+    /// </summary>
+    private static double WindowRms(float[] pcm, double centreSec, double halfSec)
+    {
+        var lo = Math.Max(0, (int)((centreSec - halfSec) * AudioRate));
+        var hi = Math.Min(pcm.Length, (int)((centreSec + halfSec) * AudioRate));
+        Assert.True(hi > lo, "ölçüm penceresi ses akışının dışında");
+        double sum = 0;
+        for (var i = lo; i < hi; i++)
+        {
+            sum += (double)pcm[i] * pcm[i];
+        }
+
+        return Math.Sqrt(sum / (hi - lo));
     }
 
     /// <summary>2 sn, 30 fps DÜZ RENK H.264 (sessiz).</summary>

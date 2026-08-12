@@ -79,21 +79,29 @@ public sealed class ExportJobTests : IDisposable
     public async Task Run_UnsupportedFeatureSnapshot_FailsWithoutRetry()
     {
         // Çok katman (M4 dalga 1), metin/şekil/çıkartma ve geçişler (M4 dalga 2), HIZ +
-        // renk düzeltme + transform/opaklık keyframe'leri (M5) ARTIK desteklenir; kapsam dışı
-        // kalan SES (volume) keyframe'iyle test edilir.
-        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000,
-            ExportTestDocs.Audio());
+        // renk düzeltme + transform/opaklık/SES SEVİYESİ keyframe'leri (M5) ARTIK desteklenir.
+        // Kapsam dışı kalan tipli hatalardan biriyle test edilir: SES klibine GÖRSEL (opacity)
+        // keyframe'i — ses klibi görüntü üretmez, animasyonun karşılığı yoktur.
+        var clip = ExportTestDocs.AudioClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
         clip.Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks
         {
-            Volume = [ExportTestDocs.Kf(0, 1), ExportTestDocs.Kf(500_000, 0)],
+            Opacity = [ExportTestDocs.Kf(0, 1), ExportTestDocs.Kf(500_000, 0)],
         };
-        var job = await SeedExportJobAsync(ExportTestDocs.ToJson(ExportTestDocs.Doc(clips: clip)));
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000),
+            ]),
+            ExportTestDocs.AudioTrack(clips: [clip]),
+        ]);
+        var job = await SeedExportJobAsync(ExportTestDocs.ToJson(doc));
 
         await CreateJobRunner().Run(job.Id, CancellationToken.None); // fırlatmamalı
 
         var reloaded = Reload(job.Id);
         Assert.Equal(JobStatus.Failed, reloaded.Status);
-        Assert.Contains("unsupported-feature:keyframes-volume", reloaded.ErrorMessage);
+        Assert.Contains("unsupported-feature:keyframes-audio-clip", reloaded.ErrorMessage);
         Assert.NotNull(reloaded.CompletedAt);
     }
 

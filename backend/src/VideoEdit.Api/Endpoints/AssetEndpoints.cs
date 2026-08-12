@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Amazon.S3;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
@@ -33,6 +34,9 @@ public static class AssetEndpoints
         // Asset-scoped uçlar (asset sahipliği denetlenir).
         var assets = app.MapGroup("/api/assets").WithTags("Assets").RequireAuthorization();
         assets.MapPost("/{id:guid}/parts/presign", PresignParts).RequireRateLimiting("upload-init");
+        // Kullanım kontrolü (M6): silmeden ÖNCE "bu medya nerede kullanılıyor?" sorusu.
+        // Timeline jsonb taraması olduğu için upload-ops bütçesine bağlanır (60/dk/kullanıcı).
+        assets.MapGet("/{id:guid}/usage", Usage).RequireRateLimiting("upload-ops");
         // complete/abort/upload-status da kullanıcı-bazlı sınırlanır: her biri S3 çağrısı
         // tetikler (Class A/B operasyon) — sınırsız çağrı MinIO/R2 maliyeti + DoS yüzeyidir.
         assets.MapPost("/{id:guid}/complete", Complete).RequireRateLimiting("upload-ops");
@@ -40,6 +44,11 @@ public static class AssetEndpoints
         assets.MapGet("/{id:guid}/upload/status", UploadStatus).RequireRateLimiting("upload-ops");
         assets.MapGet("/{id:guid}", GetById);
         assets.MapDelete("/{id:guid}", SoftDelete);
+
+        // Kota özeti (M6): kitaplık başlığındaki gösterge. InitUpload'ın kota
+        // sorgusuyla AYNI tanım (silinmemiş TÜM asset'ler, Failed dahil) —
+        // gösterge ile reddin aynı sayıyı konuşması şart.
+        app.MapGet("/api/quota", QuotaSummary).WithTags("Assets").RequireAuthorization();
 
         return app;
     }
@@ -432,6 +441,128 @@ public static class AssetEndpoints
         }
     }
 
+    // ---------- Kullanım kontrolü + kota özeti (M6) ----------
+
+    /// <summary>
+    /// GET /api/assets/{id}/usage — asset'in kullanıcının HANGİ projelerinde KAÇ klipte
+    /// kullanıldığı. Silme onayı bunun üzerine kurulur: "kullanılıyor mu?" bilgisi asset
+    /// listesine (GET /projects/{id}/assets) gömülmez, çünkü orası her 3 sn'de bir yoklanır
+    /// ve her yoklamada tüm timeline'ları taramak listeyi pahalı hale getirirdi.
+    ///
+    /// Tarama BELLEKTE yapılır (Postgres jsonb sorgusu değil): kullanıcı başına proje sayısı
+    /// azdır ve aynı kod Sqlite'lı birim testlerinde de koşar. Projeler tek tek akıtılır
+    /// (AsAsyncEnumerable) — bütün timeline'lar aynı anda RAM'e alınmaz.
+    /// </summary>
+    internal static async Task<IResult> Usage(
+        Guid id, ClaimsPrincipal principal, AppDbContext db, CancellationToken ct)
+    {
+        var userId = principal.GetUserId();
+        // Sahiplik: başkasının asset'inin hangi projelerde kullanıldığı SIZDIRILMAZ.
+        var asset = await FindOwnedAssetAsync(db, id, userId, track: false, ct);
+        if (asset is null)
+        {
+            return Results.NotFound();
+        }
+
+        var projects = new List<AssetUsageProjectDto>();
+        var query = db.Projects.AsNoTracking()
+            .Where(p => p.OwnerId == userId && p.DeletedAt == null)
+            .OrderBy(p => p.Name)
+            .ThenBy(p => p.Id)
+            .Select(p => new { p.Id, p.Name, p.Timeline })
+            .AsAsyncEnumerable();
+
+        await foreach (var row in query.WithCancellation(ct))
+        {
+            var clipCount = CountAssetClips(row.Timeline, id);
+            if (clipCount > 0)
+            {
+                projects.Add(new AssetUsageProjectDto(row.Id, row.Name, clipCount));
+            }
+        }
+
+        return Results.Ok(new AssetUsageResponse(projects));
+    }
+
+    /// <summary>
+    /// tracks[].clips[] içinde assetId'si eşleşen klip sayısı.
+    ///
+    /// Ham JSON gezintisi (TimelineDoc'a deserialize DEĞİL) bilinçlidir: ileri şema
+    /// sürümünden gelen ya da bozuk bir doküman yüzünden silme onayı patlamamalı —
+    /// tanınmayan alanlar sessizce atlanır, sayım yine doğru olur. Medya klipleri ve
+    /// sticker'lar aynı "assetId" alanını taşır, ikisi de sayılır.
+    /// </summary>
+    internal static int CountAssetClips(JsonDocument? timeline, Guid assetId)
+    {
+        if (timeline is null || timeline.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            return 0;
+        }
+
+        if (!timeline.RootElement.TryGetProperty("tracks", out var tracks)
+            || tracks.ValueKind != JsonValueKind.Array)
+        {
+            return 0;
+        }
+
+        var count = 0;
+        foreach (var track in tracks.EnumerateArray())
+        {
+            if (track.ValueKind != JsonValueKind.Object
+                || !track.TryGetProperty("clips", out var clips)
+                || clips.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var clip in clips.EnumerateArray())
+            {
+                if (clip.ValueKind != JsonValueKind.Object
+                    || !clip.TryGetProperty("assetId", out var clipAssetId)
+                    || clipAssetId.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                if (clipAssetId.TryGetGuid(out var parsed) && parsed == assetId)
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// GET /api/quota — kitaplık başlığındaki gösterge (kullanılan/toplam, asset sayısı).
+    /// Sayım InitUpload'daki kota sorgusuyla BİREBİR aynı tanımı kullanır: silinmemiş TÜM
+    /// asset'ler (Failed dahil). Gösterge ile "kota doldu" reddi farklı sayı konuşursa
+    /// kullanıcı için sadece yalan olur.
+    /// </summary>
+    internal static async Task<IResult> QuotaSummary(
+        ClaimsPrincipal principal, AppDbContext db, IOptions<QuotasOptions> quotasOptions,
+        CancellationToken ct)
+    {
+        var userId = principal.GetUserId();
+        var stats = await db.Assets.AsNoTracking()
+            .Where(a => a.OwnerId == userId && a.DeletedAt == null)
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                UsedBytes = g.Sum(a => (long?)a.SizeBytes) ?? 0L,
+                AssetCount = g.Count(),
+            })
+            .FirstOrDefaultAsync(ct);
+
+        var quotas = quotasOptions.Value;
+        return Results.Ok(new QuotaSummaryResponse(
+            stats?.UsedBytes ?? 0L,
+            quotas.MaxTotalBytesPerUser,
+            stats?.AssetCount ?? 0,
+            quotas.MaxConcurrentUploads));
+    }
+
     internal static async Task<IResult> SoftDelete(
         Guid id, ClaimsPrincipal principal, AppDbContext db, IStorageService storage,
         TimeProvider clock, CancellationToken ct)
@@ -464,10 +595,11 @@ public static class AssetEndpoints
             }
         }
 
-        // M6 (backlog): timeline'larda kullanım kontrolü ("N projede kullanılıyor" uyarısı,
-        // dangling assetId UX'i) ve R2 prefix GC (DeletePrefix) hard-delete job'ına gelecek.
-        // Şimdilik yalnız soft delete — R2 objeleri yerinde kalır. 0 satır (zaten silinmiş)
-        // de 204: silme idempotenttir.
+        // Kullanım kontrolü İSTEMCİDE, silmeden ÖNCE yapılır (GET /api/assets/{id}/usage):
+        // sunucu silmeyi reddetmez — kullanıcı uyarıyı görüp onayladıysa medya gider,
+        // ilgili klipler timeline'da "medya eksik" olarak işaretlenir. R2 prefix GC
+        // (DeletePrefix) hard-delete job'ına gelecek; şimdilik yalnız soft delete — R2
+        // objeleri yerinde kalır. 0 satır (zaten silinmiş) de 204: silme idempotenttir.
         await db.Assets
             .Where(a => a.Id == id && a.DeletedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(a => a.DeletedAt, now), ct);
@@ -541,3 +673,22 @@ public static class AssetEndpoints
         HasAudio: a.Status == AssetStatus.Ready ? a.HasAudio : null,
         CreatedAt: a.CreatedAt);
 }
+
+/// <summary>
+/// GET /api/assets/{id}/usage yanıtı — asset'in kullanıldığı projeler.
+/// Boş liste = hiçbir timeline'da kullanılmıyor (silme uyarısız onaya düşer).
+/// </summary>
+public sealed record AssetUsageResponse(IReadOnlyList<AssetUsageProjectDto> Projects);
+
+/// <summary>Bir projedeki kullanım: proje kimliği/adı + asset'i gösteren klip sayısı.</summary>
+public sealed record AssetUsageProjectDto(Guid Id, string Name, int ClipCount);
+
+/// <summary>
+/// GET /api/quota yanıtı — kitaplık kota göstergesinin sözleşmesi.
+/// usedBytes/assetCount: silinmemiş TÜM asset'ler (Failed dahil, InitUpload ile aynı tanım).
+/// </summary>
+public sealed record QuotaSummaryResponse(
+    long UsedBytes,
+    long MaxBytes,
+    int AssetCount,
+    int MaxConcurrentUploads);

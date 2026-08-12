@@ -139,7 +139,13 @@ public sealed class ExportJob(
         }
 
         // ── 2) Asset satırları: hepsi mevcut, sahibi iş sahibi ve Ready olmalı.
-        var wantedIds = plan.AssetIds.ToList();
+        // MEDYA defteri (plan.AssetIds) ile LUT defteri (plan.LutAssetIds) AYRIDIR: ikisi de
+        // indirilir ve AYNI sources sözlüğüne girer, ama .cube bir medya dosyası değildir →
+        // ffprobe'a SOKULMAZ ve kaynak-aralığı kapısına GİRMEZ (ExportPlan.LutAssetIds yorumu).
+        // Satır/sahiplik/Ready doğrulaması ikisi için de aynıdır.
+        var mediaIds = plan.AssetIds.ToList();
+        var lutIds = plan.LutAssetIds.Where(id => !mediaIds.Contains(id)).ToList();
+        var wantedIds = mediaIds.Concat(lutIds).ToList();
         var assets = await db.Assets.AsNoTracking()
             .Where(a => wantedIds.Contains(a.Id) && a.DeletedAt == null)
             .ToListAsync(ct);
@@ -160,6 +166,8 @@ public sealed class ExportJob(
                 + string.Join(", ", notReady.Select(a => $"{a.Id} ({a.Status})")) + ".");
             return;
         }
+
+        var lutAssetIds = lutIds.ToHashSet();
 
         // Temp dizini jobId+Guid: yarışan iki koşu asla aynı dizini paylaşmaz (ProcessAssetJob deseni).
         var tempDir = Path.Combine(
@@ -218,6 +226,15 @@ public sealed class ExportJob(
                 }
 
                 doneBytes += asset.SizeBytes;
+
+                // LUT (.cube): metin tabanlı bir tablo dosyası. Probe edilmez (ffprobe'da
+                // "no video stream" ile TÜM export'u düşürürdü), kaynak-aralığı kapısına da
+                // girmez — yalnız YOL olarak sources'a konur, compiler lut3d=file= ile kullanır.
+                if (lutAssetIds.Contains(asset.Id))
+                {
+                    sources[asset.Id] = new ExportAssetSource(path, false, null, null);
+                    continue;
+                }
 
                 MediaProbe probe;
                 try

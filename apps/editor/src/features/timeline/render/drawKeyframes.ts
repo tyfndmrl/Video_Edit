@@ -111,18 +111,16 @@ export function drawKeyframeStrip(
     }
   }
 
-  // "+N": channels that are animated but did not fit. Silence here would read
-  // as "the strip lost my keyframes"; the Inspector still edits every channel.
-  if (layout.hiddenChannels.length > 0) {
-    const text = `+${layout.hiddenChannels.length}`;
-    const w = 16;
-    const x = layout.x1 - w - 2;
-    const y = layout.topY + 1;
+  // "+N": channels that are animated but did not fit. It is a BUTTON (the
+  // overlay opens a channel menu on it), so its box comes from the layout —
+  // "what is drawn" and "what is clickable" must be the same rectangle.
+  if (layout.chipRect !== null) {
+    const { x, y, width, height } = layout.chipRect;
     ctx.fillStyle = COLORS.chip;
-    ctx.fillRect(x, y, w, KEYFRAME_ROW_H - 1);
+    ctx.fillRect(x, y, width, height);
     ctx.fillStyle = COLORS.chipText;
     ctx.textAlign = 'center';
-    ctx.fillText(text, x + w / 2, y + (KEYFRAME_ROW_H - 1) / 2);
+    ctx.fillText(`+${layout.hiddenChannels.length}`, x + width / 2, y + height / 2);
   }
 
   ctx.restore();

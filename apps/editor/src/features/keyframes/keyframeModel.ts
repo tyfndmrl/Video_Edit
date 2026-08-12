@@ -47,6 +47,7 @@ import {
   ROTATION_LIMIT,
   SCALE_DECIMALS,
   SCALE_MIN,
+  VOLUME_DECIMALS,
   VOLUME_MAX,
   VOLUME_MIN,
   maxClipScale,
@@ -117,7 +118,7 @@ export function channelBounds(
     case 'opacity':
       return { min: 0, max: 1, decimals: OPACITY_DECIMALS };
     case 'volume':
-      return { min: VOLUME_MIN, max: VOLUME_MAX, decimals: 4 };
+      return { min: VOLUME_MIN, max: VOLUME_MAX, decimals: VOLUME_DECIMALS };
   }
 }
 

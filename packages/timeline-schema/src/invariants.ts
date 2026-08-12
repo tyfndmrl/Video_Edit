@@ -41,9 +41,23 @@
  * 9. A drawn clip's transform.scale is strictly positive (compiler:
  *    ExportCompiler.ValidateGeometry). Audio clips produce no visual layer and
  *    are skipped, exactly like the compiler skips them.
+ *
+ * Rule 3 has a SECOND half that lives outside `superRefine`: the export
+ * compiler additionally requires `timelineStartUs` and `timelineDurationUs` to
+ * sit exactly on the project fps grid. That gate is exported separately as
+ * `exportFrameGridIssues` — see the block comment above it for why it cannot be
+ * folded into the document-wide refinement.
  */
 
-import { clipTimelineDurationUs, frameToUs, roundHalfUp, usToFrame, type MicroSec, type Rational } from './time.js';
+import {
+  clipTimelineDurationUs,
+  frameToUs,
+  isOnFrameGrid,
+  roundHalfUp,
+  usToFrame,
+  type MicroSec,
+  type Rational,
+} from './time.js';
 import { hasSourceTimeAxis, isMediaClip, type Clip, type Effect, type MediaClip, type ProjectSettings, type TimelineDoc, type Track, type Transition } from './schema.js';
 
 // ---------------------------------------------------------------------------
@@ -443,4 +457,70 @@ export function checkTimelineInvariants(
   assetDurations?: AssetDurations,
 ): void {
   doc.tracks.forEach((track, ti) => checkTrack(ctx, track, ti, doc.settings.fps, assetDurations));
+}
+
+// ---------------------------------------------------------------------------
+// Export frame-grid gate (rendering-semantics §1.4) — the compiler's rule,
+// verbatim, on this side of the boundary
+//
+// `ExportCompiler.CompileInternal` rejects, per clip:
+//
+//     if (SnapUs(planned.TimelineStartUs, fpsNum, fpsDen) != planned.TimelineStartUs
+//         || SnapUs(planned.TimelineDurationUs, fpsNum, fpsDen) != planned.TimelineDurationUs)
+//         throw new InvalidTimelineException("... is not aligned to the project frame grid ...")
+//
+// because the export segment ledger is kept in whole frames. It is NOT part of
+// `checkTimelineInvariants` on purpose, and the reason is arithmetic rather
+// than taste: outside 25 fps the grid is not closed under addition
+// (30 fps: frame 1 = 33_333 us, frame 2 = 66_667 us, and 33_333 + 33_333 =
+// 66_666 is not a grid value), so "every start on the grid AND every duration
+// on the grid" is unsatisfiable for a chain of ADJACENT clips — which the
+// transition contract (§5) requires to touch exactly. Wiring the gate into
+// `superRefine` would therefore make legitimate edits throw in dev while the
+// underlying conflict stayed unfixed.
+//
+// Exported as an explicit, opt-in check so that duration-changing ops can prove
+// their own output against the real compiler rule (see `solveSpeedChange`), and
+// so that the mismatch surfaces as data instead of as an HTTP 422 at export.
+// ---------------------------------------------------------------------------
+
+/** One clip the export compiler would reject for frame-grid misalignment. */
+export interface FrameGridIssue {
+  trackIndex: number;
+  clipIndex: number;
+  clipId: string;
+  /** Which field is off the grid (a clip can fail on both). */
+  field: 'timelineStartUs' | 'timelineDurationUs';
+  valueUs: MicroSec;
+  /** Nearest grid value — what the compiler's `SnapUs` would have produced. */
+  snappedUs: MicroSec;
+}
+
+/**
+ * Every clip in `doc` the export compiler's frame-grid gate would reject.
+ * An empty array means the document clears that gate.
+ */
+export function exportFrameGridIssues(doc: TimelineDoc): FrameGridIssue[] {
+  const fps = doc.settings.fps;
+  const issues: FrameGridIssue[] = [];
+  doc.tracks.forEach((track, trackIndex) => {
+    track.clips.forEach((clip, clipIndex) => {
+      const fields = [
+        ['timelineStartUs', clip.timelineStartUs],
+        ['timelineDurationUs', clip.timelineDurationUs],
+      ] as const;
+      for (const [field, valueUs] of fields) {
+        if (isOnFrameGrid(valueUs, fps)) continue;
+        issues.push({
+          trackIndex,
+          clipIndex,
+          clipId: clip.id,
+          field,
+          valueUs,
+          snappedUs: frameToUs(usToFrame(valueUs, fps), fps),
+        });
+      }
+    });
+  });
+  return issues;
 }

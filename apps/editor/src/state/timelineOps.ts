@@ -20,6 +20,7 @@ import {
   roundHalfUp,
   sampleKeyframes,
   snapUsToFrameGrid,
+  solveSpeedChange,
   usToFrame,
   validateTimelineDoc,
   hasSourceTimeAxis,
@@ -1845,6 +1846,14 @@ export function duplicateClips(clipIds: readonly Uuid[]): OpResult {
 /** Linear gain bounds (rendering-semantics §8.1: 0..2, 1 = untouched, 2 = +6.02 dB). */
 export const VOLUME_MIN = 0;
 export const VOLUME_MAX = 2;
+/**
+ * Stored precision of a gain value. Named — not an inline 4 — because the
+ * KEYFRAME path rounds with the same number (`keyframeModel.channelBounds`):
+ * a base value and a keyframe on the same property must be reachable at the
+ * same values, and two copies of a magic number are how that quietly stops
+ * being true.
+ */
+export const VOLUME_DECIMALS = 4;
 /** Normalized position bound: |x|,|y| <= 2 compositions away (a slip cannot lose a clip). */
 export const POSITION_LIMIT = 2;
 /**
@@ -1949,7 +1958,7 @@ export function applyClipAudioToDraft(
     if (!clipHasAudio(clip) || clip.audio === null) continue;
     const audio = clip.audio;
     if (patch.volume !== undefined) {
-      const v = clampFinite(patch.volume, VOLUME_MIN, VOLUME_MAX, 4);
+      const v = clampFinite(patch.volume, VOLUME_MIN, VOLUME_MAX, VOLUME_DECIMALS);
       if (v !== null) audio.volume = v;
     }
     if (patch.muted !== undefined) audio.muted = patch.muted === true;
@@ -2647,9 +2656,11 @@ export function setClipShape(clipIds: readonly Uuid[], patch: ClipShapePatch): O
 // Clip speed (M5) — rendering-semantics §1.3 + design 04 §2.4
 //
 // Speed is the ONE clip property that changes the timeline layout, so it is
-// the one op that cannot be a per-clip patch: the new duration comes from the
-// contract formula (`timelineDurationUs = roundHalfUp((out-in)/rate)`) and
-// everything that hangs off the duration has to move with it —
+// the one op that cannot be a per-clip patch: the new duration is SOLVED
+// (`solveSpeedChange` — a whole frame count on the project grid, with
+// `sourceOutUs` re-derived so `roundHalfUp((out-in)/rate)` reproduces it
+// exactly, because the compiler gates the clip on both rules) and everything
+// that hangs off the duration has to move with it —
 //   - the clips AFTER it (reject on collision, or ripple),
 //   - keyframe times (clip-relative TIMELINE time, so they rescale),
 //   - audio fades (invariant 8: in+out <= duration),
@@ -2671,6 +2682,19 @@ export const SPEED_DECIMALS = 3;
 
 /** Notice code: the new duration forced two keyframes onto the same instant. */
 export const SPEED_KEYFRAMES_MERGED = 'keyframes merged by speed change';
+
+/**
+ * Notice code: the frame-grid solve landed MORE than half a frame away from the
+ * duration the rate asks for.
+ *
+ * Half a frame is the unavoidable cost of putting the duration on the grid and
+ * nobody can see it. Anything beyond that means `solveSpeedChange` had to walk
+ * past frame counts that are unreachable at this rate (below 1x the admissible
+ * source window is narrower than one microsecond, so some lengths simply do not
+ * exist) — the clip is then visibly longer or shorter than "source / rate", and
+ * a correction the user did not ask for has to be VISIBLE.
+ */
+export const SPEED_DURATION_SNAPPED = 'speed duration snapped to the frame grid';
 
 /**
  * Speed applies to clips with real temporal media only.
@@ -2730,6 +2754,12 @@ interface SpeedClipPlan {
   durationUs: MicroSec;
   /** true = this clip's rate changes (the others only ripple-shift). */
   target: boolean;
+  /**
+   * Re-derived out point, present on targets only. The duration is solved onto
+   * the frame grid FIRST and the source range follows it, so this is the value
+   * that keeps invariant 3 exact — see `solveSpeedChange`.
+   */
+  sourceOutUs?: MicroSec;
 }
 
 interface SpeedTrackPlan {
@@ -2753,17 +2783,27 @@ export type SpeedPlanResult = SpeedPlan | { reason: string };
  * or leave them and refuse when the longer clip would collide. Refusing is the
  * default because moving clips the user did not select is a bigger surprise
  * than "did not fit".
+ *
+ * The new duration comes from `solveSpeedChange`, NOT from the duration formula
+ * alone: the compiler gates the clip on the formula AND on the project frame
+ * grid, and the formula on its own lands off the grid for most rates (30 fps,
+ * 3 s at 0.7x -> 4_285_714 us, grid neighbour 4_300_000 us). The solver picks
+ * the frame count first and hands back the `sourceOutUs` that makes the formula
+ * exact for it; `assetDurations` caps that re-derivation so a snap UP can never
+ * ask for source the asset does not have.
  */
 export function planClipSpeed(
   d: TimelineDoc,
   clipIds: readonly Uuid[],
   rate: number,
   ripple: boolean,
+  assetDurations?: ReadonlyMap<string, MicroSec>,
 ): SpeedPlanResult {
   const normalized = normalizeSpeedRate(rate);
   if (normalized === null) return { reason: 'invalid speed' };
   const ids = new Set(clipIds);
-  const minDurationUs = minClipDurationUs(d.settings.fps);
+  const fps = d.settings.fps;
+  const minDurationUs = minClipDurationUs(fps);
   const tracks: SpeedTrackPlan[] = [];
   let targetCount = 0;
   let sawSupported = false;
@@ -2780,18 +2820,28 @@ export function planClipSpeed(
       if (target) sawSupported = true;
       const startUs = clip.timelineStartUs + shiftUs;
       let durationUs = clip.timelineDurationUs;
+      let sourceOutUs: MicroSec | undefined;
       if (target) {
-        durationUs = clipTimelineDurationUs(
-          (clip as MediaClip).sourceInUs,
-          (clip as MediaClip).sourceOutUs,
-          normalized,
-        );
+        const media = clip as MediaClip;
+        // The one-frame floor is judged on the IDEAL duration, before the grid
+        // solve. Judging it after would let the solver's minimum silently
+        // STRETCH a sub-frame result up to a full frame — at 10x that is a
+        // tenth of a second of source the user never trimmed in.
+        const idealUs = clipTimelineDurationUs(media.sourceInUs, media.sourceOutUs, normalized);
+        if (idealUs < minDurationUs) return { reason: 'speed leaves less than one frame' };
+        const solved = solveSpeedChange(media.sourceInUs, media.sourceOutUs, normalized, fps, {
+          maxSourceOutUs: assetDurations?.get(media.assetId),
+          minFrames: 1,
+        });
+        if (solved === null) return { reason: 'speed leaves less than one frame' };
+        durationUs = solved.durationUs;
+        sourceOutUs = solved.sourceOutUs;
         if (durationUs < minDurationUs) return { reason: 'speed leaves less than one frame' };
         if (ripple) shiftUs += durationUs - clip.timelineDurationUs;
         targetCount++;
       }
       if (startUs < 0) return { reason: 'before timeline start' };
-      plans.push({ clipId: clip.id, startUs, durationUs, target });
+      plans.push({ clipId: clip.id, startUs, durationUs, target, sourceOutUs });
     }
 
     // Layout check — run for BOTH modes. Ripple cannot overlap by
@@ -2821,14 +2871,16 @@ export function applyClipSpeedToDraft(
   rate: number,
   opts: { ripple?: boolean } = {},
 ): OpResult {
-  const plan = planClipSpeed(d, clipIds, rate, opts.ripple === true);
+  const assetDurations = knownAssetDurations();
+  const plan = planClipSpeed(d, clipIds, rate, opts.ripple === true, assetDurations);
   if ('reason' in plan) return fail(plan.reason);
   const normalized = normalizeSpeedRate(rate);
   if (normalized === null) return fail('invalid speed');
 
-  const assetDurations = knownAssetDurations();
   let report = NO_TRANSITION_CHANGE;
   let merged = false;
+  let snapped = false;
+  const fps = d.settings.fps;
 
   for (const trackPlan of plan.tracks) {
     const track = d.tracks[trackPlan.trackIndex];
@@ -2839,20 +2891,34 @@ export function applyClipSpeedToDraft(
       const oldDurationUs = clip.timelineDurationUs;
       clip.timelineStartUs = entry.startUs;
       if (!entry.target) continue;
-      (clip as MediaClip).speed = { rate: normalized };
+      const media = clip as MediaClip;
+      // Measured BEFORE the write, in FRAMES rather than microseconds: the
+      // question is "did the solver have to skip the NEAREST frame count?",
+      // and a microsecond threshold answers it wrongly at the boundary (one
+      // frame is 33_333.33 us at 30 fps, so a legitimate half-frame snap can
+      // measure 16_667 against a 16_666.5 limit). See SPEED_DURATION_SNAPPED.
+      const idealUs = clipTimelineDurationUs(media.sourceInUs, media.sourceOutUs, normalized);
+      if (usToFrame(entry.durationUs, fps) !== usToFrame(idealUs, fps)) snapped = true;
+      media.speed = { rate: normalized };
+      // Source range BEFORE duration is irrelevant to the write order, but both
+      // must land: the pair (sourceOutUs, timelineDurationUs) is what satisfies
+      // invariant 3, and writing only one of them is exactly the half-applied
+      // state this op is built to avoid.
+      if (entry.sourceOutUs !== undefined) media.sourceOutUs = entry.sourceOutUs;
       clip.timelineDurationUs = entry.durationUs;
       if (rescaleKeyframes(clip, oldDurationUs, entry.durationUs)) merged = true;
       clampAudioFadesToDuration(clip);
     }
-    report = mergeTransitionReports(
-      report,
-      reconcileTransitions(track, d.settings.fps, assetDurations),
-    );
+    report = mergeTransitionReports(report, reconcileTransitions(track, fps, assetDurations));
   }
 
-  // A transition repair is the louder news (it changed something the user did
-  // not touch); the keyframe merge only reports when nothing else did.
-  return okWith(transitionReconcileNotice(report) ?? (merged ? SPEED_KEYFRAMES_MERGED : undefined));
+  // Loudest first: a transition repair changed something the user did not
+  // touch, a merged keyframe lost animation, and the grid snap only changed
+  // the length. Each of the three is reported only when nothing louder did.
+  return okWith(
+    transitionReconcileNotice(report) ??
+      (merged ? SPEED_KEYFRAMES_MERGED : snapped ? SPEED_DURATION_SNAPPED : undefined),
+  );
 }
 
 /** Inspector speed field / preset buttons. ONE history entry per call. */

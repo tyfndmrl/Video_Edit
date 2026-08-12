@@ -145,12 +145,19 @@ async function diamondPoints(page: Page): Promise<DiamondPoint[]> {
       } | null;
     };
     const ed = bridge.editor.useEditorStore.getState();
+    // Hangi kanalların satır aldığı kullanıcı seçimine bağlı ("+N" çipi) ve bu
+    // seçim şeridin KENDİ view state'i. Test onu uydurmaz: şeridin ilan ettiği
+    // sırayı (data-rows) aynı layout fonksiyonuna geri verir.
+    const preferChannels = (strip.getAttribute('data-rows') ?? '')
+      .split(',')
+      .filter((c) => c.length > 0);
     const layout = geo.buildStripLayout({
       doc: bridge.doc.useDocStore.getState().doc,
       selection: ed.selection,
       scrollUs: ed.scrollUs,
       pxPerUs: ed.pxPerUs,
       widthPx: wrapRect.width,
+      preferChannels,
     });
     if (!layout) return [] as DiamondPoint[];
 
@@ -168,6 +175,59 @@ async function diamondPoints(page: Page): Promise<DiamondPoint[]> {
       }
     }
     return out;
+  });
+}
+
+/**
+ * "+N" çipinin EKRAN kutusu — yine uygulamanın KENDİ layout'undan (test ikinci
+ * bir geometri kurmaz; çipi uygulamanın çizdiği yere tıklarız).
+ */
+async function chipPoint(page: Page): Promise<{ x: number; y: number } | null> {
+  return page.evaluate(async () => {
+    const strip = document.querySelector('[data-testid="keyframe-strip"]');
+    if (!strip) return null;
+    const wrap = [...document.querySelectorAll('div')].find(
+      (d) => [...d.children].filter((c) => c.tagName === 'CANVAS').length >= 3,
+    );
+    if (!wrap) return null;
+    const stripRect = strip.getBoundingClientRect();
+    const wrapRect = wrap.getBoundingClientRect();
+
+    const bridge = (window as unknown as {
+      __ve: {
+        doc: { useDocStore: { getState(): { doc: unknown } } };
+        editor: {
+          useEditorStore: {
+            getState(): { selection: Set<string>; scrollUs: number; pxPerUs: number };
+          };
+        };
+      };
+    }).__ve;
+    const specifier = '/src/features/keyframes/stripGeometry.ts';
+    const geo = (await import(/* @vite-ignore */ specifier)) as unknown as {
+      buildStripLayout(input: unknown): {
+        topY: number;
+        chipRect: { x: number; y: number; width: number; height: number } | null;
+      } | null;
+    };
+    const ed = bridge.editor.useEditorStore.getState();
+    const preferChannels = (strip.getAttribute('data-rows') ?? '')
+      .split(',')
+      .filter((c) => c.length > 0);
+    const layout = geo.buildStripLayout({
+      doc: bridge.doc.useDocStore.getState().doc,
+      selection: ed.selection,
+      scrollUs: ed.scrollUs,
+      pxPerUs: ed.pxPerUs,
+      widthPx: wrapRect.width,
+      preferChannels,
+    });
+    if (!layout || layout.chipRect === null) return null;
+    const chip = layout.chipRect;
+    return {
+      x: wrapRect.left + chip.x + chip.width / 2,
+      y: stripRect.top + (chip.y - layout.topY) + chip.height / 2,
+    };
   });
 }
 
@@ -547,6 +607,123 @@ test.describe('Keyframe editörü — gerçek fare ve klavye', () => {
     const kfs = await readKeyframes(page, clipId, 'opacity');
     expect(kfs[0].easing.type, 'Seçilen easing keyframe\'e yazılmalı.').toBe('easeInOut');
     await expect(menu).toHaveCount(0);
+  });
+
+  /**
+   * DÖRT animasyonlu kanal — şerit en fazla 2 satır çizer (KEYFRAME_STRIP_MAX_ROWS),
+   * yani kalanlar "+N" çipine katlanır. Bu iki test tam olarak o katlanan
+   * kanalların ERİŞİLEBİLİRLİĞİNİ kanıtlar.
+   */
+  async function animateFourChannels(editor: {
+    page: Page;
+    timeline: { scrubTo(us: number): Promise<void> };
+    state(): Promise<{ tracks: { type: string; clips: { id: string; kind: string }[] }[] }>;
+  }): Promise<string> {
+    const page = editor.page;
+    const clipId = await addShapeAtPlayhead(editor);
+    await zoomOnClip(editor as never, clipId, 3);
+    for (const channel of ['x', 'y', 'scale', 'opacity']) {
+      await clickReal(page, `clip-kf-${channel}`);
+    }
+    await expect(page.getByTestId('clip-kf-summary')).toHaveAttribute(
+      'data-channels',
+      'x,y,scale,opacity',
+    );
+    const strip = page.getByTestId('keyframe-strip');
+    await expect(strip, 'Şerit yalnız İKİ kanalı çizebilir.').toHaveAttribute('data-rows', 'x,y');
+    await expect(strip, 'Kalan iki kanal "+N" çipine katlanmalı.').toHaveAttribute(
+      'data-hidden-channels',
+      '2',
+    );
+    await expect(strip).toHaveAttribute('data-chip', 'shown');
+    return clipId;
+  }
+
+  test('KATLANMIŞ kanalın easing\'i Inspector\'dan erişilebilir (şeritte satırı yok)', async ({
+    editor,
+  }) => {
+    const page = editor.page;
+    const clipId = await animateFourChannels(editor);
+
+    // Opaklık şeritte YOK: sağ tık menüsü bu kanal için ulaşılamaz. Tek erişim
+    // yolu Inspector'daki easing düğmesi olmalı.
+    const picker = page.getByTestId('clip-kf-easing-opacity');
+    await expect(
+      picker,
+      'Playhead keyframe üzerindeyken her kanalın yanında easing düğmesi olmalı.',
+    ).toBeVisible();
+    await expect(picker, 'Yeni keyframe doğrusal başlar.').toHaveAttribute('data-easing', 'linear');
+
+    await clickReal(page, 'clip-kf-easing-opacity');
+    const menu = page.getByTestId('clip-kf-easing-menu');
+    await expect(menu, 'Düğme easing menüsünü açmalı.').toBeVisible();
+    await expect(menu).toHaveAttribute('data-channel', 'opacity');
+
+    await clickReal(page, 'clip-kf-easing-option-easeInOut');
+    await expect(menu, 'Seçimden sonra menü kapanmalı.').toHaveCount(0);
+
+    const kfs = await readKeyframes(page, clipId, 'opacity');
+    expect(kfs, 'Easing seçmek keyframe EKLEMEMELİ.').toHaveLength(1);
+    expect(kfs[0].easing.type, 'Seçilen easing dokümana yazılmalı.').toBe('easeInOut');
+    await expect(picker).toHaveAttribute('data-easing', 'easeInOut');
+
+    // Başka kanalların easing'i etkilenmemeli (menü kanal başına).
+    expect((await readKeyframes(page, clipId, 'x'))[0].easing.type).toBe('linear');
+
+    // Tek geçmiş girdisi + geri alınabilir.
+    await blurPanel(page);
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(180);
+    expect((await readKeyframes(page, clipId, 'opacity'))[0].easing.type).toBe('linear');
+  });
+
+  test('"+N" çipine GERÇEK tık kanal menüsü açar; seçilen kanal şeritte satır alır ve zamanda taşınabilir', async ({
+    editor,
+  }) => {
+    const page = editor.page;
+    const clipId = await animateFourChannels(editor);
+
+    // Opaklığa ikinci bir keyframe: taşınacak bir elmas olsun.
+    await editor.timeline.scrubTo(SHAPE_START_US + 2 * SECOND_US);
+    await clickReal(page, 'clip-kf-opacity');
+    expect(await readKeyframes(page, clipId, 'opacity')).toHaveLength(2);
+
+    const chip = await chipPoint(page);
+    expect(chip, '"+N" çipinin ekran konumu uygulamanın layout\'undan okunmalı.').not.toBeNull();
+
+    await page.mouse.move(chip!.x, chip!.y);
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.waitForTimeout(160);
+
+    const menu = page.getByTestId('keyframe-channel-menu');
+    await expect(menu, 'Çipe tıklamak kanal menüsünü açmalı.').toBeVisible();
+    await expect(
+      page.getByTestId('keyframe-channel-opacity'),
+      'Menü animasyonlu HER kanalı listelemeli.',
+    ).toHaveAttribute('data-shown', 'false');
+
+    await clickReal(page, 'keyframe-channel-opacity');
+    await expect(menu, 'Seçimden sonra menü kapanmalı.').toHaveCount(0);
+
+    const strip = page.getByTestId('keyframe-strip');
+    await expect(strip, 'Seçilen kanal şeritte İLK satırı almalı.').toHaveAttribute(
+      'data-rows',
+      'opacity,x',
+    );
+
+    // ASIL KANIT: artık o kanalın elması ZAMANDA sürüklenebiliyor — şeridin
+    // tek başına sunduğu, katlanmışken hiçbir yüzeyden erişilemeyen işlem.
+    const points = (await diamondPoints(page)).filter((p) => p.channel === 'opacity');
+    expect(points, 'Opaklık satırı iki elmas çizmeli.').toHaveLength(2);
+    const target = points[1];
+    const dx = -(target.x - points[0].x) / 2;
+    await dragMouse(page, target, { x: target.x + dx, y: target.y });
+
+    const kfs = await readKeyframes(page, clipId, 'opacity');
+    expect(kfs, 'Sürükleme keyframe sayısını değiştirmemeli.').toHaveLength(2);
+    expect(kfs[1].timeUs, 'İkinci keyframe geriye taşınmalı.').toBeLessThan(2 * SECOND_US);
+    expect(kfs[1].timeUs).toBeGreaterThan(kfs[0].timeUs);
   });
 
   test('gizmo keyframe\'li klipte artık salt okunur DEĞİL: playhead\'deki keyframe\'i yazar', async ({

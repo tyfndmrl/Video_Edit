@@ -5,6 +5,7 @@ import {
   MAX_LAYER_DIMENSION,
   TRANSFORM_SCALE_DECIMALS,
   TRANSFORM_SCALE_MIN,
+  exportFrameGridIssues,
   maxScaleFor,
   validateTimelineDoc,
 } from '../src/index.js';
@@ -728,6 +729,61 @@ describe('maxScaleFor (shared with the export compiler)', () => {
   it('never returns a ceiling below the floor', () => {
     expect(maxScaleFor({ width: 10_000_000, height: 10_000_000 })).toBe(TRANSFORM_SCALE_MIN);
     expect(maxScaleFor({ width: 0, height: 0 })).toBe(TRANSFORM_SCALE_MIN);
+  });
+});
+
+describe('exportFrameGridIssues (compiler gate replica)', () => {
+  it('accepts the valid baseline document', () => {
+    expect(exportFrameGridIssues(validDoc())).toEqual([]);
+  });
+
+  it('reports a duration that is off the project frame grid', () => {
+    const doc = validDoc();
+    const clip = doc.tracks[1].clips[0] as MediaClip;
+    // 33_334us is one microsecond past frame 1 at 30 fps (33_333us) — exactly
+    // the shape `timelineDurationUs = roundHalfUp((out-in)/rate)` produces on
+    // its own, and exactly what ExportCompiler.CompileInternal rejects.
+    clip.timelineDurationUs = 33_334;
+    clip.sourceOutUs = 33_334;
+    const issues = exportFrameGridIssues(doc);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({
+      trackIndex: 1,
+      clipIndex: 0,
+      clipId: clip.id,
+      field: 'timelineDurationUs',
+      valueUs: 33_334,
+      snappedUs: 33_333,
+    });
+  });
+
+  it('reports an off-grid start as well, and both fields on the same clip', () => {
+    const doc = validDoc();
+    const clip = doc.tracks[1].clips[0] as MediaClip;
+    clip.timelineStartUs = 1;
+    clip.timelineDurationUs = 33_334;
+    clip.sourceOutUs = 33_334;
+    expect(exportFrameGridIssues(doc).map((i) => i.field)).toEqual([
+      'timelineStartUs',
+      'timelineDurationUs',
+    ]);
+  });
+
+  it('is not wired into validateTimelineDoc (documented, deliberate)', () => {
+    // The gate cannot be a document invariant: outside 25 fps the grid is not
+    // closed under addition, so adjacent clips (which transitions REQUIRE)
+    // cannot all have grid starts and grid durations at once. The document
+    // below is a legitimate schema-valid document that the gate still flags.
+    const doc = validDoc();
+    const clip = doc.tracks[1].clips[0] as MediaClip;
+    clip.timelineDurationUs = 33_334;
+    clip.sourceOutUs = 33_334;
+    clip.keyframes = {};
+    doc.tracks[1].clips[1].timelineStartUs = 33_334;
+    (doc.tracks[1].clips[0] as MediaClip).transitionOut = undefined;
+    (doc.tracks[1].clips[1] as MediaClip).transitionIn = undefined;
+    expect(validateTimelineDoc(doc, DURATIONS).success).toBe(true);
+    expect(exportFrameGridIssues(doc).length).toBeGreaterThan(0);
   });
 });
 

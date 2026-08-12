@@ -26,10 +26,41 @@ function findApiError(err: unknown, depth = 0): ApiError | null {
   return null;
 }
 
+/**
+ * Kota reddi (M6): sunucunun İngİLİZCE ProblemDetails başlığı kartta ham
+ * biçimde durursa kullanıcı ne yapacağını bilemez. Statü + başlık örüntüsünden
+ * tanınan iki ret, kullanıcıyı kitaplık başlığındaki kota göstergesine ve somut
+ * bir çözüme yönlendirir.
+ *
+ * Tanıma STATÜYE dayanır (403 = toplam kota, 429 = eşzamanlı yükleme sınırı);
+ * başlık yalnız doğrulama içindir, çeviri sunucu metnine bağımlı kalmaz.
+ */
+export function quotaRejectionMessage(status: number, title: string | null): string | null {
+  if (status === 403) {
+    return (
+      'Depolama kotanız dolu — kitaplık başlığındaki kota göstergesine bakın. ' +
+      'Yer açmak için kullanılmayan medyayı sağ tıklayıp silin.'
+    );
+  }
+  if (status === 429) {
+    return (
+      'Aynı anda çok fazla yükleme var. Süren yüklemelerden biri bitsin ya da ' +
+      'iptal edin, sonra tekrar deneyin.' + (title ? ` (${title})` : '')
+    );
+  }
+  return null;
+}
+
 export function uploadErrorMessage(err: unknown): string {
   if (err instanceof UploadError) {
     const api = findApiError(err);
     const detail = api ? problemDetailsMessage(api.body) : null;
+    // Kota reddi YALNIZ init anında olur (AssetEndpoints.InitUpload) — başka bir
+    // adımdaki 403/429'u kotaya yormak yanlış yönlendirme olurdu.
+    if (api && err.code === 'init-failed') {
+      const quota = quotaRejectionMessage(api.status, detail);
+      if (quota) return quota;
+    }
     if (detail) return `${CODE_PREFIXES[err.code]}: ${detail}`;
     return err.message;
   }

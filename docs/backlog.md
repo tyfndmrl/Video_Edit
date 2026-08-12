@@ -23,9 +23,35 @@ hiçbir özellik ertelenmiş sayılmaz.
 | **Yazı & overlay** (metin, sticker, şekil) | ✅ tam (M4 dalga 2) | — |
 | **Geçişler** (xfade/acrossfade) | ✅ tam (M4 dalga 2 — doküman/op/export + oynatıcı önizlemesi) | — |
 | Pis-dosya korpusu (iPhone HDR/VFR/döndürülmüş) testleri | ❌ yok | **M4 dalga 3** |
-| **Renk düzeltme / filtreler** | ⚠️ motor hazır, UI yok | **M5** |
-| **Hız değiştirme** (slow-mo/timelapse) | ❌ UI yok | **M5** |
-| **Keyframe animasyonları** | ❌ editör yok | **M5** |
+| **Renk düzeltme — colorAdjust** (parlaklık/kontrast/doygunluk/sıcaklık/ton/pozlama) | ✅ tam (M5 — Inspector + önizleme shader'ı + export) | — |
+| **Filtreler — LUT (.cube)** | ⚠️ export hazır, EDİTÖRDE YOK | **M6** |
+| **Hız değiştirme** (slow-mo/timelapse) | ✅ tam (M5) | — |
+| **Keyframe animasyonları** | ✅ tam (M5, sınırlarıyla — aşağıya bakınız) | — |
+
+> **Renk satırının ikiye ayrılma gerekçesi (M5 denetimi, 2026-08-12).** Tek satır "⚠️ motor
+> hazır, UI yok" iki farklı gerçeği gizliyordu. `colorAdjust` M5'te uçtan uca kapandı: altı
+> §4.1 parametresi Inspector'da, aynı değerler önizleme shader'ında ve export zincirinde.
+> `lut` ise HÂLÂ yalnız renderer'da var: compiler `lut3d=file=...:interp=trilinear` üretiyor,
+> worker `.cube` dosyasını AYRI bir varlık defterinden indiriyor (`ExportPlan.LutAssetIds` —
+> `.cube` probe edilemez), ama editörde ne `.cube` yükleme yolu, ne efekt UI'ı, ne de
+> önizlemesi var. Yani kullanıcı LUT'u SEÇEMEZ; şemada legal, üründe erişilemez. M6.
+
+> **Hız satırı (M5).** Inspector'da ön ayarlar + serbest oran (0.1x–10x), ripple/reddet
+> davranışı, keyframe zaman yeniden ölçekleme, ses fade'lerinin yeniden sınırlanması ve
+> geçiş paylarının yeniden uzlaştırılması. Süre artık `solveSpeedChange`
+> (`packages/timeline-schema/src/time.ts`) ile ÇÖZÜLÜYOR: compiler klibi iki bağımsız kapıdan
+> geçiriyor (süre formülü **ve** proje frame ızgarası) ve yalnız formülü uygulamak
+> ızgara dışı süre üretip export'u 422 ile düşürüyordu (30 fps'te 3 sn @ 0.7x → 4_285_714 µs,
+> ızgara komşusu 4_300_000 µs). Sınır: **hız rampası yok** (tek klip = tek sabit oran);
+> compiler zaten `speed-ramp` tipli hatasıyla reddediyor.
+
+> **Keyframe satırının SINIRLARI (kayda geçer).** Kanallar yalnız
+> `x / y / scale / rotationDeg / opacity / volume` (şema `KeyframeTracks` STRICT). Bilinçli
+> olarak YOK: (a) **efekt parametresi keyframe'i** (`fx.*` — colorAdjust/LUT animasyonu),
+> (b) **hız rampası**, (c) geçişli kesimde keyframe (compiler `transition-keyframes` tipli
+> hatası). Erişim yüzeyleri: Inspector her kanal için elmas düğmesi + (playhead keyframe
+> üstündeyken) easing seçici; timeline şeridi en fazla 2 kanal satırı çizer, kalanlar "+N"
+> çipinden satır alır. `fx.*` keyframe'i M6'ya yazılıdır (aşağıdaki M6 bölümü).
 
 > **Görseller satırının geçmişi (kayda geçer).** M4 dalga 1'de ürün kullanıcıyı görsel
 > yüklemeye AKTİF olarak yönlendiriyordu (`fileTypes.ts` PNG/JPG/WebP diyor, worker işliyor,
@@ -141,7 +167,66 @@ yazılı ve motorda uygulanıyor. Aşağıdakiler bilerek dışarıda bırakıld
   pinlendi; preview↔export RMS karşılaştırması M3 backlog'undaki OfflineAudioContext
   maddesine bağlı, orada duruyor.
 
+## M5 denetiminden (2026-08-12) — editör tarafı
+
+### Kapatıldı (bu dilimde)
+- **[KRİTİK] Hız, proje frame ızgarası DIŞINDA süre üretiyordu** → export compiler'ın
+  ikinci kapısı (`SnapUs(TimelineDurationUs) == TimelineDurationUs`) klibi sert hatayla
+  reddediyor, editör uyarmıyordu. Sözleşme düzeyinde çözüldü: süre önce tam frame sayısına
+  ÇÖZÜLÜYOR, `sourceOutUs` ona göre yeniden türetiliyor (`solveSpeedChange`, tek yardımcı,
+  `packages/timeline-schema/src/time.ts`). Naif `sourceOut = sourceIn + round(D*rate)` 1x
+  ALTINDA geri dönmediği için (pencere genişliği = `rate`, bazı frame sayıları hiç
+  ulaşılamıyor) çözücü ideal frame sayısından dışa doğru yürüyor. Compiler kapısı şema
+  paketinde `exportFrameGridIssues()` olarak birebir yeniden yazıldı ve cross-boundary
+  testlerde AYNI fixture hem `validateTimelineDoc`'tan hem bu kapıdan geçiriliyor.
+  Yan ürün: 1x ALTINDA bazı frame sayıları hiç ulaşılamadığı için süre bazen yarım kareden
+  fazla sapıyor (ölçüm, 30 fps: 3 sn @ 4x → 16_667 µs; 5.231733 sn @ 0.5x → 36_534 µs).
+  Sessiz kalmıyor: `SPEED_DURATION_SNAPPED` bildirimi Inspector'da Türkçe gösteriliyor
+  (`inspectorFeedback.ts`). Sapma KARE cinsinden ölçülür — µs eşiği 30 fps'te
+  (kare = 33_333.33 µs) meşru yarım-kare snap'i yanlışlıkla bildirim sayıyordu.
+- **[ORTA] Ses kazancının ondalık hassasiyeti iki yerde ayrı yazılıydı** (`timelineOps`
+  içinde çıplak `4`, `keyframeModel.channelBounds` içinde çıplak `4`): taban değer ile
+  keyframe'in AYNI değerlere inebilmesi gerekir. Tek kaynak: `VOLUME_DECIMALS`.
+- **[ORTA] "+N" çipinin üstünde imleç `ew-resize` oluyordu** (altındaki elmas
+  vurgulanıyordu) ama basınca sürükleme başlamıyordu — çip artık hem hover hem çift tık
+  hem sağ tık yolunda önce test ediliyor.
+- **[YÜKSEK] 3+ animasyonlu kanalda easing ve zamanda taşıma ERİŞİLEMEZDİ.** Şerit en fazla
+  2 satır çizer; easing'in tek UI'ı şeritteki sağ tıktı. İki yüzey eklendi: Inspector'da
+  kanal başına easing seçici (playhead keyframe üstündeyken) ve "+N" çipinin kanal menüsü
+  (seçilen kanal şeritte satır alır → sürükle/çift tık/sağ tık geri gelir). Menüler artık
+  pencereye SIKIŞTIRILIYOR (`menuPosition.ts`): Inspector sağ sütunda olduğu için menü
+  viewport dışına taşıyor ve gerçek fareyle tıklanamıyordu.
+
+### Açık kalan (bu dilimin ALANI DIŞINDA — compiler/trim sahibi kapatmalı)
+- **[YÜKSEK] Frame-ızgarası sözleşmesi kendi içinde çelişkili.** Compiler her klipte HEM
+  `timelineStartUs` HEM `timelineDurationUs` için ızgara hizası istiyor; ama 25 fps dışında
+  ızgara toplama altında KAPALI DEĞİLDİR (30 fps: frame 1 = 33_333 µs, frame 2 = 66_667 µs,
+  33_333 + 33_333 = 66_666 ızgarada yok). Sonuç: BİTİŞİK klip zinciri (geçiş sözleşmesinin
+  şartı) iki kuralı aynı anda sağlayamaz. Ölçülen mevcut ihlal: 30 fps'te frame 1'de başlayan
+  bir klibi frame 2'ye kadar kırpmak (rate 1, hızla İLGİSİZ) `timelineDurationUs = 33_334`
+  üretiyor → ızgara dışı → export 422. Denenen 6 kırpma çiftinin 4'ü ızgara dışı süre verdi
+  (`applyTrimToDraft`, `apps/editor/src/state/timelineOps.ts`).
+  Tutarlı sözleşme KENARLARI ızgaraya oturtmaktır (`start` ve `start+duration`), çünkü frame
+  defterinin ihtiyacı `startFrame`/`endFrame`'dir; süreyi ızgarada istemek yanlış invaryant.
+  Düzeltme compiler'da tek koşul + editörde kenar disiplini demek — bu dilimin alanı değil.
+  Şema tarafındaki kapı `exportFrameGridIssues()` hazır ve BİLEREK `superRefine`'a
+  bağlanmadı (bağlansaydı meşru kırpmalar dev'de throw ederdi; gerekçe invariants.ts'te).
+- **[ORTA] Inspector'ın "ripple'sız en yavaş hız" sınırı yarım kare eksik.**
+  `clipInspectorModel.minRateWithoutRipple` sınırı İDEAL süreden türetiyor; ızgara snap'i
+  yarım kare ekleyebildiği için panelin önerdiği oran reddedilebiliyor. Ölçülen vaka
+  (30 fps): klip frame 2'de (66_667 µs), 1 kare kaynak, sonraki klip frame 4'te
+  (133_333 µs) → oda 66_666 µs, panel 0.5x öneriyor, op "sonraki klibe giriyor" diyor.
+  Ret ATOMİK ve gerekçesi doğru (UI "Sonrakileri kaydır" sunuyor), veri kaybı yok; doğru
+  düzeltme sınırı ızgaraya göre hesaplamaktır — `features/inspector` alanı.
+  Davranış testle SABİTLENDİ (`speedColorOps.test.ts`, "a half-frame snap that overruns
+  the neighbour REFUSES"), böylece sessizce overlap'e dönüşemez.
+
 ## M6 (Dayanıklılık / hardening)
+- **fx.\* keyframe'i** (colorAdjust/LUT parametrelerinin animasyonu): şema `KeyframeTracks`
+  STRICT olduğu için doküman düzeyinde de yok; kanal listesi + örnekleme + compiler ifadesi
+  birlikte açılmalı (M5 kapsam kaydı).
+- **LUT (.cube) editör yüzeyi**: `.cube` yükleme yolu + efekt UI'ı + önizleme; export tarafı
+  hazır (`ExportPlan.LutAssetIds`, `lut3d`).
 - **Revision retention job**: plandaki "son 50 auto + eskilerde inceltme" (denetim #5).
 - **Container hardening**: non-root `USER app` + volume sahipliği; worker için ayrıca seccomp/ffmpeg kaynak sınırları (denetim #35).
 - **Per-device logout**: mevcut logout tüm cihazların refresh token'larını iptal ediyor — cihaz bazlı oturum yönetimi (denetim #30).

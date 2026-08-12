@@ -33,9 +33,15 @@ public sealed record AnimationTrack(IReadOnlyList<MediaKeyframe> Keys)
 /// <summary>
 /// Bir klibin animasyon defteri. Boş kanal = null (taban/statik değer geçerlidir, §3.3).
 /// <para>
-/// MVP kapsamı: <c>x, y, scale, rotationDeg, opacity</c>. <c>volume</c> keyframe'i M5'te
-/// KAPSAM DIŞIDIR (§8.1'in sendcmd örneklemesi ses zincirine ayrı bir mekanizma ister) ve
-/// <c>fx.*</c> keyframe'i ŞEMADA YOKTUR (baş mimar kararı, §3.3).
+/// MVP kapsamı: <c>x, y, scale, rotationDeg, opacity, volume</c> (§3.3). <c>fx.*</c>
+/// keyframe'i ŞEMADA YOKTUR (baş mimar kararı, §3.3).
+/// </para>
+/// <para>
+/// <b><see cref="Any"/> YALNIZ GÖRSEL kanalları kapsar</b> ve bu bilinçlidir: compiler
+/// "animasyonlu klip KENDİ run'ındadır" kuralını, geçiş+keyframe yasağını ve "ses klibinde
+/// görsel keyframe olamaz" kapısını bu bayrakla sürer. <c>volume</c> hiçbirini ilgilendirmez
+/// (ses zincirine ait, katman run'ını bölmez, ses klibinde ZATEN olması beklenir) — bu yüzden
+/// ayrı <see cref="AnimatesAudio"/> bayrağıyla taşınır.
 /// </para>
 /// </summary>
 public sealed record ClipAnimation(
@@ -43,15 +49,20 @@ public sealed record ClipAnimation(
     AnimationTrack? Y,
     AnimationTrack? Scale,
     AnimationTrack? Rotation,
-    AnimationTrack? Opacity)
+    AnimationTrack? Opacity,
+    AnimationTrack? Volume = null)
 {
-    public static readonly ClipAnimation None = new(null, null, null, null, null);
+    public static readonly ClipAnimation None = new(null, null, null, null, null, null);
 
     /// <summary>Yerleşimi (konum/ölçek/dönme) zamana bağlı yapan kanallardan biri var mı?</summary>
     public bool AnimatesPlacement => X is not null || Y is not null
                                      || Scale is not null || Rotation is not null;
 
+    /// <summary>GÖRSEL animasyon (katman zinciri + kompozisyon kararlarını etkiler).</summary>
     public bool Any => AnimatesPlacement || Opacity is not null;
+
+    /// <summary>SES animasyonu (§8.1 volume) — görsel zinciri hiç ilgilendirmez.</summary>
+    public bool AnimatesAudio => Volume is not null;
 
     /// <summary>KATMAN zincirinde (scale/rotate) klip-göreli <c>t</c> gerektiren kanallar.</summary>
     public bool AnimatesLayerChain => Scale is not null || Rotation is not null;
@@ -82,18 +93,12 @@ public static class KeyframeCompiler
             return ClipAnimation.None;
         }
 
-        if (tracks.Volume is { Count: > 0 })
-        {
-            throw new UnsupportedFeatureException("keyframes-volume",
-                $"'{clipId}' klibinde ses seviyesi (volume) keyframe'i var — ses keyframe'leri "
-                + "henüz desteklenmiyor. Sabit bir ses seviyesi kullanın.");
-        }
-
         var x = Track(clipId, "x", tracks.X);
         var y = Track(clipId, "y", tracks.Y);
         var scale = Track(clipId, "scale", tracks.Scale);
         var rotation = Track(clipId, "rotationDeg", tracks.RotationDeg);
         var opacity = Track(clipId, "opacity", tracks.Opacity);
+        var volume = Track(clipId, "volume", tracks.Volume);
 
         if (scale is not null && scale.MinValue <= 0)
         {
@@ -109,9 +114,19 @@ public static class KeyframeCompiler
                 + $"(gelen aralık {Num(opacity.MinValue)}..{Num(opacity.MaxValue)}).");
         }
 
-        return x is null && y is null && scale is null && rotation is null && opacity is null
+        // §8.1: volume LİNEER genlik çarpanıdır ve şema aralığı [0..2]'dir (audio.volume ile
+        // AYNI aralık) — dışına çıkan keyframe sessizce clamp EDİLMEZ, tipli hatadır.
+        if (volume is not null && (volume.MinValue < 0 || volume.MaxValue > 2))
+        {
+            throw new InvalidTimelineException(
+                $"'{clipId}' klibinin ses seviyesi (volume) keyframe'leri [0..2] aralığında olmalı "
+                + $"(gelen aralık {Num(volume.MinValue)}..{Num(volume.MaxValue)}).");
+        }
+
+        return x is null && y is null && scale is null && rotation is null
+               && opacity is null && volume is null
             ? ClipAnimation.None
-            : new ClipAnimation(x, y, scale, rotation, opacity);
+            : new ClipAnimation(x, y, scale, rotation, opacity, volume);
     }
 
     /// <summary>
@@ -248,6 +263,15 @@ public static class KeyframeCompiler
     /// </summary>
     public static string SendCmdFilter(IEnumerable<string> commands) =>
         "sendcmd=c='" + string.Join("; ", commands) + "'";
+
+    /// <summary>
+    /// <see cref="SendCmdFilter"/>'ın SES zinciri karşılığı. ffmpeg'de <c>sendcmd</c> video,
+    /// <c>asendcmd</c> ses medya tipindedir — ses zincirine <c>sendcmd</c> koymak
+    /// "Media type mismatch … (audio) and … (video)" ile grafiği kurulmadan düşürür (ölçüldü,
+    /// ffmpeg 8.0). Komut BİÇİMİ ikisinde de aynıdır.
+    /// </summary>
+    public static string ASendCmdFilter(IEnumerable<string> commands) =>
+        "asendcmd=c='" + string.Join("; ", commands) + "'";
 
     /// <summary>Tek sendcmd komutu: <c>&lt;zaman&gt; &lt;hedef&gt; &lt;komut&gt; &lt;değer&gt;</c>.</summary>
     public static string Command(long timeUs, string target, string command, string value) =>

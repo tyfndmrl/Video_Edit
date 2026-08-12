@@ -425,6 +425,34 @@ public sealed class ExportCompilerSnapshotTests
         ]);
     }
 
+    /// <summary>
+    /// SES SEVİYESİ keyframe'i (§8.1 + §3.4): lineer kanal + easing'li kanal AYNI dokümanda —
+    /// ikisi de aynı frame örneklemesinden geçer (ses tarafında ifade yolu YOKTUR: volume
+    /// filtresi zaman ifadesi almaz, tek yol asendcmd'dir).
+    /// </summary>
+    private static TimelineDoc VolumeKeyframes()
+    {
+        var video = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 400_000,
+            ExportTestDocs.Audio());
+        video.Keyframes = new KeyframeTracks
+        {
+            Volume = [ExportTestDocs.Kf(0, 0), ExportTestDocs.Kf(400_000, 1)],
+        };
+
+        var music = ExportTestDocs.AudioClip(ExportTestDocs.AssetC, 0, 0, 400_000);
+        music.Keyframes = new KeyframeTracks
+        {
+            Volume = [ExportTestDocs.Kf(0, 1, ExportTestDocs.EaseInOut()),
+                      ExportTestDocs.Kf(400_000, 0.25)],
+        };
+
+        return ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips: [video]),
+            ExportTestDocs.AudioTrack(clips: [music]),
+        ]);
+    }
+
     /// <summary>LUT (.cube) varlığı — MEDYA defterinden ayrıdır (probe edilmez).</summary>
     private static readonly Guid LutAsset = Guid.Parse("00000000-0000-0000-0000-0000000000d4");
 
@@ -458,6 +486,7 @@ public sealed class ExportCompilerSnapshotTests
         "transition-pip-layer", "text-over-video", "shape-and-sticker",
         // M5: hız, renk düzeltme, LUT, keyframe (ifade yolu + sendcmd yolu)
         "speed-change", "color-adjust", "lut-effects", "keyframe-linear", "keyframe-eased",
+        "volume-keyframes",
     ];
 
     private static (TimelineDoc Doc, Dictionary<Guid, ExportAssetSource> Sources) Fixture(string name) =>
@@ -468,6 +497,7 @@ public sealed class ExportCompilerSnapshotTests
             "lut-effects" => (LutEffects(), LutSources()),
             "keyframe-linear" => (KeyframeLinear(), SdrSources()),
             "keyframe-eased" => (KeyframeEased(), SdrSources(hasAudio: false)),
+            "volume-keyframes" => (VolumeKeyframes(), SdrSources()),
             "transition-single" => (TransitionSingle(), SdrSources(hasAudio: false)),
             "transition-audio" => (TransitionSingle(audio: ExportTestDocs.Audio(volume: 0.8)), SdrSources()),
             "transition-chain" => (TransitionChain(), SdrSources()),
@@ -1204,11 +1234,12 @@ public sealed class ExportCompilerSnapshotTests
     }
 
     [Fact]
-    public void Validate_VolumeKeyframes_AreStillOutOfScope()
+    public void Validate_VolumeKeyframes_AreCompiled_NotRejected()
     {
-        // M5 kapsamı: x/y/scale/rotationDeg/opacity. VOLUME keyframe'i (§8.1) ses zincirine
-        // AYRI bir sendcmd mekanizması ister ve kapsam dışıdır — sessizce yok saymak yerine
-        // tipli hata (kullanıcı "ses otomasyonum çalışmadı" demesin).
+        // §3.3 MVP kanal listesi volume'u İÇERİR ve §8.1 "ffmpeg'de volume sendcmd örneklemesi"
+        // der: editör yazıyor, önizleme çalıştırıyor, export de artık uyguluyor. Eskiden burada
+        // UnsupportedFeature("keyframes-volume") atılıyordu — 422 ile reddedilen bir doküman
+        // önizlemede ÇALIŞIYORDU (sözleşme çelişkisi).
         var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000,
             ExportTestDocs.Audio());
         clip.Keyframes = new KeyframeTracks
@@ -1217,8 +1248,89 @@ public sealed class ExportCompilerSnapshotTests
         };
         var doc = ExportTestDocs.Doc(clips: clip);
 
-        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
-        Assert.Equal("keyframes-volume", ex.Feature);
+        var plan = ExportCompiler.Validate(doc);
+        var planned = Assert.Single(plan.Tracks[0].Clips);
+        Assert.NotNull(planned.Animation.Volume);
+        Assert.True(planned.Animation.AnimatesAudio);
+        // GÖRSEL animasyon bayrağı KAPALI kalmalı: açılsaydı klip kendi katman run'ına
+        // ayrılır (concat birleşmesi bozulur), geçişle birlikte kullanımı yasaklanır ve
+        // SES klibinde "görsel keyframe olamaz" kapısına takılırdı.
+        Assert.False(planned.Animation.Any);
+    }
+
+    [Fact]
+    public void Compile_VolumeKeyframes_WithATransition_TagEachSegmentSeparately()
+    {
+        // Geçişli kesimde iki klip TEK acrossfade grubuna girer ve HER SEGMENT kendi ses
+        // zincirini alır → volume filtre örneklerinin etiketleri ÇAKIŞMAMALI (çakışsaydı bir
+        // segmentin komutu diğerinin gain'ini de sürerdi). Ayrıca 'transition-keyframes'
+        // yasağı GÖRSEL kanallar içindir; ses seviyesi keyframe'i geçişle birlikte GEÇERLİDİR.
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            ExportTestDocs.Audio());
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            ExportTestDocs.Audio());
+        a.Keyframes = new KeyframeTracks
+        {
+            Volume = [ExportTestDocs.Kf(0, 1), ExportTestDocs.Kf(2_000_000, 0.25)],
+        };
+        b.Keyframes = new KeyframeTracks
+        {
+            Volume = [ExportTestDocs.Kf(0, 0.25), ExportTestDocs.Kf(2_000_000, 1)],
+        };
+        ExportTestDocs.Link(a, b, 400_000);
+
+        var script = ExportCompiler
+            .Compile(ExportTestDocs.Doc(clips: [a, b]), SdrSources(), ExportProfile.Hd1080p)
+            .FilterGraphScript;
+
+        Assert.Contains("volume@v0s0=1", script, StringComparison.Ordinal);
+        Assert.Contains("volume@v0s1=0.25", script, StringComparison.Ordinal);
+        Assert.Equal(2, script.Split("asendcmd=c='").Length - 1);
+        // Komut ekseni ZİNCİR eksenidir: b klibinin penceresi D/2 = 0.2 sn ERKEN başlar,
+        // yani klip-göreli 0 anı zincirde 0.2 sn'ye düşer (ilk komut oradadır).
+        Assert.Contains("0.200000 volume@v0s1 volume 0.25", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_VolumeKeyframes_OutOfRange_Throws()
+    {
+        // §8.1: volume lineer genlik çarpanıdır, şema aralığı [0..2]. Sessiz clamp YOK.
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000,
+            ExportTestDocs.Audio());
+        clip.Keyframes = new KeyframeTracks
+        {
+            Volume = [ExportTestDocs.Kf(0, 1), ExportTestDocs.Kf(500_000, 2.5)],
+        };
+        var doc = ExportTestDocs.Doc(clips: clip);
+
+        var ex = Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(doc));
+        Assert.Contains("[0..2]", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_VolumeKeyframes_OnAudioClip_AreAllowed()
+    {
+        // Ses klibinde GÖRSEL keyframe tipli hatadır (karşılığı yok) ama ses seviyesi
+        // keyframe'i tam olarak ORAYA aittir — iki kural birbirine karışmamalı.
+        var clip = ExportTestDocs.AudioClip(ExportTestDocs.AssetC, 0, 0, 1_000_000);
+        clip.Keyframes = new KeyframeTracks
+        {
+            Volume = [ExportTestDocs.Kf(0, 0), ExportTestDocs.Kf(1_000_000, 1)],
+        };
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000),
+            ]),
+            ExportTestDocs.AudioTrack(clips: [clip]),
+        ]);
+
+        var plan = ExportCompiler.Validate(doc);
+        var planned = Assert.Single(
+            plan.Tracks.SelectMany(t => t.Clips), c => c.Kind == ExportClipKind.Audio);
+        Assert.NotNull(planned.Animation.Volume);
+        Assert.False(planned.Animation.Any); // görsel keyframe kapısı tetiklenmemeli
     }
 
     [Fact]

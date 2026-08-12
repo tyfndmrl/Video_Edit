@@ -9,6 +9,10 @@
  *   rendering-semantics §1.2; C#: `(long)Math.Floor(x + 0.5)` — banker's rounding forbidden).
  * - `timelineDurationUs = roundHalfUp((sourceOutUs - sourceInUs) / speedRate)`.
  * - Timecode frame count uses `floor` and is displayed non-drop as HH:MM:SS:FF.
+ *
+ * The duration formula and the project frame grid are two SEPARATE export gates
+ * that a duration-changing edit has to satisfy together; `solveSpeedChange`
+ * below is the single place that solves for both (see its block comment).
  */
 
 /** Integer microseconds. JS numbers are exact up to 2^53 (~285 years in us). */
@@ -80,6 +84,166 @@ export function clipTimelineDurationUs(
 /** Snap an arbitrary time to the nearest frame boundary of the PROJECT fps grid. */
 export function snapUsToFrameGrid(timeUs: MicroSec, fps: Rational): MicroSec {
   return frameToUs(usToFrame(timeUs, fps), fps);
+}
+
+/** True when `timeUs` is exactly a frame boundary of the project fps grid. */
+export function isOnFrameGrid(timeUs: MicroSec, fps: Rational): boolean {
+  return snapUsToFrameGrid(timeUs, fps) === timeUs;
+}
+
+// ---------------------------------------------------------------------------
+// Speed change solver (rendering-semantics §1.3 + §1.4)
+//
+// A speed edit has to satisfy TWO rules that the export compiler enforces
+// INDEPENDENTLY on the same clip, and that a naive implementation cannot
+// satisfy at the same time:
+//
+//   (i)  duration formula  — ExportCompiler.ValidateMediaClip:
+//        `timelineDurationUs == roundHalfUp((sourceOutUs - sourceInUs) / rate)`
+//        (identical to `clipTimelineDurationUs` above, invariants.ts rule 3);
+//   (ii) frame grid        — ExportCompiler.CompileInternal:
+//        `SnapUs(timelineDurationUs) == timelineDurationUs`, because the export
+//        segment ledger is kept in WHOLE FRAMES (`trim=start_frame:end_frame`).
+//
+// Applying (i) alone is what produced the shipped defect: at 30 fps a 3 s clip
+// at rate 0.7 yields 4_285_714 us, which is NOT a grid value (the nearest frame
+// boundary is 4_300_000) — the document validates in the editor and is then
+// rejected by the compiler with a hard "not aligned to the project frame grid".
+//
+// The fix cannot be "snap the duration afterwards" either: that breaks (i).
+// The duration is the DEPENDENT value here, so the solve runs the other way
+// round — pick a whole frame count for the timeline duration first, then
+// re-derive `sourceOutUs` so that (i) holds EXACTLY for that duration.
+//
+// The re-derivation is not the one-liner it looks like. `sourceOut = sourceIn +
+// roundHalfUp(D * rate)` only round-trips while `rate >= 1`; for rate < 1 the
+// source span shrinks by 1/rate and the half-up rounding no longer inverts (at
+// rate 0.1 a one-microsecond source error becomes a ten-microsecond duration
+// error). Rule (i) inverted gives the exact admissible window
+//
+//        rate * (D - 0.5)  <=  sourceOut - sourceIn  <  rate * (D + 0.5)
+//
+// whose WIDTH is `rate`. For rate < 1 that window can hold no integer at all,
+// i.e. some frame counts are simply not reachable at that rate — so the solver
+// walks outward from the ideal frame count until it finds one that is. Both
+// rules then hold by construction, not by luck.
+// ---------------------------------------------------------------------------
+
+/** A speed change that satisfies BOTH the duration formula and the frame grid. */
+export interface SpeedChangeSolution {
+  /** Timeline duration, exactly on the project fps grid. */
+  durationUs: MicroSec;
+  /** `durationUs` expressed as a whole frame count on the project grid. */
+  durationFrames: number;
+  /** Re-derived source out point; `sourceInUs` is never moved. */
+  sourceOutUs: MicroSec;
+}
+
+/**
+ * How far the solver may walk from the ideal frame count before giving up.
+ *
+ * Empirically bounded, not guessed: a sweep over every 3-decimal rate in
+ * [0.1, 10], eight project fps values (24/25/30/50/60/15/120 and the 1001-based
+ * NTSC rationals) and source spans from 1 us to one hour — 792 080 cases —
+ * needed at most 22 frames (worst case 60000/1001 fps at rate 0.199). 256 keeps
+ * an order of magnitude of head-room; beyond it the solver reports failure
+ * instead of silently writing a document the compiler would reject.
+ */
+const SPEED_SOLVE_MAX_FRAME_OFFSET = 256;
+
+/**
+ * Largest source span that satisfies rule (i) for the given grid duration, or
+ * `null` when the admissible window holds no usable integer.
+ *
+ * The window is scanned rather than computed with a closed form on purpose:
+ * the acceptance test is `clipTimelineDurationUs` itself, so the answer is
+ * decided by the SAME floating-point expression the compiler evaluates
+ * (`(long)Math.Floor((out - in) / rate + 0.5)`), never by an algebraic
+ * paraphrase of it that could disagree in the last bit.
+ */
+function sourceSpanForDuration(durationUs: MicroSec, rate: number, maxSpanUs: number): number | null {
+  const centre = durationUs * rate;
+  const lo = Math.max(1, Math.floor(rate * (durationUs - 0.5)) - 1);
+  const hi = Math.min(maxSpanUs, Math.ceil(rate * (durationUs + 0.5)) + 1);
+  let best: number | null = null;
+  for (let span = lo; span <= hi; span++) {
+    if (clipTimelineDurationUs(0, span, rate) !== durationUs) continue;
+    if (best === null || Math.abs(span - centre) < Math.abs(best - centre)) best = span;
+  }
+  return best;
+}
+
+/**
+ * Solve a speed change for one media clip.
+ *
+ * Returns the timeline duration (always a whole number of project frames) and
+ * the re-derived `sourceOutUs` that keeps
+ * `timelineDurationUs === roundHalfUp((sourceOutUs - sourceInUs) / rate)` exact.
+ * `sourceInUs` is deliberately NOT moved: the in point is where the user
+ * trimmed, and a speed change must not slide the clip's first frame.
+ *
+ * There is deliberately NO "maximum duration" input either. Capping the solve
+ * by the free space in front of the next clip looks attractive (the snap UP can
+ * add half a frame and overrun a neighbour the requested rate just fitted
+ * behind), but the next admissible frame count BELOW such a cap can be a whole
+ * frame away — on a short clip that is a double-digit percentage of its length,
+ * applied silently. Refusing the edit is the honest outcome, and the caller's
+ * layout check owns that decision.
+ *
+ * @param maxSourceOutUs Hard ceiling for the re-derived out point (the asset
+ *   duration, when it is known). Snapping the duration UP can ask for a few
+ *   more microseconds of source than the clip currently uses; without the
+ *   ceiling that would read past the end of the media and come back as an
+ *   HTTP 422 (`sourceOutUs exceeds asset duration`). With it the solver simply
+ *   settles on a shorter frame count.
+ * @param minFrames Shortest admissible result in frames (default 1 — a clip
+ *   shorter than one frame cannot be rendered).
+ * @returns `null` when no frame count in range satisfies both rules, or when
+ *   the ceiling leaves no room at all; callers must treat that as a refusal
+ *   and leave the document untouched.
+ */
+export function solveSpeedChange(
+  sourceInUs: MicroSec,
+  sourceOutUs: MicroSec,
+  rate: number,
+  fps: Rational,
+  opts: { maxSourceOutUs?: MicroSec; minFrames?: number } = {},
+): SpeedChangeSolution | null {
+  assertInt('sourceInUs', sourceInUs);
+  assertInt('sourceOutUs', sourceOutUs);
+  assertRational(fps);
+  if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) {
+    throw new RangeError(`rate must be a finite positive number, got ${String(rate)}`);
+  }
+  if (sourceOutUs <= sourceInUs) return null;
+
+  const minFrames = Math.max(1, opts.minFrames ?? 1);
+  const maxSpanUs =
+    opts.maxSourceOutUs === undefined
+      ? Number.MAX_SAFE_INTEGER
+      : opts.maxSourceOutUs - sourceInUs;
+  if (maxSpanUs < 1) return null;
+
+  const idealDurationUs = clipTimelineDurationUs(sourceInUs, sourceOutUs, rate);
+  const ideal = Math.max(minFrames, usToFrame(idealDurationUs, fps));
+  // Nearest-first: when the ideal duration sits above its own frame boundary
+  // the next frame up is the closer neighbour, and vice versa. Ties (offset 0)
+  // are trivially the closest.
+  const upFirst = idealDurationUs >= frameToUs(ideal, fps);
+
+  for (let offset = 0; offset <= SPEED_SOLVE_MAX_FRAME_OFFSET; offset++) {
+    const candidates =
+      offset === 0 ? [ideal] : upFirst ? [ideal + offset, ideal - offset] : [ideal - offset, ideal + offset];
+    for (const frames of candidates) {
+      if (frames < minFrames) continue;
+      const durationUs = frameToUs(frames, fps);
+      if (durationUs <= 0) continue;
+      const span = sourceSpanForDuration(durationUs, rate, maxSpanUs);
+      if (span === null) continue;
+      return { durationUs, durationFrames: frames, sourceOutUs: sourceInUs + span };
+    }
+  }
+  return null;
 }
 
 /**

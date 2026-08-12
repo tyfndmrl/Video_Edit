@@ -13,6 +13,7 @@ import {
   type Uuid,
 } from '@videoedit/timeline-schema';
 import type { AssetSummary } from '../../../state/assetStore';
+import { isAssetMissing } from '../../library/missingMedia';
 import { splitLines } from '../../text/textLayout';
 import {
   NEW_TRACK_ZONE_H,
@@ -108,6 +109,9 @@ const COLORS = {
   transitionBadge: '#e8833a',
   transitionBadgeIdle: 'rgba(120,130,150,0.55)',
   transitionBadgeGlyph: '#12141a',
+  missingWash: 'rgba(239,68,68,0.28)',
+  missingStroke: '#ef4444',
+  missingText: '#ffd7d7',
 };
 
 const NAME_BAR_H = 15;
@@ -119,6 +123,9 @@ const NAME_BAR_H = 15;
  */
 function clipLabel(clip: Clip, assets: ReadonlyMap<Uuid, AssetSummary>): string {
   if (isMediaClip(clip) || clip.kind === 'sticker') {
+    // Silinmiş medya: adı yerine DURUMU yazılır. "Klip" diye duran boş bir blok,
+    // export'ta patlayacağını söylemeyen bir yalandır (missingMedia.ts).
+    if (isAssetMissing(clip.assetId, assets)) return 'Medya eksik';
     const assetName = assets.get(clip.assetId)?.name;
     if (assetName) return assetName;
     return clip.kind === 'sticker' ? 'Çıkartma' : 'Klip';
@@ -471,6 +478,15 @@ export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState
       ctx.fillStyle = fill;
       ctx.fill();
 
+      // Medyası silinmiş klip (M6): kırmızı yıkama + kırmızı kenarlık + isim
+      // çubuğunda "Medya eksik". Karar tek yerde (features/library/missingMedia).
+      const missing =
+        (isMediaClip(clip) || clip.kind === 'sticker') && isAssetMissing(clip.assetId, assets);
+      if (missing) {
+        ctx.fillStyle = COLORS.missingWash;
+        ctx.fill();
+      }
+
       const asset = isMediaClip(clip) ? assets.get(clip.assetId) : undefined;
       const contentY = y + 2 + NAME_BAR_H;
       const contentH = TRACK_H - 4 - NAME_BAR_H - 2;
@@ -496,7 +512,7 @@ export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState
         // Speed badge first: the name is what gets truncated when they collide
         // (a re-timed clip whose "2x" is hidden is the misleading case).
         const badgeW = drawSpeedBadge(ctx, clip, x, y + 2, w, NAME_BAR_H);
-        ctx.fillStyle = COLORS.clipName;
+        ctx.fillStyle = missing ? COLORS.missingText : COLORS.clipName;
         ctx.font = '10px system-ui, sans-serif';
         ctx.textBaseline = 'middle';
         const name = clipLabel(clip, assets);
@@ -509,10 +525,10 @@ export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState
         ctx.restore();
       }
 
-      // Border (selection wins).
+      // Border (selection wins, sonra "medya eksik").
       roundRect(ctx, x + 0.5, y + 2.5, w - 1, TRACK_H - 5, 4);
-      ctx.strokeStyle = selected ? COLORS.selection : stroke;
-      ctx.lineWidth = selected ? 2 : 1;
+      ctx.strokeStyle = selected ? COLORS.selection : missing ? COLORS.missingStroke : stroke;
+      ctx.lineWidth = selected || missing ? 2 : 1;
       ctx.stroke();
       ctx.lineWidth = 1;
 

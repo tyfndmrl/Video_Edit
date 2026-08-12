@@ -376,22 +376,33 @@ Tüm UI parametreleri `v ∈ [-1..1]`, default `0` (etkisiz). Uygulama sırası 
 saturation`. Her aşama sonucu `[0..1]`'e clamp edilir (ffmpeg 8-bit ara formatların doğal
 davranışıyla eşleşmek için GLSL'de de aşama başına `clamp`).
 
+Aşağıdaki `<…>` yer tutucuları **derleme zamanında hesaplanmış sayı literalleri**dir
+(InvariantCulture, en fazla 6 kesir hanesi); negatif literaller ffmpeg eval'de çift işaret
+tuzağına düşmesin diye paranteze alınır (`255*(-0.02)`). Efekt zinciri **RGB'de** koşar:
+çağıran önüne `format=rgba` koyar ve zincir boyunca renk uzayı DEĞİŞMEZ (§6.3).
+
 | Param | UI aralığı | ffmpeg formülü | WebGL GLSL formülü | Matematik |
 |---|---|---|---|---|
 | `exposure` | -1..1 | `exposure=exposure=<v>:black=0` | `c.rgb = clamp(c.rgb * exp2(v), 0., 1.);` | Çarpımsal gain `2^v`. **Gamma DEĞİL.** ffmpeg `exposure` filtresi `black=0` ile tam `in * 2^ev` uygular. |
-| `temperature` | -1..1 | `lutrgb=r='clip(val+255*(0.10*<v>),0,255)':b='clip(val-255*(0.10*<v>),0,255)'` | `c.r = clamp(c.r + 0.10*v, 0., 1.);`<br>`c.b = clamp(c.b - 0.10*v, 0., 1.);` | Lineer RGB kanal ofseti, katsayı `K_TEMP = 0.10`. Pozitif v = sıcak (+R, −B). |
-| `tint` | -1..1 | `lutrgb=g='clip(val-255*(0.10*<v>),0,255)'` | `c.g = clamp(c.g - 0.10*v, 0., 1.);` | Lineer yeşil ofseti, katsayı `K_TINT = 0.10`. Pozitif v = magenta (−G). |
-| `brightness` | -1..1 | `eq=brightness=<v>` (contrast ile aynı `eq` çağrısında) | bkz. contrast satırı | Toplamsal: luma'ya `v` ekler ≡ RGB'ye `v` ekler. |
-| `contrast` | -1..1 | `eq=contrast=<1+v>:brightness=<b>` | `c.rgb = clamp((c.rgb - 0.5)*(1.0+v) + 0.5 + b, 0., 1.);` | `eq` contrast+brightness'ı TEK afin op olarak uygular: `out = (in-0.5)*c + 0.5 + b`. GLSL aynı sırayla tek satırda uygular — ayrı ayrı uygulamak YASAK (sıra farkı üretir). |
-| `saturation` | -1..1 | `eq=saturation=<1+v>` (aynı `eq` çağrısında) | `float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));`<br>`c.rgb = clamp(mix(vec3(l), c.rgb, 1.0+v), 0., 1.);` | Luma etrafında lineer karışım; luma katsayıları **BT.709**. |
+| `temperature` | -1..1 | `lutrgb=r='clip(val+255*<0.10*v>,0,255)':b='clip(val-255*<0.10*v>,0,255)'` | `c.r = clamp(c.r + 0.10*v, 0., 1.);`<br>`c.b = clamp(c.b - 0.10*v, 0., 1.);` | Lineer RGB kanal ofseti, katsayı `K_TEMP = 0.10`. Pozitif v = sıcak (+R, −B). |
+| `tint` | -1..1 | `lutrgb=g='clip(val-255*<0.10*v>,0,255)'` | `c.g = clamp(c.g - 0.10*v, 0., 1.);` | Lineer yeşil ofseti, katsayı `K_TINT = 0.10`. Pozitif v = magenta (−G). |
+| `brightness` | -1..1 | contrast ile **AYNI** `lutrgb` ifadesinde (`+<255*b>` terimi) | bkz. contrast satırı | Toplamsal: her RGB kanalına `b` ekler. |
+| `contrast` | -1..1 | `lutrgb=r='<E>':g='<E>':b='<E>'` — üç kanalda AYNI ifade, `<E>` = `clip((val-127.5)*<1+v>+127.5+<255*b>,0,255)` | `c.rgb = clamp((c.rgb - 0.5)*(1.0+v) + 0.5 + b, 0., 1.);` | KANAL BAŞINA tek afin op: `out = (in-0.5)*(1+v) + 0.5 + b`. 8-bit ekseninde `0.5 → 127.5`, `b → 255*b`. contrast ve brightness'ı ayrı filtrelere bölmek YASAK (sıra farkı üretir). |
+| `saturation` | -1..1 | `colorchannelmixer=rr=<k+m*Lr>:rg=<m*Lg>:rb=<m*Lb>:gr=<m*Lr>:gg=<k+m*Lg>:gb=<m*Lb>:br=<m*Lr>:bg=<m*Lg>:bb=<k+m*Lb>` (`k = 1+v`, `m = -v`, `L = BT.709`) | `float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));`<br>`c.rgb = clamp(mix(vec3(l), c.rgb, 1.0+v), 0., 1.);` | `out = luma + (in-luma)*(1+v)` RGB'de LİNEER bir matristir → `colorchannelmixer` ile birebir. Alfa'ya dokunulmaz (`aa` varsayılanı 1; opaklık AYRI bir `colorchannelmixer`'dır). |
 
-ffmpeg zinciri (compiler çıktısı, tek klip için, InvariantCulture):
+ffmpeg zinciri (compiler çıktısı, `exposure=0.30, temperature=0.45, tint=-0.20,
+contrast=0.15, brightness=0.05, saturation=0.20` — `ExportSnapshots/color-adjust.txt`
+fixture'ının birebir aynısı; okunurluk için satırlara bölünmüştür, compiler tek satır yazar):
 
 ```
-exposure=exposure=0.30:black=0,
+exposure=exposure=0.3:black=0,
 lutrgb=r='clip(val+255*0.045,0,255)':b='clip(val-255*0.045,0,255)',
-lutrgb=g='clip(val-255*0.02,0,255)',
-eq=contrast=1.15:brightness=0.05:saturation=1.20
+lutrgb=g='clip(val-255*(-0.02),0,255)',
+lutrgb=r='clip((val-127.5)*1.15+127.5+12.75,0,255)'
+      :g='clip((val-127.5)*1.15+127.5+12.75,0,255)'
+      :b='clip((val-127.5)*1.15+127.5+12.75,0,255)',
+colorchannelmixer=rr=1.15748:rg=-0.14304:rb=-0.01444:gr=-0.04252:gg=1.05696:gb=-0.01444
+                 :br=-0.04252:bg=-0.14304:bb=1.18556
 ```
 
 Notlar:
@@ -405,9 +416,49 @@ Notlar:
 - Tüm parametreler 0 ise compiler efekt filtresi **hiç üretmez**; shader da no-op'tur
   (uniform default 0 iken formüller kimliğe düşer — ayrı bypass yolu gerekmez ama filtre
   üretmemek export'u hızlandırır).
-- `eq` YUV uzayında çalışır; brightness/contrast luma-afin dönüşümü RGB'de aynı afin
-  dönüşüme denk gelir (BT.709 matrisi lineerdir), saturation için GLSL BT.709 luma
-  katsayıları kullanır — `eq`'nun chroma ölçeklemesiyle eşleşir.
+
+#### 4.1.1 `eq` NEDEN KULLANILMIYOR (sözleşme değişikliği — baş mimar kararı, M5)
+
+Bu tablo daha önce contrast+brightness için `eq=contrast=<1+v>:brightness=<b>`, saturation
+için `eq=saturation=<1+v>` diyordu ve gerekçe olarak "luma-afin dönüşüm RGB'de aynı afin
+dönüşüme denktir" yazıyordu. **Bu gerekçe yanlıştır ve tablo koda göre düzeltilmiştir**
+(önizleme + export zaten yukarıdaki RGB eşlemesini uyguluyordu; doküman sapmıştı).
+
+`eq` contrast'ı YALNIZ luma düzlemine uygular, chroma'yı ayrıca `saturation` ile ölçekler;
+kanal-başına afin op ile ancak `R=G=B` (nötr gri) piksellerde çakışır. Ölçüm (ffmpeg 8.0,
+`format=rgba` zinciri, `contrast=+0.50, brightness=+0.05`):
+
+```
+kaynak (226,188,122)   →  §4.1 matematiği / GLSL / lutrgb : (255,231,132)
+                          eq                              : (255,233,166)   |ΔB| = 34
+kaynak ( 88,152,192)   →  §4.1 matematiği / GLSL / lutrgb : ( 81,177,237)
+                          eq                              : (105,169,209)   |ΔR| = 24, |ΔB| = 28
+```
+
+Yani `eq` yolu §9.3'ün golden-frame eşiğini (ortalama ΔE2000 ≤ 2.0) kat kat aşar; "ffmpeg
+sütunu"nu birebir uygulamak dokümanın KENDİ parity sözleşmesini bozardı. `lutrgb` eşlemesi
+ise matematik sütununu **birebir** verir (yukarıdaki iki ölçümde 0 kod değeri fark).
+
+Saturation'da sayısal fark küçüktür — aynı kaynakta (88,152,192), `v=+0.6` için matematik
+sütunu (56,158,222) diyor; `colorchannelmixer` (57,159,223) verdi (≤1 kod değeri), `eq`
+(58,162,222) verdi (≤4 kod değeri) — ama `eq` yine de kullanılmaz:
+`eq` bir YUV filtresidir ve rgba zincirinin ORTASINA renk uzayı gidiş-dönüşü soktuğu
+ölçülmüştür —
+
+```
+auto_scale_1: rgba → yuva444p     (Parsed_format_0 → Parsed_eq_1 arasına otomatik eklendi)
+auto_scale_2: yuva444p → rgba     (Parsed_eq_1 → Parsed_format_2 arasına)
+```
+
+— bu da §6.3'ün "zincir ortasında renk uzayı değişimi YASAK" kuralının ta kendisidir. Aynı
+ölçümde `format=rgba,lutrgb=…,colorchannelmixer=…,format=rgb24` zincirinde efekt filtrelerinin
+ARASINA hiç `auto_scale` girmez (yalnız zincirin girişinde/çıkışında, yani beklenen yerde
+vardır). İki gerekçe birlikte `eq`'yu eler.
+
+Regresyon bekçileri: `ExportM5GoldenTests.ColorAdjust_MatchesTheNormativeStageFormulas_PerChannel`
+(her aşama, gerçek render, referans hattı bu tablodur) ve
+`ColorAdjust_Contrast_IsCloserToTheNormativeMathThanTheEqMappingWouldBe` (iki eşlemeyi AYNI
+kare üstünde ölçer). Tablo tekrar `eq`'ya çevrilirse ikisi de kırmızıya döner.
 
 ### 4.2 `lut` — 3D LUT + intensity
 
@@ -711,6 +762,15 @@ out.a   = src.a + dst.a * (1 - src.a)
 - ffmpeg: `volume=<v>` (lineer mod). WebAudio: `gainNode.gain.value = v`. Keyframe'li
   volume §3 kurallarıyla interpole edilir; WebAudio'da `setValueCurveAtTime` ile örneklenmiş
   eğri, ffmpeg'de `volume` sendcmd örneklemesi (§3.4) — örnekleme yine proje fps'inde.
+- Ses zincirinde komut filtresi **`asendcmd`**'dir (`sendcmd` VİDEO medya tipidir; ses
+  zincirine konursa grafik "Media type mismatch" ile kurulmadan düşer). Filtre örneği
+  `volume@<tag>` ile etiketlenir ve komut AYNI LİNEER ZİNCİRDEDİR — çok girişli filtrelerdeki
+  framesync gecikmesi (§3.4 notu) burada yoktur.
+- **Zaman çözünürlüğü beyanı:** ffmpeg komutu SES KARESİ sınırında uygular (1024 örnek =
+  21.3 ms @48 kHz), §3.4 örneği ise proje karesindedir (30 fps'te 33.3 ms). Bu ikisinin
+  birleşimi export'taki gain eğrisini preview'a göre en fazla ~50 ms geciktirir (ölçüldü).
+  Preview `setValueCurveAtTime` ile örnek-kesindir; fark bir gain RAMPASINDA duyulamaz ve
+  kabul edilmiş asimetridir (§8.3'teki limiter asimetrisinin kardeşi).
 
 ### 8.2 Fade eğrisi
 
@@ -721,8 +781,35 @@ out.a   = src.a + dst.a * (1 - src.a)
 
 ### 8.3 Miks
 
-- Her klip zinciri: `asetpts=PTS-STARTPTS` → `atempo` (varsa, 0.5–100 dışı katlanır) →
-  `volume` → `afade` → `adelay` → `aformat`.
+- Her klip zinciri (NORMATİF sıra, compiler çıktısıyla birebir):
+
+  ```
+  [atempo …]                     hız (0.5–100 dışı katlanır); zincirin EN BAŞI
+  [adelay=<C>:all=1]             atempo WSOLA telafisi (aşağı bkz.)
+  [atrim=start:end]              yalnız geçiş payı kırpılacaksa
+  asetpts=PTS-STARTPTS
+  aformat=fltp/stereo/48000
+  apad, atrim=end=<pencere>      UZUNLUK KİLİDİ
+  volume=<v>  |  asendcmd + volume@tag        (§8.1)
+  [afade in] [afade out]         §8.2
+  [5 ms micro-fade in/out]       §8.4
+  ```
+
+  ardından GRUP seviyesinde `[acrossfade …]` (§5.4) ve timeline ofseti için `adelay=<start>`.
+- **Uzunluk kilidi (`apad` + `atrim=end`) ZORUNLUDUR.** Ses akışı, klibin sözleşme
+  penceresine (`headIn + süre + headOut`) sabitlenir. Gerekçe ölçüm: `atempo` zinciri akıştan
+  pay yutuyor — 8 sn kaynakta rate 2/4/0.5/0.25 için sırasıyla **10.7 / 16.0 / 53.3 / 160.0 ms
+  eksik** akış ölçüldü (ffmpeg 8.0). Kaynağın ses stream'i videosundan kısa bittiğinde de aynı
+  boşluk oluşur. `apad` eksiği sessizlikle doldurur, `atrim` fazlayı kırpar ve EOF verir.
+- **atempo telafisi `C = round(8.43/rate + 1.12)` ms.** atempo WSOLA'dır ve akışın BAŞINDAN
+  sabit bir pay yutar, yani ses timeline'da ERKENE kayar. Kapılanmış burst kaynağıyla ölçülen
+  en büyük sapma (patlama enerji merkezi), telafi ÖNCESİ → SONRASI:
+  `rate 2: 8.7 → 3.7 ms`, `rate 4: 7.0 → 4.0 ms`, `rate 0.5: 18.8 → 1.6 ms`,
+  `rate 0.25: 46.5 → 11.5 ms`. Sözleşme tavanı **bir çıkış karesi**dir (30 fps → 33.3 ms);
+  telafisiz hâlde rate 0.25 bunu 1.4 kare aşıyordu. Katsayılar AMPİRİKTİR (kapalı formu yok,
+  tempo taraması 0.5–8 aralığında ±1 ms içinde oturur) ve `ExportM5GoldenTests`
+  `.Speed_PutsAudioOnTheTimeline_MeasuredStreamLengthAndBurstPositions` testine bağlıdır —
+  ffmpeg davranışı değişirse sabit sessizce bayatlamaz, test kırmızıya döner.
 - **`amix=inputs=N:duration=longest:normalize=0`** — `normalize=0` zorunludur (default her
   girişi 1/N zayıflatır: "müzik ekleyince konuşma kısıldı" bug'ı).
 - Çıkışta `alimiter=limit=0.98`. Preview'de Web Audio zinciri sonuna `DynamicsCompressorNode`

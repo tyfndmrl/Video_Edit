@@ -164,17 +164,24 @@ public sealed class ExportEndpointsTests : IDisposable
     [Fact]
     public async Task StartExport_UnsupportedFeature_Returns422_WithoutQueueingGarbage()
     {
-        // Kapsam dışı özellik (SES keyframe'i) — compiler ön-doğrulaması API'de koşar, kuyruğa
-        // hiç girmez. (Geçiş + metin/şekil/çıkartma M4 dalga 2'de, hız + renk + transform/opaklık
-        // keyframe'leri M5'te DESTEKLENİR; aşağıdaki *_Accepted testleri onları sabitler.)
-        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000,
-            ExportTestDocs.Audio());
+        // Kapsam dışı özellik — compiler ön-doğrulaması API'de koşar, kuyruğa hiç girmez.
+        // (Geçiş + metin/şekil/çıkartma M4 dalga 2'de; hız + renk + transform/opaklık VE SES
+        // SEVİYESİ keyframe'leri M5'te DESTEKLENİR; aşağıdaki *_Accepted testleri onları
+        // sabitler. Burada kalan tipli hata kullanılır: ses klibine GÖRSEL opacity keyframe'i.)
+        var clip = ExportTestDocs.AudioClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
         clip.Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks
         {
-            Volume = [ExportTestDocs.Kf(0, 1), ExportTestDocs.Kf(500_000, 0)],
+            Opacity = [ExportTestDocs.Kf(0, 1), ExportTestDocs.Kf(500_000, 0)],
         };
         var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
-            ExportTestDocs.Doc(clips: clip)));
+            ExportTestDocs.MultiTrackDoc(
+            [
+                ExportTestDocs.VideoTrack(clips:
+                [
+                    ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000),
+                ]),
+                ExportTestDocs.AudioTrack(clips: [clip]),
+            ])));
 
         var result = await CallStartAsync(project.Id);
 

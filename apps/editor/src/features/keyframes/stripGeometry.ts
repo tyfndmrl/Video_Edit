@@ -30,6 +30,12 @@
  * `KEYFRAME_STRIP_MAX_ROWS` channels are editable ON THE STRIP at once. The
  * Inspector is the COMPLETE surface — it lists and toggles every channel — and
  * the strip draws a "+N" chip when channels are folded away.
+ *
+ * WHICH channels get the two rows is NOT fixed panel order: `preferChannels`
+ * puts the ones the user picked from the "+N" chip first. Without that, a clip
+ * with three or more animated channels had rows nobody could ever reach — the
+ * strip is the only surface that moves a keyframe IN TIME, so the third channel
+ * silently lost its drag, its double-click delete and its right-click easing.
  */
 import type { MicroSec, TimelineDoc, Uuid } from '@videoedit/timeline-schema';
 import {
@@ -57,6 +63,8 @@ export const KEYFRAME_DIAMOND_R = 4;
 export const KEYFRAME_HIT_SLOP_PX = 6;
 /** Below this on-screen clip width the strip is not drawn (nothing grabbable). */
 export const KEYFRAME_STRIP_MIN_CLIP_W = 34;
+/** Width of the "+N" chip, px (also its click target). */
+export const KEYFRAME_CHIP_W = 16;
 
 /** Lane-relative y of the band bottom: just above the transition badge. */
 export const KEYFRAME_STRIP_BOTTOM_OFFSET =
@@ -81,6 +89,14 @@ export interface StripRow {
   diamonds: StripDiamond[];
 }
 
+/** Content-space box of the "+N" chip (drawn AND clicked from this one rect). */
+export interface StripChipRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface StripLayout {
   clipId: Uuid;
   trackIndex: number;
@@ -94,8 +110,12 @@ export interface StripLayout {
   topY: number;
   bottomY: number;
   rows: StripRow[];
+  /** Every animated channel, in panel order (the chip menu lists these). */
+  animatedChannels: KeyframeChannel[];
   /** Animated channels that did not fit — shown as a "+N" chip. */
   hiddenChannels: KeyframeChannel[];
+  /** Where the "+N" chip is, or null when nothing is folded away. */
+  chipRect: StripChipRect | null;
 }
 
 export interface StripLayoutInput {
@@ -104,6 +124,34 @@ export interface StripLayoutInput {
   scrollUs: MicroSec;
   pxPerUs: number;
   widthPx: number;
+  /**
+   * Channels the user promoted from the "+N" chip, most recent first. They take
+   * the strip's rows before the remaining animated channels in panel order.
+   * Entries that are not animated (any more) are ignored, so the caller may keep
+   * a stale list without special-casing undo or a cleared channel.
+   */
+  preferChannels?: readonly KeyframeChannel[];
+}
+
+/**
+ * Row order: the user's picks first (in pick order), then panel order.
+ * Pure and exported so both the overlay and its tests read the same rule.
+ */
+export function orderChannelsForStrip(
+  animated: readonly KeyframeChannel[],
+  preferChannels: readonly KeyframeChannel[] = [],
+): KeyframeChannel[] {
+  const animatedSet = new Set(animated);
+  const seen = new Set<KeyframeChannel>();
+  const preferred: KeyframeChannel[] = [];
+  for (const channel of preferChannels) {
+    // Dedupe here rather than trusting the caller: a repeated pick must not
+    // produce two rows for the same channel (one of which would be unreachable).
+    if (!animatedSet.has(channel) || seen.has(channel)) continue;
+    seen.add(channel);
+    preferred.push(channel);
+  }
+  return [...preferred, ...animated.filter((c) => !seen.has(c))];
 }
 
 /**
@@ -113,7 +161,7 @@ export interface StripLayoutInput {
  * DOM hit area, zero interference with the existing timeline gestures.
  */
 export function buildStripLayout(input: StripLayoutInput): StripLayout | null {
-  const { doc, selection, scrollUs, pxPerUs, widthPx } = input;
+  const { doc, selection, scrollUs, pxPerUs, widthPx, preferChannels } = input;
   if (selection.size !== 1) return null;
   const [clipId] = [...selection];
   if (clipId === undefined) return null;
@@ -135,8 +183,9 @@ export function buildStripLayout(input: StripLayoutInput): StripLayout | null {
   const x1 = Math.min(widthPx + KEYFRAME_HIT_SLOP_PX, clipX + clipW + KEYFRAME_HIT_SLOP_PX);
   if (x1 - x0 < 8) return null;
 
-  const shown = channels.slice(0, KEYFRAME_STRIP_MAX_ROWS);
-  const hiddenChannels = channels.slice(KEYFRAME_STRIP_MAX_ROWS);
+  const ordered = orderChannelsForStrip(channels, preferChannels);
+  const shown = ordered.slice(0, KEYFRAME_STRIP_MAX_ROWS);
+  const hiddenChannels = ordered.slice(KEYFRAME_STRIP_MAX_ROWS);
   const bottomY = trackTop(trackIndex) + KEYFRAME_STRIP_BOTTOM_OFFSET;
   const topY = bottomY - shown.length * KEYFRAME_ROW_H;
 
@@ -167,8 +216,33 @@ export function buildStripLayout(input: StripLayoutInput): StripLayout | null {
     topY,
     bottomY,
     rows,
+    animatedChannels: channels,
     hiddenChannels,
+    chipRect:
+      hiddenChannels.length === 0
+        ? null
+        : {
+            x: x1 - KEYFRAME_CHIP_W - 2,
+            y: topY + 1,
+            width: KEYFRAME_CHIP_W,
+            height: KEYFRAME_ROW_H - 1,
+          },
   };
+}
+
+/**
+ * True when a content-space point is on the "+N" chip.
+ *
+ * Tested BEFORE the diamonds: the chip is painted on top of the first row, so a
+ * diamond hiding under it must not steal the press — that would make the chip
+ * randomly dead depending on where the keyframes happen to sit.
+ */
+export function hitTestStripChip(layout: StripLayout, x: number, contentY: number): boolean {
+  const chip = layout.chipRect;
+  if (chip === null) return false;
+  return (
+    x >= chip.x && x <= chip.x + chip.width && contentY >= chip.y && contentY <= chip.y + chip.height
+  );
 }
 
 export interface StripHit {

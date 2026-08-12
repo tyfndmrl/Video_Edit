@@ -76,6 +76,69 @@ describe('startMediaUrlSync — full field coverage (contract B)', () => {
   });
 });
 
+describe('reaktif yenileme — throttle ERTELER, DÜŞÜRMEZ', () => {
+  /**
+   * Regresyon: asset, son media-urls isteğinden < 5 sn sonra "ready" olursa
+   * reaktif yenileme throttle'a takılıyordu ve DÜŞÜYORDU. Asset listesi anketi
+   * (useProjectAssets) hiçbir asset işlenmiyorken DURDUĞU için "ready" yazan
+   * güncelleme store'un SON değişimidir: düşen istek bir daha tetiklenmez,
+   * proje 12 saat boyunca URL'siz kalır (filmstrip çizilmez, oynatıcı siyah).
+   * Küçük dosya + sıcak worker'da ready ~4 sn'de geliyor, yani nadir değil.
+   */
+  it('throttle penceresi İÇİNDE ready olan asset\'in URL\'leri yine de iner', async () => {
+    // Sunucu yalnız READY asset döndürür: ilk yanıt boştur.
+    apiFetchMock.mockResolvedValueOnce({
+      expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+      assets: {},
+    });
+    apiFetchMock.mockResolvedValue(response());
+    useAssetStore
+      .getState()
+      .setAssets([{ id: 'a1', kind: 'video', name: 'clip.mp4', status: 'processing' }]);
+
+    stop = startMediaUrlSync('p1');
+    await flushMicrotasks();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+
+    // Pencere KAPALIYKEN ready olur — ve bu, store'un son değişimidir.
+    await vi.advanceTimersByTimeAsync(1_000);
+    useAssetStore.getState().updateAsset('a1', { status: 'ready' });
+    await flushMicrotasks();
+    expect(apiFetchMock, 'pencere içinde ANINDA istek atılmamalı (throttle)').toHaveBeenCalledTimes(
+      1,
+    );
+
+    // Pencere açılınca ERTELENEN istek gider: store bir daha değişmese bile.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushMicrotasks();
+    expect(apiFetchMock, 'ertelenen reaktif yenileme hiç gitmedi').toHaveBeenCalledTimes(2);
+    const asset = useAssetStore.getState().getAsset('a1')!;
+    expect(asset.proxyUrl).toBe('https://cdn/proxy');
+    expect(asset.filmstripManifestUrl).toBe('https://cdn/manifest');
+  });
+
+  it('erteleme yeniden deneme fırtınasına dönüşmez', async () => {
+    // Yanıt asset'i HİÇ getirmezse bile istek başına TEK fetch yapılır.
+    apiFetchMock.mockResolvedValue({
+      expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+      assets: {},
+    });
+    useAssetStore
+      .getState()
+      .setAssets([{ id: 'a1', kind: 'video', name: 'clip.mp4', status: 'processing' }]);
+
+    stop = startMediaUrlSync('p1');
+    await flushMicrotasks();
+    useAssetStore.getState().updateAsset('a1', { status: 'ready' });
+    await flushMicrotasks();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flushMicrotasks();
+    // 1 = açılış, 2 = ertelenen reaktif yenileme. Sonrası SESSİZ.
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('forceRefreshMediaUrls (contract B: player media-error path)', () => {
   it('refetches immediately but is throttled against error storms', async () => {
     apiFetchMock.mockResolvedValue(response());

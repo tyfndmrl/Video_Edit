@@ -185,6 +185,140 @@ public sealed class ExportJobPipelineTests : IDisposable
     }
 
     [MinioAndFfmpegFact]
+    public async Task Export_WithLutEffect_DownloadsTheCubeFile_AndActuallyChangesPixels()
+    {
+        // M5 DEFEKTİ (uçtan uca): ExportCompiler LUT dosyalarını AYRI bir defterde
+        // (plan.LutAssetIds) bildiriyordu ama worker o defteri HİÇ OKUMUYORDU → .cube asla
+        // indirilmiyor, Compile "unsupported-feature:lut-asset" ile düşüyordu. Yani LUT efekti
+        // editörde kurulabiliyor, önizlemede çalışıyor, export'ta HER SEFERİNDE hata veriyordu.
+        // Bu test yolun tamamını koşar ve RENDER EDİLMİŞ PİKSELİ ölçer — "job Succeeded" tek
+        // başına yeterli kanıt değildir (LUT sessizce atlansa da iş yeşil dönerdi).
+        var sourcePath = media.VideoSolid320x240NoAudio(); // düz 0x804020
+        var cubePath = SwapRedBlueCube();
+        var now = DateTimeOffset.UtcNow;
+
+        var video = Asset.Create(_userId, AssetKind.Video, "solid.mp4", "video/mp4",
+            new FileInfo(sourcePath).Length, now);
+        MarkReady(video, now);
+        var lut = Asset.Create(_userId, AssetKind.Image, "swap-rb.cube", "application/octet-stream",
+            new FileInfo(cubePath).Length, now);
+        MarkReady(lut, now);
+        _db.Assets.AddRange(video, lut);
+
+        var clip = ExportTestDocs.VideoClip(video.Id, 0, 0, 1_000_000);
+        clip.Effects = [ExportTestDocs.Lut(lut.Id)];
+        var projectId = Guid.CreateVersion7();
+        var doc = ExportTestDocs.Doc(projectId: projectId, width: 320, height: 240, clips: clip);
+
+        var job = Job.Create(JobType.Export, _userId, now,
+            projectId: projectId,
+            timelineSnapshot: JsonDocument.Parse(ExportTestDocs.ToJson(doc)),
+            exportProfile: "1080p");
+        _db.Jobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        _cleanupPrefixes.Add($"u/{_userId}");
+        await _storage.EnsureBucketsExistAsync();
+        await _storage.UploadFileAsync(video.StorageKey, sourcePath, "video/mp4");
+        await _storage.UploadFileAsync(lut.StorageKey, cubePath, "application/octet-stream");
+
+        await CreateRunner(CreateCache()).Run(job.Id, CancellationToken.None);
+
+        Assert.True(job.Status == JobStatus.Succeeded,
+            $"expected Succeeded, got {job.Status}: {job.ErrorMessage}");
+
+        // .cube GERÇEKTEN indirildi mi (LRU cache'te uzantısıyla duruyor mu)?
+        Assert.True(File.Exists(Path.Combine(_cacheDir, lut.Id.ToString("N"), "original.cube")),
+            "LUT dosyası indirilmedi — worker plan.LutAssetIds defterini okumuyor");
+
+        // PİKSEL KANITI: kaynak 0x804020, LUT R↔B takas ediyor → çıktı ≈ 0x204080.
+        var localOutput = Path.Combine(_cacheDir, "lut-export.mp4");
+        using (var download = await _exportsBucketProbe.OpenReadAsync(job.OutputKey!))
+        await using (var file = File.Create(localOutput))
+        {
+            await download.Content.CopyToAsync(file);
+        }
+
+        var pixel = CentrePixel(localOutput, 15);
+        byte[] expected = [0x20, 0x40, 0x80];
+        var maxDiff = Math.Max(Math.Abs(pixel[0] - expected[0]),
+            Math.Max(Math.Abs(pixel[1] - expected[1]), Math.Abs(pixel[2] - expected[2])));
+        Assert.True(maxDiff <= 8,
+            $"LUT uygulanmamış: beklenen (32,64,128) civarı, ölçülen "
+            + $"({pixel[0]},{pixel[1]},{pixel[2]})");
+    }
+
+    private static void MarkReady(Asset asset, DateTimeOffset now)
+    {
+        asset.TransitionTo(AssetStatus.Uploaded, now);
+        asset.TransitionTo(AssetStatus.Processing, now);
+        asset.TransitionTo(AssetStatus.Ready, now);
+    }
+
+    /// <summary>R ve B kanallarını takas eden 2³ .cube (rendering-semantics §4.2 formatı).</summary>
+    private string SwapRedBlueCube()
+    {
+        var path = Path.Combine(_cacheDir, "swap-rb.cube");
+        if (File.Exists(path))
+        {
+            return path;
+        }
+
+        var text = new System.Text.StringBuilder();
+        text.AppendLine("TITLE \"swap-rb\"");
+        text.AppendLine("LUT_3D_SIZE 2");
+        text.AppendLine("DOMAIN_MIN 0.0 0.0 0.0");
+        text.AppendLine("DOMAIN_MAX 1.0 1.0 1.0");
+        for (var b = 0; b < 2; b++)
+        {
+            for (var g = 0; g < 2; g++)
+            {
+                for (var r = 0; r < 2; r++)
+                {
+                    text.AppendLine(System.Globalization.CultureInfo.InvariantCulture,
+                        $"{b.ToString(System.Globalization.CultureInfo.InvariantCulture)}.0 "
+                        + $"{g.ToString(System.Globalization.CultureInfo.InvariantCulture)}.0 "
+                        + $"{r.ToString(System.Globalization.CultureInfo.InvariantCulture)}.0");
+                }
+            }
+        }
+
+        File.WriteAllText(path, text.ToString());
+        return path;
+    }
+
+    /// <summary>Çıktının <paramref name="frameIndex"/>. karesinin orta pikseli (RGB).</summary>
+    private byte[] CentrePixel(string videoPath, int frameIndex)
+    {
+        var rawPath = Path.Combine(_cacheDir, "frame.rgb");
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = _ffmpegOptions.FfmpegPath,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in (string[])[
+            "-y", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", videoPath,
+            "-vf", $"select=eq(n\\,{frameIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)}),scale=320:240",
+            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", rawPath])
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = System.Diagnostics.Process.Start(psi)!;
+        var stderr = process.StandardError.ReadToEnd();
+        Assert.True(process.WaitForExit(60_000) && process.ExitCode == 0,
+            $"kare çıkarımı başarısız: {stderr}");
+
+        var rgb = File.ReadAllBytes(rawPath);
+        Assert.Equal(320 * 240 * 3, rgb.Length);
+        var offset = ((120 * 320) + 160) * 3;
+        return [rgb[offset], rgb[offset + 1], rgb[offset + 2]];
+    }
+
+    [MinioAndFfmpegFact]
     public async Task Export_ClipReadsPastSourceEnd_FailsWithSourceOutOfRange()
     {
         // 3 sn'lik gerçek kaynak; klip 5 sn okumaya kalkıyor (sourceOut=5s) — probe gate'i

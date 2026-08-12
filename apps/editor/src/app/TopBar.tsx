@@ -1,8 +1,9 @@
 /**
  * TopBar — ince editör üst çubuğu: solda "Projeler" (seçiciye dönüş) + proje
- * adı; sağda Undo/Redo, autosave çipi, kısayol listesi ('?'), export girişi ve
- * çıkış. Seçiciye dönüş activeProjectId'yi null'a çeker — EditorBoot
- * closeProject() ile autosave'i dispose-flush eder, URL'den ?project= silinir.
+ * adı; sağda Undo/Redo, autosave çipi, sürüm geçmişi, kısayol listesi ('?'),
+ * export girişi ve çıkış. Seçiciye dönüş activeProjectId'yi null'a çeker —
+ * EditorBoot closeProject() ile autosave'i dispose-flush eder, URL'den
+ * ?project= silinir.
  */
 import { useState } from 'react';
 import { AutosaveIndicator } from '../features/timeline/AutosaveIndicator';
@@ -11,6 +12,8 @@ import { useHistoryNavigationBlockReason } from '../features/history/historyLogi
 import { returnToProjectPicker } from '../features/projects/projectPickerLogic';
 import { toggleShortcutsOverlay } from '../features/shortcuts/shortcutsHelp';
 import { OverlayAddButtons } from '../features/text/OverlayAddButtons';
+import { VersionsOverlay } from '../features/versions/VersionsOverlay';
+import { openVersionsOverlay } from '../features/versions/versionsStore';
 import { logout } from '../entities/auth';
 import { useDocStore } from '../state/docStore';
 import { useProjectSession } from '../state/projectSession';
@@ -67,6 +70,16 @@ export function TopBar() {
 
       <div className="ml-auto flex items-center gap-2">
         <AutosaveIndicator />
+        <button
+          type="button"
+          disabled={!sessionReady}
+          data-testid="versions-open"
+          className="rounded border border-edge px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-3 hover:text-fg disabled:pointer-events-none disabled:opacity-50"
+          title="Sürüm geçmişi: otomatik kayıtlar, kayıt noktaları ve eski bir sürüme dönme"
+          onClick={openVersionsOverlay}
+        >
+          Sürümler
+        </button>
         <IconButton label="Klavye kısayolları (?)" onClick={toggleShortcutsOverlay}>
           ?
         </IconButton>
@@ -92,11 +105,18 @@ export function TopBar() {
         </button>
       </div>
       {sessionReady && projectId !== null && (
-        <ExportDialog
-          projectId={projectId}
-          open={exportOpen}
-          onClose={() => setExportOpen(false)}
-        />
+        <>
+          <ExportDialog
+            projectId={projectId}
+            open={exportOpen}
+            onClose={() => setExportOpen(false)}
+          />
+          {/* Açık/kapalı durumu versionsStore'da (ExportDialog'un local
+              state'inin aksine): restore sırasında kapatma versionsStore
+              tarafından REDDEDİLİR — kilitli editör asla açıklamasız
+              kalmasın. */}
+          <VersionsOverlay projectId={projectId} />
+        </>
       )}
     </header>
   );

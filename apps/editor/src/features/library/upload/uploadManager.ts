@@ -12,7 +12,7 @@
  */
 import { create } from 'zustand';
 import { queryClient } from '../../../app/queryClient';
-import { projectAssetsQueryKey } from '../../../entities/assets';
+import { projectAssetsQueryKey, quotaQueryKey } from '../../../entities/assets';
 import { useAssetStore, type AssetKind } from '../../../state/assetStore';
 import { uploadApi } from './uploadApi';
 import {
@@ -203,6 +203,8 @@ export function startUpload(file: File, projectId: string): string | null {
         // double-renders or disappears while the refetch is in flight.
         try {
           await queryClient.invalidateQueries({ queryKey: projectAssetsQueryKey(projectId) });
+          // Kullanılan alan değişti: başlıktaki kota göstergesi yalan söylemesin.
+          void queryClient.invalidateQueries({ queryKey: quotaQueryKey });
         } catch {
           // refetch errors surface through the query state itself
         }
@@ -220,6 +222,8 @@ export function startUpload(file: File, projectId: string): string | null {
         }
         useUploadStore.getState().remove(localId);
         files.delete(localId);
+        // İptal edilen yükleme sunucuda soft-delete edilir → kotadan düşer.
+        void queryClient.invalidateQueries({ queryKey: quotaQueryKey });
       }
     },
     (err: unknown) => {
@@ -228,6 +232,8 @@ export function startUpload(file: File, projectId: string): string | null {
       // anlaşılır mesaj olarak gösterilir (uploadErrors.ts).
       const message = uploadErrorMessage(err);
       useUploadStore.getState().patch(localId, { phase: 'error', errorMessage: message });
+      // Kota reddi mesajı göstergeye yönlendirir — o gösterge TAZE olmalı.
+      void queryClient.invalidateQueries({ queryKey: quotaQueryKey });
       const assetId = engine.assetId;
       if (assetId) {
         useAssetStore.getState().updateAsset(assetId, {

@@ -27,6 +27,8 @@ const M5_REASONS: Record<string, string> = {
 const M5_NOTICES: Record<string, string> = {
   'keyframes merged by speed change':
     'Yeni süreye sığmayan keyframe’ler aynı ana denk geldi ve birleştirildi',
+  'speed duration snapped to the frame grid':
+    'Klip süresi tam kareye oturtuldu — bu hızda en yakın uygulanabilir uzunluk seçildi',
   'duplicate colorAdjust effects merged':
     'Klipte birden fazla renk düzeltme efekti vardı — ilki korundu',
 };

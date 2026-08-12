@@ -16,6 +16,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   clipTimelineDurationUs,
+  exportFrameGridIssues,
+  snapUsToFrameGrid,
   validateTimelineDoc,
   type Clip,
   type Keyframe,
@@ -29,9 +31,11 @@ import { colorAdjustOf } from '../features/player/core/resolve';
 import {
   COLOR_ADJUST_DEDUPED,
   COLOR_ADJUST_KEYS,
+  SPEED_DURATION_SNAPPED,
   SPEED_KEYFRAMES_MERGED,
   SPEED_MAX,
   SPEED_MIN,
+  SPEED_PRESETS,
   TRANSITION_DROPPED,
   TRANSITION_SHORTENED_HANDLE,
   addTransition,
@@ -162,9 +166,16 @@ describe('setClipSpeed — duration formula (rendering-semantics §1.3, invarian
 
     const clip = findMedia(CLIP_A);
     expect(clip.speed.rate).toBe(1.235);
-    // The invariant recomputes from the STORED rate: deriving the duration
-    // from the raw request would put the document one microsecond off.
-    expect(clip.timelineDurationUs).toBe(clipTimelineDurationUs(0, 10 * US, 1.235));
+    // The raw formula on the STORED rate gives 8_097_166us, which is NOT on the
+    // 30 fps grid — the export compiler rejects that. The op solves for the
+    // nearest frame count instead and moves sourceOut with it, so BOTH export
+    // gates hold (see the cross-boundary block below).
+    expect(clipTimelineDurationUs(0, 10 * US, 1.235)).toBe(8_097_166);
+    expect(clip.timelineDurationUs).toBe(8_100_000);
+    expect(clip.timelineDurationUs).toBe(snapUsToFrameGrid(8_097_166, currentDoc().settings.fps));
+    expect(clip.timelineDurationUs).toBe(
+      clipTimelineDurationUs(clip.sourceInUs, clip.sourceOutUs, 1.235),
+    );
     expectValid();
   });
 
@@ -226,6 +237,164 @@ describe('setClipSpeed — duration formula (rendering-semantics §1.3, invarian
     expect(findMedia(CLIP_B).timelineDurationUs).toBe(10 * US);
     expect(findMedia(CLIP_B).timelineStartUs).toBe(20 * US);
     expectValid();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setClipSpeed — CROSS-BOUNDARY: the document must clear the EXPORT gates
+//
+// The editor's own validator (`validateTimelineDoc`) and the export compiler do
+// NOT check the same things, and the difference is what shipped as a defect:
+// the compiler applies two independent rules to every clip and the editor only
+// mirrored the first one, so a plain speed edit produced a document that
+// validated locally and came back as HTTP 422 from the export endpoint.
+//
+//   gate (i)  ExportCompiler.ValidateMediaClip:
+//             TimelineDurationUs == Timecode.ClipTimelineDurationUs(in, out, rate)
+//   gate (ii) ExportCompiler.CompileInternal:
+//             SnapUs(TimelineStartUs) == TimelineStartUs
+//             && SnapUs(TimelineDurationUs) == TimelineDurationUs
+//
+// `exportFrameGridIssues` is gate (ii) restated in the shared schema package,
+// so these tests fail here the same way the compiler fails there.
+// ---------------------------------------------------------------------------
+
+describe('setClipSpeed — export compiler gates (cross-boundary)', () => {
+  function expectClearsBothExportGates(): void {
+    const d = currentDoc();
+    // Gate (i) — the editor's own invariant 3, restated per clip.
+    for (const t of d.tracks) {
+      for (const c of t.clips) {
+        if (c.kind !== 'video' && c.kind !== 'audio') continue;
+        const media = c as MediaClip;
+        expect(
+          media.timelineDurationUs,
+          `gate (i) failed for clip ${media.id}`,
+        ).toBe(clipTimelineDurationUs(media.sourceInUs, media.sourceOutUs, media.speed.rate));
+      }
+    }
+    // Gate (ii) — the frame grid.
+    expect(exportFrameGridIssues(d), 'gate (ii) failed').toEqual([]);
+    // ...and the document is still schema-valid, which is the whole point:
+    // ONE fixture has to satisfy both sides of the boundary at once.
+    expectValid();
+  }
+
+  it('REGRESSION: 0.7x on a 3 s clip no longer lands off the frame grid', () => {
+    load([track(V1, 'video', [videoClip(CLIP_A, 0, 3 * US)])]);
+
+    expect(setClipSpeed([CLIP_A], 0.7).ok).toBe(true);
+
+    const clip = findMedia(CLIP_A);
+    // What the old implementation wrote — schema-valid, compiler-rejected.
+    expect(clipTimelineDurationUs(0, 3 * US, 0.7)).toBe(4_285_714);
+    expect(snapUsToFrameGrid(4_285_714, currentDoc().settings.fps)).not.toBe(4_285_714);
+    // What it writes now: a whole frame count, with sourceOut moved to match.
+    expect(clip.timelineDurationUs).toBe(4_300_000);
+    expect(clip.sourceOutUs).toBe(3_010_000);
+    expect(clip.sourceInUs, 'the in point is where the user trimmed').toBe(0);
+    expectClearsBothExportGates();
+  });
+
+  it('clears both gates for every preset and every awkward rate', () => {
+    for (const rate of [...SPEED_PRESETS, 0.1, 0.3, 0.7, 0.999, 1.235, 3.7, 6.66, SPEED_MAX]) {
+      load([track(V1, 'video', [videoClip(CLIP_A, 0, 3 * US)])]);
+      const result = setClipSpeed([CLIP_A], rate);
+      expect(result.ok, `rate ${rate}`).toBe(true);
+      expectClearsBothExportGates();
+    }
+  });
+
+  it('clears both gates on an NTSC project (23.976 fps)', () => {
+    useDocStore.getState().loadDoc({
+      ...createEmptyDoc(PROJECT_ID, { ...defaultProjectSettings, fps: { num: 24000, den: 1001 } }),
+      tracks: [track(V1, 'video', [videoClip(CLIP_A, 0, 3 * US)])],
+    });
+
+    for (const rate of [0.25, 0.5, 0.7, 2, 4]) {
+      expect(setClipSpeed([CLIP_A], rate).ok, `rate ${rate}`).toBe(true);
+      expectClearsBothExportGates();
+    }
+  });
+
+  it('never reads past the end of the asset when the grid snap wants MORE source', () => {
+    // The asset is exactly as long as the clip, so the 0.7x snap-up that would
+    // ask for 3_010_000us of source has nowhere to go: the op must settle on a
+    // shorter frame count instead of writing an unexportable sourceOut.
+    useAssetStore
+      .getState()
+      .setAssets([{ id: ASSET_A, kind: 'video', name: 'a.mp4', status: 'ready', durationUs: 3 * US }]);
+    load([track(V1, 'video', [videoClip(CLIP_A, 0, 3 * US)])]);
+
+    expect(setClipSpeed([CLIP_A], 0.7).ok).toBe(true);
+
+    const clip = findMedia(CLIP_A);
+    expect(clip.sourceOutUs).toBeLessThanOrEqual(3 * US);
+    expect(clip.timelineDurationUs).toBe(4_266_667); // one frame below 4_300_000
+    expectClearsBothExportGates();
+  });
+
+  it('a half-frame snap that overruns the neighbour REFUSES — it never overlaps, and never quietly shortens', () => {
+    // Documented residual, pinned so it cannot drift into an overlap.
+    //
+    // 30 fps: frame 2 = 66_667us, frame 4 = 133_333us, so the room between two
+    // grid-aligned clips is 66_666us — NOT itself a grid value (the grid is not
+    // closed under subtraction outside 25 fps). At 0.5x the ideal duration
+    // fills that room EXACTLY, which is the rate the Inspector advertises as
+    // "the slowest without ripple" (clipInspectorModel.minRateWithoutRipple);
+    // the nearest frame above it is one microsecond too long.
+    //
+    // Both alternatives to refusing are worse: overlapping breaks invariant 1
+    // (and the export), and dropping to the next admissible frame count below
+    // the room silently halves this clip. So the op refuses, atomically, with
+    // the reason the UI turns into the "Sonrakileri kaydır" (ripple) offer.
+    const startUs = 66_667;
+    const nextStartUs = 133_333;
+    load([
+      track(V1, 'video', [
+        videoClip(CLIP_A, startUs, 33_333, { sourceInUs: 0, sourceOutUs: 33_333 }),
+        videoClip(CLIP_B, nextStartUs, 33_333, { sourceInUs: 0, sourceOutUs: 33_333 }),
+      ]),
+    ]);
+
+    expect(setClipSpeed([CLIP_A], 0.5)).toEqual({
+      ok: false,
+      reason: 'speed change overlaps the next clip',
+    });
+    expect(findMedia(CLIP_A).timelineDurationUs, 'refusal is atomic').toBe(33_333);
+    expect(findMedia(CLIP_B).timelineStartUs).toBe(nextStartUs);
+    expect(historyLength()).toBe(0);
+
+    // ...and the ripple escape hatch does work, still clearing both gates.
+    // Note the length: at 0.5x on a 30 fps grid only every THIRD frame count is
+    // reachable (the admissible source window is half a microsecond wide), so a
+    // one-frame source becomes three frames, not two — and because that is more
+    // than the half-frame the snap alone costs, the op SAYS so.
+    expect(setClipSpeed([CLIP_A], 0.5, { ripple: true })).toEqual({
+      ok: true,
+      notice: SPEED_DURATION_SNAPPED,
+    });
+    expect(findMedia(CLIP_A).timelineDurationUs).toBe(100_000);
+    expectClearsBothExportGates();
+  });
+
+  it('stays SILENT when the snap costs less than half a frame (the unavoidable part)', () => {
+    load([track(V1, 'video', [videoClip(CLIP_A, 0, 3 * US)])]);
+    // 0.7x: ideal 4_285_714us -> 4_300_000us, 14_286us away — well inside the
+    // half frame (16_666us) that putting a duration on the grid always costs.
+    expect(setClipSpeed([CLIP_A], 0.7)).toEqual({ ok: true });
+    expect(findMedia(CLIP_A).timelineDurationUs).toBe(4_300_000);
+  });
+
+  it('keeps both gates satisfied after a ripple speed change', () => {
+    load([
+      track(V1, 'video', [videoClip(CLIP_A, 0, 3 * US), videoClip(CLIP_B, 3 * US, 3 * US)]),
+    ]);
+
+    expect(setClipSpeed([CLIP_A], 0.7, { ripple: true }).ok).toBe(true);
+
+    expect(findMedia(CLIP_B).timelineStartUs).toBe(4_300_000);
+    expectClearsBothExportGates();
   });
 });
 

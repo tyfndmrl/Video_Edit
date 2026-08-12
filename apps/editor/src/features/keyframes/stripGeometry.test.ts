@@ -7,11 +7,14 @@ import {
   trackTop,
 } from '../timeline/geometry';
 import {
+  KEYFRAME_CHIP_W,
   KEYFRAME_HIT_SLOP_PX,
   KEYFRAME_ROW_H,
   KEYFRAME_STRIP_MAX_ROWS,
   buildStripLayout,
   hitTestStrip,
+  hitTestStripChip,
+  orderChannelsForStrip,
   stripHitRect,
   xToClipTimeUs,
 } from './stripGeometry';
@@ -79,6 +82,16 @@ const twoKeyframes = {
   ],
 };
 
+/** Four animated channels: two fit the strip, two fold into the "+N" chip. */
+function fourChannelClip(): MediaClip {
+  return clipWith({
+    x: [{ timeUs: 0, value: 0, easing: { type: 'linear' } }],
+    y: [{ timeUs: 0, value: 0, easing: { type: 'linear' } }],
+    scale: [{ timeUs: 0, value: 1, easing: { type: 'linear' } }],
+    opacity: [{ timeUs: 0, value: 1, easing: { type: 'linear' } }],
+  });
+}
+
 describe('buildStripLayout', () => {
   it('is null unless exactly one ANIMATED clip is selected', () => {
     const bare = docWith(clipWith({}));
@@ -108,16 +121,11 @@ describe('buildStripLayout', () => {
   });
 
   it('caps the rows and reports what it folded away', () => {
-    const clip = clipWith({
-      x: [{ timeUs: 0, value: 0, easing: { type: 'linear' } }],
-      y: [{ timeUs: 0, value: 0, easing: { type: 'linear' } }],
-      scale: [{ timeUs: 0, value: 1, easing: { type: 'linear' } }],
-      opacity: [{ timeUs: 0, value: 1, easing: { type: 'linear' } }],
-    });
-    const layout = buildStripLayout(input(docWith(clip), [CLIP_ID]))!;
+    const layout = buildStripLayout(input(docWith(fourChannelClip()), [CLIP_ID]))!;
     expect(layout.rows).toHaveLength(KEYFRAME_STRIP_MAX_ROWS);
     expect(layout.rows.map((r) => r.channel)).toEqual(['x', 'y']);
     expect(layout.hiddenChannels).toEqual(['scale', 'opacity']);
+    expect(layout.animatedChannels).toEqual(['x', 'y', 'scale', 'opacity']);
   });
 
   it('vanishes when the clip is too narrow to hold a grabbable diamond', () => {
@@ -157,6 +165,68 @@ describe('hitTestStrip', () => {
     const x = layout.rows[0].diamonds[0].x;
     expect(hitTestStrip(layout, x + KEYFRAME_HIT_SLOP_PX - 1, rowCentre)?.timeUs).toBe(0);
     expect(hitTestStrip(layout, x + KEYFRAME_HIT_SLOP_PX + 2, rowCentre)).toBeNull();
+  });
+});
+
+describe('folded channels are reachable through the "+N" chip', () => {
+  it('orderChannelsForStrip puts the picks first, then panel order', () => {
+    const animated = ['x', 'y', 'scale', 'opacity'] as const;
+    expect(orderChannelsForStrip(animated)).toEqual(['x', 'y', 'scale', 'opacity']);
+    expect(orderChannelsForStrip(animated, ['opacity'])).toEqual(['opacity', 'x', 'y', 'scale']);
+    // Most recent pick first (the overlay prepends).
+    expect(orderChannelsForStrip(animated, ['scale', 'opacity'])).toEqual([
+      'scale',
+      'opacity',
+      'x',
+      'y',
+    ]);
+    // A pick that is no longer animated is ignored, not rendered as a dead row.
+    expect(orderChannelsForStrip(animated, ['volume'])).toEqual(['x', 'y', 'scale', 'opacity']);
+    // Duplicates cannot produce a duplicate row.
+    expect(orderChannelsForStrip(animated, ['y', 'y'])).toEqual(['y', 'x', 'scale', 'opacity']);
+  });
+
+  it('a picked channel takes a row and the displaced one folds away', () => {
+    const doc = docWith(fourChannelClip());
+    const before = buildStripLayout(input(doc, [CLIP_ID]))!;
+    expect(before.rows.map((r) => r.channel)).toEqual(['x', 'y']);
+    expect(before.hiddenChannels).toContain('opacity');
+
+    const after = buildStripLayout({ ...input(doc, [CLIP_ID]), preferChannels: ['opacity'] })!;
+    expect(after.rows.map((r) => r.channel)).toEqual(['opacity', 'x']);
+    expect(after.rows[0].diamonds).toHaveLength(1);
+    expect(after.hiddenChannels).toEqual(['y', 'scale']);
+  });
+
+  it('the chip rect exists only while something is folded, and is inside the band', () => {
+    const folded = buildStripLayout(input(docWith(fourChannelClip()), [CLIP_ID]))!;
+    expect(folded.chipRect).not.toBeNull();
+    expect(folded.chipRect!.width).toBe(KEYFRAME_CHIP_W);
+    expect(folded.chipRect!.x + folded.chipRect!.width).toBeLessThanOrEqual(folded.x1);
+    expect(folded.chipRect!.y).toBeGreaterThanOrEqual(folded.topY);
+    expect(folded.chipRect!.y + folded.chipRect!.height).toBeLessThanOrEqual(folded.bottomY);
+
+    const single = buildStripLayout(input(docWith(clipWith(twoKeyframes)), [CLIP_ID]))!;
+    expect(single.chipRect, 'nothing folded -> no chip, no click target').toBeNull();
+    expect(hitTestStripChip(single, 0, single.topY)).toBe(false);
+  });
+
+  it('hitTestStripChip covers the drawn rect and nothing else', () => {
+    const layout = buildStripLayout(input(docWith(fourChannelClip()), [CLIP_ID]))!;
+    const chip = layout.chipRect!;
+    expect(hitTestStripChip(layout, chip.x + chip.width / 2, chip.y + chip.height / 2)).toBe(true);
+    expect(hitTestStripChip(layout, chip.x - 2, chip.y + chip.height / 2)).toBe(false);
+    expect(hitTestStripChip(layout, chip.x + chip.width / 2, chip.y + chip.height + 3)).toBe(false);
+  });
+
+  it('the chip sits inside the DOM hit box, so a real press can reach it', () => {
+    const layout = buildStripLayout(input(docWith(fourChannelClip()), [CLIP_ID]))!;
+    const rect = stripHitRect(layout);
+    const chip = layout.chipRect!;
+    expect(chip.x).toBeGreaterThanOrEqual(rect.x);
+    expect(chip.x + chip.width).toBeLessThanOrEqual(rect.x + rect.width);
+    expect(chip.y).toBeGreaterThanOrEqual(rect.y);
+    expect(chip.y + chip.height).toBeLessThanOrEqual(rect.y + rect.height);
   });
 });
 

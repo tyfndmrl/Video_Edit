@@ -52,37 +52,23 @@ public sealed record ClipEffects(ColorAdjustParams? Color, LutParams? Lut)
 /// RGB ara formatları (lutrgb/colorchannelmixer) bunu doğal olarak yapar, GLSL tarafı da
 /// aşama başına clamp eder (apps/editor .../core/colorAdjustRef.ts).
 /// <para>
-/// <b>SÖZLEŞME SAPMASI — BAŞ MİMAR KARARI BEKLİYOR (M5).</b> §4.1 tablosunun "ffmpeg formülü"
-/// hücresi contrast+brightness için <c>eq=contrast=&lt;1+v&gt;:brightness=&lt;b&gt;</c>,
-/// saturation için <c>eq=saturation=&lt;1+v&gt;</c> diyor ve gerekçe olarak "luma-afin dönüşüm
-/// RGB'de aynı afin dönüşüme denktir" yazıyor. Bu gerekçe YANLIŞTIR: <c>eq</c> contrast'ı
-/// YALNIZ luma düzlemine uygular (chroma'yı saturation ile ölçekler), yani
-/// <c>out = (in-0.5)*c + 0.5 + b</c> KANAL BAŞINA değil LUMA üstünde çalışır. İkisi ancak
-/// R=G=B (nötr gri) iken çakışır. GERÇEK ÖLÇÜM (ffmpeg 8.0, kaynak BT.709/tv etiketli,
-/// rgba zincir):
-/// <code>
-///   kaynak (228,190,124), contrast=+0.50 brightness=+0.05
-///     §4.1 Matematik/GLSL sütunu  -> (255,234,135)
-///     §4.1 ffmpeg sütunu (eq)     -> (255,236,169)     |ΔB| = 34/255
-///   kaynak (90,153,194),  contrast=+0.50 brightness=+0.05
-///     Matematik/GLSL              -> ( 84,178,240)
-///     eq                          -> (110,172,213)     |ΔR| = 26/255
-/// </code>
-/// Bu sapma §9.3'ün golden-frame eşiklerini (ortalama ΔE2000 ≤ 2.0) kat kat aşar, yani
-/// "ffmpeg sütunu"nu birebir uygulamak dokümanın KENDİ parity sözleşmesini bozardı. Ayrıca
-/// <c>eq</c> rgba zincirin ortasına yuva444p gidiş-dönüşü sokar (ölçüldü: auto_scale
-/// rgba→yuva444p→rgba) — §6.3'ün "zincir ortasında renk uzayı değişimi YASAK" gerekçesinin
-/// aynısı. Bu yüzden uygulama §4.1'in MATEMATİK sütununu (= GLSL sütunu = önizleme) birebir
-/// veren RGB-uzayı eşlemesini üretir:
+/// <b>SÖZLEŞME KARARA BAĞLANDI (M5, baş mimar).</b> §4.1 tablosunun "ffmpeg formülü" hücresi
+/// eskiden contrast+brightness için <c>eq=contrast=&lt;1+v&gt;:brightness=&lt;b&gt;</c>,
+/// saturation için <c>eq=saturation=&lt;1+v&gt;</c> diyordu; gerekçesi ("luma-afin dönüşüm
+/// RGB'de aynı afin dönüşüme denktir") YANLIŞTI ve <b>doküman koda göre düzeltildi</b>
+/// (bkz. rendering-semantics §4.1.1, ölçüm kanıtı orada). Özet: <c>eq</c> contrast'ı yalnız
+/// LUMA düzlemine uygular, kanal-başına afin op ile ancak R=G=B iken çakışır — ölçülen sapma
+/// 34/255 kod değerine kadar çıkar ve §9.3 eşiklerini kat kat aşar; ayrıca <c>eq</c> rgba
+/// zincirin ortasına <c>rgba→yuva444p→rgba</c> gidiş-dönüşü sokar (§6.3 yasağı).
+/// Uygulama §4.1'in MATEMATİK sütununu (= GLSL sütunu = önizleme) birebir veren RGB-uzayı
+/// eşlemesini üretir:
 /// <list type="bullet">
 ///   <item>contrast+brightness → <c>lutrgb</c> ile kanal başına TEK afin op;</item>
 ///   <item>saturation → <c>colorchannelmixer</c> ile BT.709 luma etrafında lineer karışım
 ///     (matris biçimi <c>mix(luma, rgb, 1+v)</c>'nin birebir açılımıdır).</item>
 /// </list>
-/// Ölçülen parity: her iki eşleme de referans modelden ±1..3 kod değeri içinde
-/// (yukarıdaki eq sapması 34'tü). §4.1 tablosunun düzeltilmesi baş mimar onayına sunulmuştur;
-/// karar ters çıkarsa değişmesi gereken tek yer <see cref="ContrastBrightnessFilter"/> ve
-/// <see cref="SaturationFilter"/>'dır.
+/// Bu iki metot artık dokümanın NORMATİF hücresidir: değişmeleri §4.1'in de değişmesini
+/// gerektirir (Ek: Sözleşme Değişiklik Kuralı).
 /// </para>
 /// </summary>
 public static class ColorPipeline

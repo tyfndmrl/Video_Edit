@@ -16,11 +16,22 @@
  * - drag a diamond      -> one docStore transaction -> ONE history entry
  * - double click        -> remove that keyframe     -> one entry
  * - right click         -> easing menu (linear / easeIn / easeOut / easeInOut)
+ * - click the "+N" chip -> channel menu: promote a folded channel into a row
  * - Escape mid-drag     -> abort, document restored exactly
  * - unmount mid-drag    -> abort (an open transaction freezes autosave and
  *                          makes the NEXT mutate/undo throw)
+ *
+ * WHY THE CHIP IS A BUTTON
+ * ------------------------
+ * The band only fits `KEYFRAME_STRIP_MAX_ROWS` rows, so a clip animating three
+ * or more channels folded the rest into a decorative "+N". Everything the strip
+ * uniquely offers — moving a keyframe IN TIME, deleting it, its easing menu —
+ * was therefore unreachable for those channels: no other surface moves a
+ * keyframe in time. The chip now opens a channel list and the picked channel
+ * takes a row (`preferChannels`), which keeps the two-row budget while making
+ * every animated channel reachable.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { Easing, MicroSec, Uuid } from '@videoedit/timeline-schema';
 import { useDocStore, type Transaction } from '../../state/docStore';
@@ -35,9 +46,11 @@ import {
   removeKeyframe,
   setKeyframeEasing,
 } from './keyframeOps';
+import { clampMenuPoint } from './menuPosition';
 import {
   buildStripLayout,
   hitTestStrip,
+  hitTestStripChip,
   stripHitRect,
   xToClipTimeUs,
   type StripLayout,
@@ -64,6 +77,12 @@ interface EasingMenuState {
   current: Easing;
 }
 
+/** The "+N" chip's menu: pick which animated channel gets a strip row. */
+interface ChannelMenuState {
+  x: number;
+  y: number;
+}
+
 export interface KeyframeStripOverlayProps {
   /** TimelinePanel's vertical scroll (track rows are not in the store). */
   scrollY: number;
@@ -83,6 +102,14 @@ export function KeyframeStripOverlay({ scrollY }: KeyframeStripOverlayProps) {
 
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [menu, setMenu] = useState<EasingMenuState | null>(null);
+  const [channelMenu, setChannelMenu] = useState<ChannelMenuState | null>(null);
+  /**
+   * Channels promoted from the "+N" chip, most recent first. VIEW state, not
+   * document state: it must not enter history or autosave, and a stale entry is
+   * harmless because `buildStripLayout` ignores channels that are no longer
+   * animated.
+   */
+  const [preferChannels, setPreferChannels] = useState<KeyframeChannel[]>([]);
   /** Diamond to highlight (hover or drag) — redraw trigger, not document state. */
   const [active, setActive] = useState<{ channel: string; timeUs: number } | null>(null);
 
@@ -104,9 +131,17 @@ export function KeyframeStripOverlay({ scrollY }: KeyframeStripOverlayProps) {
   }, []);
 
   const layout: StripLayout | null = useMemo(
-    () => buildStripLayout({ doc, selection, scrollUs, pxPerUs, widthPx: size.w }),
-    [doc, selection, scrollUs, pxPerUs, size.w],
+    () => buildStripLayout({ doc, selection, scrollUs, pxPerUs, widthPx: size.w, preferChannels }),
+    [doc, selection, scrollUs, pxPerUs, size.w, preferChannels],
   );
+
+  // A different clip is a different set of channels; carrying the previous
+  // clip's picks over would show rows the user never asked for HERE.
+  const clipId = layout?.clipId ?? null;
+  useEffect(() => {
+    setPreferChannels((prev) => (prev.length === 0 ? prev : []));
+    setChannelMenu(null);
+  }, [clipId]);
 
   // Paint. The canvas is dpr-scaled here (it is this overlay's own canvas, not
   // one of TimelinePanel's three).
@@ -172,6 +207,7 @@ export function KeyframeStripOverlay({ scrollY }: KeyframeStripOverlayProps) {
         return;
       }
       setMenu((m) => (m === null ? m : null));
+      setChannelMenu((m) => (m === null ? m : null));
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
@@ -194,25 +230,55 @@ export function KeyframeStripOverlay({ scrollY }: KeyframeStripOverlayProps) {
     if (layout === null && dragRef.current !== null) finishDrag(false);
   }, [layout, finishDrag]);
 
-  // Close the easing menu on any press elsewhere (capture phase, so it lands
+  // A menu anchored to the click point runs off the window near the right or
+  // bottom edge — visible to a DOM query, unreachable by a real pointer. Clamp
+  // against the measured box, after layout (see menuPosition.ts).
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const size = { width: rect.width, height: rect.height };
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    if (menu !== null) {
+      const next = clampMenuPoint(menu, size, viewport);
+      if (next.x !== menu.x || next.y !== menu.y) setMenu({ ...menu, ...next });
+      return;
+    }
+    if (channelMenu !== null) {
+      const next = clampMenuPoint(channelMenu, size, viewport);
+      if (next.x !== channelMenu.x || next.y !== channelMenu.y) setChannelMenu(next);
+    }
+  }, [menu, channelMenu]);
+
+  // Close the open menu on any press elsewhere (capture phase, so it lands
   // before a timeline drag opens its own transaction).
   useEffect(() => {
-    if (menu === null) return;
+    if (menu === null && channelMenu === null) return;
     const onDown = (e: PointerEvent): void => {
       // Capture phase runs BEFORE the menu's own handlers, so a press inside
       // the menu must be recognised here or the item would be unmounted before
       // its click ever fires.
       if (menuRef.current?.contains(e.target as Node)) return;
       setMenu(null);
+      setChannelMenu(null);
     };
     window.addEventListener('pointerdown', onDown, true);
     return () => window.removeEventListener('pointerdown', onDown, true);
-  }, [menu]);
+  }, [menu, channelMenu]);
 
   const onPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       if (e.button !== 0 || layout === null) return;
       const { x, contentY } = localPoint(e.clientX, e.clientY);
+      // The chip is painted OVER the first row, so it is tested first — a
+      // diamond underneath must not steal its press.
+      if (hitTestStripChip(layout, x, contentY)) {
+        e.preventDefault();
+        e.stopPropagation();
+        setMenu(null);
+        setChannelMenu((m) => (m === null ? { x: e.clientX, y: e.clientY } : null));
+        return;
+      }
       const hit = hitTestStrip(layout, x, contentY);
       // MISS: do not consume. The press belongs to the clip/trim/marquee under
       // it and must reach TimelinePanel exactly as before.
@@ -227,6 +293,7 @@ export function KeyframeStripOverlay({ scrollY }: KeyframeStripOverlayProps) {
       e.preventDefault();
       e.stopPropagation();
       setMenu(null);
+      setChannelMenu(null);
       e.currentTarget.setPointerCapture(e.pointerId);
 
       const pointerTimeUs = xToClipTimeUs(layout, x, scrollUs, pxPerUs);
@@ -263,8 +330,11 @@ export function KeyframeStripOverlay({ scrollY }: KeyframeStripOverlayProps) {
       const { x, contentY } = localPoint(e.clientX, e.clientY);
       if (!drag) {
         // Idle: highlight what the pointer would grab. Never consume the event
-        // (the timeline's own hover cursor logic still needs it).
-        const hit = layout ? hitTestStrip(layout, x, contentY) : null;
+        // (the timeline's own hover cursor logic still needs it). Over the chip
+        // nothing is grabbable — highlighting the diamond hiding under it would
+        // promise an ew-resize drag that the press will not start.
+        const overChip = layout !== null && hitTestStripChip(layout, x, contentY);
+        const hit = layout && !overChip ? hitTestStrip(layout, x, contentY) : null;
         setActive((prev) => {
           const next = hit ? { channel: hit.channel, timeUs: hit.timeUs } : null;
           if (prev === null && next === null) return prev;
@@ -306,6 +376,13 @@ export function KeyframeStripOverlay({ scrollY }: KeyframeStripOverlayProps) {
     (e: ReactMouseEvent<HTMLDivElement>) => {
       if (layout === null) return;
       const { x, contentY } = localPoint(e.clientX, e.clientY);
+      // A double click on the chip is two chip clicks, never a delete of the
+      // diamond hiding under it.
+      if (hitTestStripChip(layout, x, contentY)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       const hit = hitTestStrip(layout, x, contentY);
       if (!hit) return;
       e.preventDefault();
@@ -321,6 +398,11 @@ export function KeyframeStripOverlay({ scrollY }: KeyframeStripOverlayProps) {
     (e: ReactMouseEvent<HTMLDivElement>) => {
       if (layout === null) return;
       const { x, contentY } = localPoint(e.clientX, e.clientY);
+      if (hitTestStripChip(layout, x, contentY)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       const hit = hitTestStrip(layout, x, contentY);
       // Miss: let the timeline's own context menu open.
       if (!hit) return;
@@ -371,6 +453,7 @@ export function KeyframeStripOverlay({ scrollY }: KeyframeStripOverlayProps) {
           data-clip-id={layout.clipId}
           data-rows={layout.rows.map((r) => r.channel).join(',')}
           data-hidden-channels={layout.hiddenChannels.length}
+          data-chip={layout.chipRect === null ? 'none' : 'shown'}
           className="pointer-events-auto absolute touch-none"
           style={{
             left: hitBox.left,
@@ -419,6 +502,43 @@ export function KeyframeStripOverlay({ scrollY }: KeyframeStripOverlayProps) {
               {option.label}
             </button>
           ))}
+        </div>
+      )}
+      {channelMenu !== null && layout !== null && (
+        <div
+          ref={menuRef}
+          data-testid="keyframe-channel-menu"
+          role="menu"
+          className="pointer-events-auto fixed z-50 min-w-[150px] rounded border border-edge bg-surface-2 py-1 shadow-lg"
+          style={{ left: channelMenu.x, top: channelMenu.y }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <p className="px-2 pb-1 text-[10px] text-fg-muted">Şeritte göster (en fazla 2)</p>
+          {layout.animatedChannels.map((channel) => {
+            const shown = layout.rows.some((r) => r.channel === channel);
+            return (
+              <button
+                key={channel}
+                type="button"
+                role="menuitem"
+                data-testid={`keyframe-channel-${channel}`}
+                data-shown={shown ? 'true' : 'false'}
+                aria-checked={shown}
+                className={`block w-full px-2 py-1 text-left text-[11px] hover:bg-surface-3 ${
+                  shown ? 'text-accent' : 'text-fg'
+                }`}
+                onClick={() => {
+                  // Most recent first: the pick always wins a row, and the
+                  // channel it displaces is the one picked longest ago.
+                  setPreferChannels((prev) => [channel, ...prev.filter((c) => c !== channel)]);
+                  setChannelMenu(null);
+                }}
+              >
+                {shown ? '● ' : '○ '}
+                {CHANNEL_META[channel].label}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

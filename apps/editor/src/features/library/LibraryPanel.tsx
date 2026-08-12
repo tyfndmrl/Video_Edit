@@ -3,10 +3,14 @@
  * cards (progress / speed / ETA, pause-resume-cancel), interrupted-session
  * badge, and the project asset list with status badges (react-query, 3 s
  * polling while the server is processing — SignalR replaces this in M1-B).
+ *
+ * M6 adds library MANAGEMENT: the storage quota indicator in the header and
+ * per-asset delete (right click / ⋯ menu -> usage lookup -> confirmation,
+ * AssetDeleteDialog).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { useProjectAssets, type AssetDto } from '../../entities/assets';
+import { useProjectAssets, useQuota, type AssetDto } from '../../entities/assets';
 import { useEditorStore } from '../../state/editorStore';
 import { openProject, useProjectSession } from '../../state/projectSession';
 import { addAssetToTimelineAtPlayhead } from './addToTimeline';
@@ -23,6 +27,9 @@ import {
   type LibraryDragPayload,
 } from '../timeline/libraryDnd';
 import { formatBytes, formatDurationUs, formatEta, formatSpeed } from './format';
+import { AssetDeleteDialog } from './AssetDeleteDialog';
+import { adoptServerAssetList, resetAssetPresence } from './missingMedia';
+import { quotaView } from './quotaModel';
 import { uploadApi } from './upload/uploadApi';
 import {
   cancelUpload,
@@ -44,11 +51,56 @@ export function LibraryPanel() {
   const projectId = useEditorStore((s) => s.activeProjectId);
   return (
     <div className="flex h-full flex-col">
-      <header className="border-b border-edge bg-surface-2 px-3 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase">
-        Kitaplık
+      <header className="border-b border-edge bg-surface-2 px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold tracking-wide text-fg-muted uppercase">
+            Kitaplık
+          </span>
+          {projectId !== null && <QuotaIndicator />}
+        </div>
       </header>
       {projectId === null ? <NoProject /> : <LibraryContent projectId={projectId} />}
     </div>
+  );
+}
+
+/**
+ * Depolama kotası göstergesi — kullanılan/toplam + yüzde, %90 üstünde uyarı
+ * rengi. Upload reddi bu göstergeye yönlendirir (upload/uploadErrors.ts), o
+ * yüzden gösterge sunucunun kota tanımıyla AYNI sayıyı okur (GET /api/quota).
+ *
+ * Kota okunamıyorsa gösterge yazılmaz: kitaplığın geri kalanı (yükleme, silme)
+ * çalışmaya devam etmeli, uydurma bir sayı göstermektense hiç göstermemeli.
+ */
+function QuotaIndicator() {
+  const quota = useQuota();
+  if (!quota.data) return null;
+  const view = quotaView(quota.data);
+  const tone =
+    view.level === 'full'
+      ? 'text-danger'
+      : view.level === 'warn'
+        ? 'text-amber-400'
+        : 'text-fg-muted';
+  const barTone =
+    view.level === 'full' ? 'bg-danger' : view.level === 'warn' ? 'bg-amber-400' : 'bg-accent';
+
+  return (
+    <span
+      className="flex min-w-0 shrink-0 items-center gap-1.5"
+      data-testid="library-quota"
+      title={view.title}
+    >
+      <span className="h-1.5 w-12 shrink-0 overflow-hidden rounded-full bg-surface-3">
+        <span
+          className={`block h-full rounded-full ${barTone}`}
+          style={{ width: `${view.barPercent}%` }}
+        />
+      </span>
+      <span className={`text-[10px] font-semibold whitespace-nowrap ${tone}`}>
+        {view.usedLabel} · %{view.percent}
+      </span>
+    </span>
   );
 }
 
@@ -121,13 +173,35 @@ function LibraryContent({ projectId }: { projectId: string }) {
 
   // ---- server asset list (react-query) + assetStore sync ----
   const assetsQuery = useProjectAssets(projectId);
+
+  // Proje değişimi: "hangi asset'ler var" damgası ÖNCEKİ projenin listesiyle
+  // konuşamaz (missingMedia.ts) — yeni liste gelene kadar eksiklik iddiası yok.
+  // Layout effect: yeni projenin dokümanı boyanmadan ÖNCE düşsün.
+  useLayoutEffect(() => {
+    resetAssetPresence();
+    return () => resetAssetPresence();
+  }, [projectId]);
+
   useEffect(() => {
-    const items = assetsQuery.data?.items;
-    if (!items) return;
+    const data = assetsQuery.data;
+    if (!data) return;
     // MERGE into the store — presigned URL fields are owned by the media-urls
     // sync and must survive the 3 s poll (see assetSync.ts).
-    syncServerAssets(items);
-  }, [assetsQuery.data]);
+    syncServerAssets(data.items);
+    // Deleted media: the poll is the only place that can tell "this asset is
+    // gone" apart from "this asset is not loaded yet" — and ONLY when the page
+    // covers the whole list (missingMedia.ts).
+    adoptServerAssetList(
+      projectId,
+      data.items.map((dto) => dto.id),
+      data.items.length >= data.totalCount,
+    );
+  }, [assetsQuery.data, projectId]);
+
+  // ---- delete flow: row menu -> usage lookup -> confirmation ----
+  const [menu, setMenu] = useState<{ asset: AssetDto; x: number; y: number } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AssetDto | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
 
   const serverAssets = useMemo(
     () => (assetsQuery.data?.items ?? []).filter((dto) => !activeAssetIds.has(dto.id)),
@@ -191,14 +265,117 @@ function LibraryContent({ projectId }: { projectId: string }) {
           <ul className="flex flex-col gap-1.5">
             {serverAssets.map((dto) => (
               <li key={dto.id}>
-                <AssetRow dto={dto} />
+                <AssetRow
+                  dto={dto}
+                  onRequestMenu={(asset, x, y) => setMenu({ asset, x, y })}
+                />
               </li>
             ))}
           </ul>
         </section>
       </div>
 
+      {menu !== null && (
+        <AssetContextMenu
+          x={menu.x}
+          y={menu.y}
+          fileName={menu.asset.fileName}
+          onDelete={() => {
+            setDeleteTarget(menu.asset);
+            closeMenu();
+          }}
+          onClose={closeMenu}
+        />
+      )}
+      {deleteTarget !== null && (
+        <AssetDeleteDialog
+          asset={deleteTarget}
+          projectId={projectId}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
+
       <LibraryDragGhost />
+    </div>
+  );
+}
+
+/**
+ * Asset satırının sağ tık / ⋯ menüsü. Tek eylem taşır (Sil) ama menü olarak
+ * durur: silme yıkıcıdır ve satırın üstünde duran çıplak bir çöp kutusu ikonu,
+ * sürükle-bırak jestinin ortasında yanlışlıkla tıklanmaya açıktır.
+ */
+function AssetContextMenu({
+  x,
+  y,
+  fileName,
+  onDelete,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  fileName: string;
+  onDelete(): void;
+  onClose(): void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState({ left: x, top: y });
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setPos({
+      left: Math.max(6, Math.min(x, window.innerWidth - rect.width - 6)),
+      top: Math.max(6, Math.min(y, window.innerHeight - rect.height - 6)),
+    });
+    el.querySelector<HTMLButtonElement>('button')?.focus();
+  }, [x, y]);
+
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent): void => {
+      if (ref.current && e.target instanceof Node && ref.current.contains(e.target)) return;
+      onClose();
+    };
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation(); // global kısayol dispatcher'ına sızmasın
+      onClose();
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('wheel', onClose, { capture: true, passive: true });
+    window.addEventListener('resize', onClose);
+    window.addEventListener('blur', onClose);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('wheel', onClose, true);
+      window.removeEventListener('resize', onClose);
+      window.removeEventListener('blur', onClose);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      aria-label={`${fileName} işlemleri`}
+      data-testid="library-context-menu"
+      className="fixed z-50 min-w-[10rem] rounded-md border border-edge bg-surface-2 py-1 shadow-xl"
+      style={{ left: pos.left, top: pos.top }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="library-menu-delete"
+        className="flex w-full items-center px-3 py-1 text-left text-xs text-danger outline-none hover:bg-surface-3 focus-visible:bg-surface-3"
+        onClick={onDelete}
+      >
+        Sil
+      </button>
     </div>
   );
 }
@@ -553,7 +730,13 @@ const KIND_LABELS: Record<string, string> = {
   image: 'IMG',
 };
 
-function AssetRow({ dto }: { dto: AssetDto }) {
+function AssetRow({
+  dto,
+  onRequestMenu,
+}: {
+  dto: AssetDto;
+  onRequestMenu(asset: AssetDto, x: number, y: number): void;
+}) {
   const dragHandlers = useAssetDragSource(dto);
   const sessionReady = useProjectSession((s) => s.status) === 'ready';
   const meta: string[] = [];
@@ -572,6 +755,11 @@ function AssetRow({ dto }: { dto: AssetDto }) {
       {...dragHandlers}
       // Çift tık: DnD'nin yedek yolu — playhead'e (çakışıyorsa proje sonuna) ekler.
       onDoubleClick={dto.status === 'ready' ? () => addAssetToTimelineAtPlayhead(dto.id) : undefined}
+      // Sağ tık: satırın işlem menüsü (Sil). Tarayıcı menüsü bastırılır.
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onRequestMenu(dto, e.clientX, e.clientY);
+      }}
       title={dto.status === 'ready' ? "Timeline'a sürükleyin · Çift tık: timeline'a ekle" : undefined}
     >
       <span className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-surface-3 text-[9px] font-bold tracking-wider text-fg-muted">
@@ -608,6 +796,28 @@ function AssetRow({ dto }: { dto: AssetDto }) {
         </button>
       )}
       <StatusBadge dto={dto} />
+      {/*
+        Sağ tıkı bulamayan kullanıcı için görünür kapı. pointerdown durdurulur:
+        satırın sürükleme kaynağı bu tıklamayı hayalet sürüklemeye çevirmesin.
+        Menü, düğmenin ALTINDAN açılır (imleç konumu değil) — düğmeye basan
+        kullanıcı menüyü orada bekler.
+      */}
+      <button
+        type="button"
+        data-testid="asset-menu-button"
+        aria-label={`${dto.fileName} işlemleri`}
+        title="Medya işlemleri (sağ tık da olur)"
+        className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[11px] leading-none text-fg-muted hover:bg-surface-3 hover:text-fg"
+        onPointerDown={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          const rect = e.currentTarget.getBoundingClientRect();
+          onRequestMenu(dto, rect.left, rect.bottom + 2);
+        }}
+      >
+        ⋯
+      </button>
     </div>
   );
 }
