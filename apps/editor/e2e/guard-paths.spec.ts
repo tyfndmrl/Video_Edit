@@ -26,6 +26,9 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures/test';
 import { SECOND_US, SEED_TIMES } from './fixtures/seed';
 import { EditorApp } from './support/editor';
+import { LibraryPanelHarness } from './support/library';
+import { ensureTestVideo, FFMPEG_SKIP_REASON, ffmpegVersion } from './support/media';
+import { createEmptyProject } from './support/projects';
 import { TRACK_H } from '../src/features/timeline/geometry';
 
 /** Rozet, şeridin ALTINDA duruyor (geometry.ts TRANSITION_BADGE_*). */
@@ -35,9 +38,18 @@ const BADGE_BOTTOM_GAP = 3;
 /** clipA [60s,66s) — şekil klibi buraya, playhead'in üstüne düşer. */
 const SHAPE_START_US = 63 * SECOND_US;
 
+interface DocTransform {
+  x: number;
+  y: number;
+  scale: number;
+  rotationDeg: number;
+  anchorX: number;
+  anchorY: number;
+}
+
 interface DocClip {
   id: string;
-  transform: { x: number; y: number; scale: number; rotationDeg: number };
+  transform: DocTransform;
   keyframes: Record<string, { timeUs: number; value: number }[] | undefined>;
   transitionIn?: { type: string; durationUs: number };
   transitionOut?: { type: string; durationUs: number };
@@ -422,5 +434,227 @@ test.describe('Derleyicinin reddettiği bileşimler UI da ön engelli', () => {
     await expect(message, 'Komşuya yayılma bildirilmeli.').toBeVisible();
     await expect(message).toHaveAttribute('data-source', 'visual');
     await expect(message).toContainText(/geçiş/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (c2) TERS SIRA — önce yerleşim, SONRA geçiş; ve işin GERÇEKTEN render olması
+//
+// (c) geçişi ÖNCE ekleyip yerleşimi SONRA yazıyor. Kullanıcının doğal sırası ise
+// çoğu zaman tersidir: klibi böl, birinci yarıyı büyüt, sonra kesime geçiş koy.
+// O sırada editör sessiz kalıyordu, PUT 200 ve POST /exports 202 dönüyordu, iş
+// KUYRUĞA GİRİYOR ve worker'da "geçişli kliplerin yerleşimi aynı olmalıdır" ile
+// düşüyordu — yani "desteklenmeyen bileşim kuyruğa hiç girmez" vaadi ölçülerek
+// yanlıştı.
+//
+// Bu yüzden burada iddia UI'da BİTMİYOR: iş gerçekten render ediliyor. Derleme
+// aşaması worker'ın içinde, dokümanın tamamı üzerinde çalışır; "Tamamlandı"
+// rozeti o aşamanın geçildiğinin tek dürüst kanıtıdır.
+// ---------------------------------------------------------------------------
+
+/** Gizmo kutusunun EKRANDAKİ geometrisi — SVG'nin kendi çizdiği noktalardan. */
+async function gizmoBox(page: Page): Promise<{
+  centre: { x: number; y: number };
+  cornerSe: { x: number; y: number };
+}> {
+  const geo = await page.evaluate(() => {
+    const svg = document.querySelector('[data-testid="player-gizmo"]');
+    const box = document.querySelector('[data-testid="player-gizmo-box"]');
+    const se = document.querySelector('[data-testid="player-gizmo-corner-se"]');
+    if (!svg || !box || !se) return null;
+    const r = svg.getBoundingClientRect();
+    const corners = (box.getAttribute('points') ?? '')
+      .trim()
+      .split(/\s+/)
+      .map((pair) => {
+        const [x, y] = pair.split(',').map(Number);
+        return { x: r.left + x, y: r.top + y };
+      });
+    if (corners.length !== 4) return null;
+    return {
+      centre: {
+        x: corners.reduce((s, p) => s + p.x, 0) / 4,
+        y: corners.reduce((s, p) => s + p.y, 0) / 4,
+      },
+      cornerSe: {
+        x: r.left + Number(se.getAttribute('x')) + Number(se.getAttribute('width')) / 2,
+        y: r.top + Number(se.getAttribute('y')) + Number(se.getAttribute('height')) / 2,
+      },
+    };
+  });
+  expect(geo, 'Gizmo ekranda bulunamadı (player-gizmo* testid\'leri yok).').not.toBeNull();
+  return geo as { centre: { x: number; y: number }; cornerSe: { x: number; y: number } };
+}
+
+/** Gerçek fare: bas -> eşiği aşan kademeli hareket -> bırak. */
+async function dragMouse(
+  page: Page,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): Promise<void> {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + Math.sign(to.x - from.x || 1) * 6, from.y, { steps: 2 });
+  await page.mouse.move(to.x, to.y, { steps: 12 });
+  await page.mouse.move(to.x, to.y);
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+}
+
+/** Track'in kliplerini zaman sırasına dizer. */
+function clipsInOrder(state: { tracks: { type: string; clips: { id: string; timelineStartUs: number; timelineDurationUs: number }[] }[] }) {
+  const track = state.tracks.find((t) => t.clips.length > 0);
+  expect(track, 'Dokümanda klipli bir track yok.').toBeDefined();
+  return [...track!.clips].sort((a, b) => a.timelineStartUs - b.timelineStartUs);
+}
+
+test.describe('(c2) böl -> ölçekle -> geçiş ekle: iş kuyrukta ölmez', () => {
+  test('gerçek fareyle kurulan sıra dışa aktarımda RENDER edilir', async ({ page, account }) => {
+    test.skip(ffmpegVersion() === null, FFMPEG_SKIP_REASON);
+    // Yükleme + worker işleme + ffmpeg render.
+    test.setTimeout(480_000);
+
+    // GERÇEK medya şart: sahte assetId'li bir doküman worker'da zaten kaynak
+    // bulamadan düşerdi ve "derleme aşamasını geçti mi?" sorusu yanıtsız kalırdı.
+    const video = ensureTestVideo();
+    const project = await createEmptyProject(
+      account.context.request,
+      account.accessToken,
+      'E2E gecis yerlesim',
+    );
+
+    const app = new EditorApp(page);
+    await app.open(project.projectId, { email: account.email, password: account.password });
+
+    const library = new LibraryPanelHarness(page);
+    await library.pickFiles([video.path]);
+    await library.waitForReady(video.fileName);
+    await library.doubleClickAsset(video.fileName);
+    await expect
+      .poll(async () => (await app.state()).clipCount, {
+        timeout: 20_000,
+        message: 'Kütüphaneden timeline\'a klip eklenemedi.',
+      })
+      .toBe(1);
+
+    // --- 1. GERÇEK sağ tık menüsüyle böl ---
+    let st = await app.state();
+    const source = clipsInOrder(st)[0];
+    const cutUs = source.timelineStartUs + Math.round(source.timelineDurationUs / 2);
+    await app.timeline.scrubTo(cutUs);
+    await app.timeline.click(await app.timeline.clipCenter(source.id, await app.state()), 'right');
+    await expect(app.contextMenu).toBeVisible();
+    await app.contextMenuItem(/playhead.?de b[öo]l/i).click();
+    await page.waitForTimeout(250);
+
+    st = await app.state();
+    expect(st.clipCount, 'Bölme iki klip üretmeliydi.').toBe(2);
+    const [first, second] = clipsInOrder(st);
+    expect(
+      first.timelineStartUs + first.timelineDurationUs,
+      'Bölmenin iki yarısı BİTİŞİK olmalı (geçişin ön koşulu).',
+    ).toBe(second.timelineStartUs);
+
+    // --- 2. İlk yarıyı seç ve GİZMO ile ölçekle (henüz geçiş YOK) ---
+    await app.timeline.click(await app.timeline.clipCenter(first.id));
+    await app.timeline.scrubTo(first.timelineStartUs + Math.round(first.timelineDurationUs / 2));
+    await expect(
+      page.getByTestId('player-gizmo'),
+      'Seçili klibin üstünde playhead varken gizmo görünmeli.',
+    ).toHaveCount(1);
+
+    const geo = await gizmoBox(page);
+    // Köşeyi çapaya doğru çek: ölçek küçülür (yön önemli değil, FARK önemli).
+    await dragMouse(page, geo.cornerSe, {
+      x: geo.cornerSe.x - (geo.cornerSe.x - geo.centre.x) * 0.4,
+      y: geo.cornerSe.y - (geo.cornerSe.y - geo.centre.y) * 0.4,
+    });
+
+    const scaledA = await readClip(page, first.id);
+    const untouchedB = await readClip(page, second.id);
+    expect(
+      scaledA.transform.scale,
+      'Gizmo sürüklemesi ilk yarının ölçeğini DEĞİŞTİRMELİYDİ (ön koşul).',
+    ).toBeLessThan(1);
+    expect(
+      untouchedB.transform.scale,
+      'ÖN KOŞUL: geçiş yokken komşuya dokunulmaz — ayrışma tam olarak burada doğuyor.',
+    ).toBe(1);
+
+    // --- 3. Kesim rozetinden GERÇEK fareyle geçiş ekle ---
+    await addTransitionByMouse(app, first.id);
+
+    // Komşunun yerleşimi değiştiyse bu SESSİZ olmamalı.
+    const warning = page.getByTestId('timeline-warning');
+    await expect(warning, 'Komşuya yayılma bildirilmeli (sessiz komşu düzenlemesi yok).').toBeVisible();
+    await expect(warning).toContainText(/yerleşim/i);
+
+    // --- 4. Doküman iddiası: tek xfade akışı, TEK yerleşim ---
+    const a = await readClip(page, first.id);
+    const b = await readClip(page, second.id);
+    expect(a.transitionOut, 'Kesime geçiş yazılmalıydı.').toBeDefined();
+    expect(b.transitionIn).toBeDefined();
+    expect(
+      b.transform,
+      'Geçişli iki klibin yerleşimi AYNI olmalı — derleyici farkı InvalidTimeline ile reddediyor.',
+    ).toEqual(a.transform);
+    expect(
+      a.transform.scale,
+      'Eşitlenen değer VARSAYILAN olmamalı, yoksa test ölçeklemenin korunduğunu kanıtlamaz.',
+    ).toBeLessThan(1);
+
+    // --- 5. GERÇEK dışa aktarım: 202 + worker'da render ---
+    const exportPost = page.waitForResponse(
+      (r) => r.url().includes('/exports') && r.request().method() === 'POST',
+      { timeout: 90_000 },
+    );
+    const openExport = page.getByRole('button', { name: 'Dışa Aktar', exact: true });
+    await expect(openExport).toBeEnabled();
+    await openExport.click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Dışa aktar' }).click();
+
+    const posted = await exportPost;
+    expect(
+      posted.status(),
+      'POST /exports 202 dönmeliydi (ön kapı bu belgeyi kabul ediyor).',
+    ).toBe(202);
+    await expect(dialog, 'Başarılı başlatmada diyalog kapanır.').toBeHidden({ timeout: 30_000 });
+
+    // Render edilen şey KAYDEDİLEN belgedir: sunucudaki belgede geçiş ve ORTAK
+    // yerleşim gerçekten var mı? (Yoksa aşağıdaki "Tamamlandı" hiçbir şey
+    // kanıtlamazdı — geçişsiz bir belge zaten sorunsuz render olur.)
+    const detail = (await (
+      await account.context.request.get(`/api/projects/${project.projectId}`, {
+        headers: { Authorization: `Bearer ${account.accessToken}` },
+      })
+    ).json()) as { timeline: { tracks: { clips: (DocClip & { timelineStartUs: number })[] }[] } };
+    const savedClips = detail.timeline.tracks
+      .flatMap((t) => t.clips)
+      .sort((x, y) => x.timelineStartUs - y.timelineStartUs);
+    expect(savedClips[0].transitionOut, 'Kaydedilen belgede geçiş olmalı.').toBeDefined();
+    expect(
+      savedClips[1].transform,
+      'Kaydedilen belgede de iki klibin yerleşimi aynı olmalı.',
+    ).toEqual(savedClips[0].transform);
+    expect(savedClips[0].transform.scale).toBeLessThan(1);
+
+    // --- 6. İş DERLEME aşamasını geçti mi? Tek dürüst kanıt: render bitti. ---
+    const exportsSection = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: 'Dışa Aktarmalar' }) })
+      .first();
+    const jobRow = exportsSection.locator('li').first();
+    await expect(jobRow).toBeVisible({ timeout: 20_000 });
+    await expect(
+      jobRow.getByText('Tamamlandı', { exact: true }),
+      'Geçişli kesimde yerleşim eşitlenmediyse iş worker\'da "geçişli kliplerin yerleşimi aynı '
+        + 'olmalıdır" ile düşer. Kart burada "Tamamlandı" göstermelidir.',
+    ).toBeVisible({ timeout: 300_000 });
+    await expect(
+      jobRow.locator('p.text-danger'),
+      'Başarısız bir iş sessizce geçmemeli.',
+    ).toHaveCount(0);
   });
 });

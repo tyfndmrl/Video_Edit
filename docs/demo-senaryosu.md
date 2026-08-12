@@ -431,7 +431,7 @@ ve adım 11'in isteğe bağlı görsel notu (~20 sn) bu toplamların dışındad
 
 ## 6. Bilinen kısıtlar — demoda dikkat
 
-1–4 bu senaryo koşulurken **ölçülen** davranışlardır; 5 ölçülmedi (senaryo sınıra
+1–4 bu senaryo koşulurken **ölçülen** davranışlardır; 5–6 ölçülmedi (senaryo sınıra
 girmiyor) ama demoyu doğaçlama genişletirseniz karşınıza çıkabilir, o yüzden burada.
 Sürpriz olmasın.
 
@@ -447,7 +447,7 @@ Sürpriz olmasın.
 3. **Videonun ÜSTÜNE bir katman koymanın UI'daki yolu overlay katmanlarıdır**
    (**Metin ekle / Şekil ekle / Çıkartma**). Ölçüldü: dışa aktarılan karede
    overlay katmanı videonun üstünde çiziliyor — `tracks[0]` en üst katman
-   (derleyici track'leri sondan başa gezer: `ExportCompiler.cs:238`).
+   (derleyici track'leri sondan başa gezer: `ExportCompiler.cs:250`).
    `+V` ile açılan video track'i ve "son track'in altına bırak" jesti diziye
    **sona** eklenir, yani görsel yığında **arkaya** düşer (kod okumasıyla:
    `timelineOps.addTrack` → `d.tracks.push`);
@@ -460,6 +460,14 @@ Sürpriz olmasın.
    oynatıcıda bir rozet bildirir. **Dışa aktarma etkilenmez.** Bu senaryo en
    fazla 2 eşzamanlı video kullandığı için sınıra girmez
    (`poc-bilinen-sinirlar.md` §2.2).
+6. **Geçişli iki klip aynı yerleşimi paylaşmak ZORUNDADIR** — `xfade` ikisini tek
+   akışa katlar. Doğaçlarken bunu görebilirsiniz: geçişli bir klibi ölçekler ya da
+   döndürürseniz **komşusu da aynı değeri alır**, ve tersi de olur — ölçeği
+   değiştirilmiş bir klibe sonradan geçiş eklemek komşuyu ona hizalar. İkisi de
+   sessiz değildir — ekranda *"Yerleşim geçişli komşu klibe de uygulandı (geçişli
+   kliplerin yerleşimi aynı olmalı)"* bildirimi çıkar (`timeline/feedback.ts`).
+   Bu senaryo geçişi **varsayılan yerleşimli** iki klip arasında kurduğu için fark görünmez
+   (kural: `rendering-semantics.md` §5.2; `poc-bilinen-sinirlar.md` §3, 9. satır).
 
 ---
 

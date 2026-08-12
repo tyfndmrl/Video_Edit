@@ -76,10 +76,17 @@ public sealed class ExportEndpointsTests : IDisposable
     /// </summary>
     private static readonly FontManifestProvider Fonts = new();
 
-    private Task<IResult> CallStartAsync(Guid projectId, string? profile = "1080p") =>
+    /// <summary>
+    /// Ölçüm yolu VARSAYILAN OLARAK YOKTUR (null): birim testleri kurulu font istemez ve
+    /// kapının font-bağımsız ALT SINIR yarısını ölçer. Ölçümlü yol
+    /// <see cref="StartExport_MeasuredTextWiderThanTheCeiling_Returns422_BeforeQueueing"/>'de
+    /// sahte bir ölçerle sürülür.
+    /// </summary>
+    private Task<IResult> CallStartAsync(
+        Guid projectId, string? profile = "1080p", ITextRasterService? measurer = null) =>
         ExportEndpoints.StartExport(
             projectId, new CreateExportRequest(profile), PrincipalFor(_userId), _db, _jobs,
-            TimeProvider.System, Fonts, CancellationToken.None);
+            TimeProvider.System, Fonts, measurer, CancellationToken.None);
 
     // ---------- POST /api/projects/{id}/exports ----------
 
@@ -342,6 +349,84 @@ public sealed class ExportEndpointsTests : IDisposable
         Assert.Equal(1, _jobs.CreateCount);
     }
 
+    // ---------- Raster katman tavanı (3. tur denetim, blocker 2) ----------
+
+    [Fact]
+    public async Task StartExport_HugeTextLayer_Returns422_BeforeQueueing()
+    {
+        // BLOCKER'IN HTTP KARŞILIĞI. Baş mimarın canlı ölçümü tam olarak buydu: fontSizePx
+        // 2000 + tek uzun satır + scale 4 → PUT 200, POST /exports 202, ve iş worker'da
+        // düştü. Kural artık Validate'te: kutu ALT SINIRI bile 2000*1.2*4 = 9600 px, yani
+        // 8192 tavanını kesinlikle aşıyor → 422, kuyruğa hiç girmiyor. (Ölçer VERİLMEDİ:
+        // kapı fontlar kurulu olmadan da tutuyor.)
+        var clip = ExportTestDocs.TextClip(0, 1_000_000,
+            content: new string('A', 400),
+            transform: ExportTestDocs.Transform(scale: 4));
+        clip.Text!.FontSizePx = 2000;
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        var result = await CallStartAsync(project.Id);
+
+        var problem = Assert.IsType<ProblemHttpResult>(result);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("transform-scale", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Contains("8192", problem.ProblemDetails.Detail);
+        Assert.Empty(_db.Jobs.ToList()); // job satırı yazılmadı
+        Assert.Equal(0, _jobs.CreateCount); // kuyruğa çöp atılmadı
+    }
+
+    [Fact]
+    public async Task StartExport_MeasuredTextWiderThanTheCeiling_Returns422_BeforeQueueing()
+    {
+        // Alt sınırın GÖREMEDİĞİ vaka: kutu YÜKSEKLİKTEN değil GENİŞLİKTEN taşıyor (uzun tek
+        // satır, küçük punto). Genişliğin font-bağımsız bir alt sınırı yoktur → kapı ancak
+        // ÖLÇÜM yolu varsa tutar. Sahte ölçer gerçek fontlara ihtiyaç duymadan o yolu sürer.
+        var clip = ExportTestDocs.TextClip(0, 1_000_000, content: new string('W', 3000));
+        clip.Text!.FontSizePx = 100; // alt sınır yüksekliği yalnız 120 px → kapıyı tetiklemez
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        // Ölçer YOKken belge kabul edilir (alt sınır kapısı bu vakayı göremez) —
+        // negatif kontrolün yarısı: aşağıdaki 422 ölçümden geliyor, başka bir şeyden değil.
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+        _db.Jobs.RemoveRange(_db.Jobs);
+        await _db.SaveChangesAsync();
+
+        var result = await CallStartAsync(
+            project.Id, measurer: new FakeTextMeasurer(widthPx: 165_000, heightPx: 120));
+
+        var problem = Assert.IsType<ProblemHttpResult>(result);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("overlay-too-large", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Empty(_db.Jobs.ToList());
+    }
+
+    [Fact]
+    public async Task StartExport_MeasurementFailure_DoesNotRejectAValidDocument()
+    {
+        // Ölçüm bir ALTYAPI işidir (font kökü, manifest, Skia). Patlarsa doğrulama alt sınıra
+        // düşer — kullanıcının belgesi YANLIŞ 422 yemez.
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: ExportTestDocs.TextClip(0, 1_000_000))));
+
+        var result = await CallStartAsync(project.Id, measurer: new ThrowingTextMeasurer());
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(result);
+    }
+
+    [Fact]
+    public async Task StartExport_NormalTextLayer_IsStillAccepted()
+    {
+        // Kapının negatif kontrolü: 64 px / tek satır / scale 2 (= 153.6 px kutu) REDDEDİLMEZ.
+        var clip = ExportTestDocs.TextClip(0, 1_000_000,
+            transform: ExportTestDocs.Transform(scale: 2));
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+    }
+
     [Fact]
     public async Task StartExport_EmptyTimeline_Returns422()
     {
@@ -496,6 +581,40 @@ public sealed class ExportEndpointsTests : IDisposable
     }
 
     // ---------- Sahteler ----------
+
+    /// <summary>
+    /// Sabit bbox döndüren ölçer — ön kapının ÖLÇÜMLÜ yolunu kurulu font olmadan sürer.
+    /// <c>RenderAsync</c> ÇAĞRILMAMALIDIR (ön kapı yalnız ölçer): çağrılırsa test patlar.
+    /// </summary>
+    private sealed class FakeTextMeasurer(double widthPx, double heightPx) : ITextRasterService
+    {
+        public Task<RasterResult> RenderAsync(
+            VideoEdit.Contracts.Timeline.Clip clip,
+            VideoEdit.Contracts.Timeline.ProjectSettings settings,
+            string outputPath, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Ön kapı raster ÜRETMEMELİ, yalnız ölçmeli.");
+
+        public TextLayout Measure(
+            VideoEdit.Contracts.Timeline.TextClipText text,
+            VideoEdit.Contracts.Timeline.ProjectSettings settings) =>
+            new([], text.FontSizePx * text.LineHeight, widthPx, heightPx,
+                0, 0, widthPx, heightPx, false);
+    }
+
+    /// <summary>Kurulu font yokmuş gibi davranan ölçer (altyapı hatası → alt sınıra düşülür).</summary>
+    private sealed class ThrowingTextMeasurer : ITextRasterService
+    {
+        public Task<RasterResult> RenderAsync(
+            VideoEdit.Contracts.Timeline.Clip clip,
+            VideoEdit.Contracts.Timeline.ProjectSettings settings,
+            string outputPath, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Ön kapı raster ÜRETMEMELİ, yalnız ölçmeli.");
+
+        public TextLayout Measure(
+            VideoEdit.Contracts.Timeline.TextClipText text,
+            VideoEdit.Contracts.Timeline.ProjectSettings settings) =>
+            throw FontNotFoundException.UnknownId("roboto", "(test)", []);
+    }
 
     /// <summary>Create + ChangeState çağrılarını kaydeden Hangfire istemcisi.</summary>
     private sealed class RecordingJobClient : IBackgroundJobClient

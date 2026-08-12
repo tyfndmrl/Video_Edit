@@ -2,6 +2,7 @@ using System.Globalization;
 using VideoEdit.Contracts;
 using VideoEdit.Contracts.Timeline;
 using VideoEdit.Media.Recipes;
+using VideoEdit.Media.Text;
 
 namespace VideoEdit.Media.Export;
 
@@ -182,8 +183,18 @@ public static class ExportCompiler
             $"'{type}' geçiş tipi dışa aktarıcıda tanımlı değil."),
     };
 
-    /// <summary>M4 dalga 2 kapsam + sözleşme doğrulaması. İhlalde ExportCompileException türevi fırlatır.</summary>
-    public static ExportPlan Validate(TimelineDoc doc)
+    /// <summary>
+    /// M4 dalga 2 kapsam + sözleşme doğrulaması. İhlalde ExportCompileException türevi fırlatır.
+    /// <para>
+    /// <paramref name="overlayMeasurer"/> METİN kliplerinin bbox'ını ÖLÇMEK içindir (yalnız
+    /// <see cref="ITextRasterService.Measure"/> çağrılır — dosya yazılmaz). Verilirse metin
+    /// katmanı tavanı GERÇEK bbox'la, verilmezse fontlardan BAĞIMSIZ KESİN ALT SINIRLA
+    /// doğrulanır (bkz. <see cref="TextBoxLowerBound"/>): ölçüm yokluğu yanlış 422 üretmez,
+    /// yalnız kapının yakalayabildiği vaka kümesini daraltır. Şekil klibinde ölçüm GEREKMEZ —
+    /// bbox sözleşme gereği proje karesidir (<see cref="Media.Text.ShapeGeometry"/>).
+    /// </para>
+    /// </summary>
+    public static ExportPlan Validate(TimelineDoc doc, ITextRasterService? overlayMeasurer = null)
     {
         ArgumentNullException.ThrowIfNull(doc);
 
@@ -229,6 +240,7 @@ public static class ExportCompiler
         // sözleşmesi tracks[0]'ı EN ÜST katman sayar (docs/design/01 §1.2). BOŞ track'ler
         // (clips.length == 0, tipi ne olursa olsun) yok sayılır: editör +V/+A ile içeriksiz
         // track ekler — bunlar export kapsamını değiştirmez, 422'ye düşürmez.
+        var geometry = new GeometryContext(settings, width, height, overlayMeasurer);
         var trackPlans = new List<ExportTrackPlan>();
         var sourceRangeClips = new List<MediaClip>();
         var rasterClips = new List<ExportClipPlan>();
@@ -246,7 +258,7 @@ public static class ExportCompiler
             var clips = new List<ExportClipPlan>(track.Clips.Count);
             foreach (var clip in track.Clips)
             {
-                var planned = ValidateClip(clip, width, height);
+                var planned = ValidateClip(clip, geometry);
 
                 // Frame-grid güvenlik ağı (rendering-semantics §1.4): frame defteri klibi İKİ KENARLA
                 // tutar (aşağıda startFrame/endFrame → trim=start_frame:end_frame), uzunlukla DEĞİL.
@@ -1608,7 +1620,15 @@ public static class ExportCompiler
 
     // ───────────────────────── Klip doğrulaması ─────────────────────────
 
-    private static ExportClipPlan ValidateClip(Clip clip, int width, int height)
+    /// <summary>
+    /// Geometri kapısının ihtiyaç duyduğu bağlam: proje tuvali + (varsa) metin ölçüm yolu.
+    /// Ayrı bir kayıt, çünkü <see cref="ValidateClip"/> zincirinde dört parametre daha
+    /// taşımak imza gürültüsünden başka bir şey üretmezdi.
+    /// </summary>
+    private readonly record struct GeometryContext(
+        ProjectSettings Settings, int Width, int Height, ITextRasterService? Measurer);
+
+    private static ExportClipPlan ValidateClip(Clip clip, GeometryContext geometry)
     {
         var planned = clip switch
         {
@@ -1702,7 +1722,7 @@ public static class ExportCompiler
                 $"'{planned.Id}' çıkartma klibinin assetId'si yok — çıkartma bir varlık dosyasıdır.");
         }
 
-        ValidateGeometry(planned, width, height);
+        ValidateGeometry(planned, geometry);
 
         if (planned.Media is not { } media2)
         {
@@ -1781,12 +1801,22 @@ public static class ExportCompiler
 
     /// <summary>
     /// Transform/opaklık sözleşmesi (rendering-semantics §2 + şema sınırları). Ses klibi
-    /// görsel katman üretmediği için geometri doğrulaması ATLANIR. Metin/şekil kliplerinde
-    /// ölçek KUTUSU raster boyutuna bağlıdır ve Validate rasteri bilmez — tavan doğrulaması
-    /// onlar için Compile'da (PlacementOf) yapılır.
+    /// görsel katman üretmediği için geometri doğrulaması ATLANIR.
+    /// <para>
+    /// METİN/ŞEKİL kliplerinde ölçek kutusu tuvalden değil rasterin KENDİ bbox'ından türer
+    /// (§7). Bu yüzden tavan eskiden yalnız Compile'da (PlacementOf) doğrulanıyordu ve
+    /// API'nin 422 ön kapısı onu GÖRMÜYORDU: iş kuyruğa giriyor, dakikalar sonra worker'da
+    /// düşüyordu (3. tur denetim, blocker 2 — canlı ölçümle doğrulandı). Kural artık BURADA:
+    /// <see cref="EnsureRasterFits"/> bbox'ı bildiği kadarıyla (şekilde kesin, metinde ölçüm
+    /// varsa kesin, yoksa KESİN ALT SINIR) doğrular. Compile'daki tavan KALDIRILMADI — orada
+    /// bbox her zaman gerçektir, yani alt sınırın kaçırdığı vaka orada hâlâ yakalanır.
+    /// </para>
     /// </summary>
-    private static void ValidateGeometry(ExportClipPlan clip, int width, int height)
+    private static void ValidateGeometry(ExportClipPlan clip, GeometryContext geometry)
     {
+        var width = geometry.Width;
+        var height = geometry.Height;
+
         // Bu mesajlar 422 ProblemDetails.Detail olarak KULLANICIYA görünür (ExportEndpoints) —
         // kardeş UnsupportedFeature mesajlarıyla aynı dilde olmalıdır (M4 dalga 1 denetimi).
         if (clip.Opacity is < 0 or > 1 || double.IsNaN(clip.Opacity))
@@ -1841,11 +1871,144 @@ public static class ExportCompiler
 
         if (clip.NeedsServerRaster)
         {
-            return; // kutu raster boyutundan türer → tavan Compile'da (PlacementOf)
+            EnsureRasterFits(clip, geometry);
+            return;
         }
 
         var placement = LayerGeometry.Compute(PlacementTransform(clip), width, height);
         EnsureLayerFits(clip.Id, clip.KindTr, placement);
+    }
+
+    /// <summary>
+    /// Raster (metin/şekil) klibinin PROJE PİKSELİNDEKİ kutusu, Validate aşamasının
+    /// bildiği kadarıyla. <see cref="Exact"/> ise gerçek bbox'tır; değilse GERÇEĞİ ASLA
+    /// AŞMAYAN bir alt sınırdır (dolayısıyla ondan üretilen ret KESİNDİR — yanlış 422 yok).
+    /// </summary>
+    private readonly record struct RasterBox(double WidthPx, double HeightPx, bool Exact);
+
+    /// <summary>
+    /// Raster klibinin iki tavanı da Validate aşamasında:
+    /// <list type="number">
+    ///   <item><b>Raster tuvali:</b> PNG en az <c>bbox × 1</c> boyutunda üretilir
+    ///     (SkiaOverlayRasterService.ChooseRasterScale çarpanı 1'e kadar düşürür, altına inmez)
+    ///     → bbox'ın kendisi <see cref="TextRasterOptions.MaxRasterDimension"/>'ı aşamaz.</item>
+    ///   <item><b>Katman ara tuvali:</b> <c>bbox × transform.scale</c> (+ çapa pad'i, + rotate
+    ///     köşegeni) <see cref="LayerGeometry.MaxLayerDimension"/>'ı aşamaz — medya kliplerindeki
+    ///     kuralın aynısı, yalnız fit kutusu tuval değil bbox.</item>
+    /// </list>
+    /// İki sabit BİRE BİR aynıdır (8192; TextRasterOptions'ta da öyle yazar) ve
+    /// <c>MaxRasterDimension_MirrorsMaxLayerDimension</c> testiyle sabitlenmiştir.
+    /// </summary>
+    private static void EnsureRasterFits(ExportClipPlan clip, GeometryContext geometry)
+    {
+        var box = RasterBoxOf(clip, geometry);
+
+        if (box.WidthPx > LayerGeometry.MaxLayerDimension
+            || box.HeightPx > LayerGeometry.MaxLayerDimension)
+        {
+            throw new UnsupportedFeatureException("overlay-too-large",
+                $"'{clip.Id}' {clip.KindTr} klibinin çizim kutusu tek başına çok büyük: "
+                + $"{Num(box.WidthPx)}x{Num(box.HeightPx)} piksel"
+                + (box.Exact ? "" : " (en iyi durumda; gerçek kutu daha da büyük)")
+                + $"; üst sınır {LayerGeometry.MaxLayerDimension.ToString(CultureInfo.InvariantCulture)}. "
+                + (clip.Kind == ExportClipKind.Text
+                    ? "Font boyutunu, satır sayısını ya da metin uzunluğunu küçültün."
+                    : "Proje çözünürlüğünü küçültün (şeklin doğal kutusu tüm karedir)."));
+        }
+
+        var placement = LayerGeometry.Compute(
+            PlacementTransform(clip), geometry.Width, geometry.Height, box.WidthPx, box.HeightPx);
+
+        if (box.Exact)
+        {
+            // Kutu gerçek → Compile'daki kapının BİREBİR aynısı (asgari boyut dahil).
+            EnsureLayerFits(clip.Id, clip.KindTr, placement);
+            return;
+        }
+
+        // Alt sınır → yalnız TAVAN doğrulanır. Asgari boyut ("bir pikselin altına düşüyor")
+        // burada SORULAMAZ: alt sınır zaten küçüktür, sorulsaydı geçerli her metni reddederdi.
+        EnsureLayerCeiling(clip.Id, clip.KindTr, placement);
+    }
+
+    /// <summary>
+    /// Raster kutusunu çözer. Şekil: sözleşme gereği proje karesi (ölçüm YOK, KESİN).
+    /// Metin: ölçüm yolu varsa gerçek bbox, yoksa font-bağımsız alt sınır.
+    /// <para>
+    /// Ölçüm bir ALTYAPI işidir (font kökü, manifest, Skia): başarısızlığı KULLANICI hatasına
+    /// (422) çevirmeyiz — alt sınıra düşülür, gerçek tavan Compile'da zaten durmaktadır.
+    /// </para>
+    /// </summary>
+    private static RasterBox RasterBoxOf(ExportClipPlan clip, GeometryContext geometry)
+    {
+        if (clip.Kind == ExportClipKind.Shape)
+        {
+            // ShapeGeometry.Compute: BoxWidthPx/BoxHeightPx DAİMA proje karesidir (şemada
+            // şekle özel genişlik/yükseklik alanı yoktur) → ölçüme gerek yok.
+            return new RasterBox(geometry.Width, geometry.Height, Exact: true);
+        }
+
+        var text = (clip.Source as TextClip)?.Text
+            ?? throw new InvalidTimelineException($"'{clip.Id}' metin klibinde 'text' alanı yok.");
+
+        // Raster hattının Compile öncesi ilk kapısı (SkiaOverlayRasterService.RenderText):
+        // ölçüsüz metin PNG üretemez. Kural Validate'te de yaşamalı, yoksa iş kuyruğa girer.
+        if (!double.IsFinite(text.FontSizePx) || text.FontSizePx <= 0
+            || !double.IsFinite(text.LineHeight) || text.LineHeight <= 0)
+        {
+            throw new InvalidTimelineException(
+                $"'{clip.Id}' metin klibi geçersiz ölçü taşıyor (fontSizePx="
+                + $"{Num(text.FontSizePx)}, lineHeight={Num(text.LineHeight)}) — ikisi de pozitif olmalı.");
+        }
+
+        if (geometry.Measurer is { } measurer)
+        {
+            try
+            {
+                var layout = measurer.Measure(text, geometry.Settings);
+                if (double.IsFinite(layout.BboxWidthPx) && double.IsFinite(layout.BboxHeightPx)
+                    && layout.BboxWidthPx > 0 && layout.BboxHeightPx > 0)
+                {
+                    return new RasterBox(layout.BboxWidthPx, layout.BboxHeightPx, Exact: true);
+                }
+            }
+            catch (Exception)
+            {
+                // BİLEREK GENİŞ. Buradaki her hata ALTYAPIDANDIR: font kökü yok
+                // (OverlayRasterException), manifest bozuk, SkiaSharp yerel kütüphanesi
+                // yüklenemedi (TypeInitializationException/DllNotFoundException — API süreci
+                // bu hattı bu değişiklikten ÖNCE hiç kullanmıyordu). Hiçbiri kullanıcının
+                // belgesiyle ilgili değildir: dar bir catch, ölçümün patladığı bir kurulumda
+                // her export isteğini 500'e çevirirdi. Kapı alt sınıra düşer, gerçek tavan
+                // Compile'da durmaya devam eder.
+            }
+        }
+
+        var (lowW, lowH) = TextBoxLowerBound(text);
+        return new RasterBox(lowW, lowH, Exact: false);
+    }
+
+    /// <summary>
+    /// Metin bbox'ının FONTTAN BAĞIMSIZ KESİN ALT SINIRI. <see cref="TextLayoutEngine"/>'de
+    /// bbox = birleşim(içerik kutusu, mürekkep+kontur, arka plan kutusu) ve sonra DIŞA
+    /// yuvarlanır; birleşimin her bileşeni bbox için bir alt sınırdır:
+    /// <list type="bullet">
+    ///   <item>yükseklik ≥ içerik yüksekliği = <c>fontSizePx * lineHeight * satırSayısı</c>
+    ///     (CSS line-height modeli — fonta BAĞLI DEĞİL);</item>
+    ///   <item>arka plan varsa kutu her yönde <c>paddingPx</c> büyür → ±2*padding.</item>
+    /// </list>
+    /// GENİŞLİK için font-bağımsız bir alt sınır YOKTUR (glif ilerlemesi fonta bağlıdır, bir
+    /// font sıfır genişlikli glif tanımlayabilir) — bu yüzden yalnız arka plan payı sayılır.
+    /// Genişlikten doğan gerçek taşmayı ÖLÇÜM (varsa) ya da Compile yakalar.
+    /// </summary>
+    internal static (double WidthPx, double HeightPx) TextBoxLowerBound(TextClipText text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        var lineCount = TextLayoutEngine.SplitLines(text.Content ?? string.Empty).Count;
+        var contentHeight = text.FontSizePx * text.LineHeight * lineCount;
+        var padding = text.Background is { PaddingPx: var p } && double.IsFinite(p) && p > 0 ? p : 0d;
+        return (2d * padding, contentHeight + (2d * padding));
     }
 
     /// <summary>
@@ -1898,6 +2061,15 @@ public static class ExportCompiler
                 $"'{clipId}' klibinin ölçeği katmanı bir pikselin altına düşürüyor.");
         }
 
+        EnsureLayerCeiling(clipId, kindTr, placement);
+    }
+
+    /// <summary>
+    /// Tavanın kendisi — asgari boyut kuralı OLMADAN. Ayrı durur çünkü raster kliplerinin
+    /// ALT SINIR yolu (bkz. <see cref="EnsureRasterFits"/>) yalnız bu yarıyı sorabilir.
+    /// </summary>
+    private static void EnsureLayerCeiling(Guid clipId, string kindTr, LayerPlacement placement)
+    {
         if (placement.IntermediateWidth <= LayerGeometry.MaxLayerDimension
             && placement.IntermediateHeight <= LayerGeometry.MaxLayerDimension)
         {

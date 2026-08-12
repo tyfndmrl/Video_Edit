@@ -39,7 +39,7 @@ import { isMediaClip } from '@videoedit/timeline-schema';
 import type { Transform, Uuid } from '@videoedit/timeline-schema';
 import { useDocStore, type Transaction } from '../../state/docStore';
 import { useEditorStore } from '../../state/editorStore';
-import { clipHasScaleKeyframes, maxClipScale } from '../../state/timelineOps';
+import { clipHasScaleKeyframes, maxClipScaleFor } from '../../state/timelineOps';
 import { keyframeTimeAtPlayhead } from '../keyframes/keyframeModel';
 import { applyTransformPatchToDraft } from '../keyframes/keyframeOps';
 import { useAssetStore } from '../../state/assetStore';
@@ -118,6 +118,19 @@ interface Rects {
   top: number;
   width: number;
   height: number;
+}
+
+/**
+ * The overlay raster's §7 bbox in PROJECT px (`rasterPx * baseScale`), or null
+ * for a media frame (fit to the canvas, hence no baseScale). This is the box a
+ * TEXT layer's scale ceiling comes from — the SAME numbers the compositor just
+ * drew with, so the gizmo, the inspector and the export compiler cannot
+ * disagree about where the limit is.
+ */
+function overlayBoxPx(size: SourceSize): { widthPx: number; heightPx: number } | null {
+  const base = size.baseScale;
+  if (base === undefined || !(base > 0)) return null;
+  return { widthPx: size.width * base, heightPx: size.height * base };
 }
 
 export function TransformGizmo({
@@ -370,11 +383,14 @@ export function TransformGizmo({
         compW,
         compH,
         // The op's OWN ceiling function, not a re-derivation of it. The bound
-        // is project-dependent (the compiler measures the scaled layer box) AND
-        // capped by a resolution-independent sanity limit; importing
-        // maxClipScale is the only way the box cannot stop following the
-        // pointer at a limit the document does not actually enforce.
-        maxScale: maxClipScale(doc.settings),
+        // is per-CLIP (a text layer is drawn at `bbox * scale`, so its ceiling
+        // comes from its own measured box, not from the canvas) and capped by a
+        // resolution-independent sanity limit; calling maxClipScaleFor is the
+        // only way the box cannot keep following the pointer past a limit the
+        // op would silently clamp. The measured box is the SAME one the
+        // compositor drew this frame — `source` is the raster the engine
+        // reported, so the gizmo and the export agree on the number.
+        maxScale: maxClipScaleFor(target.clip, doc.settings, overlayBoxPx(source)),
         corner:
           handle === 'move' || handle === 'rotate'
             ? undefined

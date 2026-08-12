@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Hangfire;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using VideoEdit.Api.Auth;
 using VideoEdit.Contracts;
@@ -48,9 +49,16 @@ public static class ExportEndpoints
 
     // ---------- Handlers (internal: birim testleri doğrudan çağırır) ----------
 
+    /// <param name="overlayMeasurer">
+    /// Metin bbox'ının ölçüm yolu (yalnız <see cref="ITextRasterService.Measure"/> — dosya
+    /// yazılmaz). Ön kapının raster katman tavanını GERÇEK kutuyla doğrulaması için verilir;
+    /// kayıtlı değilse (ya da fontlar kurulu değilse) doğrulama font-bağımsız KESİN ALT
+    /// SINIRA düşer — kapı zayıflar ama yanlış 422 üretmez (3. tur denetim, blocker 2).
+    /// </param>
     internal static async Task<IResult> StartExport(
         Guid projectId, CreateExportRequest request, ClaimsPrincipal principal, AppDbContext db,
-        IBackgroundJobClient jobs, TimeProvider clock, FontManifestProvider fonts, CancellationToken ct)
+        IBackgroundJobClient jobs, TimeProvider clock, FontManifestProvider fonts,
+        [FromServices] ITextRasterService? overlayMeasurer, CancellationToken ct)
     {
         var userId = principal.GetUserId();
         var project = await db.Projects.AsNoTracking()
@@ -87,7 +95,7 @@ public static class ExportEndpoints
         {
             var doc = project.Timeline.RootElement.Deserialize<TimelineDoc>(TimelineJson.Options)
                 ?? throw new InvalidTimelineException("timeline document is empty.");
-            ExportCompiler.Validate(doc);
+            ExportCompiler.Validate(doc, overlayMeasurer);
 
             // FONT ÖN KONTROLÜ (M4 dalga-2 denetimi, bulgu #1d): manifestte olmayan bir
             // fontId, raster aşamasında 'font-missing' ile düşer — ama o noktaya gelmek

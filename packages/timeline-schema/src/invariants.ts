@@ -27,6 +27,9 @@
  *    - The transition edge must have an adjacent media-clip neighbor, and the
  *      transition must be symmetric: A.transitionOut and B.transitionIn on the
  *      same cut must BOTH exist and be deep-equal (type + durationUs).
+ *    - The two clips of a transition cut must have an EQUAL `transform`. See
+ *      the block comment above `checkTransitionPlacement` for the rule's origin
+ *      and for why equality of the transform is exactly equality of the layout.
  * 6. Effect params (rendering-semantics §4): colorAdjust allows exactly
  *    {brightness, contrast, saturation, temperature, tint, exposure}, each a
  *    number in [-1..1]; lut requires assetId (UUID string) + intensity (number
@@ -59,7 +62,7 @@ import {
   type MicroSec,
   type Rational,
 } from './time.js';
-import { hasSourceTimeAxis, isMediaClip, type Clip, type Effect, type MediaClip, type ProjectSettings, type TimelineDoc, type Track, type Transition } from './schema.js';
+import { hasSourceTimeAxis, isMediaClip, type Clip, type Effect, type MediaClip, type ProjectSettings, type TimelineDoc, type Track, type Transform, type Transition } from './schema.js';
 
 // ---------------------------------------------------------------------------
 // Transform bounds shared with the export compiler
@@ -139,6 +142,90 @@ function transitionHandleUs(durationUs: MicroSec, rate: number): MicroSec {
   return roundHalfUp((durationUs / 2) * rate);
 }
 
+/**
+ * Every transform field, because the compiler's layout depends on every one of
+ * them: it feeds `clip.Transform` straight into `LayerGeometry.Compute`.
+ *
+ * The list is the WHOLE record on purpose (not a hand-picked subset). A field
+ * added to `TransformSchema` and forgotten here would silently reopen the hole
+ * this rule closes — divergence in the new field would pass the editor's gate
+ * and fail in the render worker, which is exactly the failure mode the rule
+ * exists to prevent. The assertion below turns that omission into a COMPILE
+ * error: `Exclude` is `never` only while the list covers every key.
+ */
+const PLACEMENT_FIELDS = ['x', 'y', 'scale', 'rotationDeg', 'anchorX', 'anchorY'] as const;
+
+const _placementFieldsCoverTransform: Exclude<
+  keyof Transform,
+  (typeof PLACEMENT_FIELDS)[number]
+> extends never
+  ? true
+  : ['transform field missing from PLACEMENT_FIELDS', Exclude<keyof Transform, (typeof PLACEMENT_FIELDS)[number]>] = true;
+void _placementFieldsCoverTransform;
+
+/**
+ * Rule 5, layout half: the two clips of a transition cut must have an EQUAL
+ * transform.
+ *
+ * WHY IT IS A DOCUMENT INVARIANT AND NOT AN EDITOR-SIDE PREFERENCE
+ * ---------------------------------------------------------------
+ * `xfade` folds the two clips of a cut into ONE stream and requires both inputs
+ * to have the same size, so the export compiler refuses a cut whose two sides
+ * are laid out differently (ExportCompiler.cs, the `open.Placement != placement`
+ * branch: "geçişli kliplerin yerleşimi aynı olmalıdır"). That check lives in
+ * COMPILE, not in `ExportCompiler.Validate`, so the API's 422 pre-gate cannot
+ * see it: a divergent document is accepted, queued, and only then fails in the
+ * worker. The editor must therefore never produce one, and this invariant is
+ * what proves it did not — the dev document gate (docStore.assertDocGateDev)
+ * runs on EVERY commit, so a future op that writes a transition or re-joins a
+ * cut without aligning the chain fails at the write, not at the render.
+ *
+ * WHY EQUAL TRANSFORM == EQUAL LAYOUT. For a media clip the compiler's scale
+ * box is the PROJECT canvas (fit=contain, §2.2) — `PlacementOf` passes only
+ * `plan.Width/Height`, never the source size — so the layout is a pure function
+ * of the transform and equal transforms are equal layouts. Raster clips (text /
+ * shape / sticker) DO fold in their natural size, but they can never be a side
+ * of a transition: the compiler rejects that cut outright ("metin-şekil-çıkartma
+ * klibine geçiş yapılamaz") and `isMediaClip` below keeps this check on the same
+ * side of that line.
+ *
+ * Scope note: the compiler's layout also folds in ANIMATED scale/rotation
+ * (`PlacementTransform` overrides the static field with the keyframe extreme),
+ * which this rule deliberately does not model. It does not have to: a keyframed
+ * clip cannot carry a transition at all — the compiler rejects that combination
+ * with its own typed error ("transition-keyframes") and the editor refuses to
+ * build it (timelineOps.addTransitionBlockReason). Comparing the static
+ * transforms is therefore complete for every document that can reach the
+ * renderer, and this check stays a pure function of the document.
+ *
+ * Checked once per CUT (on the outgoing edge only): a cut whose sides disagree
+ * is one fact, and reporting it twice would just double every message. A
+ * one-sided transition never reaches this check — the symmetry rule above it
+ * already reported that, and it is the more basic failure.
+ */
+function checkTransitionPlacement(
+  ctx: InvariantIssueSink,
+  trackIndex: number,
+  clipIndex: number,
+  outgoing: MediaClip,
+  incoming: MediaClip,
+): void {
+  const differing = PLACEMENT_FIELDS.filter(
+    (field) => outgoing.transform[field] !== incoming.transform[field],
+  );
+  if (differing.length === 0) return;
+  const detail = differing
+    .map((f) => `${f}: ${outgoing.transform[f]} vs ${incoming.transform[f]}`)
+    .join(', ');
+  ctx.addIssue({
+    code: 'custom',
+    message:
+      'transition placement violated: both clips of a transition cut must have the same '
+      + `transform (xfade folds them into one stream), got ${detail}`,
+    path: ['tracks', trackIndex, 'clips', clipIndex, 'transform'],
+  });
+}
+
 function checkTransitionEdge(
   ctx: InvariantIssueSink,
   trackIndex: number,
@@ -185,6 +272,11 @@ function checkTransitionEdge(
       message: `transition symmetry violated: both sides of the cut must be deep-equal, got ${transition.type}/${transition.durationUs}us vs ${counterpart.type}/${counterpart.durationUs}us`,
       path,
     });
+  }
+
+  // Layout half of the rule — once per cut, from the outgoing side.
+  if (edge === 'transitionOut' && counterpart !== undefined) {
+    checkTransitionPlacement(ctx, trackIndex, clipIndex, clip, neighbor);
   }
 
   // D must sit exactly on the project fps grid and be an EVEN frame count >= 2

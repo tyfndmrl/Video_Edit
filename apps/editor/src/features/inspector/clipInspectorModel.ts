@@ -32,6 +32,7 @@ import {
   type Track,
   type Uuid,
 } from '@videoedit/timeline-schema';
+import { maxClipScale, maxClipScaleFor, maxTextSizeFor } from '../../state/timelineOps';
 
 /** Shown wherever a multi-selection disagrees. */
 export const MIXED_LABEL = '—';
@@ -76,6 +77,15 @@ export interface VisualSection {
   scale: CommonNumber;
   rotationDeg: CommonNumber;
   opacity: CommonNumber;
+  /**
+   * Scale ceiling for the SELECTION: the strictest of the selected clips, since
+   * one write goes to all of them. It is per-clip and not merely per-project
+   * because a text layer is drawn at `bbox * scale` (§7), so a 2000 px caption
+   * runs out of room long before a video clip does (`maxClipScaleFor`).
+   */
+  maxScale: number;
+  /** True when the ceiling comes from a text layer's own box, not the canvas. */
+  maxScaleFromTextBox: boolean;
 }
 
 /**
@@ -102,6 +112,12 @@ export interface TextSection {
   backgroundColor: CommonString;
   backgroundPaddingPx: CommonNumber;
   backgroundRadiusPx: CommonNumber;
+  /**
+   * Font-size ceiling for the SELECTION (strictest selected clip). Derived, not
+   * constant: line count, background padding and the clip's own scale all spend
+   * the same 8192 px layer budget — see `maxTextSizeFor`.
+   */
+  maxFontSizePx: number;
 }
 
 export interface ShapeSection {
@@ -177,6 +193,17 @@ export interface ClipInspectorModel {
 export interface AssetNameSource {
   get(assetId: Uuid): { name: string } | undefined;
 }
+
+/**
+ * Measures a text clip's §7 bbox in project px, or returns null when it cannot
+ * (no DOM, font still loading). The panel passes the browser measurer
+ * (features/text/overlayRaster.measureTextLayout — the SAME layout rule the
+ * export's SkiaSharp uses); tests and SSR leave it out and the model falls back
+ * to the font-independent lower bound the export compiler also uses. The
+ * fallback can only be MORE permissive, so a missing measurement never blocks a
+ * value the server would have accepted.
+ */
+export type TextBoxMeasurer = (clip: TextClip) => { widthPx: number; heightPx: number } | null;
 
 interface Located {
   clip: Clip;
@@ -264,6 +291,19 @@ function buildIdentity(
   };
 }
 
+/** Measured bbox of a text clip, or null for anything else / no measurement. */
+function textBoxOf(
+  clip: Clip,
+  measure: TextBoxMeasurer | undefined,
+): { widthPx: number; heightPx: number } | null {
+  if (clip.kind !== 'text' || measure === undefined) return null;
+  const box = measure(clip);
+  if (box === null) return null;
+  return Number.isFinite(box.widthPx) && Number.isFinite(box.heightPx) && box.widthPx > 0 && box.heightPx > 0
+    ? box
+    : null;
+}
+
 /**
  * Derives the whole panel from (document, selection). Clips in the selection
  * that no longer exist are ignored — selection is view state and may lag a
@@ -273,6 +313,7 @@ export function buildClipInspectorModel(
   doc: TimelineDoc,
   selection: ReadonlySet<Uuid>,
   assets?: AssetNameSource,
+  measureTextBox?: TextBoxMeasurer,
 ): ClipInspectorModel {
   const located = locate(doc, selection);
   if (located.length === 0) {
@@ -328,6 +369,17 @@ export function buildClipInspectorModel(
           scale: commonNumber(visualClips.map((c) => c.transform.scale)),
           rotationDeg: commonNumber(visualClips.map((c) => c.transform.rotationDeg)),
           opacity: commonNumber(visualClips.map((c) => c.opacity)),
+          // STRICTEST wins: the field writes one value to every selected clip,
+          // so offering the loosest ceiling would let the op silently clamp the
+          // others — the exact failure mode this whole blocker is about.
+          maxScale: Math.min(
+            ...visualClips.map((c) => maxClipScaleFor(c, doc.settings, textBoxOf(c, measureTextBox))),
+          ),
+          maxScaleFromTextBox: visualClips.some(
+            (c) =>
+              c.kind === 'text' &&
+              maxClipScaleFor(c, doc.settings, textBoxOf(c, measureTextBox)) < maxClipScale(doc.settings),
+          ),
         };
 
   // Text / shape styles (M4 wave 2). A selection can legitimately mix kinds
@@ -371,6 +423,9 @@ export function buildClipInspectorModel(
             textClips
               .map((c) => c.text.background?.radiusPx)
               .filter((v): v is number => v !== undefined),
+          ),
+          maxFontSizePx: Math.min(
+            ...textClips.map((c) => maxTextSizeFor(c, textBoxOf(c, measureTextBox))),
           ),
         };
 

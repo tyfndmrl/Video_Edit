@@ -202,6 +202,13 @@ try
         builder.Configuration.GetSection(VideoEdit.Media.Text.TextRasterOptions.SectionName));
     builder.Services.AddSingleton(sp => new VideoEdit.Media.Text.FontManifestProvider(
         sp.GetService<Microsoft.Extensions.Options.IOptions<VideoEdit.Media.Text.TextRasterOptions>>()?.Value));
+    // ÖLÇÜM-İÇİN raster servisi (POST /exports ön kapısı — hiçbir yerde RenderAsync ÇAĞRILMAZ):
+    // metin katmanının bbox'ı ölçülemezse "8192 px katman" kuralı yalnız worker'da görünür,
+    // iş kuyruğa girer ve dakikalar sonra düşer (3. tur denetim, blocker 2). Servis TEMBELDİR:
+    // manifest/typeface ilk ölçümde yüklenir, fontlar kurulu değilse doğrulama alt sınıra düşer.
+    builder.Services.AddSingleton<VideoEdit.Media.Text.ITextRasterService>(sp =>
+        new VideoEdit.Media.Text.SkiaOverlayRasterService(
+            sp.GetService<Microsoft.Extensions.Options.IOptions<VideoEdit.Media.Text.TextRasterOptions>>()?.Value));
     builder.Services.AddSingleton<ISnapshotPolicy, SnapshotPolicy>();
     builder.Services.AddScoped<IRefreshTokenService, RefreshTokenService>();
     builder.Services.AddScoped<JwtTokenService>();

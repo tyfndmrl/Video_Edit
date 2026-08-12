@@ -6,8 +6,8 @@ her biri **kodda doğrulandı** — iddia edilen her sınırın yanında dosya/s
 
 Okuma sırası: önce **§1 kullanıcıyı ilk gün ısırabilecekler**, sonra §2–§6.
 
-- Doğrulama tarihi: **2026-08-12**, `df799df` + teslim düzeltme turu (dosya/satır atıfları bu
-  ağaçta yeniden denetlendi)
+- Doğrulama tarihi: **2026-08-12**, `6ef7498` + **3. tur** düzeltmeleri (dosya/satır atıfları
+  bu ağaçta yeniden denetlendi; §5'teki sayılar bu turda bizzat koşuldu)
 - Ölçüm makinesi: Intel Core i9-10850K (10 çekirdek / 20 iş parçacığı), 32 GB RAM, Windows 11
 - Yığın: .NET 10.0.302, Node v22.14.0, ffmpeg 8.0, PostgreSQL 17, Redis 7, MinIO (R2 yerine)
 
@@ -132,7 +132,7 @@ dışıdır. Öneri, üç vakadan yalnız birini örtüyordu.
 
 **Düzeltme — 1. tur (sözleşme).**
 
-1. **Derleyici kapısı kenarlara alındı** — `ExportCompiler.cs:258-267`: artık
+1. **Derleyici kapısı kenarlara alındı** — `ExportCompiler.cs:270-279`: artık
    `timelineStartUs` VE `timelineStartUs + timelineDurationUs` ızgarada mı diye bakılır
    (hata metni de değişti: *"clip … edges are not on the project frame grid"*). Süre, tanımı
    gereği bir ızgara büyüklüğü değildir.
@@ -304,26 +304,47 @@ export'takiyle aynı" iddiası **test edilmiş değil, tasarımla gerekçelendir
 
 ## 3. Şema / export motoru sınırları (tipli hata verir, sessiz bozulma yok)
 
-Ortak nokta: hiçbiri **sessizce yanlış çıktı vermez**. Kapı türü satırdan satıra değişir:
+Ortak nokta: hiçbiri **sessizce yanlış çıktı vermez**. Ama **kapının NEREDE olduğu** satırdan
+satıra değişir ve bu fark kullanıcı için gerçektir: 422 istek anında gelir, kuyruk-sonrası bir
+düşüş ise dakikalar sonra "başarısız" olarak görünür.
 
 - **Şema düzeyi** (ilk iki satır) — sınır dokümanda **ifade bile edilemez**, o yüzden ortada
   reddedilecek bir şey yoktur: `speed` tek skalerdir (rampa yazılamaz) ve `KeyframeTracks`
   STRICT'tir (`fx.*` kanalı eklenemez, zod reddeder).
-- **Derleyici 422'si** (3.–7. satırlar) — export isteğinde **açık gerekçeli 422**; iş kuyruğa
-  hiç girmez. Hata tipli: `transition-keyframes`, `scale-keyframes-with-rotation`,
-  `keyframes-audio-clip` / `effects-audio-clip`, `keyframe-sample-budget`, `transform-scale`.
+- **Derleyici 422'si** (3.–8. satırlar) — kural `ExportCompiler.Validate` **içindedir**; API
+  export isteğinde onu çağırır (`ExportEndpoints.cs`), iş **kuyruğa hiç girmez** ve açık
+  gerekçeli 422 döner. Hata tipli: `transition-keyframes`, `scale-keyframes-with-rotation`,
+  `keyframes-audio-clip` / `effects-audio-clip`, `keyframe-sample-budget`, `transform-scale`,
+  `overlay-too-large`.
+- **Doküman değişmezi** (9. satır) — kural derleyicide VAR ama `Validate`'te DEĞİL, `Compile`
+  aşamasındadır; API'nin ön kapısı yalnız `Validate`'i çağırdığı için onu **göremez**. Kapı bu
+  yüzden **editördedir**: editör böyle bir doküman üretmez (yerleşimi geçiş zincirine yayar) ve
+  DEV doküman kapısı her `commit`'te doğrular. Editörden gelen iş kuyruğa hiç girmez — ama
+  API'ye **doğrudan** yazılmış bir doküman 202 alır ve worker'da düşer. Bu, §4.7'nin (sunucuda
+  tam şema doğrulaması yok) doğrudan sonucudur, ayrı bir sürpriz değil.
 - **Ayrı kapılar** (son üç satır) — doküman tavanları kaydetmede **400**, kaynak süresi tavanı
   işlemede `too-long`, profil ise basitçe tek seçenektir.
+
+> **Bu ayrım 3. tur denetiminde ÖLÇÜLEREK doğdu — ve dokümanın kendi vaadini yanlışladı.**
+> Bu bölümün ve README'nin önceki hali "desteklenmeyen bileşim kuyruğa hiç girmez, 422 ile
+> gerekçe döner" diyordu; baş mimar **iki bileşimin 202 alıp canlı worker'da `failed`
+> olduğunu ölçtü**. Kök neden tek bir cümleydi: bazı derleyici kuralları `Validate`'te değil
+> `Compile`/raster aşamasında yaşıyordu ve API'nin ön kapısı yalnız `Validate`'i çağırıyor.
+> İki kural da bu turda kapatıldı — **overlay katman tavanı `Validate`'e taşındı**, **geçiş
+> yerleşimi editöre + doküman değişmezine alındı** — ve tablo artık hangi kuralın hangi
+> kapıda olduğunu satır satır söylüyor. Ölçülen iki kural aşağıda **8. ve 9.** satırlardır.
 
 | Sınır | Ne olur | Kanıt |
 |---|---|---|
 | **Hız rampası yok** *(şema)* | Bir klip = tek sabit oran (0.1×–10×). Klip içinde hızlanma/yavaşlama kurulamaz. | `schema.ts:195` `speed: z.object({ rate: … })` tek skaler |
 | **Efekt parametresi keyframe'i yok** (`fx.*`) *(şema)* | colorAdjust/LUT değerleri animasyonlanamaz. Keyframe kanalları yalnız `x, y, scale, rotationDeg, opacity, volume`. | `schema.ts:109` `KeyframeTracksSchema` STRICT |
-| **Geçişli kesimde keyframe yasak** | Geçiş penceresine giren klipte animasyon varsa 422. | `ExportCompiler.cs:1504` `transition-keyframes` |
-| **Ölçek animasyonu + dönme birlikte yasak** | ffmpeg `rotate` çıkış tuvalini bir kez kurar, büyüyen girişi sessizce KIRPARDI — sessiz kırpma yerine tipli hata. | `ExportCompiler.cs:1837` `scale-keyframes-with-rotation` |
-| **Ses klibinde görsel keyframe / renk efekti yasak** | Ses görüntü üretmez; sessizce yok saymak "animasyonum çalışmıyor" bug'ı olurdu. | `ExportCompiler.cs:1681` `keyframes-audio-clip`, `:1688` `effects-audio-clip` |
-| **Keyframe örnek bütçesi 60 000** | Easing'li animasyon KARE KARE örneklenir; çok uzun animasyon 422. | `ClipAnimation.cs:83` `MaxSamples = 60_000`; hata `ExportCompiler.cs:852`, `:2230` `keyframe-sample-budget` |
-| **Katman boyutu tavanı 8192 px** | Aşırı ölçek (ve dönmenin açtığı ara tuval) reddedilir. | `LayerGeometry.cs:81` `MaxLayerDimension = 8192`; hata `ExportCompiler.cs:1911` `transform-scale` |
+| **Geçişli kesimde keyframe yasak** | Geçiş penceresine giren klipte animasyon varsa 422. | `ExportCompiler.cs:1516` `transition-keyframes` |
+| **Ölçek animasyonu + dönme birlikte yasak** | ffmpeg `rotate` çıkış tuvalini bir kez kurar, büyüyen girişi sessizce KIRPARDI — sessiz kırpma yerine tipli hata. | `ExportCompiler.cs:1867` `scale-keyframes-with-rotation` |
+| **Ses klibinde görsel keyframe / renk efekti yasak** | Ses görüntü üretmez; sessizce yok saymak "animasyonum çalışmıyor" bug'ı olurdu. | `ExportCompiler.cs:1701` `keyframes-audio-clip`, `:1708` `effects-audio-clip` |
+| **Keyframe örnek bütçesi 60 000** | Easing'li animasyon KARE KARE örneklenir; çok uzun animasyon 422. | `ClipAnimation.cs:83` `MaxSamples = 60_000`; hata `ExportCompiler.cs:864`, `:2402` `keyframe-sample-budget` |
+| **Katman boyutu tavanı 8192 px** *(medya / görsel / çıkartma)* | Aşırı ölçek (ve dönmenin açtığı ara tuval) reddedilir. Editör bu satırda **önden korur**: ölçek alanının tavanı proje çözünürlüğünden türer (`maxClipScale`, 1080p'de ~4.266) — ama tavan **ara tuvalden** doğrulanır, editörün tavanı ise KUTUDAN; dönme (~1.41×) ve merkez dışı çapa (2×) ara tuvali büyüttüğü için dönmüş bir katman hâlâ 422 alabilir. | `LayerGeometry.cs:81` `MaxLayerDimension = 8192`; hata `transform-scale` (`ExportCompiler.EnsureLayerFits`); editör tavanı `invariants.ts` `maxScaleFor` |
+| **Overlay katman tavanı 8192 px** *(metin / şekil)* | Metin/şekil klibinin çizim kutusu proje tuvalinden değil **rasterin kendi bbox'ından** türer (§7 @2x kuralı). Kural bu yüzden eskiden yalnız `Compile`'da bakılıyordu ve iş **kuyruk sonrası** düşüyordu — 3. tur denetiminde ölçülen iki vakadan biri. Artık `Validate`'te: **şekilde** kutu kesindir (sözleşme gereği proje karesi), **metinde** ölçüm yolu varsa gerçek bbox, yoksa **fonttan bağımsız kesin ALT SINIR** kullanılır — yani ölçüm yokluğu yanlış 422 üretmez, yalnız kapıyı zayıflatır. `Compile`'daki tavan **yedek olarak duruyor** (orada bbox her zaman gerçektir). Editör de önden korur: Inspector'ın **ölçek** ve **font boyutu** tavanları klibin KENDİ kutusundan türer (proje çözünürlüğünden değil) — 2000 px'lik bir başlık, bir video klibinden çok önce sınıra çarpar. | `ExportCompiler.EnsureRasterFits` / `TextBoxLowerBound`, hata `overlay-too-large`; ölçüm yolu: `Api/Program.cs` (`ITextRasterService` DI) → `ExportEndpoints.cs` `ExportCompiler.Validate(doc, overlayMeasurer)`; editör tavanları: `inspector/clipInspectorModel.ts` (`maxScale`, `maxFontSizePx`); GERÇEK KLAVYE kanıtı: `e2e/text-layer-limit.spec.ts` |
+| **Geçişli kesimde iki klibin yerleşimi aynı olmalı** *(doküman değişmezi — girişteki 3. madde)* | `xfade` kesimin iki tarafını TEK akışa katlar ve iki girişin **aynı boyutta** olmasını şart koşar; farklı yerleşim, katmanın geçiş boyunca sessizce kaymasına yol açardı. Kullanıcı bunu bir **hata olarak görmez**: yerleşim yazan her işlem (transform yazma/sıfırlama **ve geçiş ekleme**) yerleşimi geçiş zincirinin tamamına **yayar** ve bunu bildirir. Derleyicideki kapı `Compile` aşamasındadır — API'nin 422 ön kapısı onu göremez, o yüzden asıl kapı editördedir. | Normatif kural: `docs/rendering-semantics.md` §5.2; değişmez: `packages/timeline-schema/src/invariants.ts` `checkTransitionPlacement`; editör: `state/timelineOps.ts` `alignTransitionChainTransforms` + `propagateTransformToChain`; derleyici (Compile): `ExportCompiler.cs:462`; GERÇEK FARE kanıtı: `e2e/guard-paths.spec.ts` — "böl → ölçekle → geçiş ekle" sırası kurulup iş **gerçekten render ediliyor** (kuyrukta ölmüyor) |
 | **Tek export profili: 1080p** | 720p/4K/dikey ön ayarı yok; libx264 CRF18 `veryfast` + AAC 192k sabit. | `ExportProfiles.cs` |
 | **Doküman tavanları** | En fazla 50 track, 2000 klip, ~2 MB timeline gövdesi; sample rate 44 100 veya 48 000. | `TimelineRequestValidation.cs:18-27` |
 | **Kaynak süresi tavanı 4 saat** | Aşan medya probe SONRASI, transcode ÖNCESİ `too-long` ile düşer. | `Worker/Jobs/ProcessingOptions.cs:14` (`MaxDurationUs`), düşüş: `ProcessAssetJob.cs:167` |
@@ -418,21 +439,29 @@ istemcide (zod) ve export öncesi derleyicide koşar. Yani API'ye doğrudan iste
 istemci, geçersiz bir doküman kaydedebilir — **kaydeder, ama export edemez** (derleyici
 tipli hatayla reddeder).
 
+**Nerede reddedildiği önemlidir.** Kuralların çoğu `ExportCompiler.Validate` içindedir ve
+export isteğinde **422** ile döner; iş kuyruğa hiç girmez. Ama §3'ün 9. satırındaki kural
+(geçişli kliplerin yerleşim eşitliği) derleyicide `Compile` aşamasındadır — ön kapı onu
+göremez, dolayısıyla böyle bir doküman **202 alır ve worker'da `failed` olur**. Editör bu
+dokümanı üretmez (§3), yani kullanıcının göreceği bir durum değildir; API'ye doğrudan yazan
+bir istemci içinse bu maddenin doğrudan sonucudur. Sessiz bozulma yine YOKTUR: iş açık
+gerekçeyle düşer, yanlış video üretilmez.
+
 ---
 
 ## 5. Neyin test edildiği — neyin edilmediği
 
-Aşağıdaki sayılar **bu doküman turunda bizzat koşularak** alındı (2026-08-12, `df799df` +
-teslim düzeltme turu):
+Aşağıdaki sayılar **bu turda bizzat koşularak** alındı (2026-08-12, `6ef7498` + 3. tur
+düzeltmeleri):
 
 | Paket | Komut | Sonuç |
 |---|---|---|
-| Backend | `MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln` | **966 / 966 geçti** (0 atlandı, 45 sn) |
-| Backend (MinIO env'siz) | `dotnet test backend/VideoEdit.sln` | 953 geçti, **13 atlandı** |
-| Editör | `pnpm --filter @videoedit/editor test` | **1156 / 1156 geçti** (71 dosya) |
-| Şema paketi | `pnpm --filter @videoedit/timeline-schema test` | **180 / 180 geçti** (3 dosya) |
+| Backend | `MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln` | **980 / 980 geçti** (0 atlandı, 52 sn) |
+| Backend (MinIO env'siz) | `dotnet test backend/VideoEdit.sln` | 967 geçti, **13 atlandı** |
+| Editör | `pnpm --filter @videoedit/editor test` | **1186 / 1186 geçti** (72 dosya) |
+| Şema paketi | `pnpm --filter @videoedit/timeline-schema test` | **191 / 191 geçti** (3 dosya) |
 | Tip denetimi | `tsc -b` + `tsc -p e2e/tsconfig.json --noEmit` | **ikisi de temiz** (çıkış kodu 0) |
-| E2E (gerçek fare) | `pnpm --filter @videoedit/editor test:e2e` | **126 / 126 geçti** (Chromium, tek worker, 27 spec dosyası, 6.4 dk) |
+| E2E (gerçek fare) | `pnpm --filter @videoedit/editor test:e2e` | **129 / 129 geçti** (Chromium, tek worker, 28 spec dosyası, 6.0 dk) |
 
 **Atlanan 13 test** `MINIO_AVAILABLE=1` olmadan `Skip` olur: `ProcessAssetPipelineTests` (7),
 `MinioStorageSmokeTests` (2), `ExportJobPipelineTests` (4 — LUT piksel testi dâhil). CI'da

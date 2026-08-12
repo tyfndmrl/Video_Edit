@@ -539,6 +539,40 @@ compiler job'ı `failed` + `error_code=transition_handle` ile bitirir (sessiz k�
 `A.transitionOut` ve `B.transitionIn` aynı kesimde **birlikte var olmalı ve derin-eşit
 olmalıdır** (`type` + `durationUs`). Tek taraflı geçiş sözleşme ihlalidir.
 
+**Yerleşim eşitliği invaryantı (NORMATİF):** geçişli bir kesimin **İKİ klibinin
+`transform`'u EŞİT olmalıdır** — altı alanın hepsi: `x`, `y`, `scale`, `rotationDeg`,
+`anchorX`, `anchorY`.
+
+*Gerekçe.* `xfade` kesimin iki tarafını **TEK bir akışa katlar** ve iki girişin **aynı
+boyutta** olmasını şart koşar; §5.3'ün offset matematiği de o tek birleşik akışın kendi
+zamanında tanımlıdır. Farklı yerleşim = farklı boyutta iki giriş. Derleyici bunu sessizce
+ortak bir kutuya oturtsaydı katman geçiş boyunca **kayardı** — sessiz düzeltme yerine
+görünür hata (M4 dalga 1 denetiminin "1 px sessiz kayma" kararının aynısı).
+
+*Transform eşitliği neden tam olarak yerleşim eşitliğidir.* Medya (video/görsel) klibinde
+ölçek kutusunun tabanı **proje tuvalidir** (§2.2 `fit=contain`) — kaynağın kendi boyutu
+hesaba girmez — dolayısıyla yerleşim yalnız transform'un fonksiyonudur. Doğal boyutunu
+hesaba katan raster klipleri (metin/şekil/çıkartma) bu kuralın kapsamına giremez, çünkü
+bir geçişin **tarafı olamazlar**: geçiş yalnız bitişik iki MEDYA klibi arasında kurulur.
+Keyframe de farkı geri sızdıramaz — geçiş penceresindeki klipte görsel keyframe zaten
+yasaktır (`transition-keyframes`), yani animasyonlu bir kanal bu iki klibin yerleşimini
+ayıramaz.
+
+*Zincir kuralı.* Geçiş bir **eşdeğerlik sınıfı** kurar: A—B geçişliyse ikisi, B—C de
+geçişliyse üçü aynı yerleşimi paylaşır. Kural bu yüzden bir **engel değil bir YAYILIM**
+olarak uygulanır: bir klibin yerleşimini yazan her işlem (transform yazma/sıfırlama **ve
+geçiş EKLEME**) zincirin tamamını hizalar ve kullanıcıya bunu bildirir; kullanıcı komşuyu
+elle düzeltmek zorunda kalmaz.
+
+*Nerede uygulanır (bilgilendirici).* Doküman değişmezi: `packages/timeline-schema` →
+`invariants.ts` `checkTransitionPlacement` (DEV doküman kapısı her `commit`'te koşar).
+Editör: `state/timelineOps.ts` → `propagateTransformToChain` (yerleşim yazan op'lar) ve
+`alignTransitionChainTransforms` (geçiş uzlaştırma pass'i — kesim YARATAN düzenlemeler de
+buradan geçer). Derleyici: `ExportCompiler.cs`, `open.Placement != placement` dalı — bu kapı
+`Validate`'te değil **`Compile`** aşamasındadır, yani API'nin 422 ön kapısı onu görmez;
+sözleşmeyi ayakta tutan asıl kapı bu yüzden yukarıdaki ilk ikisidir
+(`docs/poc-bilinen-sinirlar.md` §3, 9. satır).
+
 ### 5.3 xfade offset matematiği
 
 Zincirdeki klip `i`'nin timeline süresi `d_i`, klip `i` ile `i+1` arasındaki geçiş `D_i`

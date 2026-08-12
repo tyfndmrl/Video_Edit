@@ -38,8 +38,11 @@ import {
   REASON_TRANSITION_NEEDS_STATIC_CLIPS,
   TRANSFORM_APPLIED_TO_TRANSITION_CHAIN,
   addTransition,
+  addTransitionAtEdge,
   addTransitionBlockReason,
+  clipEndUs,
   clipHasVisualKeyframes,
+  deleteClips,
   knownAssetDurations,
   resetClipTransform,
   rotationBlockReason,
@@ -462,6 +465,162 @@ describe('(c) geçişli kliplerin yerleşimi aynı kalır', () => {
 
     expect(setClipTransform([CLIP_A], { scale: 2 })).toEqual({ ok: true });
     expect(clipById(CLIP_B).transform.scale).toBe(1.5);
+  });
+
+  it('zaten eşit olan zincirde bildirim ÇIKMAZ (olmamış bir komşu düzenlemesi haber verilmez)', () => {
+    // Yayılım "kopyaladım" değil "komşu GERÇEKTEN değişti" der. İki klip de
+    // varsayılan dönüşümdeyken geçiş eklemek olağan haldir; burada bildirim
+    // çıkarsa kullanıcı her geçiş ekleyişinde olmamış bir düzenleme okur.
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US)).toEqual({ ok: true });
+    expect(setClipTransform([CLIP_A], { scale: 1.5 })).toEqual({
+      ok: true,
+      notice: TRANSFORM_APPLIED_TO_TRANSITION_CHAIN,
+    });
+    // Aynı değeri bir kez daha yazmak komşuyu kımıldatmaz -> bildirim yok.
+    expect(setClipTransform([CLIP_A], { scale: 1.5 })).toEqual({ ok: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (c2) TERS SIRA: önce yerleşim, SONRA geçiş
+//
+// (c)'nin tamamı geçişi ÖNCE ekleyip yerleşimi SONRA yazıyordu; ters sıra hiç
+// denenmemişti ve tam olarak orada açık vardı. Yayılım yalnız yerleşim YAZAN
+// op'larda çağrılıyordu (setClipTransform / resetClipTransform), geçiş EKLEYEN
+// op'ta çağrılmıyordu — oysa geçiş eklemek de bir yerleşim olayıdır: iki klip
+// o an tek xfade akışına girer. Kullanıcı yolu tamamen normaldi (klibi böl ->
+// gizmo/Inspector ile ölçekle -> kesim rozetinden geçiş ekle), kapı SESSİZ
+// kalıyordu, PUT 200 / POST /exports 202 dönüyordu ve iş worker'da
+// "geçişli kliplerin yerleşimi aynı olmalıdır" ile DÜŞÜYORDU.
+// ---------------------------------------------------------------------------
+
+describe('(c2) yerleşim ÖNCE yazıldıysa geçiş eklemek zinciri eşitler', () => {
+  it('Inspector yolu: A ölçeklenip SONRA geçiş eklenirse B de eşitlenir', () => {
+    // Geçiş YOKKEN ölçeklemek serbesttir ve komşuya dokunmaz (yayılacak zincir
+    // yok) — hatanın ön koşulu tam olarak budur.
+    expect(setClipTransform([CLIP_A], { scale: 2 })).toEqual({ ok: true });
+    expect(clipById(CLIP_B).transform.scale).toBe(1);
+
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US)).toEqual({
+      ok: true,
+      notice: TRANSFORM_APPLIED_TO_TRANSITION_CHAIN,
+    });
+    expect(clipById(CLIP_B).transform).toEqual(clipById(CLIP_A).transform);
+    expect(clipById(CLIP_B).transform.scale).toBe(2);
+    expectDocValid();
+  });
+
+  it('GİZMO yolu: sürüklemeyle yazılan yerleşim de geçiş eklenince eşitlenir', () => {
+    // Gizmo doğrudan applyTransformPatchToDraft'a yazar (TransformGizmo.tsx
+    // -> tx.update). Inspector'dan farklı bir giriş noktasıdır; kapı orada da
+    // kapanmalı, yoksa "fareyle ölçekleyip geçiş ekle" yolu açık kalırdı.
+    useDocStore.getState().mutate('clipTransform', 'gizmo ölçek', (d) => {
+      expect(applyTransformPatchToDraft(d, CLIP_A, { scale: 1.75, x: 0.2 }, 0).ok).toBe(true);
+    });
+    expect(clipById(CLIP_B).transform.scale).toBe(1);
+
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US)).toEqual({
+      ok: true,
+      notice: TRANSFORM_APPLIED_TO_TRANSITION_CHAIN,
+    });
+    expect(clipById(CLIP_B).transform).toEqual(clipById(CLIP_A).transform);
+    expect(clipById(CLIP_B).transform.scale).toBe(1.75);
+    expect(clipById(CLIP_B).transform.x).toBe(0.2);
+    expectDocValid();
+  });
+
+  it('GELEN klip ölçeklenmişse de eşitlenir (fark hangi tarafta olursa olsun)', () => {
+    expect(setClipTransform([CLIP_B], { scale: 2, y: -0.1 })).toEqual({ ok: true });
+
+    const result = addTransition(CLIP_A, CLIP_B, 'crossfade', US);
+    expect(result).toEqual({ ok: true, notice: TRANSFORM_APPLIED_TO_TRANSITION_CHAIN });
+    // Zincir GİDEN klipten yayılır (kesimde her yerde kazanan taraf o), yani
+    // burada eşitlenen B'dir; iddia edilen şey EŞİTLİK, kimin kazandığı değil.
+    expect(clipById(CLIP_B).transform).toEqual(clipById(CLIP_A).transform);
+    expectDocValid();
+  });
+
+  it('rozet yolu (addTransitionAtEdge, "in" kenarı) da eşitler', () => {
+    // Kullanıcı kesim rozetine B'nin SOL kenarından basmış olabilir; op aynı
+    // kesme çözülür ama giriş noktası farklıdır.
+    expect(setClipTransform([CLIP_A], { rotationDeg: 45 })).toEqual({ ok: true });
+
+    expect(addTransitionAtEdge(CLIP_B, 'in', 'crossfade', US)).toEqual({
+      ok: true,
+      notice: TRANSFORM_APPLIED_TO_TRANSITION_CHAIN,
+    });
+    expect(clipById(CLIP_B).transform).toEqual(clipById(CLIP_A).transform);
+    expect(clipById(CLIP_B).transform.rotationDeg).toBe(45);
+    expectDocValid();
+  });
+
+  it('ZİNCİRİ BÜYÜTMEK: A—B varken C eklenirse üçü birden eşitlenir', () => {
+    expect(setClipTransform([CLIP_A], { scale: 2 }).ok).toBe(true);
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US).ok).toBe(true);
+    expect(clipById(CLIP_B).transform.scale).toBe(2);
+    // C zincirin DIŞINDA: kendi yerleşimini serbestçe alır.
+    expect(setClipTransform([CLIP_C], { scale: 3 })).toEqual({ ok: true });
+
+    expect(addTransition(CLIP_B, CLIP_C, 'crossfade', US)).toEqual({
+      ok: true,
+      notice: TRANSFORM_APPLIED_TO_TRANSITION_CHAIN,
+    });
+    expect(clipById(CLIP_C).transform).toEqual(clipById(CLIP_B).transform);
+    expect(clipById(CLIP_A).transform).toEqual(clipById(CLIP_B).transform);
+    expect(clipById(CLIP_C).transform.scale).toBe(2);
+    expectDocValid();
+  });
+
+  it('geçiş EKLENEMEDİĞİNDE komşunun yerleşimine dokunulmaz', () => {
+    // Reddedilen bir op'un yan etkisi olamaz: kapı kapalıyken zincir de kurulmaz.
+    editClip(CLIP_B, (c) => {
+      c.keyframes.opacity = [kf(0, 1), kf(2 * US, 0)];
+    });
+    expect(setClipTransform([CLIP_A], { scale: 2 }).ok).toBe(true);
+
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US)).toEqual({
+      ok: false,
+      reason: REASON_TRANSITION_NEEDS_STATIC_CLIPS,
+    });
+    expect(clipById(CLIP_B).transform.scale, 'Ret, komşuyu ELLEMEMELİ.').toBe(1);
+    expectDocValid();
+  });
+
+  it('YENİDEN BİTİŞEN kesim: ripple silme geçişi taşıdığında yerleşim de taşınır', () => {
+    // Geçiş metadata'sı yeni bir kesime "miras" kalabilir: A—B geçişliyken B
+    // ripple ile silinince A'nın transitionOut'u BAMBAŞKA bir klibin (C)
+    // karşısına düşer ve reconcile onu benimser (giden taraf kazanır). O iki
+    // klibin yerleşimi hiçbir zaman eşit olmak zorunda DEĞİLDİ — yani bu, aynı
+    // sözleşme ihlaline giden İKİNCİ yol.
+    expect(addTransition(CLIP_A, CLIP_B, 'crossfade', US).ok).toBe(true);
+    expect(setClipTransform([CLIP_C], { scale: 3 }).ok).toBe(true);
+
+    const result = deleteClips([CLIP_B], { ripple: true });
+    expect(result.ok).toBe(true);
+
+    const a = clipById(CLIP_A);
+    const c = clipById(CLIP_C);
+    expect(clipEndUs(a), 'Ripple silme A|C kesimini bitiştirmeliydi (ön koşul).').toBe(
+      c.timelineStartUs,
+    );
+    expect(a.transitionOut, 'Geçiş yeni kesime taşındı (ön koşul).').toBeDefined();
+    expect(c.transitionIn).toBeDefined();
+    expect(c.transform, 'Devralınan kesimde yerleşim de eşitlenmeli.').toEqual(a.transform);
+    expect(result.ok && result.notice).toBe(TRANSFORM_APPLIED_TO_TRANSITION_CHAIN);
+    expectDocValid();
+  });
+
+  it('doküman KAPISI ayrışmayı yakalar — yeni bir yol açılırsa yazımda patlar', () => {
+    // Yayılım bir DÜZELTME'dir; invariant ise KANIT. Bu ikisi ayrı olmalı:
+    // yarın geçiş metadata'sı yazan yeni bir yol eklenir ve yayılımı çağırmayı
+    // unutursa, hata dışa aktarımda değil TAM O YAZIMDA görünsün.
+    expect(setClipTransform([CLIP_A], { scale: 2 }).ok).toBe(true);
+    expect(() => {
+      editClips((find) => {
+        find(CLIP_A).transitionOut = { type: 'crossfade', durationUs: US };
+        find(CLIP_B).transitionIn = { type: 'crossfade', durationUs: US };
+      });
+    }).toThrow(/transition placement violated/);
   });
 });
 

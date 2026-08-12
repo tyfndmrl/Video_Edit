@@ -75,7 +75,13 @@ Medyanı yükle, zaman çizgisinde kes, katmanla, metin ve geçiş ekle, renk ve
 - Timeline JSON → **FilterGraph Compiler** → `ffmpeg -filter_complex_script` → MP4
 - Desteklenmeyen bir bileşim varsa export **kuyruğa hiç girmez**: sunucu 422 ile
   **gerekçesini** döner ve dialogda kırmızı olarak gösterilir (dakikalarca render edip
-  düşmek yerine). Kapsam hatalarının metni Türkçe, şema ihlallerininki İngilizcedir
+  düşmek yerine). Kapsam hatalarının metni Türkçe, şema ihlallerininki İngilizcedir.
+  Bunun **tek istisnası** dürüstçe yazılıdır: geçişli iki klibin yerleşim eşitliği kuralı
+  derleyicide `Validate` değil `Compile` aşamasındadır, yani sunucunun 422 ön kapısı onu
+  göremez. Editör böyle bir doküman **üretmez** (yerleşimi geçiş zincirine yayar, doküman
+  değişmezi her değişiklikte doğrular) — ama API'ye doğrudan yazılmış bir doküman 202 alır ve
+  worker'da düşer. Kuralın hangi kapıda olduğu satır satır:
+  [poc-bilinen-sinirlar.md](docs/poc-bilinen-sinirlar.md) §3
 
 **Ölçülmüş export süreleri** (i9-10850K, 1080p30, gerçek boru hattı): 60 sn tek klip →
 **10.8 sn**; 60 sn, 2 klip + crossfade + renk + metin + şekil → **33.4 sn**. Aynı uzunluk,
@@ -179,15 +185,15 @@ klipleri **sistem fontuyla** çizilir; o zaman render **belirlenimci değildir**
 
 ## Testler
 
-Tümü **2026-08-12**, `df799df` + teslim düzeltme turu üzerinde bizzat koşuldu:
+Tümü **2026-08-12**, `6ef7498` + 3. tur düzeltmeleri üzerinde bizzat koşuldu:
 
 ```bash
-# Backend — 966 test.  MinIO ayaktaysa env değişkenini VERİN, yoksa 13 test Skip olur
+# Backend — 980 test.  MinIO ayaktaysa env değişkenini VERİN, yoksa 13 test Skip olur
 #   (ProcessAssetPipelineTests, MinioStorageSmokeTests, ExportJobPipelineTests).
-MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 966/966 ✓
+MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 980/980 ✓
 
 # Editör + şema paketi birlikte
-pnpm -r test                                                 # editor 1156 ✓ · schema 180 ✓
+pnpm -r test                                                 # editor 1186 ✓ · schema 191 ✓
 
 # Tip denetimi
 pnpm --filter @videoedit/editor exec tsc -b
@@ -199,7 +205,7 @@ pnpm --filter @videoedit/editor build
 # E2E — GERÇEK tarayıcıda GERÇEK fare/klavye ile (page.mouse / page.keyboard).
 # API (5000), worker ve Vite (5173) AYAKTA olmalı; Playwright hiçbir süreci
 # başlatmaz/öldürmez, ayakta olanlara bağlanır.
-pnpm --filter @videoedit/editor test:e2e                     # 126/126 ✓ (27 spec, 6.4 dk)
+pnpm --filter @videoedit/editor test:e2e                     # 129/129 ✓ (28 spec, 6.0 dk)
 ```
 
 > **Neden gerçek fare?** Teslim edilen ilk sürümde "E2E" testleri store'u doğrudan
@@ -241,7 +247,7 @@ backend/
   src/VideoEdit.Infrastructure/  EF Core, R2/S3 istemcisi, JWT
   src/VideoEdit.Media/           ffmpeg reçeteleri, probe, Export/ (FilterGraph compiler), Text/ (SkiaSharp)
   src/VideoEdit.Worker/          Hangfire: ProcessAssetJob, ExportJob, AssetReaperJob
-  tests/VideoEdit.UnitTests/     966 test + ExportSnapshots/ (filtre grafiği metin snapshot'ları)
+  tests/VideoEdit.UnitTests/     980 test + ExportSnapshots/ (filtre grafiği metin snapshot'ları)
   tests/GoldenFrames/            export karesi piksel golden'ları (11 PNG)
   tests/RasterGoldens/           SkiaSharp şekil rasteri golden'ları (4 PNG)
   tools/SchemaGen/               JSON Schema → C# DTO üretici

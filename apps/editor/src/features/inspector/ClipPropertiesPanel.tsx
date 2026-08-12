@@ -75,6 +75,7 @@ import { inspectorFailureMessage, inspectorNoticeMessage } from './inspectorFeed
 import { useKeyframeInspector } from '../keyframes/useKeyframeInspector';
 import { weightsFor } from '../text/fontManifest';
 import { useFontCatalogue } from '../text/fontCatalogue';
+import { measureTextLayout } from '../text/overlayRaster';
 import {
   buildClipInspectorModel,
   formatDb,
@@ -86,6 +87,7 @@ import {
   type ColorSection,
   type ShapeSection,
   type SpeedSection,
+  type TextBoxMeasurer,
   type TextSection,
 } from './clipInspectorModel';
 import { isBurstEditOpen, isLiveEditOpen, updateBurstEdit, updateLiveEdit } from './liveEdit';
@@ -105,6 +107,17 @@ const US = 1_000_000;
 
 /** Stable empty list: a fresh `[]` would re-run the guard memos every render. */
 const EMPTY_IDS: readonly string[] = [];
+
+/**
+ * The panel's text measurer (see `TextBoxMeasurer`). Module scope, not a hook:
+ * it must be a STABLE reference or the model memo would rebuild every render.
+ * Returns null without a DOM — the model then falls back to the same
+ * font-independent bound the export compiler uses.
+ */
+const measuredTextBox: TextBoxMeasurer = (clip) => {
+  const layout = measureTextLayout(clip.text);
+  return { widthPx: layout.bboxWidthPx, heightPx: layout.bboxHeightPx };
+};
 
 /** An op result the user has to see, tagged with the section that caused it. */
 interface OpMessage {
@@ -141,7 +154,11 @@ export function ClipPropertiesPanel() {
   const sessionReady = useProjectSession((s) => s.status) === 'ready';
 
   const model = useMemo(
-    () => buildClipInspectorModel(doc, selection, assets),
+    // The measurer is the browser's own Canvas2D shaping through the SHARED
+    // layout rule (features/text/textLayout), i.e. the same box the export's
+    // SkiaSharp produces. It is what turns the scale / font-size ceilings from
+    // "safe guess" into "the number the server will actually accept".
+    () => buildClipInspectorModel(doc, selection, assets, measuredTextBox),
     [doc, selection, assets],
   );
 
@@ -199,11 +216,14 @@ export function ClipPropertiesPanel() {
   );
 
   /**
-   * Scale ceiling is a PROJECT property, not a constant: the export compiler
-   * caps a rendered layer at 8192 px, so 1080p tops out around 4.266 and 4K
-   * around 2.133. Changing the project resolution moves this field's max.
+   * Scale ceiling is a per-CLIP property, not a constant: the export compiler
+   * caps a rendered layer at 8192 px. For media/shape/sticker that is the
+   * canvas (1080p tops out around 4.266, 4K around 2.133); for TEXT it is the
+   * clip's OWN measured box (§7 draws it at `bbox * scale`), which is why the
+   * model — not this component — derives it. `visual.maxScale` is the strictest
+   * of the selected clips, i.e. exactly what the op will clamp to.
    */
-  const scaleMax = useMemo(() => maxClipScale(doc.settings), [doc.settings]);
+  const scaleMax = model.visual?.maxScale ?? maxClipScale(doc.settings);
 
   if (model.count === 0) {
     return (
@@ -526,11 +546,19 @@ export function ClipPropertiesPanel() {
               alanı değiştirmek o andaki keyframe'i yazar (yoksa ekler).
             </p>
           )}
-          <p className="text-[10px] leading-snug text-fg-muted" data-testid="clip-scale-limit-note">
+          <p
+            className="text-[10px] leading-snug text-fg-muted"
+            data-testid="clip-scale-limit-note"
+            data-max={scaleMax}
+            data-from-text-box={visual?.maxScaleFromTextBox === true ? 'true' : 'false'}
+          >
             Konum kompozisyon merkezine göre normalize (0 = ortada, 0.5 = yarım kompozisyon
-            kadar sağ/aşağı); Ölçek 1 = sığdır. Bu projede ölçek en fazla{' '}
-            {formatNumber(scaleMax, SCALE_DECIMALS)} olabilir ({doc.settings.width}×
-            {doc.settings.height} çıktıda katman {MAX_LAYER_DIMENSION} pikseli aşamaz).
+            kadar sağ/aşağı); Ölçek 1 = sığdır. Ölçek en fazla{' '}
+            {formatNumber(scaleMax, SCALE_DECIMALS)} olabilir — çıktıda katman{' '}
+            {MAX_LAYER_DIMENSION} pikseli aşamaz.{' '}
+            {visual?.maxScaleFromTextBox === true
+              ? 'Metin katmanı kareye SIĞDIRILMAZ, kendi kutusu kadar çizilir (yazı boyutu × ölçek): tavanı bu yüzden metnin ölçülen kutusu belirliyor, proje çözünürlüğü değil.'
+              : `Bu tavan proje çözünürlüğünden gelir (${doc.settings.width}×${doc.settings.height}).`}
           </p>
         </PropertySection>
       )}
@@ -839,7 +867,10 @@ function TextPropertiesSection({
         label="Boyut"
         value={section.fontSizePx}
         min={TEXT_SIZE_MIN}
-        max={TEXT_SIZE_MAX}
+        // TÜRETİLMİŞ tavan (sabit TEXT_SIZE_MAX değil): punto, satır sayısı,
+        // arka plan payı ve klibin ölçeği AYNI 8192 px'lik katman bütçesini
+        // harcar. Sabit tavan, sunucunun reddedeceği bir belge yazdırıyordu.
+        max={section.maxFontSizePx}
         step={1}
         decimals={0}
         perPixel={1}
@@ -848,6 +879,18 @@ function TextPropertiesSection({
         gesture={{ actionType: 'clipText', label: 'Metin boyutu değiştirildi' }}
         onChange={(fontSizePx) => write({ fontSizePx })}
       />
+      {section.maxFontSizePx < TEXT_SIZE_MAX && (
+        <p
+          className="text-[10px] leading-snug text-fg-muted"
+          data-testid="clip-text-size-limit-note"
+          data-max={section.maxFontSizePx}
+        >
+          Bu metin için boyut en fazla {formatNumber(section.maxFontSizePx, 0)} px olabilir:
+          dışa aktarımda tek katman {MAX_LAYER_DIMENSION} pikseli aşamaz ve bu sınırı punto,
+          satır sayısı, arka plan payı ve klibin ölçeği birlikte belirler. Daha büyük yazı
+          için ölçeği, satır sayısını ya da arka plan payını küçültün.
+        </p>
+      )}
       <SelectField
         id="clip-text-weight"
         testId="clip-text-weight"

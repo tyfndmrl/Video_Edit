@@ -32,6 +32,7 @@ import {
   usToFrame,
   hasSourceTimeAxis,
   isMediaClip,
+  MAX_LAYER_DIMENSION,
   TRANSFORM_SCALE_DECIMALS,
   TRANSFORM_SCALE_MIN,
   type Clip,
@@ -48,6 +49,7 @@ import {
   type TimelineDoc,
   type Track,
   type TrackType,
+  type Transform,
   type Transition,
   type TransitionType,
   type Uuid,
@@ -348,23 +350,40 @@ export interface TransitionReconcileReport {
    * DIFFERENT fixes, and guessing one of them is worse than saying nothing.
    */
   shortenedBy: 'handle' | 'length' | null;
+  /**
+   * Clips whose transform the pass had to rewrite so their transition chain
+   * stays laid out identically (see alignTransitionChainTransforms). Counted
+   * separately because it is the only repair that touches a clip the edit was
+   * not even about.
+   */
+  aligned: number;
 }
 
 const NO_TRANSITION_CHANGE: TransitionReconcileReport = {
   shortened: 0,
   removed: 0,
   shortenedBy: null,
+  aligned: 0,
 };
 
-/** Notice code for a report, or undefined when nothing changed. */
+/**
+ * Notice code for a report, or undefined when nothing changed.
+ *
+ * The chain alignment comes LAST on purpose. Losing a transition, or getting a
+ * shorter one than you asked for, is the headline of the edit; a neighbour
+ * re-laid-out to match it is a consequence of that same edit and only worth the
+ * single notice slot when nothing louder happened.
+ */
 export function transitionReconcileNotice(
   report: TransitionReconcileReport,
 ): string | undefined {
   if (report.removed > 0) return TRANSITION_DROPPED;
-  if (report.shortened === 0) return undefined;
-  return report.shortenedBy === 'handle'
-    ? TRANSITION_SHORTENED_HANDLE
-    : TRANSITION_SHORTENED_LENGTH;
+  if (report.shortened > 0) {
+    return report.shortenedBy === 'handle'
+      ? TRANSITION_SHORTENED_HANDLE
+      : TRANSITION_SHORTENED_LENGTH;
+  }
+  return report.aligned > 0 ? TRANSFORM_APPLIED_TO_TRANSITION_CHAIN : undefined;
 }
 
 export function mergeTransitionReports(
@@ -375,6 +394,7 @@ export function mergeTransitionReports(
     shortened: a.shortened + b.shortened,
     removed: a.removed + b.removed,
     shortenedBy: b.shortenedBy ?? a.shortenedBy,
+    aligned: a.aligned + b.aligned,
   };
 }
 
@@ -398,7 +418,12 @@ function reconcileTransitions(
   fps: Rational,
   assetDurations: ReadonlyMap<string, MicroSec>,
 ): TransitionReconcileReport {
-  const report: TransitionReconcileReport = { shortened: 0, removed: 0, shortenedBy: null };
+  const report: TransitionReconcileReport = {
+    shortened: 0,
+    removed: 0,
+    shortenedBy: null,
+    aligned: 0,
+  };
   const cs = track.clips;
   const keptOut = new Set<number>();
   const keptIn = new Set<number>();
@@ -465,7 +490,66 @@ function reconcileTransitions(
       report.removed++;
     }
   }
+
+  report.aligned = alignTransitionChainTransforms(track);
   return report;
+}
+
+/**
+ * Makes every LIVE transition chain in the track share one transform, copying
+ * from the chain's FIRST clip. Returns how many clips had to be rewritten.
+ *
+ * Why it belongs to reconciliation and not to the individual ops: the ops above
+ * do not only BREAK cuts, they also CREATE them. Ripple-deleting B out of
+ * `A -xfade- B ... C` leaves A's `transitionOut` facing a brand-new A|C cut, and
+ * the loop above adopts it (the outgoing side wins) — so A and C become one
+ * xfade stream although nothing ever required their layouts to match. The same
+ * shape reaches here through moving, trimming and pasting. Aligning at the end
+ * of the pass covers all of them at once, which is the point: the rule cannot be
+ * re-broken by an op that forgets to think about it, and `checkTimelineInvariants`
+ * (transition placement) is what fails loudly if some path still does.
+ *
+ * The FIRST clip wins for the same reason it wins for the transition metadata
+ * itself: it is the outgoing side of the cut the chain grew from. Any other
+ * choice would make the result depend on which end of the chain the edit
+ * happened to touch.
+ */
+function alignTransitionChainTransforms(track: Track): number {
+  const cs = track.clips;
+  let rewritten = 0;
+  let anchor: Clip | null = null;
+  for (let i = 0; i + 1 < cs.length; i++) {
+    const a = cs[i];
+    const b = cs[i + 1];
+    const joined =
+      isMediaClip(a) &&
+      isMediaClip(b) &&
+      a.transitionOut !== undefined &&
+      b.transitionIn !== undefined &&
+      clipEndUs(a) === b.timelineStartUs;
+    if (!joined) {
+      anchor = null;
+      continue;
+    }
+    // First cut of a chain: `a` is the anchor the whole chain adopts.
+    anchor ??= a;
+    if (!transformsEqual(anchor.transform, b.transform)) {
+      b.transform = { ...anchor.transform };
+      rewritten++;
+    }
+  }
+  return rewritten;
+}
+
+function transformsEqual(a: Transform, b: Transform): boolean {
+  return (
+    a.x === b.x &&
+    a.y === b.y &&
+    a.scale === b.scale &&
+    a.rotationDeg === b.rotationDeg &&
+    a.anchorX === b.anchorX &&
+    a.anchorY === b.anchorY
+  );
 }
 
 /**
@@ -2019,6 +2103,12 @@ export function transitionChainSiblings(d: TimelineDoc, clipId: Uuid): Uuid[] {
  * transform'un eşitliği yerleşimin eşitliğini GARANTİ eder. Kopya sessiz değildir:
  * op `TRANSFORM_APPLIED_TO_TRANSITION_CHAIN` bildirimi döner ve panel bunu önceden
  * yazar.
+ *
+ * DÖNÜŞ DEĞERİ: "kopyalandı" değil, "bir komşu GERÇEKTEN DEĞİŞTİ". Aradaki fark
+ * bildirimin doğruluğudur: zincirdeki klipler zaten aynı yerleşimdeyse (geçiş
+ * eklemenin olağan hali — iki klip de varsayılan dönüşümde) kullanıcıya
+ * "yerleşim komşuya da uygulandı" demek, olmamış bir komşu düzenlemesini haber
+ * vermektir. Bildirim ancak komşunun yerleşimi gerçekten kaydığında çıkar.
  */
 function propagateTransformToChain(d: TimelineDoc, clipId: Uuid): boolean {
   const loc = locateClip(d, clipId);
@@ -2029,6 +2119,7 @@ function propagateTransformToChain(d: TimelineDoc, clipId: Uuid): boolean {
   for (let i = lo; i <= hi; i++) {
     const other = loc.track.clips[i];
     if (other === undefined || other.id === clipId) continue;
+    if (transformsEqual(other.transform, loc.clip.transform)) continue;
     other.transform = { ...loc.clip.transform };
     copied = true;
   }
@@ -2106,6 +2197,20 @@ function planNotice(plan: TransitionPlan): string | undefined {
 }
 
 /**
+ * One op, two things worth reporting, ONE `notice` slot: `primary` wins.
+ *
+ * Adding a transition can both shorten the requested duration AND re-lay-out
+ * the neighbour, so the two have to be ranked. The shortening is legible
+ * without any bubble — the transition editor opens on that very cut with the
+ * effective duration in its "Süre (sn)" field — while a neighbouring clip's
+ * scale changing leaves no other trace on screen. The invisible one is
+ * therefore the primary.
+ */
+function preferNotice(primary: string | undefined, fallback: string | undefined): string | undefined {
+  return primary ?? fallback;
+}
+
+/**
  * Writes a transition onto a cut, on BOTH sides (symmetry invariant, §5.2).
  * Runs inside a draft recipe; the caller owns the history entry.
  */
@@ -2144,7 +2249,19 @@ export function addTransition(
     const plan = planTransitionDuration(target.a, target.b, durationUs, dd.settings.fps, durations);
     if (plan === null) return;
     writeTransition(target, type, plan.durationUs);
-    result = okWith(planNotice(plan));
+    // ADDING a transition is a layout write too — this is the ONLY moment the
+    // two clips become one xfade stream, and until it happened they were free
+    // to be laid out differently. Propagating only from the transform ops
+    // (setClipTransform / resetClipTransform) covered the order "transition
+    // first, then scale" and MISSED the reverse one: split -> scale A -> add
+    // transition left A at scale 2 next to B at scale 1, the editor stayed
+    // silent, the document saved, and the render worker failed the job with
+    // "geçişli kliplerin yerleşimi aynı olmalıdır". The chain is aligned from
+    // the OUTGOING clip, the same side that wins everywhere else on a cut.
+    const chained = propagateTransformToChain(dd, clipAId);
+    result = okWith(
+      preferNotice(chained ? TRANSFORM_APPLIED_TO_TRANSITION_CHAIN : undefined, planNotice(plan)),
+    );
   });
   return result;
 }
@@ -2513,9 +2630,104 @@ export const SCALE_MAX = 10;
  * box against LayerGeometry.MaxLayerDimension (8192 px), so the real ceiling
  * falls out of the project resolution — ~4.266 at 1080p, ~2.133 at 4K.
  * The inspector's field max AND the clamp both go through here.
+ *
+ * MEDIA / IMAGE / STICKER / SHAPE only. A TEXT layer is not fit to the canvas
+ * (§7: its box is its own bbox), so its ceiling comes from `maxClipScaleFor`.
  */
 export function maxClipScale(settings: Pick<ProjectSettings, 'width' | 'height'>): number {
   return Math.min(SCALE_MAX, maxScaleFor(settings));
+}
+
+/** Floors to the stored scale precision — see `maxScaleFor` for WHY it floors. */
+function floorToScaleDecimals(value: number): number {
+  const factor = 10 ** SCALE_DECIMALS;
+  return Math.floor(value * factor) / factor;
+}
+
+/**
+ * Scale ceiling for a layer whose drawn box is `boxWidthPx x boxHeightPx` at
+ * `scale = 1` — the general form of `maxClipScale` (which is this with the box
+ * = the canvas).
+ */
+export function maxScaleForBoxPx(
+  settings: Pick<ProjectSettings, 'width' | 'height'>,
+  boxWidthPx: number,
+  boxHeightPx: number,
+): number {
+  const longest = Math.max(boxWidthPx, boxHeightPx);
+  const canvasCeiling = maxClipScale(settings);
+  if (!Number.isFinite(longest) || longest <= 0) return canvasCeiling;
+  return Math.max(SCALE_MIN, Math.min(canvasCeiling, floorToScaleDecimals(MAX_LAYER_DIMENSION / longest)));
+}
+
+/**
+ * FONT-INDEPENDENT LOWER BOUND of a text clip's §7 bbox, in project px.
+ *
+ * MIRRORS `ExportCompiler.TextBoxLowerBound` (C#) — same two components, same
+ * reasoning: `layoutText` unions the content box, the ink+stroke box and the
+ * background box and then rounds OUTWARD, so every component is a lower bound.
+ * - height >= contentHeight = fontSizePx * lineHeight * lineCount (the CSS
+ *   line-height model; NOT font dependent),
+ * - a background grows the box by `paddingPx` on every side.
+ * There is NO font-independent lower bound for the WIDTH (glyph advances are a
+ * property of the font file), so only the background padding counts there.
+ *
+ * Used where a REAL measurement is not available: the op layer must not reach
+ * up into features/text (Canvas2D), and a bound that can only UNDER-estimate
+ * can only ever clamp a value the compiler would certainly reject anyway. The
+ * inspector passes the measured bbox instead — see `maxScaleForBoxPx` callers.
+ */
+export function textBoxLowerBoundPx(text: TextClip['text']): { widthPx: number; heightPx: number } {
+  const fontSizePx = Number.isFinite(text.fontSizePx) ? Math.max(0, text.fontSizePx) : 0;
+  const lineHeight = Number.isFinite(text.lineHeight) ? Math.max(0, text.lineHeight) : 0;
+  const lineCount = splitTextLines(text.content).length;
+  const padding = text.background && Number.isFinite(text.background.paddingPx)
+    ? Math.max(0, text.background.paddingPx)
+    : 0;
+  return {
+    widthPx: 2 * padding,
+    heightPx: fontSizePx * lineHeight * lineCount + 2 * padding,
+  };
+}
+
+/**
+ * Line split of a text content — the ONE rule shared with the export
+ * (TextLayoutEngine.SplitLines / features/text/textLayout.splitLines): CRLF and
+ * CR normalize to LF, empty content is ONE line (the box keeps its height).
+ * Duplicated here rather than imported because `state/` must not depend on
+ * `features/` (the browser measurer lives there and drags the DOM in).
+ */
+function splitTextLines(content: string): string[] {
+  if (typeof content !== 'string' || content.length === 0) return [''];
+  return content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+}
+
+/**
+ * Scale ceiling for ONE clip.
+ *
+ * A text layer is drawn at `bbox * scale`, NOT fit to the composition (§7), so
+ * its ceiling is `8192 / max(bboxW, bboxH)` and has nothing to do with the
+ * canvas: at fontSizePx 2000 a single line is already ~2400 px tall, i.e. the
+ * layer tops out around scale 3.4 in ANY project. Deriving the field max from
+ * the canvas (as this used to) let the user write scale 4.266, the API queued
+ * it and the worker died on it (3. tur denetim, blocker 2).
+ *
+ * `measuredBoxPx` is the REAL bbox when the caller can measure one (the
+ * inspector can — features/text/overlayRaster); without it the font-independent
+ * lower bound is used, which can only ever be MORE permissive, never less.
+ */
+export function maxClipScaleFor(
+  clip: Clip,
+  settings: Pick<ProjectSettings, 'width' | 'height'>,
+  measuredBoxPx?: { widthPx: number; heightPx: number } | null,
+): number {
+  if (clip.kind !== 'text') {
+    // Media/image/sticker are fit=contain and a shape's natural box IS the
+    // frame (ShapeGeometry.cs) — for all of them the canvas ceiling is exact.
+    return maxClipScale(settings);
+  }
+  const box = measuredBoxPx ?? textBoxLowerBoundPx(clip.text);
+  return maxScaleForBoxPx(settings, box.widthPx, box.heightPx);
 }
 
 export const ROTATION_LIMIT = 360;
@@ -2661,8 +2873,11 @@ export function applyClipTransformToDraft(
       if (v !== null) t.y = v;
     }
     if (patch.scale !== undefined) {
-      // Ceiling is per-project (layer box <= 8192 px), not a constant.
-      const v = clampFinite(patch.scale, SCALE_MIN, maxClipScale(d.settings), SCALE_DECIMALS);
+      // Ceiling is per-CLIP, not a constant and not merely per-project: a text
+      // layer is drawn at `bbox * scale`, so a 2000 px font tops out around 3.4
+      // even in a project where a video clip may go to 4.266 (see
+      // maxClipScaleFor — 3. tur denetim, blocker 2).
+      const v = clampFinite(patch.scale, SCALE_MIN, maxClipScaleFor(clip, d.settings), SCALE_DECIMALS);
       if (v !== null) t.scale = v;
     }
     if (patch.rotationDeg !== undefined) {
@@ -3091,7 +3306,17 @@ export function addStickerClip(
 // ---------------------------------------------------------------------------
 
 export const TEXT_SIZE_MIN = 4;
+/**
+ * Absolute sanity cap. The EFFECTIVE ceiling is `maxTextSizeFor(clip)`: a font
+ * size is only meaningful together with the line count, the background padding
+ * and the clip's scale, because those four together decide whether the layer
+ * fits in MAX_LAYER_DIMENSION. Bounding the field with this constant alone let
+ * a user type 2000 px on a scale-4 clip; the document saved (PUT 200), the API
+ * queued the export (202) and the worker died on it (3. tur denetim, blocker 2).
+ */
 export const TEXT_SIZE_MAX = 2000;
+/** Precision a font size is stored with (the inspector field shows integers). */
+export const TEXT_SIZE_DECIMALS = 1;
 export const TEXT_LINE_HEIGHT_MIN = 0.5;
 export const TEXT_LINE_HEIGHT_MAX = 4;
 export const TEXT_WEIGHT_MIN = 100;
@@ -3102,6 +3327,64 @@ export const SHAPE_RADIUS_MAX = 1000;
 export const SHAPE_STROKE_WIDTH_MAX = 500;
 /** Guard against pathological documents (and pathological rasters). */
 export const TEXT_CONTENT_MAX_LENGTH = 5000;
+
+/**
+ * Largest font size THIS text clip may take without pushing its layer past
+ * MAX_LAYER_DIMENSION — the font-size counterpart of `maxClipScaleFor`.
+ *
+ * Solved from the same font-independent lower bound the compiler uses:
+ *   bboxHeight >= fontSizePx * lineHeight * lineCount + 2 * padding
+ * and the layer has to satisfy BOTH server ceilings —
+ *   bbox              <= 8192   (the PNG itself; the raster factor bottoms out
+ *                                at 1, so the bbox can never be shrunk away)
+ *   bbox * scale      <= 8192   (the composited layer)
+ * which collapses to `8192 / max(1, scale)`.
+ *
+ * With a `measuredBoxPx` the same equation is solved against the REAL box
+ * instead of the bound (see the comment on `perFontPx`), which is what the
+ * inspector passes — the bound alone cannot see a wide single line.
+ *
+ * Never below TEXT_SIZE_MIN: a UI range control must not invert. When the
+ * content alone is already too tall, the floor is what the user gets and the
+ * export still refuses — with a message that names the real reason.
+ */
+export function maxTextSizeFor(
+  clip: TextClip,
+  measuredBoxPx?: { widthPx: number; heightPx: number } | null,
+): number {
+  const text = clip.text;
+  const lineHeight = Number.isFinite(text.lineHeight) ? Math.max(0, text.lineHeight) : 0;
+  const lineCount = splitTextLines(text.content).length;
+  const perPx = lineHeight * lineCount;
+  if (!(perPx > 0)) return TEXT_SIZE_MAX;
+
+  const scale = Number.isFinite(clip.transform.scale) ? Math.max(1, clip.transform.scale) : 1;
+  const padding = text.background && Number.isFinite(text.background.paddingPx)
+    ? Math.max(0, text.background.paddingPx)
+    : 0;
+
+  // How many box pixels ONE font pixel costs. Without a measurement that is the
+  // height bound (lineHeight * lines). With one it is the measured box itself,
+  // read as PROPORTIONAL to the current font size — which is what a glyph box
+  // is: advances and ink scale with the em, only the background padding does
+  // not, so it is taken out first and added back as a constant. Treating the
+  // measured box as a fixed offset instead would badly under-count a WIDE line
+  // (the widest text grows fastest with the font size).
+  let perFontPx = perPx;
+  if (measuredBoxPx && Number.isFinite(text.fontSizePx) && text.fontSizePx > 0) {
+    const longest = Math.max(measuredBoxPx.widthPx, measuredBoxPx.heightPx);
+    // Never BELOW the font-independent bound: the measured box always contains
+    // the content box, so a smaller ratio would mean the measurement is wrong.
+    perFontPx = Math.max(perPx, (longest - 2 * padding) / text.fontSizePx);
+  }
+
+  // WHOLE pixels, floored. The inspector's size field shows integers, so a
+  // fractional ceiling (743.9) would be clamped to itself and then ROUNDED UP
+  // by the field to 744 — a value one tenth of a pixel past the ceiling the
+  // same panel just advertised. Measured in the browser, not reasoned about.
+  const budgetPx = MAX_LAYER_DIMENSION / scale - 2 * padding;
+  return Math.max(TEXT_SIZE_MIN, Math.min(TEXT_SIZE_MAX, Math.floor(budgetPx / perFontPx)));
+}
 
 const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
@@ -3154,7 +3437,11 @@ export function applyClipTextToDraft(
       text.fontId = patch.fontId;
     }
     if (patch.fontSizePx !== undefined) {
-      const v = clampFinite(patch.fontSizePx, TEXT_SIZE_MIN, TEXT_SIZE_MAX, 1);
+      // Ceiling is derived, not constant — see maxTextSizeFor. Computed AFTER
+      // `content` was written above so a patch that changes both lands on the
+      // ceiling of the text the user will actually see.
+      const v = clampFinite(
+        patch.fontSizePx, TEXT_SIZE_MIN, maxTextSizeFor(clip), TEXT_SIZE_DECIMALS);
       if (v !== null) text.fontSizePx = v;
     }
     if (patch.fontWeight !== undefined) {

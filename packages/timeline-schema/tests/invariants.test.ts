@@ -513,6 +513,84 @@ describe('transition symmetry', () => {
   });
 });
 
+/**
+ * Transition PLACEMENT — the compiler folds the two clips of a cut into one
+ * xfade stream and requires both inputs to be the same size, so their transforms
+ * must be equal (ExportCompiler.cs: "geçişli kliplerin yerleşimi aynı olmalıdır").
+ *
+ * This rule is the reason a document can no longer be queued and then die in the
+ * worker: the compiler enforces it in COMPILE, not in `Validate`, so the API's
+ * 422 pre-gate never saw it. Here it is a document invariant, which means the
+ * editor's own commit gate refuses to write one.
+ */
+describe('transition placement (both clips of a cut share one transform)', () => {
+  /** Every field of the transform, since every one of them moves the layout. */
+  const FIELDS = ['x', 'y', 'scale', 'rotationDeg', 'anchorX', 'anchorY'] as const;
+
+  it.each(FIELDS)('rejects a cut whose two clips differ in transform.%s', (field) => {
+    const doc = validDoc();
+    const outgoing = doc.tracks[1].clips[0] as MediaClip;
+    // A value that is legal on its own (inside the schema bounds — anchors are
+    // capped at 1) but different from the incoming clip's.
+    outgoing.transform[field] = field === 'anchorX' || field === 'anchorY' ? 0.25 : 1.75;
+    expectIssue(doc, 'transition placement violated');
+  });
+
+  it('names the differing field and both values (the message has to be actionable)', () => {
+    const doc = validDoc();
+    (doc.tracks[1].clips[0] as MediaClip).transform.scale = 2;
+    const result = validateTimelineDoc(doc);
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const issue = result.error.issues.find((i) => i.message.includes('transition placement'));
+    expect(issue?.message).toContain('scale: 2 vs 1');
+    // Reported on the OUTGOING clip's transform, so the path points at a clip
+    // the user can actually select.
+    expect(issue?.path.join('.')).toBe('tracks.1.clips.0.transform');
+  });
+
+  it('reports the cut ONCE, not once per side', () => {
+    const doc = validDoc();
+    (doc.tracks[1].clips[0] as MediaClip).transform.scale = 2;
+    const result = validateTimelineDoc(doc);
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(
+      result.error.issues.filter((i) => i.message.includes('transition placement')),
+    ).toHaveLength(1);
+  });
+
+  it('accepts differing transforms when there is NO transition on the cut', () => {
+    // The rule is about the cut, not about the track: two ordinary neighbours
+    // are free to be laid out differently and always were.
+    const doc = validDoc();
+    (doc.tracks[1].clips[0] as MediaClip).transitionOut = undefined;
+    (doc.tracks[1].clips[1] as MediaClip).transitionIn = undefined;
+    (doc.tracks[1].clips[0] as MediaClip).transform.scale = 2;
+    expect(validateTimelineDoc(doc).success).toBe(true);
+  });
+
+  it('accepts a transition cut whose clips share a NON-default transform', () => {
+    const doc = validDoc();
+    const shared = { x: 0.1, y: -0.2, scale: 1.5, rotationDeg: 30, anchorX: 0.25, anchorY: 0.75 };
+    (doc.tracks[1].clips[0] as MediaClip).transform = { ...shared };
+    (doc.tracks[1].clips[1] as MediaClip).transform = { ...shared };
+    expect(validateTimelineDoc(doc).success).toBe(true);
+  });
+
+  it('does not fire on a one-sided transition (symmetry is the more basic failure)', () => {
+    const doc = validDoc();
+    (doc.tracks[1].clips[1] as MediaClip).transitionIn = undefined;
+    (doc.tracks[1].clips[0] as MediaClip).transform.scale = 2;
+    const result = validateTimelineDoc(doc);
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join('\n');
+    expect(messages).toContain('transition symmetry violated');
+    expect(messages).not.toContain('transition placement violated');
+  });
+});
+
 describe('effect params (rendering-semantics §4)', () => {
   function docWithEffect(effect: Effect): TimelineDoc {
     const doc = validDoc();
@@ -687,8 +765,13 @@ describe('transform scale bounds (rule 9)', () => {
     // Changing the project resolution can legitimately push an existing clip
     // past maxScaleFor(); the write-time clamp handles that, the document
     // validator must not brick every later op over it.
+    //
+    // The two video clips of validDoc() share a crossfade, so the scale goes on
+    // BOTH sides: leaving one behind would fail the transition-placement rule
+    // instead and this test would stop saying anything about the ceiling.
     const doc = validDoc();
     (doc.tracks[1].clips[0] as MediaClip).transform.scale = 9;
+    (doc.tracks[1].clips[1] as MediaClip).transform.scale = 9;
     expect(validateTimelineDoc(doc).success).toBe(true);
   });
 });

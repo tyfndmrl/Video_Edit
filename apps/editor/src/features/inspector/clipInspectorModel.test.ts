@@ -16,6 +16,7 @@ import {
   type Track,
 } from '@videoedit/timeline-schema';
 import { createEmptyDoc, defaultProjectSettings } from '../../state/docStore';
+import { maxClipScale, TEXT_SIZE_MAX } from '../../state/timelineOps';
 import {
   buildClipInspectorModel,
   commonBoolean,
@@ -277,6 +278,79 @@ describe('buildClipInspectorModel — visual section', () => {
     expect(model.identity?.sourceRange).toBeNull();
     expect(model.visual?.y).toBe(0.2);
     expect(model.audio).toBeNull();
+  });
+});
+
+/**
+ * Derived ceilings (3. tur denetim, blocker 2). The panel used to offer
+ * `maxClipScale(settings)` and the constant TEXT_SIZE_MAX for every clip, so a
+ * text layer could be pushed past MAX_LAYER_DIMENSION: the document saved, the
+ * API queued the export and the worker died on it. The model derives both
+ * ceilings now — per clip, and from the MEASURED box when one is available.
+ */
+describe('buildClipInspectorModel — layer size ceilings', () => {
+  it('keeps the canvas ceiling for media clips', () => {
+    const model = build(docWith([track(V1, 'video', [videoClip(CLIP_A, 0, 5 * US)])]), [CLIP_A]);
+    expect(model.visual?.maxScale).toBe(maxClipScale(defaultProjectSettings));
+    expect(model.visual?.maxScaleFromTextBox).toBe(false);
+  });
+
+  it('tightens the scale ceiling for a large text clip and says where it came from', () => {
+    const clip = textClip(CLIP_A);
+    clip.text.fontSizePx = 2000; // one line -> at least 2400 px tall
+    const model = build(docWith([track(A1, 'overlay', [clip])]), [CLIP_A]);
+
+    expect(model.visual?.maxScale).toBe(3.413);
+    expect(model.visual?.maxScale).toBeLessThan(maxClipScale(defaultProjectSettings));
+    expect(model.visual?.maxScaleFromTextBox).toBe(true);
+    expect(model.text?.maxFontSizePx).toBe(TEXT_SIZE_MAX); // at scale 1 the cap still wins
+  });
+
+  it('derives the font-size ceiling from line count, padding and the clip scale', () => {
+    const clip = textClip(CLIP_A);
+    clip.transform.scale = 4;
+    clip.text.content = 'bir\niki';
+    clip.text.background = { color: '#000000', paddingPx: 92, radiusPx: 0 };
+    const model = build(docWith([track(A1, 'overlay', [clip])]), [CLIP_A]);
+
+    // floor((8192/4 - 2*92) / (1.2 * 2 lines)) = 776 — WHOLE px, because the
+    // panel's size field shows integers and would round a fractional ceiling UP
+    // past itself.
+    expect(model.text?.maxFontSizePx).toBe(776);
+  });
+
+  it('takes the STRICTEST ceiling of a multi-selection (one write hits them all)', () => {
+    const small = textClip(CLIP_A);
+    const huge = textClip(CLIP_B, 4 * US);
+    huge.text.fontSizePx = 2000;
+    const model = build(docWith([track(A1, 'overlay', [small, huge])]), [CLIP_A, CLIP_B]);
+
+    expect(model.visual?.clipIds).toEqual([CLIP_A, CLIP_B]);
+    expect(model.visual?.maxScale).toBe(3.413); // the huge clip's ceiling, not 4.266
+  });
+
+  it('uses a MEASURED box when the caller supplies a measurer', () => {
+    // A long single line is WIDE, not tall — invisible to the font-independent
+    // bound, which is exactly why the panel measures instead of guessing.
+    const clip = textClip(CLIP_A);
+    clip.text.content = 'W'.repeat(300);
+    const doc = docWith([track(A1, 'overlay', [clip])]);
+
+    expect(build(doc, [CLIP_A]).visual?.maxScale).toBe(maxClipScale(defaultProjectSettings));
+
+    const measured = buildClipInspectorModel(doc, new Set([CLIP_A]), assets, () => ({
+      widthPx: 16_500,
+      heightPx: 120,
+    }));
+    expect(measured.visual?.maxScale).toBe(0.496);
+    expect(measured.visual?.maxScaleFromTextBox).toBe(true);
+  });
+
+  it('ignores a measurer that cannot measure (no DOM, font still loading)', () => {
+    const doc = docWith([track(A1, 'overlay', [textClip(CLIP_A)])]);
+    const model = buildClipInspectorModel(doc, new Set([CLIP_A]), assets, () => null);
+    expect(model.visual?.maxScale).toBe(maxClipScale(defaultProjectSettings));
+    expect(model.text?.maxFontSizePx).toBe(TEXT_SIZE_MAX);
   });
 });
 

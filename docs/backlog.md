@@ -10,7 +10,7 @@ M4 dalga 1 denetimi, seçilen MVP özelliklerinden altısının "eksik **ve kay�
 tespit etti. Aşağıdaki tablo bundan sonra her teslim notunun kaynağıdır; buraya yazılmadan
 hiçbir özellik ertelenmiş sayılmaz.
 
-**Son doğrulama: 2026-08-12, `df799df` + teslim düzeltme turu — her satır KODDA
+**Son doğrulama: 2026-08-12, `6ef7498` + 3. tur düzeltmeleri — her satır KODDA
 denetlendi.** "✅ tam"
 yalnızca özelliğin uçtan uca (editör + şema + export) erişilebilir olduğu anlamına gelir;
 bilinen sınırlar `⚠︎` dipnotlarıyla ve
@@ -255,7 +255,7 @@ yazılı ve motorda uygulanıyor. Aşağıdakiler bilerek dışarıda bırakıld
   30 fps'te kenarları ızgarada olan 144 klip kombinasyonundan **32'si (%22)** ızgara dışı süre
   üretiyordu. Kapsam yalnız kırpma değildi: **bölme** ve **asset ekleme** de bir SÜREYE karar
   verdiği için aynı kapıya çarpıyordu.
-  **Düzeltme, 1. tur:** (a) compiler kapısı kenarlara alındı — `ExportCompiler.cs:258-267`,
+  **Düzeltme, 1. tur:** (a) compiler kapısı kenarlara alındı — `ExportCompiler.cs:270-279`,
   artık `timelineStartUs` VE `timelineStartUs + timelineDurationUs` denetleniyor, hata metni
   *"clip … edges are not on the project frame grid"*; (b) editör süreyi kendi başlangıcına göre
   TAM KARE seçiyor (`packages/timeline-schema/src/time.ts`: `frameSpanUs`, `frameSpanCount`,
@@ -325,23 +325,57 @@ JPEG'de `40000` µs bildiriyor — yalnız `null`'a bakan bir düzeltme JPEG'i k
 doküman durumunu ve export tarafını doğruluyordu; **hiçbir test görsel klibin oynatıcı tuvaline
 çizildiğini kontrol etmiyordu**. Golden-frame paketi de export tarafındadır.
 
+### [KAPANDI, 3. tur denetimi] "Desteklenmeyen bileşim kuyruğa hiç girmez" vaadi YANLIŞTI
+
+Baş mimar 3. turda **iki bileşimin export isteğinde 202 alıp canlı worker'da `failed`
+olduğunu ölçtü**; README ve `poc-bilinen-sinirlar.md` §3 ise "kuyruğa hiç girmez, 422 ile
+gerekçe döner" diyordu. **Ortak kök neden tek cümleyle:** bazı derleyici kuralları
+`ExportCompiler.Validate`'te değil `Compile`/raster aşamasında yaşıyordu ve API'nin 422 ön
+kapısı (`ExportEndpoints.StartExport`) yalnız `Validate`'i çağırıyor — dolayısıyla o kurallar
+ön kapıda **görünmüyordu**.
+
+| Kural | Eskiden | Şimdi |
+|---|---|---|
+| Overlay katman tavanı 8192 px (metin/şekil) | yalnız `Compile` (`PlacementOf`) → 202 + worker'da düşüş | `Validate` içinde `EnsureRasterFits` → **422 `overlay-too-large`**; şekilde kutu kesin, metinde ölçüm varsa gerçek bbox yoksa font-bağımsız **alt sınır**; `Compile` kapısı yedek olarak duruyor |
+| Geçişli kliplerin yerleşim eşitliği | yalnız `Compile` → 202 + worker'da düşüş | **doküman değişmezi** (`invariants.checkTransitionPlacement`) + editör yayılımı (`propagateTransformToChain`, `alignTransitionChainTransforms`); `Compile` kapısı yerinde |
+
+**Neden ikisi farklı çözüldü.** Overlay tavanı sunucunun tek başına karar verebileceği bir
+şeydir (bbox ölçülebilir) → ön kapıya taşındı. Yerleşim eşitliği ise bir **doküman
+sözleşmesidir** (`rendering-semantics.md` §5.2, bu turda normatif madde olarak yazıldı):
+kullanıcıya 422 göstermek yanlış ürün kararı olurdu — editör yerleşimi geçiş zincirine yayar,
+kullanıcı hiçbir hata görmez. Sunucuda bu kural hâlâ `Compile` aşamasındadır; **API'ye
+doğrudan yazan bir istemci için ön kapı onu göremez** ve bu artık üç teslim dokümanında da
+açıkça yazılıdır (README dışa aktarma maddesi, `poc-bilinen-sinirlar.md` §3 girişi + tablo
+9. satırı + §4.7).
+
+**Açık kalan (düşük):** yerleşim eşitliği kuralının `Validate`'e de taşınması. Bugün
+gerekmiyor (editör üretmiyor, sessiz bozulma yok, iş açık gerekçeyle düşüyor), ama ön kapının
+"tam" olması için doğru yer orasıdır.
+
 ### Diğerleri (düşük/orta) — hepsi HÂLÂ AÇIK
 
 - **Track yeniden sıralama / yeniden adlandırma yok.** `timelineOps` yalnız `addTrack`
-  (`:549`) ve `deleteTrack` (`:598`) sunar; track sağ tık menüsü (`contextMenu.ts:262`)
+  ve `deleteTrack` sunar; track sağ tık menüsü (`contextMenu.ts:262`)
   yapıştır + üç bayrak + silme ile sınırlı. `addTrack` diziye **sona** ekler (`d.tracks.push`),
   `tracks[0]` en üst katmandır — yani katman sırası ancak track'leri doğru sırada ekleyerek
   kurulabiliyor.
 - **Ölçek animasyonu + dönme bileşimi export'ta reddediliyor**
-  (`ExportCompiler.cs:1837`, `scale-keyframes-with-rotation`). Gerekçe doğru (ffmpeg `rotate`
+  (`ExportCompiler.cs:1867`, `scale-keyframes-with-rotation`). Gerekçe doğru (ffmpeg `rotate`
   çıkış tuvalini bir kez kurar, büyüyen girişi sessizce kırpardı) ve hata tipli — ama
   **editör bunu önceden uyarmıyor**, kullanıcı 422'yi export anında görüyor. Proaktif rozet
   M3 backlog'undaki "kapsam haritasının UI'da gösterimi" maddesiyle aynı ailedendir.
-- **Keyframe örnek bütçesi 60 000** (`ClipAnimation.cs:83`) ve **katman boyut tavanı 8192 px**
-  (`LayerGeometry.cs:81`) — ikisi de tipli hata verir, editörde önden uyarı yok.
+- **Keyframe örnek bütçesi 60 000** (`ClipAnimation.cs:83`) — tipli hata verir
+  (`keyframe-sample-budget`), editörde önden uyarı yok.
+- **Katman boyut tavanı 8192 px** (`LayerGeometry.cs:81`) — *bu satırın "editörde önden uyarı
+  yok" iddiası YANLIŞTI, düzeltildi (3. tur).* Editör ölçek alanının tavanını proje
+  çözünürlüğünden türetiyor (`invariants.maxScaleFor` → `timelineOps.maxClipScale`, 1080p'de
+  ~4.266) ve yazma anında kırpıyor. **Kalan gerçek boşluk:** editörün tavanı ölçek
+  KUTUSUNDAN, derleyicininki ARA TUVALDEN hesaplanır — dönme (~1.41×) ve merkez dışı çapa
+  (2×) ara tuvali büyütür, dolayısıyla dönmüş bir katman editörün izin verdiği ölçekte hâlâ
+  `transform-scale` 422'si alabilir. Editör tarafının dönmeyi hesaba katması açık iş.
 - **Tek export profili.** `ExportProfiles.cs` yalnız `Hd1080p` tanır; 720p/4K/dikey ön ayarı yok.
 - **Ses klibinde görsel keyframe / renk efekti reddediliyor**
-  (`ExportCompiler.cs:1681` `keyframes-audio-clip`, `:1688` `effects-audio-clip`) — doğru
+  (`ExportCompiler.cs:1701` `keyframes-audio-clip`, `:1708` `effects-audio-clip`) — doğru
   davranış, editörde önden engellenmiyor.
 
 ## M6 (Dayanıklılık / hardening)

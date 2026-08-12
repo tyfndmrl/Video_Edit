@@ -4,6 +4,7 @@ using VideoEdit.Contracts;
 using VideoEdit.Contracts.Timeline;
 using VideoEdit.Media;
 using VideoEdit.Media.Export;
+using VideoEdit.Media.Text;
 using MediaEasing = VideoEdit.Media.Easing;
 using MediaKeyframe = VideoEdit.Media.Keyframe;
 
@@ -2257,8 +2258,9 @@ public sealed class ExportCompilerSnapshotTests
     [Fact]
     public void Compile_OversizedTextRaster_ThrowsTypedFeatureError()
     {
-        // Metin kutusu RASTER boyutundan türer; tavan bu yüzden Validate'te değil Compile'da
-        // doğrulanır (Validate raster boyutunu bilmez).
+        // Metin kutusu RASTER boyutundan türer. Tavan artık Validate'te DE var (bkz. aşağıdaki
+        // "Raster katman tavanı" bloğu), ama Compile'daki kapı KALDIRILMADI: burada bbox her
+        // zaman GERÇEKTİR, yani Validate'in alt-sınır yolunun göremediği vaka burada durur.
         var doc = ExportTestDocs.MultiTrackDoc(
             [ExportTestDocs.OverlayTrack(clips: [ExportTestDocs.TextClip(0, 1_000_000)])]);
         var textId = ((TextClip)doc.Tracks[0].Clips[0]).Id;
@@ -2411,6 +2413,180 @@ public sealed class ExportCompilerSnapshotTests
             var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
             Assert.Equal("transform-scale", ex.Feature);
         }
+    }
+
+    // ---------- Raster (metin/şekil) katman tavanı — 3. tur denetim, blocker 2 ----------
+    //
+    // KÖK NEDEN: EnsureLayerFits raster klipleri için YALNIZ Compile'da (PlacementOf)
+    // çağrılıyordu; ValidateGeometry "if (clip.NeedsServerRaster) return;" ile erken
+    // dönüyordu. API'nin 422 ön kapısı yalnız Validate'i çağırdığı için kural GÖRÜNMÜYORDU:
+    // iş kuyruğa giriyor ve dakikalar sonra worker'da düşüyordu (canlı ölçümle doğrulandı).
+    // Aşağıdaki testler kuralın Validate'te olduğunu ve gevşemediğini sabitler.
+
+    /// <summary>Sabit bbox döndüren ölçer — kurulu font olmadan ÖLÇÜMLÜ yolu sürer.</summary>
+    private sealed class StubMeasurer(double widthPx, double heightPx) : ITextRasterService
+    {
+        public Task<RasterResult> RenderAsync(
+            Clip clip, ProjectSettings settings, string outputPath, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Validate raster ÜRETMEZ, yalnız ölçer.");
+
+        public TextLayout Measure(TextClipText text, ProjectSettings settings) =>
+            new([], text.FontSizePx * text.LineHeight, widthPx, heightPx,
+                0, 0, widthPx, heightPx, false);
+    }
+
+    private static TimelineDoc TextDoc(TextClip clip) =>
+        ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips: [clip])]);
+
+    [Fact]
+    public void Validate_HugeTextLayer_IsRejectedWithoutAnyFontInstalled()
+    {
+        // Baş mimarın CANLI ölçümü: fontSizePx 2000 + uzun tek satır + scale 4 → 202 + worker
+        // çöküşü. Alt sınır (fonttan BAĞIMSIZ) 2000*1.2*1 = 2400 px; ×4 = 9600 > 8192 → 422.
+        var clip = ExportTestDocs.TextClip(0, 1_000_000,
+            content: new string('A', 400), transform: ExportTestDocs.Transform(scale: 4));
+        clip.Text!.FontSizePx = 2000;
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(TextDoc(clip)));
+        Assert.Equal("transform-scale", ex.Feature);
+        Assert.Contains("metin", ex.Message);
+        Assert.Contains("8192", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_TextLayerLowerBound_CountsLinesAndBackgroundPadding()
+    {
+        // Alt sınırın iki bileşeni de gerçektir: satır SAYISI (içerik yüksekliği) ve arka plan
+        // payı (kutu her yönde büyür). 400*1.2*8 = 3840; +2*160 = 4160; ×2 = 8320 > 8192.
+        var clip = ExportTestDocs.TextClip(0, 1_000_000,
+            content: string.Join('\n', Enumerable.Repeat("satır", 8)),
+            transform: ExportTestDocs.Transform(scale: 2));
+        clip.Text!.FontSizePx = 400;
+        clip.Text.Background = new Background { Color = "#000000", PaddingPx = 160, RadiusPx = 0 };
+
+        Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(TextDoc(clip)));
+
+        // NEGATİF KONTROL: arka planı kaldır → 3840*2 = 7680 ≤ 8192 → kabul edilir.
+        // (Yani ret payın KENDİSİNDEN geliyor, "büyük metin" genellemesinden değil.)
+        clip.Text.Background = null;
+        Assert.Single(ExportCompiler.Validate(TextDoc(clip)).RasterClips);
+    }
+
+    [Fact]
+    public void Validate_MeasuredTextBox_CatchesWidthOverflowTheLowerBoundCannotSee()
+    {
+        // Genişliğin font-BAĞIMSIZ alt sınırı YOKTUR (glif ilerlemesi fonta bağlıdır), yani
+        // "küçük punto + çok uzun tek satır" ancak ÖLÇÜMLE yakalanır. İki koşum, tek fark ölçer.
+        var clip = ExportTestDocs.TextClip(0, 1_000_000, content: new string('W', 3000));
+        clip.Text!.FontSizePx = 100;
+
+        Assert.Single(ExportCompiler.Validate(TextDoc(clip)).RasterClips);          // ölçer yok → görünmez
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(TextDoc(clip), new StubMeasurer(165_000, 120)));
+        Assert.Equal("overlay-too-large", ex.Feature);   // bbox tek başına raster tavanını aşıyor
+
+        // Ölçüm KABUL de edebilmeli: aynı yol, sığan bir kutuyla 422 ÜRETMEZ.
+        Assert.Single(ExportCompiler.Validate(TextDoc(clip), new StubMeasurer(1200, 120)).RasterClips);
+    }
+
+    [Fact]
+    public void Validate_MeasuredTextBox_AppliesTheScaleCeilingToo()
+    {
+        // Ölçülen kutu raster tavanının ALTINDA (4000 ≤ 8192) ama ölçekle katman tavanını
+        // aşıyor: 4000 × 3 = 12000 → "transform-scale".
+        var clip = ExportTestDocs.TextClip(0, 1_000_000,
+            transform: ExportTestDocs.Transform(scale: 3));
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(TextDoc(clip), new StubMeasurer(4000, 500)));
+        Assert.Equal("transform-scale", ex.Feature);
+        Assert.Contains("12000x1500", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_MeasurementFailure_FallsBackToTheLowerBound_NeverToAFalse422()
+    {
+        // Ölçüm ALTYAPI işidir (font kökü, manifest, Skia). Patlaması kullanıcının belgesini
+        // geçersiz YAPMAZ — alt sınıra düşülür ve geçerli belge kabul edilir.
+        var plan = ExportCompiler.Validate(
+            TextDoc(ExportTestDocs.TextClip(0, 1_000_000)), new ThrowingMeasurer());
+        Assert.Single(plan.RasterClips);
+    }
+
+    private sealed class ThrowingMeasurer : ITextRasterService
+    {
+        public Task<RasterResult> RenderAsync(
+            Clip clip, ProjectSettings settings, string outputPath, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Validate raster ÜRETMEZ, yalnız ölçer.");
+
+        public TextLayout Measure(TextClipText text, ProjectSettings settings) =>
+            throw FontNotFoundException.UnknownId("roboto", "(test)", []);
+    }
+
+    [Fact]
+    public void Validate_TextWithoutUsableMetrics_ThrowsInvalidTimeline()
+    {
+        // Raster hattının kendi kapısı (SkiaOverlayRasterService.RenderText: "geçersiz ölçü")
+        // de Compile-öncesiydi → iş kuyruğa giriyordu. Aynı kural Validate'te.
+        // (NaN/∞ denenmez: TimelineDoc JSON'dan gelir ve System.Text.Json onları YAZAMAZ —
+        //  double.IsFinite kontrolü yine de durur, çünkü kural doküman kaynağından bağımsızdır.)
+        foreach (var (size, lineHeight) in new[] { (0d, 1.2d), (64d, 0d), (-1d, 1.2d) })
+        {
+            var clip = ExportTestDocs.TextClip(0, 1_000_000);
+            clip.Text!.FontSizePx = size;
+            clip.Text.LineHeight = lineHeight;
+            Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(TextDoc(clip)));
+        }
+    }
+
+    [Fact]
+    public void Validate_ShapeLayer_MeasuresTheProjectFrameAsItsBox()
+    {
+        // Şeklin doğal kutusu SÖZLEŞME GEREĞİ proje karesidir (ShapeGeometry) — ölçüm gerekmez,
+        // tavan KESİN hesaplanır: 1920 × 5 = 9600 > 8192 → 422 (worker'da düşmez).
+        var doc = ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips:
+            [ExportTestDocs.ShapeClip(0, 1_000_000, transform: ExportTestDocs.Transform(scale: 5))])]);
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
+        Assert.Equal("transform-scale", ex.Feature);
+        Assert.Contains("şekil", ex.Message);
+
+        // NEGATİF KONTROL: 1920 × 4 = 7680 ≤ 8192 → aynı klip kabul edilir.
+        var fits = ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips:
+            [ExportTestDocs.ShapeClip(0, 1_000_000, transform: ExportTestDocs.Transform(scale: 4))])]);
+        Assert.Single(ExportCompiler.Validate(fits).RasterClips);
+    }
+
+    [Fact]
+    public void Validate_ShapeLayerBelowOnePixel_ThrowsInvalidTimeline()
+    {
+        // Kutu KESİN olduğunda asgari boyut kuralı da Validate'te işler (Compile'daki ile aynı).
+        var doc = ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips:
+            [ExportTestDocs.ShapeClip(0, 1_000_000, transform: ExportTestDocs.Transform(scale: 0.0005))])]);
+        Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(doc));
+    }
+
+    [Fact]
+    public void Validate_OrdinaryOverlayClips_AreStillAccepted()
+    {
+        // Kapının ana negatif kontrolü: 64 px metin + yarım kare şekil + çıkartma REDDEDİLMEZ.
+        var doc = ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips:
+        [
+            ExportTestDocs.TextClip(0, 1_000_000, transform: ExportTestDocs.Transform(scale: 2)),
+            ExportTestDocs.ShapeClip(1_000_000, 1_000_000,
+                transform: ExportTestDocs.Transform(scale: 0.5)),
+            ExportTestDocs.StickerClip(ExportTestDocs.AssetC, 2_000_000, 1_000_000),
+        ])]);
+
+        Assert.Equal(2, ExportCompiler.Validate(doc).RasterClips.Count);
+    }
+
+    [Fact]
+    public void MaxRasterDimension_MirrorsMaxLayerDimension()
+    {
+        // Validate'in bbox kapısı LayerGeometry.MaxLayerDimension'ı kullanır; rasteri gerçekten
+        // üreten taraf ise TextRasterOptions.MaxRasterDimension'ı. İkisi ayrışırsa kapı ya
+        // yanlış 422 verir ya da worker'da düşen bir işi geçirir.
+        Assert.Equal(LayerGeometry.MaxLayerDimension, new TextRasterOptions().MaxRasterDimension);
     }
 
     [Fact]
