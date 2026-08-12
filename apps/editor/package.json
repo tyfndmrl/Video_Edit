@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/check-public-assets.mjs && tsc -b && vite build",
+    "check:public": "node scripts/check-public-assets.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:typecheck": "tsc -p e2e/tsconfig.json --noEmit",

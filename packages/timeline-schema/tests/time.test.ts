@@ -3,11 +3,17 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   clipTimelineDurationUs,
+  floorDurationToFrameSpan,
   formatTimecode,
+  frameSpanCount,
+  frameSpanUs,
   frameToUs,
+  isClipOnFrameGrid,
   isOnFrameGrid,
+  snapDurationToFrameSpan,
   snapUsToFrameGrid,
   solveSpeedChange,
+  sourceSpanForDuration,
   usToFrame,
   type Rational,
 } from '../src/time.js';
@@ -90,8 +96,10 @@ describe('solveSpeedChange', () => {
    * exactly as the C# enforces them:
    *   (i)  ExportCompiler.ValidateMediaClip — `TimelineDurationUs ==
    *        Timecode.ClipTimelineDurationUs(SourceInUs, SourceOutUs, rate)`;
-   *   (ii) ExportCompiler.CompileInternal — `SnapUs(TimelineDurationUs) ==
-   *        TimelineDurationUs`.
+   *   (ii) ExportCompiler.Validate — both clip EDGES on the grid; with the
+   *        default start of 0 that reduces to `SnapUs(duration) == duration`,
+   *        which is what these cases assert. The general case (a clip that does
+   *        NOT start at 0) is covered in the timelineStartUs block below.
    * A solution is only correct when it satisfies BOTH.
    */
   function expectBothGates(
@@ -297,5 +305,135 @@ describe('integer discipline', () => {
     expect(() => clipTimelineDurationUs(0, 100, 0)).toThrow(RangeError);
     expect(() => clipTimelineDurationUs(0, 100, -1)).toThrow(RangeError);
     expect(() => clipTimelineDurationUs(0, 100, Number.NaN)).toThrow(RangeError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Frame SPANS — the rule the export compiler actually enforces
+// ---------------------------------------------------------------------------
+
+describe('frame spans (frameSpanUs / frameSpanCount / isClipOnFrameGrid)', () => {
+  it('proves the premise: the grid is NOT closed under addition outside 25 fps', () => {
+    const fps30 = { num: 30, den: 1 };
+    expect(frameToUs(1, fps30)).toBe(33_333);
+    expect(frameToUs(2, fps30)).toBe(66_667);
+    // Two "one frame" durations do not add up to a grid value...
+    expect(isOnFrameGrid(33_333 + 33_333, fps30)).toBe(false);
+    // ...so a one-frame clip starting on frame 1 is 33_334 us long, and that
+    // length is not a grid value either. Only the EDGES are.
+    expect(frameSpanUs(33_333, 1, fps30)).toBe(33_334);
+    expect(isOnFrameGrid(33_334, fps30)).toBe(false);
+    expect(isClipOnFrameGrid(33_333, 33_334, fps30)).toBe(true);
+    expect(isClipOnFrameGrid(33_333, 33_333, fps30)).toBe(false);
+
+    // 25 fps is the exception that hid the bug: 40_000 us per frame, closed.
+    const fps25 = { num: 25, den: 1 };
+    expect(frameSpanUs(40_000, 1, fps25)).toBe(40_000);
+    expect(isClipOnFrameGrid(40_000, 40_000, fps25)).toBe(true);
+  });
+
+  it('lands the clip END on the grid from EVERY grid start, at every fps', () => {
+    for (const fps of ALL_FPS) {
+      for (let startFrame = 0; startFrame < 12; startFrame++) {
+        const startUs = frameToUs(startFrame, fps);
+        for (let frames = 1; frames <= 12; frames++) {
+          const durationUs = frameSpanUs(startUs, frames, fps);
+          expect(isOnFrameGrid(startUs + durationUs, fps)).toBe(true);
+          expect(isClipOnFrameGrid(startUs, durationUs, fps)).toBe(true);
+          expect(frameSpanCount(startUs, durationUs, fps)).toBe(frames);
+        }
+      }
+    }
+  });
+
+  it('floorDurationToFrameSpan never exceeds the source, snapDurationToFrameSpan is nearest', () => {
+    for (const fps of ALL_FPS) {
+      for (const startFrame of [0, 1, 2, 5]) {
+        const startUs = frameToUs(startFrame, fps);
+        // Real ffprobe durations.
+        for (const sourceUs of [7_307_300, 12_679_333, 4_000_000, 1_001_000]) {
+          const floored = floorDurationToFrameSpan(startUs, sourceUs, fps);
+          expect(floored).toBeGreaterThan(0);
+          expect(floored).toBeLessThanOrEqual(sourceUs);
+          expect(isClipOnFrameGrid(startUs, floored, fps)).toBe(true);
+          // ...and it is the LARGEST such span: one more frame overshoots.
+          const oneMore = frameSpanUs(startUs, frameSpanCount(startUs, floored, fps) + 1, fps);
+          expect(oneMore).toBeGreaterThan(sourceUs);
+
+          const snapped = snapDurationToFrameSpan(startUs, sourceUs, fps);
+          expect(isClipOnFrameGrid(startUs, snapped, fps)).toBe(true);
+          expect(Math.abs(snapped - sourceUs)).toBeLessThanOrEqual(frameToUs(1, fps));
+        }
+      }
+    }
+  });
+
+  it('floorDurationToFrameSpan returns 0 below one frame (callers must refuse)', () => {
+    const fps = { num: 30, den: 1 };
+    expect(floorDurationToFrameSpan(0, 33_332, fps)).toBe(0);
+    expect(floorDurationToFrameSpan(0, 33_333, fps)).toBe(33_333);
+    expect(floorDurationToFrameSpan(0, 0, fps)).toBe(0);
+  });
+
+  it('snapDurationToFrameSpan never returns less than one frame', () => {
+    const fps = { num: 30, den: 1 };
+    expect(snapDurationToFrameSpan(33_333, 1, fps)).toBe(33_334);
+    expect(snapDurationToFrameSpan(0, 1, fps)).toBe(33_333);
+  });
+});
+
+describe('solveSpeedChange with timelineStartUs (edge-based gate)', () => {
+  it('returns a duration whose END is on the grid, for every start x rate x fps', () => {
+    for (const fps of ALL_FPS) {
+      for (const startFrame of [0, 1, 2, 7]) {
+        const startUs = frameToUs(startFrame, fps);
+        for (const rate of [0.5, 0.7, 1, 1.235, 2, 4]) {
+          const solved = solveSpeedChange(0, 3_000_000, rate, fps, { timelineStartUs: startUs });
+          expect(solved, `fps=${fps.num}/${fps.den} start=${startUs} rate=${rate}`).not.toBeNull();
+          // Gate (i): the duration formula stays exact.
+          expect(clipTimelineDurationUs(0, solved!.sourceOutUs, rate)).toBe(solved!.durationUs);
+          // Gate (ii): BOTH edges on the grid.
+          expect(isClipOnFrameGrid(startUs, solved!.durationUs, fps)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('defaults to a start of 0 (the historical behaviour)', () => {
+    const fps = { num: 30, den: 1 };
+    expect(solveSpeedChange(0, 3_000_000, 0.7, fps)!.durationUs).toBe(
+      solveSpeedChange(0, 3_000_000, 0.7, fps, { timelineStartUs: 0 })!.durationUs,
+    );
+  });
+
+  it('NEGATIVE CONTROL: ignoring the start puts the clip END off the grid', () => {
+    const fps = { num: 30, den: 1 };
+    const startUs = 33_333; // frame 1
+    // Solving as if the clip started at 0 (what the shipped code did) gives a
+    // duration that IS a grid value...
+    const asIfAtZero = solveSpeedChange(0, 33_333, 1, fps)!;
+    expect(isOnFrameGrid(asIfAtZero.durationUs, fps)).toBe(true);
+    // ...and whose end, placed at frame 1, is NOT — an HTTP 422 at export.
+    expect(isOnFrameGrid(startUs + asIfAtZero.durationUs, fps)).toBe(false);
+    // Told where the clip sits, the solver answers correctly.
+    const solved = solveSpeedChange(0, 33_333, 1, fps, { timelineStartUs: startUs })!;
+    expect(isClipOnFrameGrid(startUs, solved.durationUs, fps)).toBe(true);
+  });
+});
+
+describe('sourceSpanForDuration', () => {
+  it('inverts the duration formula exactly, or reports that it cannot', () => {
+    for (const rate of [0.1, 0.5, 1, 1.235, 2, 10]) {
+      for (const durationUs of [33_333, 33_334, 40_000, 1_001_000]) {
+        const span = sourceSpanForDuration(durationUs, rate);
+        if (span === null) continue;
+        expect(clipTimelineDurationUs(0, span, rate)).toBe(durationUs);
+      }
+    }
+  });
+
+  it('respects the maximum span (the asset can be shorter than the ask)', () => {
+    expect(sourceSpanForDuration(1_000_000, 1, 999_999)).toBeNull();
+    expect(sourceSpanForDuration(1_000_000, 1, 1_000_000)).toBe(1_000_000);
   });
 });

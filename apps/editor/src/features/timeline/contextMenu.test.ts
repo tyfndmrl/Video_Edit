@@ -523,12 +523,28 @@ describe('menü disabled durumu === op ret gerekçesi (tablo testi)', () => {
     track(V1, 'video', [clip(CLIP_A, 0, 10 * US)], { locked: true }),
     track(V2, 'video', []),
   ]);
+  /**
+   * Bitişik iki klip, GİDEN olanı animasyonlu. Derleyici bu kesimde geçişi
+   * reddeder ("transition-keyframes"), dolayısıyla "Geçiş ekle" öğesi de gri
+   * olmalı — bu satır, kapı sökülürse tabloyu kırmızıya çeviren yerdir.
+   */
+  const animatedNeighbour = docWith([
+    track(V1, 'video', [
+      {
+        ...clip(CLIP_A, 0, 10 * US),
+        keyframes: { opacity: [{ timeUs: 0, value: 1, easing: { type: 'linear' } }] },
+      },
+      clip(CLIP_B, 10 * US, 10 * US),
+    ]),
+    track(A1, 'audio', []),
+  ]);
 
   const cases: { name: string; ctx: TimelineMenuContext }[] = [
     { name: 'klip / playhead içeride', ctx: ctx() },
     { name: 'klip / playhead dışarıda', ctx: ctx({ playheadUs: 40 * US }) },
     { name: 'klip / seçim yok', ctx: ctx({ selection: [] }) },
     { name: 'klip / bitişik komşu (çoğaltmaya yer yok)', ctx: ctx({ doc: twoAdjacent }) },
+    { name: 'klip / komşu animasyonlu (geçiş yasak)', ctx: ctx({ doc: animatedNeighbour }) },
     { name: 'klip / kilitli track', ctx: ctx({ doc: lockedTrack }) },
     { name: 'klip / mutasyon yasak', ctx: ctx({ mutationAllowed: false }) },
     { name: 'track', ctx: ctx({ target: { kind: 'track', trackId: V1 }, doc: twoAdjacent }) },

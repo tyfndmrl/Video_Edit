@@ -689,17 +689,41 @@ public sealed class ExportCompilerSnapshotTests
     }
 
     [Fact]
-    public void Validate_ClipOffProjectFrameGrid_ThrowsInvalidTimeline()
+    public void Validate_ClipEdgeOffProjectFrameGrid_ThrowsInvalidTimeline()
     {
-        // Güvenlik ağı: editör grid'de üretir; grid dışı start/duration frame defterini bozar
-        // ve sessiz snap yerine sözleşme ihlali olarak görünür olmalıdır.
+        // Güvenlik ağı: editör KENARLARI grid'de üretir; grid dışı bir kenar frame defterini
+        // (trim=start_frame:end_frame) bozar ve sessiz snap yerine sözleşme ihlali olarak
+        // görünür olmalıdır.
         var offStart = ExportTestDocs.Doc(fpsNum: 30000, fpsDen: 1001,
             clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 50_000, 0, 1_001_000));
-        Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(offStart));
+        var startError = Assert.Throws<InvalidTimelineException>(
+            () => ExportCompiler.Validate(offStart));
+        Assert.Contains("edges are not on the project frame grid", startError.Message);
 
-        var offDuration = ExportTestDocs.Doc(fpsNum: 30000, fpsDen: 1001,
-            clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000)); // 29.97 frame
-        Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(offDuration));
+        // Başlangıç ızgarada ama BİTİŞ değil (0 + 1_000_000; 29.97'de kare sınırı 1_001_000).
+        var offEnd = ExportTestDocs.Doc(fpsNum: 30000, fpsDen: 1001,
+            clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000));
+        Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(offEnd));
+    }
+
+    [Fact]
+    public void Validate_GridAlignedEdgesWithOffGridDuration_IsAccepted()
+    {
+        // REGRESYON (teslim RED blocker'ı): kapı SÜREYİ değil KENARLARI ister. 30 fps'te
+        // frame1=33_333, frame2=66_667 → frame1'den frame2'ye giden klip 33_334 µs sürer ve
+        // bu değer ızgarada YOKTUR. Eski süre tabanlı kapı, editörün BÖLME/KIRPMA gibi en sıradan
+        // işlemlerinin ürettiği belgeyi reddediyordu (kaydedilebiliyor ama export 422).
+        var doc = ExportTestDocs.Doc(fpsNum: 30, fpsDen: 1, clips: [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 33_333),
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 33_333, 0, 33_334),
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetC, 66_667, 0, 33_333),
+        ]);
+
+        var plan = ExportCompiler.Validate(doc);
+
+        // Defter kesintisiz: 0,1,2,3 — kliplerin µs süreleri farklı olsa da her biri TEK kare.
+        Assert.Equal(100_000, plan.TotalDurationUs);
+        Assert.Equal(3, plan.Tracks[0].Clips.Count);
     }
 
     [Fact]

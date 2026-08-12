@@ -41,6 +41,20 @@ const REASONS: Record<string, string> = {
   'no transition at this cut': 'Bu kesimde geçiş yok',
   'no room for a transition':
     'Geçiş için yer yok — kaynak payı ya da klip süresi 2 kareye yetmiyor',
+  // Dışa aktarıcının reddettiği bileşimlerin ÖN engelleri (timelineOps'taki
+  // "yönlendir-sonra-reddet" bölümü). Metinler ÇIKIŞ YOLUNU da söyler: kapalı
+  // bir düğmenin yanında "olmaz" demek kullanıcıyı çıkmazda bırakıyor.
+  'a keyframed clip cannot take a transition':
+    'Kesimin kliplerinde keyframe var — geçişte iki klip tek akışa katlandığı için '
+    + 'yerleşim sabit olmalı. Önce animasyonu temizleyin',
+  'the clip has a transition':
+    'Bu klipte geçiş var — geçişli kliplerin yerleşimi sabit olmalı, keyframe eklenemez. '
+    + 'Önce geçişi kaldırın',
+  'scale keyframes cannot be combined with rotation':
+    'Ölçek animasyonu ile döndürme birlikte kullanılamaz — dışa aktarım katmanı kırpardı',
+  'rotation cannot be combined with scale keyframes':
+    'Ölçek animasyonu varken döndürme değiştirilemez — önce ölçek animasyonunu temizleyin',
+  'channel is not animatable on this clip': 'Bu klipte bu özellik animasyonlanamaz',
 };
 
 /**
@@ -56,6 +70,8 @@ const NOTICES: Record<string, string> = {
   'transition shortened by clip length':
     'Geçiş süresi komşu klip süresine göre kısaltıldı',
   'transition removed by edit': 'Kesim bozulduğu için geçiş kaldırıldı',
+  'transform applied to transition neighbours':
+    'Yerleşim geçişli komşu klibe de uygulandı (geçişli kliplerin yerleşimi aynı olmalı)',
 };
 
 /** timelineOps `reason` -> kullanıcıya gösterilecek Türkçe uyarı. */

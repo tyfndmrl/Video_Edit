@@ -11,6 +11,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { TimelineMenuActionId, TimelineMenuEntry } from './contextMenu';
 import { setTimelineMenuOpen } from './contextMenuState';
+import { opFailureMessage } from './feedback';
 
 /** Menü kenarının ekrana yapışmaması için pay (px). */
 const EDGE_MARGIN = 6;
@@ -118,6 +119,13 @@ export function TimelineContextMenu({ x, y, entries, onSelect, onClose }: Timeli
             type="button"
             role="menuitem"
             disabled={entry.disabled}
+            // Gri bir öğe NEDEN gri? Gerekçe op'un kendi ret kuralıdır
+            // (contextMenu.blockReason) ve burada Türkçeye çevrilip ipucu
+            // olarak asılır — "tıklıyorum bir şey olmuyor"un panduğu yer
+            // burasıydı. data-* öznitelik testin okuduğu yüzeydir.
+            title={entry.blockReason !== null ? opFailureMessage(entry.blockReason) : undefined}
+            data-block-reason={entry.blockReason ?? undefined}
+            data-testid={`timeline-menu-${entry.id}`}
             className={`flex w-full items-center gap-4 px-3 py-1 text-left text-xs outline-none ${
               entry.danger ? 'text-danger' : 'text-fg'
             } enabled:hover:bg-surface-3 enabled:focus-visible:bg-surface-3 disabled:cursor-default disabled:opacity-40`}

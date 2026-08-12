@@ -92,6 +92,92 @@ export function isOnFrameGrid(timeUs: MicroSec, fps: Rational): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Frame SPANS — durations measured between two grid EDGES
+//
+// The frame grid is not closed under addition outside integer-fps projects: at
+// 30 fps frame 1 is 33_333 us and frame 2 is 66_667 us, so two clips of "one
+// grid frame" (33_333 us) placed back to back end at 66_666 us — a time that is
+// NOT on the grid. A duration is therefore NOT a grid quantity; only the two
+// EDGES of a clip are (`timelineStartUs` and `timelineStartUs + duration`),
+// which is exactly what the export compiler's segment ledger keeps
+// (`trim=start_frame:end_frame`, ExportCompiler.CompileInternal).
+//
+// Every op that decides a duration must therefore pick a whole number of frames
+// RELATIVE TO ITS OWN START and measure the microseconds between the two grid
+// edges — that is what these helpers do. Snapping a duration on its own
+// (`snapUsToFrameGrid(durationUs)`) is the bug they replace.
+// ---------------------------------------------------------------------------
+
+/**
+ * Microseconds spanned by `frames` whole project frames starting at `startUs`.
+ * `startUs` is expected to be on the grid (ops snap it first); the span is
+ * measured edge-to-edge, so `startUs + frameSpanUs(...)` is always on the grid.
+ */
+export function frameSpanUs(startUs: MicroSec, frames: number, fps: Rational): MicroSec {
+  assertInt('startUs', startUs);
+  assertInt('frames', frames);
+  assertRational(fps);
+  return frameToUs(usToFrame(startUs, fps) + frames, fps) - startUs;
+}
+
+/** Whole frames between `startUs` and `startUs + durationUs` on the project grid. */
+export function frameSpanCount(startUs: MicroSec, durationUs: MicroSec, fps: Rational): number {
+  assertInt('startUs', startUs);
+  assertInt('durationUs', durationUs);
+  assertRational(fps);
+  return usToFrame(startUs + durationUs, fps) - usToFrame(startUs, fps);
+}
+
+/**
+ * Nearest whole-frame span at `startUs` (never below `minFrames`, default 1).
+ * Use for durations the user asks for in the abstract (a new overlay clip, a
+ * default length); use `floorDurationToFrameSpan` when the duration is capped
+ * by real source material.
+ */
+export function snapDurationToFrameSpan(
+  startUs: MicroSec,
+  requestedDurationUs: MicroSec,
+  fps: Rational,
+  minFrames = 1,
+): MicroSec {
+  const frames = Math.max(minFrames, frameSpanCount(startUs, Math.max(0, requestedDurationUs), fps));
+  return frameSpanUs(startUs, frames, fps);
+}
+
+/**
+ * Largest whole-frame span at `startUs` that does NOT exceed `maxDurationUs`
+ * (tail snap). Returns 0 when not even one frame fits — the caller must refuse
+ * rather than write a sub-frame clip.
+ *
+ * This is the rule for anything bounded by source material: a clip may end
+ * BEFORE the media runs out, never after (`sourceOutUs <= asset.durationUs`).
+ */
+export function floorDurationToFrameSpan(
+  startUs: MicroSec,
+  maxDurationUs: MicroSec,
+  fps: Rational,
+): MicroSec {
+  if (maxDurationUs <= 0) return 0;
+  let frames = frameSpanCount(startUs, maxDurationUs, fps);
+  // usToFrame rounds HALF-UP, so the frame it names can sit past maxDurationUs.
+  while (frames > 0 && frameSpanUs(startUs, frames, fps) > maxDurationUs) frames--;
+  return frames > 0 ? frameSpanUs(startUs, frames, fps) : 0;
+}
+
+/**
+ * The export compiler's frame-grid gate for ONE clip, verbatim: both EDGES on
+ * the project grid (`ExportCompiler.Validate`). The duration itself is
+ * deliberately not tested — see the block comment above.
+ */
+export function isClipOnFrameGrid(
+  startUs: MicroSec,
+  durationUs: MicroSec,
+  fps: Rational,
+): boolean {
+  return isOnFrameGrid(startUs, fps) && isOnFrameGrid(startUs + durationUs, fps);
+}
+
+// ---------------------------------------------------------------------------
 // Speed change solver (rendering-semantics §1.3 + §1.4)
 //
 // A speed edit has to satisfy TWO rules that the export compiler enforces
@@ -101,9 +187,12 @@ export function isOnFrameGrid(timeUs: MicroSec, fps: Rational): boolean {
 //   (i)  duration formula  — ExportCompiler.ValidateMediaClip:
 //        `timelineDurationUs == roundHalfUp((sourceOutUs - sourceInUs) / rate)`
 //        (identical to `clipTimelineDurationUs` above, invariants.ts rule 3);
-//   (ii) frame grid        — ExportCompiler.CompileInternal:
-//        `SnapUs(timelineDurationUs) == timelineDurationUs`, because the export
-//        segment ledger is kept in WHOLE FRAMES (`trim=start_frame:end_frame`).
+//   (ii) frame grid        — ExportCompiler.Validate:
+//        `SnapUs(start) == start && SnapUs(start + duration) == start + duration`,
+//        because the export segment ledger is kept in WHOLE FRAMES
+//        (`trim=start_frame:end_frame`). The duration is the DIFFERENCE of two
+//        grid edges, which outside integer fps is itself off the grid — hence
+//        `opts.timelineStartUs` below.
 //
 // Applying (i) alone is what produced the shipped defect: at 30 fps a 3 s clip
 // at rate 0.7 yields 4_285_714 us, which is NOT a grid value (the nearest frame
@@ -131,7 +220,7 @@ export function isOnFrameGrid(timeUs: MicroSec, fps: Rational): boolean {
 
 /** A speed change that satisfies BOTH the duration formula and the frame grid. */
 export interface SpeedChangeSolution {
-  /** Timeline duration, exactly on the project fps grid. */
+  /** Timeline duration: a whole-frame span from `opts.timelineStartUs`. */
   durationUs: MicroSec;
   /** `durationUs` expressed as a whole frame count on the project grid. */
   durationFrames: number;
@@ -152,16 +241,27 @@ export interface SpeedChangeSolution {
 const SPEED_SOLVE_MAX_FRAME_OFFSET = 256;
 
 /**
- * Largest source span that satisfies rule (i) for the given grid duration, or
- * `null` when the admissible window holds no usable integer.
+ * Source span (`sourceOutUs - sourceInUs`) that satisfies the duration formula
+ * EXACTLY for `durationUs` at `rate`, closest to the ideal `durationUs * rate`,
+ * or `null` when the admissible window holds no usable integer (below 1x the
+ * window is narrower than a microsecond, so some durations are unreachable).
  *
  * The window is scanned rather than computed with a closed form on purpose:
  * the acceptance test is `clipTimelineDurationUs` itself, so the answer is
  * decided by the SAME floating-point expression the compiler evaluates
  * (`(long)Math.Floor((out - in) / rate + 0.5)`), never by an algebraic
  * paraphrase of it that could disagree in the last bit.
+ *
+ * Exported because every op that RE-FITS a clip onto the grid needs it: moving
+ * a clip changes what "one frame" is worth in microseconds (the grid is not
+ * closed under addition), so the duration changes by a microsecond or two and
+ * the source range has to follow it or rule 3 breaks.
  */
-function sourceSpanForDuration(durationUs: MicroSec, rate: number, maxSpanUs: number): number | null {
+export function sourceSpanForDuration(
+  durationUs: MicroSec,
+  rate: number,
+  maxSpanUs: number = Number.MAX_SAFE_INTEGER,
+): number | null {
   const centre = durationUs * rate;
   const lo = Math.max(1, Math.floor(rate * (durationUs - 0.5)) - 1);
   const hi = Math.min(maxSpanUs, Math.ceil(rate * (durationUs + 0.5)) + 1);
@@ -198,6 +298,11 @@ function sourceSpanForDuration(durationUs: MicroSec, rate: number, maxSpanUs: nu
  *   settles on a shorter frame count.
  * @param minFrames Shortest admissible result in frames (default 1 — a clip
  *   shorter than one frame cannot be rendered).
+ * @param timelineStartUs Where the clip sits on the timeline (default 0). The
+ *   grid rule is about the clip's two EDGES, so the admissible durations are
+ *   the spans measured FROM THIS START (`frameSpanUs`) — at 30 fps a clip
+ *   starting on frame 1 may be 33_334 us long (frame 1 -> frame 2) and may NOT
+ *   be 33_333 us long, the exact opposite of a clip starting at 0.
  * @returns `null` when no frame count in range satisfies both rules, or when
  *   the ceiling leaves no room at all; callers must treat that as a refusal
  *   and leave the document untouched.
@@ -207,7 +312,7 @@ export function solveSpeedChange(
   sourceOutUs: MicroSec,
   rate: number,
   fps: Rational,
-  opts: { maxSourceOutUs?: MicroSec; minFrames?: number } = {},
+  opts: { maxSourceOutUs?: MicroSec; minFrames?: number; timelineStartUs?: MicroSec } = {},
 ): SpeedChangeSolution | null {
   assertInt('sourceInUs', sourceInUs);
   assertInt('sourceOutUs', sourceOutUs);
@@ -218,6 +323,8 @@ export function solveSpeedChange(
   if (sourceOutUs <= sourceInUs) return null;
 
   const minFrames = Math.max(1, opts.minFrames ?? 1);
+  const startUs = opts.timelineStartUs ?? 0;
+  assertInt('timelineStartUs', startUs);
   const maxSpanUs =
     opts.maxSourceOutUs === undefined
       ? Number.MAX_SAFE_INTEGER
@@ -225,18 +332,18 @@ export function solveSpeedChange(
   if (maxSpanUs < 1) return null;
 
   const idealDurationUs = clipTimelineDurationUs(sourceInUs, sourceOutUs, rate);
-  const ideal = Math.max(minFrames, usToFrame(idealDurationUs, fps));
+  const ideal = Math.max(minFrames, frameSpanCount(startUs, idealDurationUs, fps));
   // Nearest-first: when the ideal duration sits above its own frame boundary
   // the next frame up is the closer neighbour, and vice versa. Ties (offset 0)
   // are trivially the closest.
-  const upFirst = idealDurationUs >= frameToUs(ideal, fps);
+  const upFirst = idealDurationUs >= frameSpanUs(startUs, ideal, fps);
 
   for (let offset = 0; offset <= SPEED_SOLVE_MAX_FRAME_OFFSET; offset++) {
     const candidates =
       offset === 0 ? [ideal] : upFirst ? [ideal + offset, ideal - offset] : [ideal - offset, ideal + offset];
     for (const frames of candidates) {
       if (frames < minFrames) continue;
-      const durationUs = frameToUs(frames, fps);
+      const durationUs = frameSpanUs(startUs, frames, fps);
       if (durationUs <= 0) continue;
       const span = sourceSpanForDuration(durationUs, rate, maxSpanUs);
       if (span === null) continue;

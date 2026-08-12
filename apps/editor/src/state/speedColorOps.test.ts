@@ -334,30 +334,51 @@ describe('setClipSpeed — export compiler gates (cross-boundary)', () => {
     expectClearsBothExportGates();
   });
 
-  it('a half-frame snap that overruns the neighbour REFUSES — it never overlaps, and never quietly shortens', () => {
-    // Documented residual, pinned so it cannot drift into an overlap.
-    //
-    // 30 fps: frame 2 = 66_667us, frame 4 = 133_333us, so the room between two
-    // grid-aligned clips is 66_666us — NOT itself a grid value (the grid is not
-    // closed under subtraction outside 25 fps). At 0.5x the ideal duration
-    // fills that room EXACTLY, which is the rate the Inspector advertises as
-    // "the slowest without ripple" (clipInspectorModel.minRateWithoutRipple);
-    // the nearest frame above it is one microsecond too long.
-    //
-    // Both alternatives to refusing are worse: overlapping breaks invariant 1
-    // (and the export), and dropping to the next admissible frame count below
-    // the room silently halves this clip. So the op refuses, atomically, with
-    // the reason the UI turns into the "Sonrakileri kaydır" (ripple) offer.
+  it('fills the room between two neighbours EXACTLY when the rate allows it', () => {
+    // 30 fps: frame 2 = 66_667 us, frame 4 = 133_333 us, so the room between
+    // two grid-aligned clips is 66_666 us — NOT itself a grid value (the grid
+    // is not closed under subtraction outside integer fps). It IS a legal
+    // length here though, because a length is the distance between two EDGES:
+    // frames 2..4 measured from frame 2. The solver is told where the clip
+    // starts, so at 0.5x (the rate the Inspector advertises as "the slowest
+    // without ripple", clipInspectorModel.minRateWithoutRipple) the clip lands
+    // on exactly that length instead of one microsecond past it.
+    const startUs = 66_667;
+    const nextStartUs = 133_333;
+    load([
+      track(V1, 'video', [
+        // Frame 2 -> 3 (33_333 us) and frame 4 -> 5 (33_334 us). The two
+        // lengths differ although both clips are one frame long: that IS the
+        // grid, and both clips sit on it edge to edge.
+        videoClip(CLIP_A, startUs, 33_333, { sourceInUs: 0, sourceOutUs: 33_333 }),
+        videoClip(CLIP_B, nextStartUs, 33_334, { sourceInUs: 0, sourceOutUs: 33_334 }),
+      ]),
+    ]);
+
+    expect(setClipSpeed([CLIP_A], 0.5)).toEqual({ ok: true });
+    expect(findMedia(CLIP_A).timelineDurationUs).toBe(66_666);
+    const a = findMedia(CLIP_A);
+    expect(a.timelineStartUs + a.timelineDurationUs).toBe(nextStartUs); // butt-joined
+    expect(findMedia(CLIP_B).timelineStartUs).toBe(nextStartUs);
+    expectClearsBothExportGates();
+  });
+
+  it('a slow-down that does NOT fit refuses atomically — it never overlaps, and never quietly shortens', () => {
+    // Same geometry, but 0.25x asks for 4 frames where only 2 fit. Both
+    // alternatives to refusing are worse: overlapping breaks invariant 1 (and
+    // the export), and dropping to the next admissible frame count below the
+    // room silently halves the clip. So the op refuses, atomically, with the
+    // reason the UI turns into the "Sonrakileri kaydır" (ripple) offer.
     const startUs = 66_667;
     const nextStartUs = 133_333;
     load([
       track(V1, 'video', [
         videoClip(CLIP_A, startUs, 33_333, { sourceInUs: 0, sourceOutUs: 33_333 }),
-        videoClip(CLIP_B, nextStartUs, 33_333, { sourceInUs: 0, sourceOutUs: 33_333 }),
+        videoClip(CLIP_B, nextStartUs, 33_334, { sourceInUs: 0, sourceOutUs: 33_334 }),
       ]),
     ]);
 
-    expect(setClipSpeed([CLIP_A], 0.5)).toEqual({
+    expect(setClipSpeed([CLIP_A], 0.25)).toEqual({
       ok: false,
       reason: 'speed change overlaps the next clip',
     });
@@ -365,16 +386,19 @@ describe('setClipSpeed — export compiler gates (cross-boundary)', () => {
     expect(findMedia(CLIP_B).timelineStartUs).toBe(nextStartUs);
     expect(historyLength()).toBe(0);
 
-    // ...and the ripple escape hatch does work, still clearing both gates.
-    // Note the length: at 0.5x on a 30 fps grid only every THIRD frame count is
-    // reachable (the admissible source window is half a microsecond wide), so a
-    // one-frame source becomes three frames, not two — and because that is more
-    // than the half-frame the snap alone costs, the op SAYS so.
-    expect(setClipSpeed([CLIP_A], 0.5, { ripple: true })).toEqual({
+    // ...and the ripple escape hatch does work, still clearing both gates —
+    // including clip B, which is rippled by whole FRAMES and re-fitted so its
+    // own end stays on the grid.
+    // The frame count it settles on is NOT the nearest one, so the op SAYS so.
+    expect(setClipSpeed([CLIP_A], 0.25, { ripple: true })).toEqual({
       ok: true,
       notice: SPEED_DURATION_SNAPPED,
     });
+    // Only every third frame count is reachable at 0.25x (the admissible
+    // source window is a quarter of a microsecond wide), so the clip lands on
+    // 3 frames measured from frame 2 — 100_000 us — not on the 4 it asked for.
     expect(findMedia(CLIP_A).timelineDurationUs).toBe(100_000);
+    expect(findMedia(CLIP_B).timelineStartUs).toBe(200_000); // frame 6
     expectClearsBothExportGates();
   });
 

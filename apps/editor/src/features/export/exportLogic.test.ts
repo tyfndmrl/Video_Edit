@@ -9,11 +9,13 @@ import {
   clampPercent,
   exportAutosaveGate,
   exportBlockReason,
+  exportFrameGridBlockReason,
   mapExportError,
   stageLabel,
   statusBadgeClass,
   statusLabel,
 } from './exportLogic';
+import type { TimelineDoc } from '@videoedit/timeline-schema';
 
 describe('mapExportError (ExportDialog message)', () => {
   it('422: surfaces the ProblemDetails detail in the unsupported-feature message', () => {
@@ -154,5 +156,75 @@ describe('clampPercent', () => {
   it('treats non-finite input as 0', () => {
     expect(clampPercent(Number.NaN)).toBe(0);
     expect(clampPercent(Number.POSITIVE_INFINITY)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Frame-grid pre-flight (the gate that used to exist with no caller)
+// ---------------------------------------------------------------------------
+
+describe('exportFrameGridBlockReason', () => {
+  const PROJECT_ID = '01890000-0000-7000-8000-000000000001';
+  const TRACK = '01890000-0000-7000-8000-000000000101';
+  const CLIP = '01890000-0000-7000-8000-000000000201';
+
+  function docWith(startUs: number, durationUs: number): TimelineDoc {
+    return {
+      schemaVersion: 1,
+      projectId: PROJECT_ID,
+      settings: {
+        width: 1920,
+        height: 1080,
+        fps: { num: 30, den: 1 },
+        audioSampleRate: 48000,
+        backgroundColor: '#000000',
+      },
+      tracks: [
+        {
+          id: TRACK,
+          type: 'video',
+          muted: false,
+          hidden: false,
+          locked: false,
+          clips: [
+            {
+              id: CLIP,
+              kind: 'video',
+              assetId: '01890000-0000-7000-8000-00000000000a',
+              timelineStartUs: startUs,
+              timelineDurationUs: durationUs,
+              sourceInUs: 0,
+              sourceOutUs: durationUs,
+              speed: { rate: 1 },
+              audio: null,
+              transform: { x: 0, y: 0, scale: 1, rotationDeg: 0, anchorX: 0.5, anchorY: 0.5 },
+              keyframes: {},
+              effects: [],
+              opacity: 1,
+            },
+          ],
+        },
+      ],
+      markers: [],
+    };
+  }
+
+  it('passes a document whose clip EDGES are on the grid (off-grid length and all)', () => {
+    // Frame 1 -> frame 2 at 30 fps: 33_334 us long, which is not itself a grid
+    // value. This is what a split produces and it must NOT be blocked.
+    expect(exportFrameGridBlockReason(docWith(33_333, 33_334))).toBeNull();
+  });
+
+  it('explains an off-grid clip in Turkish instead of letting the render 422 it', () => {
+    const reason = exportFrameGridBlockReason(docWith(33_333, 33_333));
+    expect(reason).not.toBeNull();
+    expect(reason).toContain('kare ızgarasına oturmuyor');
+    expect(reason).toContain('66666'); // the offending edge
+    expect(reason).toContain('66667'); // the nearest frame boundary
+  });
+
+  it('names the START when that is the edge that is off', () => {
+    const reason = exportFrameGridBlockReason(docWith(1, 33_332));
+    expect(reason).toContain('başlangıcı');
   });
 });

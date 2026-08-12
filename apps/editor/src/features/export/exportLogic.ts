@@ -4,8 +4,33 @@
  * Kept DOM-free so it is unit-testable in the node vitest environment
  * (the repo has no testing-library; components stay thin over these).
  */
+import {
+  exportFrameGridIssues,
+  frameGridIssueSummary,
+  type TimelineDoc,
+} from '@videoedit/timeline-schema';
 import type { ExportJobStatusDto } from '../../entities/exports';
 import type { AutosaveStatus } from '../../state/autosave';
+
+// ---------------------------------------------------------------------------
+// Frame-grid pre-flight (the compiler's gate, run before the request)
+// ---------------------------------------------------------------------------
+
+/**
+ * Why this document cannot be exported yet, or null when it clears the export
+ * compiler's frame-grid gate.
+ *
+ * The gate lives in the shared schema package (`exportFrameGridIssues`) and is
+ * a verbatim replica of `ExportCompiler.Validate`. Running it HERE turns the
+ * one failure mode the user cannot diagnose — a render job that comes back
+ * "422 unsupported" minutes later — into a sentence in the dialog, before
+ * anything is queued. Documents from older revisions (or from a project whose
+ * fps was changed after the fact) are exactly the ones that trip it.
+ */
+export function exportFrameGridBlockReason(doc: TimelineDoc): string | null {
+  const issues = exportFrameGridIssues(doc);
+  return issues.length === 0 ? null : frameGridIssueSummary(issues);
+}
 
 // ---------------------------------------------------------------------------
 // Autosave awareness (export must render the last SAVED document)

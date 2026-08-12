@@ -14,6 +14,26 @@ export function toAssetKind(kind: AssetDto['kind']): AssetKind {
   return kind === 'audio' || kind === 'image' ? kind : 'video';
 }
 
+/**
+ * `durationMicros` -> `durationUs`, narrowed to `number | undefined`.
+ *
+ * The DTO type says `number | undefined`, but the WIRE says otherwise: the API
+ * serializes a missing duration as JSON `null` (AssetDto.DurationMicros is
+ * `long?` and the asset endpoints do not ignore nulls), and a still image has
+ * no duration to report — ffprobe's `png_pipe` demuxer emits none at all.
+ *
+ * Storing that null is not a cosmetic type lie. `durationUs` feeds the source
+ * bounds invariant (`sourceOutUs > assetDuration`), and in JS `4000000 > null`
+ * is TRUE — so adding a photo to the timeline made the editor's own validator
+ * reject the document it had just written, assertDocValidDev threw, and the
+ * new clip could not even be selected. Cut it at the source: `null` never
+ * enters the store, so no downstream comparison can be poisoned by it.
+ */
+function toDurationUs(dto: AssetDto): number | undefined {
+  const raw: number | null | undefined = dto.durationMicros;
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
+
 export function toAssetSummary(dto: AssetDto): AssetSummary {
   return {
     id: dto.id,
@@ -21,7 +41,7 @@ export function toAssetSummary(dto: AssetDto): AssetSummary {
     name: dto.fileName,
     status: dto.status,
     progress: dto.progress,
-    durationUs: dto.durationMicros,
+    durationUs: toDurationUs(dto),
     width: dto.width,
     height: dto.height,
     errorCode: dto.errorCode,

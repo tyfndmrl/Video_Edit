@@ -33,15 +33,22 @@ import { projectDurationUs, transitionAtPlayhead } from './core/resolve';
 import { previewShortfallNote } from './core/scheduler';
 import { transitionTypeLabel } from '../timeline/transitions';
 import { readIsPlaying, readUserSeekSeq } from './editorBridge';
+import { previewSourceUrl } from './previewSource';
 import { TransformGizmo } from './TransformGizmo';
 
-/** AssetResolver backed by assetStore (proxy presigned URLs, media-urls sync). */
+/**
+ * AssetResolver backed by assetStore (presigned URLs from the media-urls sync).
+ *
+ * The URL is chosen by asset KIND (previewSource.ts): video/audio decode the
+ * proxy, stills decode the poster — the worker never produces a proxy for an
+ * image, so a blanket `proxyUrl` read left every photo and sticker undrawn.
+ */
 function resolveAsset(assetId: string): ReturnType<AssetResolver> {
   const asset = useAssetStore.getState().getAsset(assetId);
   if (!asset) return null;
   return {
     kind: asset.kind,
-    url: asset.status === 'ready' ? (asset.proxyUrl ?? null) : null,
+    url: previewSourceUrl(asset),
     durationUs: asset.durationUs,
     width: asset.width,
     height: asset.height,
@@ -100,6 +107,20 @@ export function PlayerPanel() {
     applied: 1,
   });
   /**
+   * Motor kurulumu BAŞARISIZ olduğunda gösterilecek gerekçe (null = motor ayakta).
+   *
+   * Neden state, neden throw değil: `new VideoPlaybackEngine` WebGL2 yoksa
+   * fırlatır (compositor.ts "WebGL2 is not available"). Effect içinden fırlayan
+   * hata React'te bir üst hata sınırına gider ve — sınır yoksa — TÜM uygulamayı
+   * söker. Donanım hızlandırması kapalı bir laptopta, uzak masaüstünde ya da
+   * kara listedeki bir GPU'da editörün TAMAMI (timeline, inspector, dışa
+   * aktarma) çalışabilir durumdadır; yalnız ÖNİZLEME çalışamaz. Bu yüzden hata
+   * burada yakalanıp panele dönüştürülür: kayıp yerel kalır.
+   */
+  const [engineError, setEngineError] = useState<string | null>(null);
+  /** "Yeniden dene" sayacı — motor kurulum effect'ini yeniden tetikler. */
+  const [engineAttempt, setEngineAttempt] = useState(0);
+  /**
    * Flush the engine's DEBOUNCED doc reload on demand. Assigned by the mount
    * effect below; the gizmo calls it after every drag step so the picture keeps
    * up with the box instead of trailing it by the debounce.
@@ -110,7 +131,15 @@ export function PlayerPanel() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const engine = new VideoPlaybackEngine(canvas);
+    let engine: VideoPlaybackEngine;
+    try {
+      engine = new VideoPlaybackEngine(canvas);
+    } catch (err) {
+      // Önizleme düştü; uygulamanın geri kalanı AYAKTA kalır.
+      setEngineError(describeEngineFailure(err));
+      return;
+    }
+    setEngineError(null);
     engineRef.current = engine;
     registerPlaybackEngine(engine);
 
@@ -219,7 +248,7 @@ export function PlayerPanel() {
       engineRef.current = null;
       engine.dispose();
     };
-  }, []);
+  }, [engineAttempt]);
 
   // ---- autoplay-blocked: retry on the FIRST real user gesture ----
   // Gestures INSIDE the panel already flow through togglePlayback (the panel
@@ -251,6 +280,12 @@ export function PlayerPanel() {
   );
   const flushPreviewLoad = useCallback(() => flushLoadRef.current(), []);
 
+  /** Motoru yeniden kurmayı dener (tuval yeniden bağlandıktan sonra effect koşar). */
+  const retryEngine = useCallback(() => {
+    setEngineError(null);
+    setEngineAttempt((n) => n + 1);
+  }, []);
+
   // Honest degradation, computed by a PURE function (core/scheduler) so the
   // exact wording is unit-tested rather than eyeballed.
   const shortfall = previewShortfallNote(previewStatus);
@@ -261,20 +296,59 @@ export function PlayerPanel() {
         ref={stageRef}
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black p-2"
         onClick={togglePlayback}
-        title={isPlaying ? 'Duraklat (Space)' : 'Oynat (Space)'}
+        title={
+          engineError !== null
+            ? 'Önizleme kullanılamıyor'
+            : isPlaying
+              ? 'Duraklat (Space)'
+              : 'Oynat (Space)'
+        }
       >
-        <canvas
-          ref={canvasRef}
-          className="max-h-full max-w-full object-contain"
-          style={{ aspectRatio: `${settings.width} / ${settings.height}` }}
-        />
-        <TransformGizmo
-          containerRef={stageRef}
-          canvasRef={canvasRef}
-          getSourceSize={getSourceSize}
-          flushPreviewLoad={flushPreviewLoad}
-          isPlaying={isPlaying}
-        />
+        {/* Motor kurulamadıysa tuval yerine GEREKÇE gösterilir. Tuvali boş
+            bırakmak "önizleme siyah, neden?" sorusunu üretirdi; uygulamanın
+            geri kalanı (timeline, inspector, dışa aktarma) çalışmaya devam
+            eder ve panel bunu açıkça söyler. */}
+        {engineError !== null ? (
+          <div
+            data-testid="player-engine-error"
+            role="alert"
+            className="max-h-full max-w-lg overflow-auto rounded border border-edge bg-surface-1 p-4 text-center"
+          >
+            <p className="text-sm font-medium text-fg">Önizleme başlatılamadı</p>
+            <p className="mt-2 text-xs leading-relaxed text-fg-muted">{engineError}</p>
+            <p className="mt-2 text-[11px] leading-relaxed text-fg-muted">
+              Editörün geri kalanı çalışmaya devam eder: timeline'da düzenleme yapabilir,
+              özellikleri değiştirebilir ve dışa aktarabilirsiniz — dışa aktarma sunucuda
+              (ffmpeg) yapıldığı için bu sınırdan etkilenmez. Yalnızca oynatıcı görüntüsü yoktur.
+            </p>
+            <button
+              type="button"
+              data-testid="player-engine-retry"
+              className="mt-3 rounded border border-edge px-2.5 py-1 text-xs text-fg hover:bg-surface-3"
+              onClick={(e) => {
+                e.stopPropagation(); // sahnenin oynat/duraklat tıklaması tetiklenmesin
+                retryEngine();
+              }}
+            >
+              Yeniden dene
+            </button>
+          </div>
+        ) : (
+          <>
+            <canvas
+              ref={canvasRef}
+              className="max-h-full max-w-full object-contain"
+              style={{ aspectRatio: `${settings.width} / ${settings.height}` }}
+            />
+            <TransformGizmo
+              containerRef={stageRef}
+              canvasRef={canvasRef}
+              getSourceSize={getSourceSize}
+              flushPreviewLoad={flushPreviewLoad}
+              isPlaying={isPlaying}
+            />
+          </>
+        )}
         {blocked && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <span className="rounded bg-black/70 px-3 py-1.5 text-xs text-white">
@@ -327,8 +401,10 @@ export function PlayerPanel() {
       <div className="flex items-center gap-3 border-t border-edge bg-surface-2 px-3 py-1.5 text-xs text-fg-muted">
         <button
           type="button"
-          className="flex h-6 w-6 items-center justify-center rounded border border-edge text-fg hover:bg-surface-3"
+          className="flex h-6 w-6 items-center justify-center rounded border border-edge text-fg hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-40"
           onClick={togglePlayback}
+          disabled={engineError !== null}
+          title={engineError !== null ? 'Önizleme motoru kurulamadı' : undefined}
           aria-label={isPlaying ? 'Duraklat' : 'Oynat'}
         >
           {isPlaying ? <PauseIcon /> : <PlayIcon />}
@@ -346,6 +422,27 @@ export function PlayerPanel() {
       </div>
     </div>
   );
+}
+
+/**
+ * Motor kurulum hatasını KULLANICININ yapabileceği bir eyleme çevirir.
+ *
+ * WebGL2 eksikliği tek başına en olası neden ve tek çözülebilir olan: donanım
+ * hızlandırması kapalıysa (uzak masaüstü, pil tasarrufu profili, kara listeye
+ * alınmış sürücü) kullanıcı bunu kendi açabilir. Diğer hatalarda ham mesaj
+ * gösterilir — uydurma bir teşhis, sessizlikten daha kötüdür.
+ */
+function describeEngineFailure(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/webgl2/i.test(message)) {
+    return (
+      'Tarayıcınız veya GPU\'nuz WebGL2 desteklemiyor — donanım hızlandırmasını açın ' +
+      '(Chrome: chrome://gpu adresinden durumu görebilir, Ayarlar > Sistem > "Kullanılabilir ' +
+      'olduğunda donanım hızlandırmayı kullan" seçeneğini açabilirsiniz). Uzak masaüstü ' +
+      'oturumlarında ve bazı sanal makinelerde WebGL2 kapalıdır.'
+    );
+  }
+  return `Oynatma motoru kurulamadı: ${message}`;
 }
 
 function PlayIcon() {

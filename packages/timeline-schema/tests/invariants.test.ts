@@ -737,43 +737,63 @@ describe('exportFrameGridIssues (compiler gate replica)', () => {
     expect(exportFrameGridIssues(validDoc())).toEqual([]);
   });
 
-  it('reports a duration that is off the project frame grid', () => {
+  it('reports a clip END that is off the project frame grid', () => {
     const doc = validDoc();
     const clip = doc.tracks[1].clips[0] as MediaClip;
-    // 33_334us is one microsecond past frame 1 at 30 fps (33_333us) — exactly
-    // the shape `timelineDurationUs = roundHalfUp((out-in)/rate)` produces on
-    // its own, and exactly what ExportCompiler.CompileInternal rejects.
+    // Start 0, duration 33_334 -> end 33_334, one microsecond past frame 1 at
+    // 30 fps (33_333 us). That is exactly what ExportCompiler.Validate rejects,
+    // because its ledger turns the end into a frame number.
+    clip.timelineStartUs = 0;
     clip.timelineDurationUs = 33_334;
     clip.sourceOutUs = 33_334;
+    clip.keyframes = {};
     const issues = exportFrameGridIssues(doc);
     expect(issues).toHaveLength(1);
     expect(issues[0]).toMatchObject({
       trackIndex: 1,
       clipIndex: 0,
       clipId: clip.id,
-      field: 'timelineDurationUs',
+      field: 'timelineEndUs',
       valueUs: 33_334,
       snappedUs: 33_333,
     });
   });
 
-  it('reports an off-grid start as well, and both fields on the same clip', () => {
+  it('reports an off-grid start as well, and both edges on the same clip', () => {
     const doc = validDoc();
     const clip = doc.tracks[1].clips[0] as MediaClip;
     clip.timelineStartUs = 1;
     clip.timelineDurationUs = 33_334;
     clip.sourceOutUs = 33_334;
+    clip.keyframes = {};
     expect(exportFrameGridIssues(doc).map((i) => i.field)).toEqual([
       'timelineStartUs',
-      'timelineDurationUs',
+      'timelineEndUs',
     ]);
   });
 
+  it('accepts an off-grid DURATION when both edges are on the grid', () => {
+    // THE regression this gate was rewritten for. At 30 fps frame 1 is 33_333
+    // us and frame 2 is 66_667 us, so a clip from frame 1 to frame 2 is 33_334
+    // us long — a duration that is NOT a grid value. The old duration-based
+    // gate rejected it, which made splitting a clip produce a document the
+    // editor saved happily (PUT 200) and the export refused (422).
+    const doc = validDoc();
+    doc.tracks[1].clips = [
+      mediaClip({ timelineStartUs: 0, timelineDurationUs: 33_333 }),
+      mediaClip({ timelineStartUs: 33_333, timelineDurationUs: 33_334 }),
+      mediaClip({ timelineStartUs: 66_667, timelineDurationUs: 33_333 }),
+    ];
+    expect(exportFrameGridIssues(doc)).toEqual([]);
+    // ... and the same document is a legal document.
+    expect(validateTimelineDoc(doc, DURATIONS).success).toBe(true);
+  });
+
   it('is not wired into validateTimelineDoc (documented, deliberate)', () => {
-    // The gate cannot be a document invariant: outside 25 fps the grid is not
-    // closed under addition, so adjacent clips (which transitions REQUIRE)
-    // cannot all have grid starts and grid durations at once. The document
-    // below is a legitimate schema-valid document that the gate still flags.
+    // The gate stays opt-in: a document can arrive from an older revision (or
+    // from a project whose fps changed) with clips off the grid, and failing
+    // every later edit would be worse than one actionable message. The document
+    // below is schema-valid and still flagged by the gate.
     const doc = validDoc();
     const clip = doc.tracks[1].clips[0] as MediaClip;
     clip.timelineDurationUs = 33_334;

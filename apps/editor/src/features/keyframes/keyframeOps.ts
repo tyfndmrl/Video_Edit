@@ -46,7 +46,9 @@ import {
 } from '../../state/timelineOps';
 import {
   CHANNEL_META,
+  REASON_CHANNEL_UNAVAILABLE,
   channelBaseValue,
+  channelBlockReason,
   channelIsAvailable,
   channelKeyframes,
   channelValueAt,
@@ -63,7 +65,7 @@ const fail = (reason: string): OpResult => ({ ok: false, reason });
 /** Reason codes (stable English, like every other op family). */
 export const REASON_CLIP_NOT_FOUND = 'clip not found';
 export const REASON_TRACK_LOCKED = 'track is locked';
-export const REASON_CHANNEL_UNAVAILABLE = 'channel is not animatable on this clip';
+export { REASON_CHANNEL_UNAVAILABLE } from './keyframeModel';
 export const REASON_NO_KEYFRAME = 'no keyframe at this time';
 export const REASON_DUPLICATE = 'a keyframe already exists at this time';
 export const REASON_INVALID_VALUE = 'invalid keyframe value';
@@ -76,17 +78,50 @@ interface Target {
   settings: Pick<ProjectSettings, 'width' | 'height'>;
 }
 
-/** Resolve + gate a clip/channel pair on a DRAFT document. */
+/**
+ * Resolve + gate a clip/channel pair on a DRAFT document.
+ *
+ * `mode` is the whole point of the split:
+ *  - 'create' — a NEW keyframe is about to appear, so every rule applies,
+ *    including the combinations the export compiler rejects
+ *    (`channelBlockReason`: a transitioned clip, scale-with-rotation).
+ *  - 'edit'   — an EXISTING keyframe is moved / re-valued / removed. Those must
+ *    stay possible even on a clip that is already in a forbidden combination
+ *    (an older project, or a clip that got there before this gate existed);
+ *    otherwise the only way out — clearing the channel — would be locked too.
+ */
 function target(
   d: TimelineDoc,
   clipId: Uuid,
   channel: KeyframeChannel,
+  mode: 'create' | 'edit' = 'edit',
 ): Target | { error: string } {
   const located = locateClip(d, clipId);
   if (located === null) return { error: REASON_CLIP_NOT_FOUND };
   if (located.track.locked) return { error: REASON_TRACK_LOCKED };
-  if (!channelIsAvailable(located.clip, channel)) return { error: REASON_CHANNEL_UNAVAILABLE };
+  if (mode === 'create') {
+    const blocked = channelBlockReason(located.clip, channel);
+    if (blocked !== null) return { error: blocked };
+  } else if (!channelIsAvailable(located.clip, channel)) {
+    return { error: REASON_CHANNEL_UNAVAILABLE };
+  }
   return { clip: located.clip, fps: d.settings.fps, settings: d.settings };
+}
+
+/**
+ * Why a keyframe cannot be ADDED at `(clipId, channel)`, or null.
+ *
+ * Same contract as `state/timelineOps`' `*BlockReason` helpers: the Inspector's
+ * diamond is disabled with EXACTLY the rule the op enforces, so the panel never
+ * offers a click that then fails.
+ */
+export function addKeyframeBlockReason(
+  d: TimelineDoc,
+  clipId: Uuid,
+  channel: KeyframeChannel,
+): string | null {
+  const t = target(d, clipId, channel, 'create');
+  return isError(t) ? t.error : null;
 }
 
 function isError(t: Target | { error: string }): t is { error: string } {
@@ -231,7 +266,7 @@ export function applyAddKeyframeToDraft(
   timeUs: MicroSec,
   value?: number,
 ): OpResult {
-  const t = target(d, clipId, channel);
+  const t = target(d, clipId, channel, 'create');
   if (isError(t)) return fail(t.error);
   const { clip } = t;
   const at = clampClipTimeUs(clip, timeUs);
@@ -372,7 +407,13 @@ export function applyTransformPatchToDraft(
       baseKeys++;
     }
   }
-  if (baseKeys > 0) applyClipTransformToDraft(d, [clipId], base);
+  if (baseKeys > 0) {
+    // The base half can REFUSE (rotation on a scale-animated clip — the export
+    // compiler crops that combination). Swallowing it here would turn a refusal
+    // into "the gizmo did nothing", which is the defect the guard removes.
+    const written = applyClipTransformToDraft(d, [clipId], base);
+    if (!written.ok) return written;
+  }
   return baseKeys > 0 || animatedWrites > 0 ? OK : fail('empty transform patch');
 }
 

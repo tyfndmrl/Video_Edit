@@ -54,6 +54,8 @@ import {
   maxClipScale,
   resetClipColorAdjust,
   resetClipTransform,
+  rotationBlockReason,
+  transitionChainSiblings,
   setClipAudio,
   setClipColorAdjust,
   setClipColorAdjustEnabled,
@@ -101,9 +103,12 @@ import {
 
 const US = 1_000_000;
 
+/** Stable empty list: a fresh `[]` would re-run the guard memos every render. */
+const EMPTY_IDS: readonly string[] = [];
+
 /** An op result the user has to see, tagged with the section that caused it. */
 interface OpMessage {
-  source: 'speed' | 'color';
+  source: 'speed' | 'color' | 'visual';
   text: string;
   kind: 'error' | 'notice';
 }
@@ -174,6 +179,24 @@ export function ClipPropertiesPanel() {
     };
   const reportSpeed = reportFrom('speed');
   const reportColor = reportFrom('color');
+  const reportVisual = reportFrom('visual');
+
+  /**
+   * Görüntü bölümünün iki ÖN bilgisi (tıklamadan önce söylenir, sonra değil):
+   *  - dönme, ölçek animasyonlu klipte yazılamaz (dışa aktarıcı katmanı kırpardı)
+   *    -> alan KİLİTLENİR, gerekçe altında yazar;
+   *  - geçişli klipte yerleşim EŞİT olmak zorundadır -> op zincirin tamamına
+   *    yazar ve panel bunu önceden ilan eder ("komşu klip de değişecek").
+   */
+  const visualClipIds = model.visual?.clipIds ?? EMPTY_IDS;
+  const rotationBlocked = useMemo(
+    () => rotationBlockReason(doc, visualClipIds),
+    [doc, visualClipIds],
+  );
+  const transitionChained = useMemo(
+    () => visualClipIds.some((id) => transitionChainSiblings(doc, id).length > 0),
+    [doc, visualClipIds],
+  );
 
   /**
    * Scale ceiling is a PROJECT property, not a constant: the export compiler
@@ -235,7 +258,10 @@ export function ClipPropertiesPanel() {
     if (isLiveEditOpen()) {
       updateLiveEdit((d) => void applyClipTransformToDraft(d, visual.clipIds, rest));
     } else {
-      setClipTransform(visual.clipIds, rest);
+      // Yerleşim yazımı artık SESSİZ değil: geçiş zincirine yayıldığında
+      // (bkz. timelineOps.propagateTransformToChain) bildirim döner ve bölümün
+      // kendi satırında görünür.
+      reportVisual(setClipTransform(visual.clipIds, rest));
     }
   };
   const writeOpacity = (opacity: number): void => {
@@ -447,11 +473,20 @@ export function ClipPropertiesPanel() {
             decimals={ROTATION_DECIMALS}
             perPixel={0.5}
             unit="°"
-            disabled={!editable}
+            disabled={!editable || rotationBlocked !== null}
             gesture={{ actionType: 'clipTransform', label: 'Döndürme değiştirildi' }}
             onChange={(v) => writeTransform({ rotationDeg: v })}
             adornment={kf.adornment('rotationDeg')}
           />
+          {rotationBlocked !== null && (
+            <p
+              className="text-[10px] leading-snug text-amber-400"
+              data-testid="clip-rotation-block"
+              data-reason={rotationBlocked}
+            >
+              {inspectorFailureMessage(rotationBlocked)}
+            </p>
+          )}
           <SliderField
             id="clip-opacity"
             testId="clip-opacity"
@@ -469,6 +504,18 @@ export function ClipPropertiesPanel() {
             onChange={(v) => writeOpacity(v)}
             adornment={kf.adornment('opacity')}
           />
+          {transitionChained && (
+            <p
+              className="text-[10px] leading-snug text-amber-400"
+              data-testid="clip-transform-chain-note"
+            >
+              Bu klipte geçiş var: geçişli kliplerin yerleşimi AYNI olmak zorunda, bu yüzden
+              konum/ölçek/döndürme değişikliği geçişin diğer klibine de uygulanır.
+            </p>
+          )}
+          {opMessage !== null && opMessage.source === 'visual' && (
+            <OpMessageLine message={opMessage} />
+          )}
           {kf.summary !== null && (
             <p
               className="text-[10px] leading-snug text-accent"
@@ -524,7 +571,10 @@ export function ClipPropertiesPanel() {
           Bu panel klibin hızını, rengini, sesini, dönüşümünü ve metin/şekil biçimini düzenler.
           Keyframe animasyonu artık burada: alanların yanındaki elmas düğmesi playhead'e keyframe
           yazar, eğri timeline'daki keyframe şeridinden düzenlenir. Henüz burada olmayanlar: çapa
-          (anchor) noktası — merkezde sabit; LUT efekti → M6. Efekt parametreleri (fx.*) MVP
+          (anchor) noktası — merkezde sabit; LUT (.cube) efekti — MVP KAPSAMI DIŞINDA: dosya
+          yükleme yolu, efekt seçimi ve önizleme shader'ı yoktur (dışa aktarma motorunda
+          karşılığı hazırdır, editör yüzeyi yazılmadı — bkz. docs/poc-bilinen-sinirlar.md §1.3).
+          Efekt parametreleri (fx.*) MVP
           şemasında keyframe'lenemez (bilinçli karar). Hız ve renk düzeltme önizlemede ve dışa
           aktarımda AYNI normatif formüllerle uygulanır (süre = kaynak ÷ hız; renk sırası
           pozlama → sıcaklık → ton → kontrast+parlaklık → doygunluk); dışa aktarım tarafını M5’in

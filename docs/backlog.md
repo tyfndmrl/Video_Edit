@@ -10,23 +10,43 @@ M4 dalga 1 denetimi, seçilen MVP özelliklerinden altısının "eksik **ve kay�
 tespit etti. Aşağıdaki tablo bundan sonra her teslim notunun kaynağıdır; buraya yazılmadan
 hiçbir özellik ertelenmiş sayılmaz.
 
+**Son doğrulama: 2026-08-12, commit `f39e0b4` — her satır KODDA denetlendi.** "✅ tam"
+yalnızca özelliğin uçtan uca (editör + şema + export) erişilebilir olduğu anlamına gelir;
+bilinen sınırlar `⚠︎` dipnotlarıyla ve
+[`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) ile birlikte okunmalıdır.
+
 | MVP özelliği (kullanıcı seçimi) | Durum | Hedef |
 |---|---|---|
-| Çoklu katman timeline | ✅ tam | — |
-| Kırpma/kesme/ayırma/taşıma/katman | ✅ tam | — |
+| Çoklu katman timeline | ✅ tam ⚠︎ track yeniden sıralama/adlandırma yok | sonraki dilim |
+| Kırpma/kesme/ayırma/taşıma/katman | ✅ tam ⚠︎ 30 fps'te bazı kırpmalar export'ta 422 | **sonraki dilim (YÜKSEK)** |
 | Frame, zoom, timecode, player, kısayollar | ✅ tam | — |
 | Undo/Redo + işlem geçmişi | ✅ tam | — |
-| Hesap + proje yönetimi, autosave | ✅ tam (versiyon geçmişi UI'ı hariç) | UI → M6 |
+| Hesap + proje yönetimi, autosave | ✅ tam (versiyon geçmişi UI'ı M6'da geldi) | — |
 | **Ses katmanları** (waveform, seviye, fade, detach) | ✅ tam (M4 dalga 1) | — |
 | **Çoklu katman export + transform** | ✅ tam (M4 dalga 1) | — |
-| **Görseller (PNG/JPG/WebP)** | ✅ tam (dalga 1 + dalga 2 denetim düzeltmesi: geçiş de kurulabiliyor) | — |
-| **Yazı & overlay** (metin, sticker, şekil) | ✅ tam (M4 dalga 2) | — |
-| **Geçişler** (xfade/acrossfade) | ✅ tam (M4 dalga 2 — doküman/op/export + oynatıcı önizlemesi) | — |
+| **Görseller (PNG/JPG/WebP)** | ⚠️ export doğru, **ÖNİZLEMEDE ÇİZİLMİYOR** (aşağıya bakınız) | **sonraki dilim (YÜKSEK)** |
+| **Yazı & overlay** (metin, sticker, şekil) | ✅ tam (M4 dalga 2) ⚠︎ emoji yok; shaping iki motorda | sonraki dilim |
+| **Geçişler** (xfade/acrossfade) | ✅ tam (M4 dalga 2 — doküman/op/export + oynatıcı önizlemesi) ⚠︎ dissolve/fadeToBlack önizlemesi piksel-eşit değil | parity → dalga 3 |
 | Pis-dosya korpusu (iPhone HDR/VFR/döndürülmüş) testleri | ❌ yok | **M4 dalga 3** |
 | **Renk düzeltme — colorAdjust** (parlaklık/kontrast/doygunluk/sıcaklık/ton/pozlama) | ✅ tam (M5 — Inspector + önizleme shader'ı + export) | — |
-| **Filtreler — LUT (.cube)** | ⚠️ export hazır, EDİTÖRDE YOK | **M6** |
-| **Hız değiştirme** (slow-mo/timelapse) | ✅ tam (M5) | — |
-| **Keyframe animasyonları** | ✅ tam (M5, sınırlarıyla — aşağıya bakınız) | — |
+| **Filtreler — LUT (.cube)** | ⚠️ yalnız export + şema hazır; **editör UI'ı VE önizleme shader'ı YOK** (dört bacağın ikisi) — **M6'da yapılmadı** | **sonraki dilim** |
+| **Hız değiştirme** (slow-mo/timelapse) | ✅ tam (M5) ⚠︎ hız rampası yok | sonraki dilim |
+| **Keyframe animasyonları** | ✅ tam (M5, sınırlarıyla — aşağıya bakınız) ⚠︎ `fx.*` kanalı yok | sonraki dilim |
+
+> **M6 KAPSAM KAYDI (review-gate kural 4, 2026-08-12).** M6 planı bu dosyada altı madde
+> listeliyordu; teslim edilen M6 **iki** maddedir: **sürüm geçmişi UI'ı** (`features/versions`,
+> e2e `versions.spec.ts`) ve **kota/silme UX'i** (`quotaModel.ts`, `AssetDeleteDialog.tsx`,
+> e2e `library-manage.spec.ts`). Yapılmayan dört madde sessizce düşmedi, aşağıdaki
+> "M6 (Dayanıklılık)" bölümünde **açık** kalmaya devam ediyor: `fx.*` keyframe'i,
+> LUT editör yüzeyi, revision retention job, container sertleştirme (+ per-device logout,
+> Dockerfile restore, tsconfig.node tip denetimi). Bunların hepsi
+> [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §1.3, §4.3, §4.5, §4.6'da
+> kullanıcıya da anlatıldı.
+
+> **Görseller satırı, POC dokümantasyon turu (2026-08-12).** Satır M4 dalga 1'den beri
+> "✅ tam" diyordu; **yanlıştı**. Export doğru çalışıyor (canlı doğrulandı), ama görsel ve
+> sticker klipleri **oynatıcı önizlemesinde hiç çizilmiyor**. Kök neden ve gerçek tarayıcı
+> kanıtı aşağıda, "POC dokümantasyon turunda kayda geçenler" bölümünde.
 
 > **Renk satırının ikiye ayrılma gerekçesi (M5 denetimi, 2026-08-12).** Tek satır "⚠️ motor
 > hazır, UI yok" iki farklı gerçeği gizliyordu. `colorAdjust` M5'te uçtan uca kapandı: altı
@@ -34,7 +54,13 @@ hiçbir özellik ertelenmiş sayılmaz.
 > `lut` ise HÂLÂ yalnız renderer'da var: compiler `lut3d=file=...:interp=trilinear` üretiyor,
 > worker `.cube` dosyasını AYRI bir varlık defterinden indiriyor (`ExportPlan.LutAssetIds` —
 > `.cube` probe edilemez), ama editörde ne `.cube` yükleme yolu, ne efekt UI'ı, ne de
-> önizlemesi var. Yani kullanıcı LUT'u SEÇEMEZ; şemada legal, üründe erişilemez. M6.
+> önizlemesi var. Yani kullanıcı LUT'u SEÇEMEZ; şemada legal, üründe erişilemez.
+> **M6'ya yazılmıştı, M6'da YAPILMADI** (yukarıdaki kapsam kaydı) — sonraki dilime taşındı.
+> Motorun gerçekten çalıştığı testle sabit:
+> `ExportJobPipelineTests.Export_WithLutEffect_DownloadsTheCubeFile_AndActuallyChangesPixels`.
+> Kalan iş yalnız editör yüzeyidir: `.cube` yükleme yolu (`fileTypes.ts` whitelist'i +
+> backend contentType whitelist'i + probe'suz asset türü), efekt UI'ı ve önizleme
+> shader'ında 3D doku örneklemesi.
 
 > **Hız satırı (M5).** Inspector'da ön ayarlar + serbest oran (0.1x–10x), ripple/reddet
 > davranışı, keyframe zaman yeniden ölçekleme, ses fade'lerinin yeniden sınırlanması ve
@@ -198,6 +224,12 @@ yazılı ve motorda uygulanıyor. Aşağıdakiler bilerek dışarıda bırakıld
   viewport dışına taşıyor ve gerçek fareyle tıklanamıyordu.
 
 ### Açık kalan (bu dilimin ALANI DIŞINDA — compiler/trim sahibi kapatmalı)
+
+> **DURUM `f39e0b4` (2026-08-12): İKİSİ DE HÂLÂ AÇIK.** M6 bu iki maddeye dokunmadı.
+> Frame-ızgarası çelişkisi CANLI API'de yeniden üretildi (kayıt geçiyor, export 422 veriyor)
+> ve ölçüldü: 30 fps'te kenarları ızgarada olan 144 klip kombinasyonundan **32'si (%22)**
+> ızgara dışı süre üretiyor; 25 fps'te 0. Kullanıcıya
+> [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §1.1'de anlatıldı.
 - **[YÜKSEK] Frame-ızgarası sözleşmesi kendi içinde çelişkili.** Compiler her klipte HEM
   `timelineStartUs` HEM `timelineDurationUs` için ızgara hizası istiyor; ama 25 fps dışında
   ızgara toplama altında KAPALI DEĞİLDİR (30 fps: frame 1 = 33_333 µs, frame 2 = 66_667 µs,
@@ -221,12 +253,81 @@ yazılı ve motorda uygulanıyor. Aşağıdakiler bilerek dışarıda bırakıld
   Davranış testle SABİTLENDİ (`speedColorOps.test.ts`, "a half-frame snap that overruns
   the neighbour REFUSES"), böylece sessizce overlap'e dönüşemez.
 
+## POC dokümantasyon turunda kayda geçenler (2026-08-12, `f39e0b4`)
+
+Kapsam tablosunun satır satır kod doğrulaması sırasında bulunan, daha önce **hiçbir yerde
+yazılı olmayan** sınırlar. Hepsi kullanıcıya
+[`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) ile anlatıldı.
+
+### [YÜKSEK] Görsel/sticker klipleri ÖNİZLEMEDE çizilmiyor — "Görseller ✅ tam" satırı yanlıştı
+
+Zincir üç yerde birden tutarsız ve hiçbir test bunu yakalamıyordu:
+
+1. `Worker/Jobs/ProcessAssetJob.cs:392` — görsel asset için **proxy üretilmez** (yorum bunu
+   açıkça söylüyor); yalnız `ThumbnailKey` (poster) yazılır.
+2. `Api/Endpoints/AssetMediaUrlBuilder.cs:37` — dolayısıyla `media-urls` görsel için
+   `proxy: null` döner (canlı doğrulandı).
+3. `apps/editor/src/features/player/PlayerPanel.tsx:44` — oynatıcı çözücüsü YALNIZ
+   `proxyUrl` okur → `url = null` → `engineV1.ts:1095` `imageDrawItem` çizmeden döner.
+
+**Kanıt (gerçek tarayıcı, gerçek PNG, 2026-08-12).** 1920×1080 macenta PNG, 5 sn'lik image
+klibi, playhead 0'da, `window.__videoeditTest` ile doğrulanan store: `session=ready`,
+`tracks=1`, `clip={kind:image,start:0}`, `asset.proxyUrl=null`, `asset.posterUrl=VAR`.
+Oynatıcı canvas'ı **tamamen siyah**. Aynı projenin export'u ise doğru: 2. saniyedeki kare
+`YAVG=104 UAVG=210 VAVG=234` (macenta).
+
+**Neden test yakalamadı.** `e2e/transitions-image.spec.ts` ve
+`ExportImageTransitionTests` doküman durumu ve export tarafını doğruluyor; **hiçbir test
+görsel klibin oynatıcı tuvaline çizildiğini kontrol etmiyor**. Golden-frame paketi de
+export tarafındadır.
+
+**Düzeltme yönü.** `resolveAsset` (`PlayerPanel.tsx:39`) `kind === 'image'` için
+`posterUrl`'e düşmeli — poster en fazla 1280 px genişlikte JPEG'dir
+(`PosterRecipe.MaxWidth`), yani görselin "proxy" karşılığıdır. Alternatif: worker görsel için
+de bir proxy (webp/png, 540p kısa kenar) üretsin. Hangisi seçilirse seçilsin, **düzeltmeyle
+birlikte bir e2e piksel testi** eklenmelidir (gerçek görsel → tuvalde beklenen renk).
+
+### Diğerleri (düşük/orta)
+
+- **Track yeniden sıralama / yeniden adlandırma yok.** `timelineOps` yalnız `addTrack`
+  (`:492`) ve `deleteTrack` (`:541`) sunar; sağ tık menüsü (`contextMenu.ts:262`) bayrak
+  değiştirme + silme ile sınırlı. Katman sırası ancak track'leri doğru sırada ekleyerek
+  kurulabiliyor.
+- **Ölçek animasyonu + dönme bileşimi export'ta reddediliyor**
+  (`ExportCompiler.cs:1831`, `scale-keyframes-with-rotation`). Gerekçe doğru (ffmpeg `rotate`
+  çıkış tuvalini bir kez kurar, büyüyen girişi sessizce kırpardı) ve hata tipli — ama
+  **editör bunu önceden uyarmıyor**, kullanıcı 422'yi export anında görüyor. Proaktif rozet
+  M3 backlog'undaki "kapsam haritasının UI'da gösterimi" maddesiyle aynı ailedendir.
+- **Keyframe örnek bütçesi 60 000** (`ClipAnimation.cs:83`) ve **katman boyut tavanı 8192 px**
+  (`LayerGeometry.cs:81`) — ikisi de tipli hata verir, editörde önden uyarı yok.
+- **Tek export profili.** `ExportProfiles` yalnız `1080p` tanır; 720p/4K/dikey ön ayarı yok.
+- **Ses klibinde görsel keyframe / renk efekti reddediliyor** (`ExportCompiler.cs:1675`,
+  `:1682`) — doğru davranış, editörde önden engellenmiyor.
+
 ## M6 (Dayanıklılık / hardening)
+
+> **M6 TESLİM EDİLDİ ama bu listeden HİÇBİRİ değil.** M6 dilimi iki başka maddeyi kapattı:
+> **sürüm geçmişi UI'ı** ve **kota/silme UX'i** (yukarıdaki kapsam kaydı). Aşağıdaki maddeler
+> `f39e0b4` itibarıyla **AÇIKTIR** — her biri kodda doğrulandı:
+
+| Madde | Doğrulama (`f39e0b4`) |
+|---|---|
+| `fx.*` keyframe'i | `packages/timeline-schema/src/schema.ts:109` `KeyframeTracksSchema` hâlâ STRICT, 6 kanal |
+| LUT editör yüzeyi **+ önizleme shader'ı** | `apps/editor/src/features/library/fileTypes.ts` whitelist'inde `.cube` yok; ayrıca `rendering-semantics.md` §4.2'nin NORMATİF önizleme uniform'ları (`uLut3D`, `uLutScale`, `uLutOffset`) `apps/`+`packages/` altında **0 kez** geçiyor — `player/core/resolve.ts` `lut` efektini atlar |
+| Revision retention job | `backend/src/VideoEdit.Worker/Program.cs:155` — kayıtlı tek yinelenen iş `asset-reaper` |
+| Container hardening | `Api/Dockerfile` + `Worker/Dockerfile` içinde `USER` direktifi yok |
+| Per-device logout | `AuthEndpoints.cs:169` `RevokeAllForUserAsync` — tüm cihazlar düşer |
+| Dockerfile restore (sln üyesi tüm csproj) | `Api/Dockerfile:11-16` — 6 csproj kopyalanıyor, SchemaGen/UnitTests yok |
+| `tsconfig.node.json` tip denetimi | `.github/workflows/ci.yml` ve `apps/editor/package.json` içinde geçmiyor |
+
 - **fx.\* keyframe'i** (colorAdjust/LUT parametrelerinin animasyonu): şema `KeyframeTracks`
   STRICT olduğu için doküman düzeyinde de yok; kanal listesi + örnekleme + compiler ifadesi
   birlikte açılmalı (M5 kapsam kaydı).
-- **LUT (.cube) editör yüzeyi**: `.cube` yükleme yolu + efekt UI'ı + önizleme; export tarafı
-  hazır (`ExportPlan.LutAssetIds`, `lut3d`).
+- **LUT (.cube) editör yüzeyi + önizleme shader'ı**: `.cube` yükleme yolu (yeni asset türü)
+  + efekt UI'ı + WebGL2 tarafında 3D doku örneklemesi (`sampler3D`, `uLut3D/uLutScale/uLutOffset`
+  — `rendering-semantics.md` §4.2 bunları NORMATİF olarak tarif ediyor, kodda karşılığı yok).
+  **İki ayrı iş kalemidir**: yalnız UI yazılırsa kullanıcı LUT'u seçer ama önizlemede hiçbir
+  etkisini göremez. Export tarafı hazır (`ExportPlan.LutAssetIds`, `lut3d`).
 - **Revision retention job**: plandaki "son 50 auto + eskilerde inceltme" (denetim #5).
 - **Container hardening**: non-root `USER app` + volume sahipliği; worker için ayrıca seccomp/ffmpeg kaynak sınırları (denetim #35).
 - **Per-device logout**: mevcut logout tüm cihazların refresh token'larını iptal ediyor — cihaz bazlı oturum yönetimi (denetim #30).
@@ -237,7 +338,13 @@ yazılı ve motorda uygulanıyor. Aşağıdakiler bilerek dışarıda bırakıld
 ## M1 denetiminden ertelenenler (2026-08-07, 37 bulgu; kritik+yüksek tümü M1'de düzeltildi)
 - **M2**: IDOR korumaları kod olarak doğru ama regresyon test paketi yok — sahiplik ihlali senaryolarını (başka kullanıcının assetId/projectId'si) kapsayan endpoint testleri eklenmeli. SignalR progress kanalı gelince `refetchIntervalInBackground` geçici çözümü kaldırılacak.
 - **M6**: Kota kontrolü check-then-act (bilinçli MVP kabulü) — eşzamanlı init'lerle sınırlı aşım mümkün; transactional/advisory-lock çözümü. Upload resume sertleştirme: dosya-değişti tespiti (ilk 1 MiB parmak izi), IndexedDB hayalet satırlarının tam yaşam döngüsü, FileSystemFileHandle akışı.
-- **Not**: E2E fixture (`apps/editor/public/e2e-test-video.mp4`) gitignore'da; lokal `vite build` dist'ine kopyalanır — sürüm build'i öncesi silinmeli (commit'lere girmez).
+- **Not (KAPANDI, teslim düzeltme turu 2026-08-12)**: E2E/ölçüm fixture'ı 122 MB ile
+  `apps/editor/public/` altında duruyordu ve `vite build` onu `dist/`e kopyalıyordu (üretim
+  bundle'ına sızma). "Sürüm build'i öncesi silinmeli" notu bir SÜREÇ dilekçesiydi, kapı değildi.
+  Düzeltme: dosya `apps/editor/e2e/fixtures/media/` altına taşındı (Playwright dosyayı
+  YOLDAN okur, sunucudan değil) ve `apps/editor/scripts/check-public-assets.mjs` bekçisi
+  `build` script'inin ilk adımı yapıldı — `public/` altında medya uzantılı ya da 1 MB'ı aşan
+  bir dosya varsa build gerekçesiyle DURUR.
 
 ## M2 denetiminden ertelenenler (2026-08-07, 33 bulgu; 4 kritik + 6 yüksek + tüm ortalar M2'de düzeltildi)
 - **Düşük öncelikli 12 bulgu** ertelendi — tam liste `docs/audits/m2-denetim.json` içinde (tüm milestone denetim raporları artık `docs/audits/` altında arşivleniyor).

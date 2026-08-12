@@ -226,6 +226,49 @@ public sealed class ExportEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task StartExport_SplitClipsFromTheEditor_Accepted()
+    {
+        // TESLİM RED BLOCKER'ININ HTTP KARŞILIĞI. Aşağıdaki üç klip uydurma değildir:
+        // apps/editor/e2e/frame-grid.spec.ts, 30 fps'lik VARSAYILAN projede GERÇEK fare +
+        // GERÇEK klavye ile bir klibi iki kez böldüğünde dokümanda tam olarak bu değerler
+        // oluşur (ortadaki klip 1 kare: frame 1861 -> 1862, yani 33_334 µs).
+        //
+        // Eski kapı SÜREYİ ızgarada istiyordu ve bu istek bu belgeyi
+        //   "clip ... is not aligned to the project frame grid (30/1 fps):
+        //    timelineStartUs=62033333, timelineDurationUs=33334"
+        // diyerek 422 ile geri çeviriyordu — kullanıcı klibi bölüyor, kaydediyor (PUT 200),
+        // sonra dışa aktaramıyordu. Kapı KENARLARA taşındı; bu belge artık kuyruğa girer.
+        var doc = ExportTestDocs.Doc(fpsNum: 30, fpsDen: 1, clips: [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 60_000_000, 0, 2_033_333),
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 62_033_333, 2_033_333, 2_066_667),
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 62_066_667, 2_066_667, 6_000_000),
+        ]);
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(doc));
+
+        var result = await CallStartAsync(project.Id);
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(result);
+    }
+
+    [Fact]
+    public async Task StartExport_ClipEdgeOffFrameGrid_Returns422_WithoutQueueingGarbage()
+    {
+        // Kapının diğer yarısı: KENAR ızgara dışındaysa belge hâlâ reddedilir (kapı
+        // gevşetilmedi, YERİ değişti). Başlangıç 60_000_001 → hiçbir kare sınırı değil.
+        var doc = ExportTestDocs.Doc(fpsNum: 30, fpsDen: 1,
+            clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 60_000_001, 0, 2_000_000));
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(doc));
+
+        var result = await CallStartAsync(project.Id);
+
+        var problem = Assert.IsType<ProblemHttpResult>(result);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Contains("edges are not on the project frame grid", problem.ProblemDetails.Detail);
+        Assert.Empty(_db.Jobs);
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [Fact]
     public async Task StartExport_TransitionsAndOverlayClips_Accepted()
     {
         // M4 dalga 2: editör artık geçiş + metin/şekil/çıkartma üretiyor — ön-doğrulama

@@ -43,10 +43,11 @@
  *    are skipped, exactly like the compiler skips them.
  *
  * Rule 3 has a SECOND half that lives outside `superRefine`: the export
- * compiler additionally requires `timelineStartUs` and `timelineDurationUs` to
- * sit exactly on the project fps grid. That gate is exported separately as
- * `exportFrameGridIssues` — see the block comment above it for why it cannot be
- * folded into the document-wide refinement.
+ * compiler additionally requires both clip EDGES (`timelineStartUs` and
+ * `timelineStartUs + timelineDurationUs`) to sit exactly on the project fps
+ * grid. That gate is exported separately as `exportFrameGridIssues` — see the
+ * block comment above it for why the rule is about edges and not about the
+ * duration, and why it is not folded into the document-wide refinement.
  */
 
 import {
@@ -463,25 +464,29 @@ export function checkTimelineInvariants(
 // Export frame-grid gate (rendering-semantics §1.4) — the compiler's rule,
 // verbatim, on this side of the boundary
 //
-// `ExportCompiler.CompileInternal` rejects, per clip:
+// `ExportCompiler.Validate` rejects, per clip:
 //
-//     if (SnapUs(planned.TimelineStartUs, fpsNum, fpsDen) != planned.TimelineStartUs
-//         || SnapUs(planned.TimelineDurationUs, fpsNum, fpsDen) != planned.TimelineDurationUs)
-//         throw new InvalidTimelineException("... is not aligned to the project frame grid ...")
+//     var endUs = planned.TimelineStartUs + planned.TimelineDurationUs;
+//     if (SnapUs(planned.TimelineStartUs, ...) != planned.TimelineStartUs
+//         || SnapUs(endUs, ...) != endUs)
+//         throw new InvalidTimelineException("... edges are not on the project frame grid ...")
 //
-// because the export segment ledger is kept in whole frames. It is NOT part of
-// `checkTimelineInvariants` on purpose, and the reason is arithmetic rather
-// than taste: outside 25 fps the grid is not closed under addition
-// (30 fps: frame 1 = 33_333 us, frame 2 = 66_667 us, and 33_333 + 33_333 =
-// 66_666 is not a grid value), so "every start on the grid AND every duration
-// on the grid" is unsatisfiable for a chain of ADJACENT clips — which the
-// transition contract (§5) requires to touch exactly. Wiring the gate into
-// `superRefine` would therefore make legitimate edits throw in dev while the
-// underlying conflict stayed unfixed.
+// because the export segment ledger is kept in whole frames — and it is kept as
+// a pair of EDGES (`trim=start_frame:end_frame`, ExportCompiler line ~421), not
+// as a length. That distinction is the whole rule: outside integer fps the grid
+// is not closed under addition (30 fps: frame 1 = 33_333 us, frame 2 = 66_667
+// us, and 33_333 + 33_333 = 66_666 is NOT a grid value), so requiring the
+// DURATION to be a grid value contradicts requiring the START to be one for any
+// chain of adjacent clips — the shape every split, and every transition (§5),
+// produces. Gating the edges instead is satisfiable everywhere and is exactly
+// what the frame ledger needs.
 //
-// Exported as an explicit, opt-in check so that duration-changing ops can prove
-// their own output against the real compiler rule (see `solveSpeedChange`), and
-// so that the mismatch surfaces as data instead of as an HTTP 422 at export.
+// It is still not part of `checkTimelineInvariants`: a document can arrive from
+// an older revision (or from a project whose fps was changed after the fact)
+// with clips off the grid, and failing every later edit would be worse than one
+// actionable message. `assertDocValidDev` (editor, dev only) and the export
+// dialog run it explicitly, so the mismatch surfaces as data — or as a Turkish
+// warning before submit — instead of as an HTTP 422 from the render worker.
 // ---------------------------------------------------------------------------
 
 /** One clip the export compiler would reject for frame-grid misalignment. */
@@ -489,8 +494,8 @@ export interface FrameGridIssue {
   trackIndex: number;
   clipIndex: number;
   clipId: string;
-  /** Which field is off the grid (a clip can fail on both). */
-  field: 'timelineStartUs' | 'timelineDurationUs';
+  /** Which EDGE is off the grid (a clip can fail on both). */
+  field: 'timelineStartUs' | 'timelineEndUs';
   valueUs: MicroSec;
   /** Nearest grid value — what the compiler's `SnapUs` would have produced. */
   snappedUs: MicroSec;
@@ -507,7 +512,7 @@ export function exportFrameGridIssues(doc: TimelineDoc): FrameGridIssue[] {
     track.clips.forEach((clip, clipIndex) => {
       const fields = [
         ['timelineStartUs', clip.timelineStartUs],
-        ['timelineDurationUs', clip.timelineDurationUs],
+        ['timelineEndUs', clip.timelineStartUs + clip.timelineDurationUs],
       ] as const;
       for (const [field, valueUs] of fields) {
         if (isOnFrameGrid(valueUs, fps)) continue;
@@ -523,4 +528,20 @@ export function exportFrameGridIssues(doc: TimelineDoc): FrameGridIssue[] {
     });
   });
   return issues;
+}
+
+/**
+ * One-line Turkish summary of a frame-grid violation, for the export dialog.
+ * Empty string when there is nothing to report.
+ */
+export function frameGridIssueSummary(issues: readonly FrameGridIssue[]): string {
+  if (issues.length === 0) return '';
+  const first = issues[0];
+  const edge = first.field === 'timelineStartUs' ? 'başlangıcı' : 'bitişi';
+  const more = issues.length > 1 ? ` (+${issues.length - 1} klip daha)` : '';
+  return (
+    `Bir klibin ${edge} proje kare ızgarasına oturmuyor ` +
+    `(${first.valueUs}µs, en yakın kare ${first.snappedUs}µs)${more}. ` +
+    'Bu belge dışa aktarımda reddedilir; klibi bir kare kaydırıp tekrar deneyin.'
+  );
 }

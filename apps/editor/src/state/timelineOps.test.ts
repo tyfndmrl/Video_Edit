@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   clipTimelineDurationUs,
+  exportFrameGridIssues,
+  frameToUs,
+  usToFrame,
   validateTimelineDoc,
   type MediaClip,
+  type Rational,
   type TimelineDoc,
   type Track,
 } from '@videoedit/timeline-schema';
@@ -30,6 +34,7 @@ const ASSET_B = '01890000-0000-7000-8000-00000000000b';
 const TRACK_1 = '01890000-0000-7000-8000-000000000101';
 
 const US = 1_000_000;
+const FPS30: Rational = { num: 30, den: 1 };
 
 function mediaClip(
   id: string,
@@ -116,6 +121,149 @@ describe('addTrack / addClipFromAsset', () => {
     expect(currentDoc().tracks).toHaveLength(1);
     expect(currentDoc().tracks[0].type).toBe('video');
     expectValid();
+  });
+
+  /**
+   * Real files, real numbers. ffprobe reports 7.307300 s and 12.679333 s, not
+   * the round 10 s of the fixtures above — and those microsecond values are not
+   * frame boundaries at ANY project rate. Before the tail snap this was the
+   * shortest path to an unexportable document in the product: drop a file on the
+   * timeline, hit export, get HTTP 422.
+   */
+  describe.each([
+    { durationUs: 7_307_300, name: '7.3073 s' },
+    { durationUs: 12_679_333, name: '12.679333 s' },
+    { durationUs: 1, name: '1 us (shorter than a frame)' },
+  ])('ffprobe duration $name', ({ durationUs }) => {
+    it.each([
+      { label: '30 fps', fps: { num: 30, den: 1 } },
+      { label: '29.97 fps', fps: { num: 30000, den: 1001 } },
+      { label: '25 fps', fps: { num: 25, den: 1 } },
+      { label: '23.976 fps', fps: { num: 24000, den: 1001 } },
+    ])('lands both edges on the $label grid', ({ fps }) => {
+      useDocStore
+        .getState()
+        .loadDoc(createEmptyDoc(PROJECT_ID, { ...defaultProjectSettings, fps }));
+      useAssetStore.getState().setAssets([
+        { id: ASSET_A, kind: 'video', name: 'real.mp4', status: 'ready', durationUs },
+      ]);
+      const trackId = addTrack('video');
+      const res = addClipFromAsset(ASSET_A, { trackId }, 1_234_567);
+
+      if (durationUs < frameToUs(1, fps)) {
+        // Shorter than one frame: refused, never rounded up to a frame of
+        // source the file does not have.
+        expect(res).toEqual({ ok: false, reason: 'asset has no known duration' });
+        expect(currentDoc().tracks[0].clips).toHaveLength(0);
+        return;
+      }
+
+      expect(res.ok).toBe(true);
+      const clip = currentDoc().tracks[0].clips[0] as MediaClip;
+      // 1. both edges on the grid (the export compiler's gate),
+      expect(exportFrameGridIssues(currentDoc())).toEqual([]);
+      // 2. duration formula exact at rate 1, and
+      expect(clip.timelineDurationUs).toBe(clip.sourceOutUs - clip.sourceInUs);
+      // 3. never reads past the end of the file — the snap only shortens.
+      expect(clip.sourceOutUs).toBeLessThanOrEqual(durationUs);
+      expect(durationUs - clip.timelineDurationUs).toBeLessThan(frameToUs(1, fps) + 1);
+      expectValid();
+    });
+  });
+});
+
+/**
+ * Still images on the timeline.
+ *
+ * A photo gets a 4 s clip whose `sourceOut` the FILE knows nothing about, so an
+ * "asset duration" reported for a still is a cap with no meaning behind it —
+ * and the two values the server actually reports are both wrong caps:
+ *
+ *   PNG  -> ffprobe (png_pipe) reports NO duration -> API sends JSON `null`.
+ *           `4000000 > null` is TRUE in JS, so the invariant fired on a
+ *           comparison with a value that was supposed to mean "unknown".
+ *   JPEG -> ffprobe (image2) reports 0.04 s -> 40000 µs, a perfectly ordinary
+ *           number that caps the clip 100x below its own length.
+ *
+ * Both landed as `sourceOutUs (4000000) exceeds asset duration (...)` thrown by
+ * assertDocValidDev AFTER the mutation had been committed, which also broke
+ * selecting the clip that had just been added. `it()` bodies below therefore
+ * assert on the op result AND on the validator, since a throw would fail the
+ * test either way — that is the point.
+ */
+describe('addClipFromAsset — still images have no source time axis', () => {
+  const IMAGE_PNG = '01890000-0000-7000-8000-00000000000c';
+  const IMAGE_JPG = '01890000-0000-7000-8000-00000000000d';
+
+  it('accepts a photo whose duration the server reported as null (PNG)', () => {
+    useAssetStore.getState().setAssets([
+      // `durationUs: null` is what the wire delivers; the type says it cannot
+      // happen, which is exactly why it went unnoticed.
+      {
+        id: IMAGE_PNG,
+        kind: 'image',
+        name: 'foto.png',
+        status: 'ready',
+        durationUs: null as unknown as undefined,
+      },
+    ]);
+    const trackId = addTrack('video');
+    const res = addClipFromAsset(IMAGE_PNG, { trackId }, 0);
+    expect(res.ok, !res.ok ? res.reason : '').toBe(true);
+
+    const clip = currentDoc().tracks[0].clips[0] as MediaClip;
+    expect(clip.kind).toBe('image');
+    expect(clip.sourceOutUs).toBe(4 * US);
+    expect(clip.timelineDurationUs).toBe(4 * US);
+    expect(clip.audio, 'A still carries no audio.').toBeNull();
+    expectValid();
+    // The clip the user just added must be selectable — the throw used to
+    // abort addClipFromAsset before it ever got here.
+    expect([...useEditorStore.getState().selection]).toEqual([clip.id]);
+  });
+
+  it('accepts a photo whose duration the server reported as 0.04 s (JPEG)', () => {
+    useAssetStore
+      .getState()
+      .setAssets([
+        { id: IMAGE_JPG, kind: 'image', name: 'foto.jpg', status: 'ready', durationUs: 40_000 },
+      ]);
+    const trackId = addTrack('video');
+    const res = addClipFromAsset(IMAGE_JPG, { trackId }, 0);
+    expect(res.ok, !res.ok ? res.reason : '').toBe(true);
+    expect((currentDoc().tracks[0].clips[0] as MediaClip).sourceOutUs).toBe(4 * US);
+    expectValid();
+  });
+
+  it('knownAssetDurations reports no cap for stills, and still caps real media', () => {
+    useAssetStore.getState().setAssets([
+      { id: ASSET_A, kind: 'video', name: 'a.mp4', status: 'ready', durationUs: 10 * US },
+      { id: IMAGE_JPG, kind: 'image', name: 'foto.jpg', status: 'ready', durationUs: 40_000 },
+      {
+        id: IMAGE_PNG,
+        kind: 'image',
+        name: 'foto.png',
+        status: 'ready',
+        durationUs: null as unknown as undefined,
+      },
+    ]);
+    const durations = knownAssetDurations();
+    expect(durations.has(IMAGE_JPG), 'A still must not carry a source-duration cap.').toBe(false);
+    expect(durations.has(IMAGE_PNG)).toBe(false);
+    expect(durations.get(ASSET_A), 'Real media still has to be capped.').toBe(10 * US);
+  });
+
+  it('drops a non-numeric duration even for a video asset (second wall)', () => {
+    useAssetStore.getState().setAssets([
+      {
+        id: ASSET_A,
+        kind: 'video',
+        name: 'a.mp4',
+        status: 'ready',
+        durationUs: null as unknown as undefined,
+      },
+    ]);
+    expect(knownAssetDurations().has(ASSET_A)).toBe(false);
   });
 });
 
@@ -286,19 +434,51 @@ describe('moveClips', () => {
     expectValid();
   });
 
-  it('multi-select: delta snapped ONCE against clipIds[0]; relative offsets preserved exactly', () => {
+  it('multi-select: the selection shifts by the anchor FRAME delta and both clips stay on the grid', () => {
+    // The grid is not closed under addition at 30 fps (frame 1 = 33_333 us,
+    // frame 2 = 66_667 us), so a uniform MICROSECOND delta pushes the
+    // non-anchor clip off the grid — the export compiler rejects exactly that
+    // (HTTP 422) even though the document saves fine. The delta is therefore
+    // applied in FRAMES, and each clip is re-fitted to the grid at its new
+    // start (see refitToGrid).
     const c1 = mediaClip('01890000-0000-7000-8000-000000000201', ASSET_A, 0, 0, 2 * US);
-    // Off-grid start: the second clip must keep its exact offset from c1.
-    const c2 = mediaClip('01890000-0000-7000-8000-000000000202', ASSET_B, 3 * US + 11, 0, 2 * US);
+    // c2: frame 91 (3_033_333 us), 61 frames long -> ends on frame 152
+    // (5_066_667 us), i.e. 2_033_334 us — a length that is NOT a grid value.
+    const c2 = mediaClip('01890000-0000-7000-8000-000000000202', ASSET_B, 3_033_333, 0, 2_033_334);
     useDocStore.getState().loadDoc(docWith([videoTrack(TRACK_1, [c1, c2])]));
+    expect(exportFrameGridIssues(currentDoc())).toEqual([]);
 
-    const res = moveClips([c1.id, c2.id], 50_000);
+    const res = moveClips([c1.id, c2.id], 50_000); // 1.5 frames -> +2 frames
     expect(res.ok).toBe(true);
     const clips = currentDoc().tracks[0].clips;
-    expect(clips[0].timelineStartUs).toBe(66_667); // snapped anchor
-    expect(clips[1].timelineStartUs).toBe(3 * US + 11 + 66_667); // NOT re-snapped
-    expect(clips[1].timelineStartUs - clips[0].timelineStartUs).toBe(3 * US + 11);
+    expect(clips[0].timelineStartUs).toBe(66_667); // snapped anchor (frame 2)
+    expect(clips[1].timelineStartUs).toBe(3_100_000); // frame 93 = 91 + 2
+    // Relative offset preserved in FRAMES — the unit the export ledger counts.
+    expect(usToFrame(clips[1].timelineStartUs, FPS30) - usToFrame(clips[0].timelineStartUs, FPS30))
+      .toBe(91);
+    // ... and the frame SPAN of each clip is unchanged, its microsecond length
+    // re-fitted (2_033_334 -> 2_033_333) with the source window following it so
+    // the duration formula stays exact.
+    expect(usToFrame(clips[1].timelineStartUs + clips[1].timelineDurationUs, FPS30)).toBe(154);
+    expect(clips[1].timelineDurationUs).toBe(2_033_333);
+    expect((clips[1] as MediaClip).sourceOutUs).toBe(2_033_333);
+    expect(exportFrameGridIssues(currentDoc())).toEqual([]);
     expectValid();
+  });
+
+  it('a clip that is already off the grid (legacy document) keeps the raw delta', () => {
+    // Nothing can put such a clip back on the grid without moving it somewhere
+    // the user did not ask for, so the plan keeps the old behaviour verbatim.
+    // Planned, not committed: the op's dev assert would (correctly) refuse to
+    // hand back a document the compiler rejects.
+    const c1 = mediaClip('01890000-0000-7000-8000-000000000201', ASSET_A, 0, 0, 2 * US);
+    const c2 = mediaClip('01890000-0000-7000-8000-000000000202', ASSET_B, 3 * US + 11, 0, 2 * US);
+    useDocStore.getState().loadDoc(docWith([videoTrack(TRACK_1, [c1, c2])]));
+    const plan = planMoveClips(currentDoc(), [c1.id, c2.id], 50_000);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.moves[0].newStartUs).toBe(66_667);
+    expect(plan.moves[1].newStartUs).toBe(3 * US + 11 + 66_667);
   });
 
   it('a delta that snaps to zero is a no-op that leaves no history entry', () => {

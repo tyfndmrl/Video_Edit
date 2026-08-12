@@ -13,6 +13,11 @@
  * first consults exportAutosaveGate — 'flush' awaits controller.saveNow(),
  * 'blocked' (conflict/error, also post-flush) refuses with the reason. The
  * open dialog shows a one-line last-save summary.
+ *
+ * Frame-grid pre-flight: `exportFrameGridBlockReason` runs the export
+ * compiler's own frame-grid rule on the live document before submitting, so an
+ * off-grid clip is explained in the dialog instead of coming back as an opaque
+ * 422 from the render worker.
  */
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -23,10 +28,12 @@ import {
   type ExportProfile,
 } from '../../entities/exports';
 import { getAutosaveController, useAutosaveStore } from '../../state/autosave';
+import { useDocStore } from '../../state/docStore';
 import {
   autosaveSummary,
   exportAutosaveGate,
   exportBlockReason,
+  exportFrameGridBlockReason,
   mapExportError,
   type ExportStartError,
 } from './exportLogic';
@@ -66,6 +73,16 @@ export function ExportDialog({
     if (submitting) return;
     setSubmitting(true);
     setError(null);
+
+    // Frame-grid pre-flight: the compiler rejects an off-grid clip with a 422
+    // that arrives only after the job has been queued and picked up. Same rule,
+    // run here, before anything is submitted.
+    const gridReason = exportFrameGridBlockReason(useDocStore.getState().doc);
+    if (gridReason !== null) {
+      setSubmitting(false);
+      setError({ kind: 'unsupported', message: gridReason });
+      return;
+    }
 
     // Export renders the last SAVED revision — flush unsaved work first, and
     // refuse when autosave cannot persist (conflict/error). Read the LIVE

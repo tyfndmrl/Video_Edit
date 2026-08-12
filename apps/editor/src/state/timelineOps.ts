@@ -15,10 +15,17 @@
  */
 import {
   clipTimelineDurationUs,
+  exportFrameGridIssues,
+  floorDurationToFrameSpan,
+  frameSpanCount,
+  frameSpanUs,
   frameToUs,
+  isOnFrameGrid,
+  sourceSpanForDuration,
   maxScaleFor,
   roundHalfUp,
   sampleKeyframes,
+  snapDurationToFrameSpan,
   snapUsToFrameGrid,
   solveSpeedChange,
   usToFrame,
@@ -86,11 +93,39 @@ function minClipDurationUs(fps: Rational): MicroSec {
   return Math.max(1, frameToUs(1, fps));
 }
 
-/** assetId -> durationUs for every asset whose duration is known. */
+/**
+ * assetId -> durationUs for every asset that HAS a source time axis and whose
+ * duration is known. This map is the "source bounds" side of the invariant
+ * check (`sourceOutUs <= assetDuration`), so anything it reports is a hard cap
+ * on trims, speed solves and transition handles.
+ *
+ * Two exclusions, both load bearing:
+ *
+ *  - STILL IMAGES are never in the map. A still has no source clock to run out
+ *    of: the export compiler opens it with `-loop 1` and skips the source-range
+ *    rules (`ExportClipPlan.IsStillInput`), the schema exempts it
+ *    (`hasSourceTimeAxis`), and the editor mints image clips with
+ *    `sourceOut = IMAGE_DEFAULT_DURATION_US` (4 s) — a length the FILE knows
+ *    nothing about. Reporting a duration for it therefore constrains the clip
+ *    against a number that has no meaning, and the numbers that show up are
+ *    real: ffprobe hands back nothing for a PNG (`png_pipe`) but 0.04 s for a
+ *    JPEG (`image2`, one frame at the default 25 fps). The 40 000 µs case made
+ *    "add a photo" fail with `sourceOutUs (4000000) exceeds asset duration
+ *    (40000)`, and would have survived any null-only guard.
+ *  - NON-NUMBERS are dropped rather than trusted. `durationUs` is typed
+ *    `number | undefined`, but a JSON `null` off the wire types the same and
+ *    compares as `4000000 > null === true`. assetSync now stops that at the
+ *    source; this is the second wall, because the store is writable from
+ *    several places and one bad write must not invalidate every document.
+ */
 export function knownAssetDurations(): Map<string, MicroSec> {
   const map = new Map<string, MicroSec>();
   for (const a of useAssetStore.getState().assets.values()) {
-    if (a.durationUs !== undefined) map.set(a.id, a.durationUs);
+    if (a.kind === 'image') continue;
+    const durationUs: number | null | undefined = a.durationUs;
+    if (typeof durationUs === 'number' && Number.isFinite(durationUs)) {
+      map.set(a.id, durationUs);
+    }
   }
   return map;
 }
@@ -114,15 +149,37 @@ function locateClip(d: TimelineDoc, clipId: Uuid): ClipLocation | null {
 /**
  * Dev-mode invariant assert — run after EVERY committed op. Throws so tests
  * and dev sessions cannot silently produce a contract-violating document.
+ *
+ * TWO gates, because the export compiler has two: the document invariants
+ * (`validateTimelineDoc`) AND the frame-grid edge rule
+ * (`exportFrameGridIssues`, ExportCompiler.Validate). The second one used to
+ * exist in the schema package without a single caller in the app, which is how
+ * ops shipped that wrote documents the editor accepted and the render worker
+ * rejected with HTTP 422. Asserting it here makes every op test in the suite a
+ * frame-grid test as well.
  */
 export function assertDocValidDev(context: string): void {
   if (!import.meta.env?.DEV) return;
-  const result = validateTimelineDoc(useDocStore.getState().doc, knownAssetDurations());
+  const d = useDocStore.getState().doc;
+  const result = validateTimelineDoc(d, knownAssetDurations());
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `${i.path.join('.')}: ${i.message}`)
       .join('\n  ');
     throw new Error(`Timeline invariant violation after "${context}":\n  ${issues}`);
+  }
+  const gridIssues = exportFrameGridIssues(d);
+  if (gridIssues.length > 0) {
+    const detail = gridIssues
+      .map(
+        (i) =>
+          `tracks.${i.trackIndex}.clips.${i.clipIndex} (${i.clipId}): ` +
+          `${i.field}=${i.valueUs} is off the project frame grid (nearest ${i.snappedUs})`,
+      )
+      .join('\n  ');
+    throw new Error(
+      `Export frame-grid violation after "${context}" — this document would fail export with HTTP 422:\n  ${detail}`,
+    );
   }
 }
 
@@ -565,17 +622,41 @@ export function deleteTrack(trackId: Uuid): OpResult {
 // addClipFromAsset
 // ---------------------------------------------------------------------------
 
-function buildClipFromAsset(asset: AssetSummary, startUs: MicroSec): MediaClip | null {
+/**
+ * A fresh clip for `asset`, placed at the (already grid-snapped) `startUs`.
+ *
+ * The length is TAIL-SNAPPED: the clip ends on the frame boundary at or before
+ * the end of the source, and `sourceOutUs` follows the length exactly. Real
+ * assets do not have grid-friendly durations — ffprobe reports 7.307300 s,
+ * 12.679333 s — so without this the very first thing a user does (drop a file
+ * on the timeline) writes a clip whose END is off the project grid and whose
+ * export comes back HTTP 422. One tail snap satisfies all three rules at once:
+ *   - both edges on the grid (export gate, `isClipOnFrameGrid`),
+ *   - duration formula at rate 1 (`sourceOutUs - sourceInUs == duration`),
+ *   - source bound (`sourceOutUs <= asset duration`, since the snap only ever
+ *     shortens).
+ * The still-image default (4 s) goes through the same path, which is what puts
+ * it on the grid in NTSC projects where 4_000_000 us is not a frame boundary.
+ */
+function buildClipFromAsset(
+  asset: AssetSummary,
+  startUs: MicroSec,
+  fps: Rational,
+): MediaClip | null {
   const sourceDurationUs = asset.kind === 'image' ? IMAGE_DEFAULT_DURATION_US : asset.durationUs;
   if (sourceDurationUs === undefined || sourceDurationUs <= 0) return null;
+  const durationUs = floorDurationToFrameSpan(startUs, sourceDurationUs, fps);
+  // Shorter than one frame at this fps — refuse rather than write a clip the
+  // renderer would drop.
+  if (durationUs <= 0) return null;
   return {
     id: uuidv7(),
     kind: asset.kind,
     assetId: asset.id,
     timelineStartUs: startUs,
-    timelineDurationUs: clipTimelineDurationUs(0, sourceDurationUs, 1),
+    timelineDurationUs: durationUs,
     sourceInUs: 0,
-    sourceOutUs: sourceDurationUs,
+    sourceOutUs: durationUs,
     speed: { rate: 1 },
     audio:
       asset.kind === 'image' ? null : { volume: 1, fadeInUs: 0, fadeOutUs: 0, muted: false },
@@ -608,7 +689,7 @@ export function addClipFromAsset(
   if (asset.status !== 'ready') return { ok: false, reason: 'asset is not ready' };
 
   const startUs = snapUsToFrameGrid(Math.max(0, Math.round(timelineStartUs)), d.settings.fps);
-  const clip = buildClipFromAsset(asset, startUs);
+  const clip = buildClipFromAsset(asset, startUs, d.settings.fps);
   if (!clip) return { ok: false, reason: 'asset has no known duration' };
 
   const requiredType = trackTypeForClipKind(clip.kind);
@@ -646,29 +727,195 @@ export function addClipFromAsset(
 
 export interface MovePlan {
   ok: true;
-  moves: { clipId: Uuid; fromTrackIndex: number; toTrackIndex: number; newStartUs: MicroSec }[];
+  moves: {
+    clipId: Uuid;
+    fromTrackIndex: number;
+    toTrackIndex: number;
+    newStartUs: MicroSec;
+    /** Re-fitted length at the new start (see `refitToGrid`); usually unchanged. */
+    newDurationUs: MicroSec;
+    /** Media clips only, and only when the re-fit had to move the source window. */
+    newSourceInUs?: MicroSec;
+    newSourceOutUs?: MicroSec;
+  }[];
 }
 
 export type MovePlanResult = MovePlan | { ok: false; reason: string };
 
 /**
- * Validates moving `clipIds` by a uniform microsecond delta (relative
- * positions preserved EXACTLY) and an optional vertical track shift.
+ * Re-fit a clip that is about to move to `newStartUs` so BOTH of its edges stay
+ * on the project frame grid (the export compiler's gate).
+ *
+ * Why a move needs a re-fit at all: outside integer fps the grid is not closed
+ * under addition, so the microsecond length of "n frames" DEPENDS ON WHERE THE
+ * CLIP STARTS. At 30 fps a clip covering frames 1..2 is 33_334 us long; the
+ * same two frames starting at frame 0 are 33_333 us. Moving the clip by one
+ * frame while keeping the microsecond length therefore pushes its end off the
+ * grid — the document then saves fine (PUT 200) and the export refuses it (422).
+ *
+ * The frame COUNT is what the clip is: it is preserved exactly whenever the
+ * source allows. The length follows the grid, and for a media clip the source
+ * window follows the length (rule 3 stays exact to the microsecond) — the out
+ * point is preferred, the in point is used when the asset has no slack left at
+ * the tail.
+ *
+ * A microsecond of source is not always there to spend: a clip that already
+ * covers its whole asset (sourceIn 0, sourceOut = asset duration) cannot grow,
+ * and below 1x some durations have NO admissible source span at all (the window
+ * is narrower than a microsecond). Rather than dead-end an ordinary drag, those
+ * cases fall through to `solveSpeedChange`, which finds the nearest frame count
+ * that IS reachable at the new start and re-derives the out point for it —
+ * costing at most a frame of length instead of the whole edit. `null` (nothing
+ * works at all) still refuses.
+ */
+function refitToGrid(
+  clip: Clip,
+  newStartUs: MicroSec,
+  fps: Rational,
+  assetDurations: ReadonlyMap<string, MicroSec>,
+): { durationUs: MicroSec; sourceInUs?: MicroSec; sourceOutUs?: MicroSec } | null {
+  // A clip that is already off the grid (older revision, changed project fps)
+  // has no frame span to preserve — leave it exactly as it is rather than
+  // "correcting" it to a length the user never chose.
+  if (!isOnFrameGrid(clip.timelineStartUs, fps) || !isOnFrameGrid(newStartUs, fps)) {
+    return { durationUs: clip.timelineDurationUs };
+  }
+  const frames = frameSpanCount(clip.timelineStartUs, clip.timelineDurationUs, fps);
+  const durationUs = frameSpanUs(newStartUs, frames, fps);
+  if (durationUs <= 0) return null;
+  if (durationUs === clip.timelineDurationUs) return { durationUs };
+  if (!isMediaClip(clip)) return { durationUs };
+
+  // Rule 3 must stay EXACT: find the source span the formula maps onto the new
+  // duration, then spend it at the tail if the asset has room, at the head
+  // otherwise (a still image has no source clock and is left alone).
+  if (!hasSourceTimeAxis(clip)) return { durationUs };
+  const assetDurationUs = assetDurations.get(clip.assetId);
+  const span = sourceSpanForDuration(durationUs, clip.speed.rate);
+  if (span !== null && span >= 1) {
+    const outFirst = clip.sourceInUs + span;
+    if (assetDurationUs === undefined || outFirst <= assetDurationUs) {
+      return { durationUs, sourceInUs: clip.sourceInUs, sourceOutUs: outFirst };
+    }
+    const inFallback = clip.sourceOutUs - span;
+    if (inFallback >= 0) {
+      return { durationUs, sourceInUs: inFallback, sourceOutUs: clip.sourceOutUs };
+    }
+  }
+
+  // Exact span unavailable (see the block comment): settle for the nearest
+  // reachable frame count at this start instead of refusing the edit.
+  const solved = solveSpeedChange(clip.sourceInUs, clip.sourceOutUs, clip.speed.rate, fps, {
+    maxSourceOutUs: assetDurationUs,
+    minFrames: 1,
+    timelineStartUs: newStartUs,
+  });
+  if (solved === null) return null;
+  return {
+    durationUs: solved.durationUs,
+    sourceInUs: clip.sourceInUs,
+    sourceOutUs: solved.sourceOutUs,
+  };
+}
+
+/**
+ * Where a clip lands when the timeline shifts it by `frameDelta` whole frames.
+ * A clip that is already off the grid (legacy document) cannot be walked in
+ * frames, so it keeps the raw microsecond delta instead of being "corrected"
+ * to somewhere the user never put it.
+ */
+function shiftedStartUs(
+  clip: Clip,
+  frameDelta: number,
+  deltaUs: MicroSec,
+  fps: Rational,
+): MicroSec {
+  if (!isOnFrameGrid(clip.timelineStartUs, fps)) return clip.timelineStartUs + deltaUs;
+  return frameToUs(usToFrame(clip.timelineStartUs, fps) + frameDelta, fps);
+}
+
+/**
+ * Move `clip` to `newStartUs` in place, keeping its frame span and both edges
+ * on the grid (see `refitToGrid`). false = the span does not fit there and the
+ * caller must refuse the whole op.
+ */
+function shiftClipOnGrid(
+  clip: Clip,
+  newStartUs: MicroSec,
+  fps: Rational,
+  assetDurations: ReadonlyMap<string, MicroSec>,
+): boolean {
+  const refit = refitToGrid(clip, newStartUs, fps, assetDurations);
+  if (refit === null) return false;
+  clip.timelineStartUs = newStartUs;
+  clip.timelineDurationUs = refit.durationUs;
+  if (refit.sourceInUs !== undefined && isMediaClip(clip)) {
+    clip.sourceInUs = refit.sourceInUs;
+    clip.sourceOutUs = refit.sourceOutUs!;
+  }
+  clampAudioFadesToDuration(clip);
+  return true;
+}
+
+/**
+ * Ripple the clips after `fromIndex` so they follow an edge that moved from
+ * `oldEdgeUs` to `newEdgeUs`.
+ *
+ * The shift is measured in FRAMES, not microseconds, for the same reason the
+ * move op works that way: a microsecond shift of a grid-aligned clip lands its
+ * end off the grid two times out of three at 30 fps, and the export compiler
+ * rejects that document. false = a follower cannot keep its frame span at the
+ * new position and the caller must refuse the whole op.
+ */
+function rippleFollowers(
+  track: Track,
+  fromIndex: number,
+  oldEdgeUs: MicroSec,
+  newEdgeUs: MicroSec,
+  fps: Rational,
+  assetDurations: ReadonlyMap<string, MicroSec>,
+): boolean {
+  const deltaUs = newEdgeUs - oldEdgeUs;
+  if (deltaUs === 0) return true;
+  const frameDelta = usToFrame(newEdgeUs, fps) - usToFrame(oldEdgeUs, fps);
+  // Plan first, write second: a follower that cannot be re-fitted must leave the
+  // OTHERS untouched (a half-rippled track is a broken document, not a refusal).
+  const targets = track.clips.slice(fromIndex).map((c) => ({
+    clip: c,
+    startUs: shiftedStartUs(c, frameDelta, deltaUs, fps),
+  }));
+  if (targets.some((t) => refitToGrid(t.clip, t.startUs, fps, assetDurations) === null)) {
+    return false;
+  }
+  for (const t of targets) shiftClipOnGrid(t.clip, t.startUs, fps, assetDurations);
+  return true;
+}
+
+/**
+ * Validates moving `clipIds` by a uniform delta and an optional vertical track
+ * shift.
  *
  * Frame-grid policy (same as every other op — docs/rendering-semantics §1):
  * the REFERENCE clip's target start (clipIds[0]; the drag code puts the
- * grabbed anchor first) is snapped to the project fps grid, and that snapped
- * delta is applied to the whole selection ONCE — relative offsets between the
- * moved clips are preserved exactly. Overlaps reject the whole move (MVP: no
- * auto-ripple, per design §3.3).
+ * grabbed anchor first) is snapped to the project fps grid, and the resulting
+ * whole-FRAME delta is applied to the whole selection ONCE. Relative offsets
+ * are preserved exactly IN FRAMES, which is the unit the export ledger counts
+ * in; in microseconds they can differ by one or two, because the grid is not
+ * closed under addition (30 fps: frame 1 = 33_333 us, frame 2 = 66_667 us).
+ * Preserving the microsecond offsets instead is what used to push the
+ * non-anchor clips off the grid and their export to HTTP 422.
+ *
+ * Overlaps reject the whole move (MVP: no auto-ripple, per design §3.3).
  */
 export function planMoveClips(
   d: TimelineDoc,
   clipIds: readonly Uuid[],
   deltaUs: MicroSec,
   trackDelta = 0,
+  assetDurations: ReadonlyMap<string, MicroSec> = knownAssetDurations(),
 ): MovePlanResult {
   if (clipIds.length === 0) return { ok: false, reason: 'nothing to move' };
+  const fps = d.settings.fps;
   const moves: MovePlan['moves'] = [];
   const moving = new Set(clipIds);
 
@@ -678,9 +925,12 @@ export function planMoveClips(
   const ref = locateClip(d, clipIds[0]);
   if (!ref) return { ok: false, reason: 'clip not found' };
   const refTargetUs = Math.round(ref.clip.timelineStartUs + deltaUs);
-  deltaUs =
-    (refTargetUs < 0 ? refTargetUs : snapUsToFrameGrid(refTargetUs, d.settings.fps)) -
-    ref.clip.timelineStartUs;
+  const refSnappedUs = refTargetUs < 0 ? refTargetUs : snapUsToFrameGrid(refTargetUs, fps);
+  deltaUs = refSnappedUs - ref.clip.timelineStartUs;
+  // The delta in FRAMES — the unit the rest of the selection is shifted by.
+  // A negative target keeps the raw microsecond delta; it rejects below anyway.
+  const frameDelta =
+    refTargetUs < 0 ? null : usToFrame(refSnappedUs, fps) - usToFrame(ref.clip.timelineStartUs, fps);
 
   for (const clipId of clipIds) {
     const loc = locateClip(d, clipId);
@@ -693,9 +943,26 @@ export function planMoveClips(
     const toTrack = d.tracks[toTrackIndex];
     if (toTrack.locked) return { ok: false, reason: 'target track is locked' };
     if (toTrack.type !== loc.track.type) return { ok: false, reason: 'track type mismatch' };
-    const newStartUs = loc.clip.timelineStartUs + deltaUs;
+    // Off-grid legacy clips (imported/older revision) keep the raw delta: the
+    // frame walk is only meaningful for a start that IS a frame boundary.
+    const onGrid = frameDelta !== null && isOnFrameGrid(loc.clip.timelineStartUs, fps);
+    const newStartUs = onGrid
+      ? frameToUs(usToFrame(loc.clip.timelineStartUs, fps) + frameDelta, fps)
+      : loc.clip.timelineStartUs + deltaUs;
     if (newStartUs < 0) return { ok: false, reason: 'before timeline start' };
-    moves.push({ clipId, fromTrackIndex: loc.trackIndex, toTrackIndex, newStartUs });
+    const refit = onGrid
+      ? refitToGrid(loc.clip, newStartUs, fps, assetDurations)
+      : { durationUs: loc.clip.timelineDurationUs };
+    if (refit === null) return { ok: false, reason: 'clip cannot keep its frame span here' };
+    moves.push({
+      clipId,
+      fromTrackIndex: loc.trackIndex,
+      toTrackIndex,
+      newStartUs,
+      newDurationUs: refit.durationUs,
+      newSourceInUs: refit.sourceInUs,
+      newSourceOutUs: refit.sourceOutUs,
+    });
   }
 
   // Overlap check per destination track: stationary clips + incoming movers.
@@ -713,8 +980,7 @@ export function planMoveClips(
       intervals.push({ start: c.timelineStartUs, end: clipEndUs(c) });
     }
     for (const m of incoming) {
-      const clip = locateClip(d, m.clipId)!.clip;
-      intervals.push({ start: m.newStartUs, end: m.newStartUs + clip.timelineDurationUs });
+      intervals.push({ start: m.newStartUs, end: m.newStartUs + m.newDurationUs });
     }
     intervals.sort((a, b) => a.start - b.start);
     for (let i = 1; i < intervals.length; i++) {
@@ -729,7 +995,8 @@ export function planMoveClips(
 export function moveClips(clipIds: readonly Uuid[], deltaUs: MicroSec, trackDelta = 0): OpResult {
   if (deltaUs === 0 && trackDelta === 0) return OK;
   const d0 = doc();
-  const plan = planMoveClips(d0, clipIds, deltaUs, trackDelta);
+  const durations = knownAssetDurations();
+  const plan = planMoveClips(d0, clipIds, deltaUs, trackDelta, durations);
   if (!plan.ok) return plan;
   // The grid snap may collapse the delta to zero — never pollute history then.
   const noop = plan.moves.every((m) => {
@@ -743,7 +1010,6 @@ export function moveClips(clipIds: readonly Uuid[], deltaUs: MicroSec, trackDelt
   if (noop) return OK;
 
   const label = clipIds.length === 1 ? 'Klip taşındı' : `${clipIds.length} klip taşındı`;
-  const durations = knownAssetDurations();
   let report = NO_TRANSITION_CHANGE;
   useDocStore.getState().mutate('move', label, (dd) => {
     const moving = new Set(clipIds);
@@ -766,6 +1032,14 @@ export function moveClips(clipIds: readonly Uuid[], deltaUs: MicroSec, trackDelt
       const clip = extracted.get(m.clipId);
       if (!clip) continue;
       clip.timelineStartUs = m.newStartUs;
+      // The grid re-fit (see refitToGrid): length follows the grid, source
+      // window follows the length. Both are usually identity.
+      clip.timelineDurationUs = m.newDurationUs;
+      if (m.newSourceInUs !== undefined && isMediaClip(clip)) {
+        clip.sourceInUs = m.newSourceInUs;
+        clip.sourceOutUs = m.newSourceOutUs!;
+      }
+      clampAudioFadesToDuration(clip);
       insertClipSorted(dd.tracks[m.toTrackIndex], clip);
       touched.add(m.toTrackIndex);
     }
@@ -961,11 +1235,9 @@ export function applyTrimToDraft(
       clampAudioFadesToDuration(clip);
       newEnd = target;
     }
-    if (effectiveMode === 'ripple') {
-      const delta = newEnd - oldEnd;
-      for (let i = clipIndex + 1; i < track.clips.length; i++) {
-        track.clips[i].timelineStartUs += delta;
-      }
+    if (effectiveMode === 'ripple'
+      && !rippleFollowers(track, clipIndex + 1, oldEnd, newEnd, fps, assetDurations)) {
+      return fail('no room to ripple the following clips');
     }
     return okWith(
       transitionReconcileNotice(reconcileTransitions(track, fps, assetDurations)),
@@ -987,9 +1259,9 @@ export function applyTrimToDraft(
 
   if (isMediaClip(clip)) {
     if (effectiveMode === 'ripple') {
-      const { durationDeltaUs } = trimMediaLeft(clip, target, 0, minDur, 'start');
-      for (let i = clipIndex + 1; i < track.clips.length; i++) {
-        track.clips[i].timelineStartUs += durationDeltaUs;
+      trimMediaLeft(clip, target, 0, minDur, 'start');
+      if (!rippleFollowers(track, clipIndex + 1, end, clipEndUs(clip), fps, assetDurations)) {
+        return fail('no room to ripple the following clips');
       }
     } else {
       trimMediaLeft(clip, target, minStart, minDur, 'end');
@@ -1001,8 +1273,8 @@ export function applyTrimToDraft(
       clip.timelineDurationUs = newDur;
       remapKeyframes(clip, newDur - oldDur, newDur);
       clampAudioFadesToDuration(clip);
-      for (let i = clipIndex + 1; i < track.clips.length; i++) {
-        track.clips[i].timelineStartUs += newDur - oldDur;
+      if (!rippleFollowers(track, clipIndex + 1, end, clipEndUs(clip), fps, assetDurations)) {
+        return fail('no room to ripple the following clips');
       }
     } else {
       clip.timelineStartUs = target;
@@ -1418,6 +1690,162 @@ export function transitionEdgesOf(d: TimelineDoc, clipId: Uuid): TransitionEdge[
   return (['in', 'out'] as const).filter((edge) => findTransitionCut(d, clipId, edge) !== null);
 }
 
+// ---------------------------------------------------------------------------
+// Derleyicinin reddettiği BİLEŞİMLER — editör tarafı ön engeller
+// ---------------------------------------------------------------------------
+/*
+ * Aşağıdaki üç kural ffmpeg derleyicisinde TİPLİ HATA'dır (ExportCompiler):
+ *   1. geçişli kesimin iki klibinden birinde GÖRSEL keyframe  -> UnsupportedFeature
+ *      ("transition-keyframes"): geçişte iki klip TEK xfade akışına katlanır, akışın
+ *      yerleşimi kesim boyunca sabit olmak zorundadır.
+ *   2. ÖLÇEK keyframe'i + DÖNME (taban açı ya da dönme keyframe'i) -> UnsupportedFeature
+ *      ("scale-keyframes-with-rotation"): rotate çıkış tuvalini config anında bir kez
+ *      kurar, büyüyen katmanı sessizce KIRPAR.
+ *   3. geçişli iki klibin YERLEŞİMİ farklı -> InvalidTimeline: xfade iki girişin aynı
+ *      boyutta olmasını şart koşar.
+ * Editör bu bileşimleri kurdurursa kullanıcı ancak dışa aktarımda (422) öğrenir —
+ * "yönlendir sonra reddet". Bu yüzden her biri BURADA, op'un kendi ret kuralı olarak
+ * durur; menü/panel `*BlockReason` üzerinden aynı kuralı okur ve teklif etmez.
+ *
+ * 3 numaralı kural ENGEL değil YAYILIM ile karşılanır (bkz. propagateTransformToChain).
+ */
+
+/**
+ * Görsel animasyon kanalları — derleyicideki `ClipAnimation.Any` ile AYNI küme.
+ * `volume` bilinçli olarak DIŞARIDA: ses zincirine aittir, katman akışını hiç
+ * ilgilendirmez, dolayısıyla geçişli klipte de serbesttir.
+ */
+export const VISUAL_KEYFRAME_CHANNELS = ['x', 'y', 'scale', 'rotationDeg', 'opacity'] as const;
+
+type VisualKeyframeChannel = (typeof VISUAL_KEYFRAME_CHANNELS)[number];
+
+/** Geçişli kesime keyframe'li klip giremez (derleyici: "transition-keyframes"). */
+export const REASON_TRANSITION_NEEDS_STATIC_CLIPS = 'a keyframed clip cannot take a transition';
+/** Geçişli klipte görsel kanal animasyonlanamaz (aynı kuralın klip tarafı). */
+export const REASON_KEYFRAME_NEEDS_NO_TRANSITION = 'the clip has a transition';
+/** Ölçek animasyonu + dönme (derleyici: "scale-keyframes-with-rotation"). */
+export const REASON_SCALE_KEYFRAMES_NEED_NO_ROTATION =
+  'scale keyframes cannot be combined with rotation';
+/** Aynı kuralın dönme tarafı: ölçek animasyonluyken dönme yazılamaz. */
+export const REASON_ROTATION_NEEDS_STATIC_SCALE =
+  'rotation cannot be combined with scale keyframes';
+
+/** Yerleşim, geçişli komşulara da uygulandı (sessiz değil — OpResult.notice). */
+export const TRANSFORM_APPLIED_TO_TRANSITION_CHAIN = 'transform applied to transition neighbours';
+
+function channelHasKeyframes(clip: Clip, channel: VisualKeyframeChannel): boolean {
+  const kfs = clip.keyframes[channel];
+  return kfs !== undefined && kfs.length > 0;
+}
+
+/** Katman akışını etkileyen (görsel) bir animasyonu var mı? */
+export function clipHasVisualKeyframes(clip: Clip): boolean {
+  return VISUAL_KEYFRAME_CHANNELS.some((c) => channelHasKeyframes(clip, c));
+}
+
+/** Klibin herhangi bir kenarında geçiş var mı? */
+export function clipHasTransition(clip: Clip): boolean {
+  return (
+    isMediaClip(clip) && (clip.transitionIn !== undefined || clip.transitionOut !== undefined)
+  );
+}
+
+/**
+ * Katman DÖNÜYOR mu? Derleyicinin kuralı `rotationDeg % 360 != 0` (360'ın katları
+ * rotate filtresi üretmez) VEYA dönme kanalı animasyonlu.
+ */
+export function clipRotationIsActive(clip: Clip): boolean {
+  return clip.transform.rotationDeg % 360 !== 0 || channelHasKeyframes(clip, 'rotationDeg');
+}
+
+export function clipHasScaleKeyframes(clip: Clip): boolean {
+  return channelHasKeyframes(clip, 'scale');
+}
+
+/**
+ * Geçişlerle BİRBİRİNE BAĞLI kliplerin (aynı track, ardışık) indeks aralığı.
+ *
+ * Geçiş bir EŞDEĞERLİK sınıfı kurar: A—B geçişliyse ikisinin yerleşimi aynı olmak
+ * zorundadır; B—C de geçişliyse zincir C'ye kadar uzar. Yerleşim yazarken bu
+ * zincirin TAMAMI güncellenir, aksi halde ilk komşuyu düzeltip ikincisini bozardık.
+ */
+function transitionChainRange(track: Track, index: number): { lo: number; hi: number } {
+  const clips = track.clips;
+  const joined = (i: number): boolean => {
+    const a = clips[i];
+    const b = clips[i + 1];
+    if (a === undefined || b === undefined) return false;
+    if (!isMediaClip(a) || !isMediaClip(b)) return false;
+    if (a.transitionOut === undefined || b.transitionIn === undefined) return false;
+    // Kopmuş kesimde (araya boşluk girmiş) geçiş metadata'sı bayat olabilir;
+    // reconcile onu düşürene kadar zinciri BURADA da kesiyoruz.
+    return clipEndUs(a) === b.timelineStartUs;
+  };
+  let lo = index;
+  while (lo > 0 && joined(lo - 1)) lo--;
+  let hi = index;
+  while (hi < clips.length - 1 && joined(hi)) hi++;
+  return { lo, hi };
+}
+
+/** `clipId` ile aynı geçiş zincirindeki DİĞER kliplerin id'leri (yoksa boş). */
+export function transitionChainSiblings(d: TimelineDoc, clipId: Uuid): Uuid[] {
+  const loc = locateClip(d, clipId);
+  if (!loc) return [];
+  const { lo, hi } = transitionChainRange(loc.track, loc.clipIndex);
+  const out: Uuid[] = [];
+  for (let i = lo; i <= hi; i++) {
+    const c = loc.track.clips[i];
+    if (c !== undefined && c.id !== clipId) out.push(c.id);
+  }
+  return out;
+}
+
+/**
+ * Yazılan yerleşimi geçiş zincirinin TAMAMINA kopyalar (§5.2 "geçişli kliplerin
+ * yerleşimi aynı olmalı").
+ *
+ * ENGELLEMEK yerine YAYMAK bilinçli bir seçim: derleyicinin kuralı "yerleşim
+ * VARSAYILAN olsun" değil "EŞİT olsun"dur. Engelleseydik geçiş eklenen bir sahne
+ * bir daha hiç ölçeklenemez/konumlanamazdı (yaygın bir düzenleme tamamen kaybolurdu);
+ * yaymak ise kuralı BİREBİR karşılar ve yeteneği korur. Medya kliplerinde yerleşim
+ * yalnız transform'dan türer (LayerGeometry fit kutusu proje tuvalidir), dolayısıyla
+ * transform'un eşitliği yerleşimin eşitliğini GARANTİ eder. Kopya sessiz değildir:
+ * op `TRANSFORM_APPLIED_TO_TRANSITION_CHAIN` bildirimi döner ve panel bunu önceden
+ * yazar.
+ */
+function propagateTransformToChain(d: TimelineDoc, clipId: Uuid): boolean {
+  const loc = locateClip(d, clipId);
+  if (!loc) return false;
+  const { lo, hi } = transitionChainRange(loc.track, loc.clipIndex);
+  if (lo === hi) return false;
+  let copied = false;
+  for (let i = lo; i <= hi; i++) {
+    const other = loc.track.clips[i];
+    if (other === undefined || other.id === clipId) continue;
+    other.transform = { ...loc.clip.transform };
+    copied = true;
+  }
+  return copied;
+}
+
+/**
+ * Dönme yazılamamasının gerekçesi (ölçek animasyonlu klip), yoksa null.
+ *
+ * `clipIds` op'a verilen seçimdir; kapı YALNIZ op'un gerçekten yazacağı kliplere
+ * bakar (kilitli track / görsel olmayan klip zaten atlanır) — aksi halde seçimdeki
+ * bir ses klibi yüzünden geçerli bir düzenleme reddedilirdi.
+ */
+export function rotationBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string | null {
+  for (const clipId of clipIds) {
+    const loc = locateClip(d, clipId);
+    if (!loc || loc.track.locked) continue;
+    if (!isVisualClip(loc.clip)) continue;
+    if (clipHasScaleKeyframes(loc.clip)) return REASON_ROTATION_NEEDS_STATIC_SCALE;
+  }
+  return null;
+}
+
 /**
  * Why a transition cannot be ADDED at `(clipId, edge)`, or null when it can.
  *
@@ -1438,6 +1866,12 @@ export function addTransitionBlockReason(
   const cut = findTransitionCut(d, clipId, edge);
   if (!cut) return 'no adjacent clip at this cut';
   if (transitionAt(cut) !== undefined) return 'a transition is already here';
+  // Geçiş + keyframe: derleyici bu bileşimi reddeder (dosya başındaki kural 1).
+  // Kesimin İKİ tarafına da bakılır — animasyon hangi tarafta olursa olsun iki
+  // klip tek xfade akışına katlanır.
+  if (clipHasVisualKeyframes(cut.a) || clipHasVisualKeyframes(cut.b)) {
+    return REASON_TRANSITION_NEEDS_STATIC_CLIPS;
+  }
   if (planTransitionDuration(cut.a, cut.b, requestedUs, d.settings.fps, assetDurations) === null) {
     return 'no room for a transition';
   }
@@ -2003,7 +2437,15 @@ export function applyClipTransformToDraft(
   clipIds: readonly Uuid[],
   patch: ClipTransformPatch,
 ): OpResult {
+  // Dönme + ölçek animasyonu bileşimi (dosya başındaki kural 2). Kapı yazmadan
+  // ÖNCE ve TÜM patch için kapanır: yarısı yazılmış bir dönüşüm, kullanıcının
+  // "bir kısmı tuttu" diye okuyacağı sessiz bir yarım sonuç olurdu.
+  if (patch.rotationDeg !== undefined) {
+    const blocked = rotationBlockReason(d, clipIds);
+    if (blocked !== null) return fail(blocked);
+  }
   let touched = 0;
+  let chained = false;
   for (const clipId of clipIds) {
     const loc = locateClip(d, clipId);
     if (!loc || loc.track.locked) continue;
@@ -2028,8 +2470,11 @@ export function applyClipTransformToDraft(
       if (v !== null) t.rotationDeg = v;
     }
     touched++;
+    // Geçiş zinciri: yerleşim EŞİT olmak zorunda (dosya başındaki kural 3).
+    if (propagateTransformToChain(d, clipId)) chained = true;
   }
-  return touched > 0 ? OK : fail('no visual clip in selection');
+  if (touched === 0) return fail('no visual clip in selection');
+  return chained ? okWith(TRANSFORM_APPLIED_TO_TRANSITION_CHAIN) : OK;
 }
 
 function transformLabel(patch: ClipTransformPatch): string {
@@ -2084,6 +2529,7 @@ export function resetClipTransform(clipIds: readonly Uuid[]): OpResult {
   let result: OpResult = fail('no visual clip in selection');
   useDocStore.getState().mutate('clipTransform', 'Dönüşüm sıfırlandı', (d) => {
     let touched = 0;
+    let chained = false;
     for (const clipId of clipIds) {
       const loc = locateClip(d, clipId);
       if (!loc || loc.track.locked) continue;
@@ -2091,8 +2537,16 @@ export function resetClipTransform(clipIds: readonly Uuid[]): OpResult {
       loc.clip.transform = { ...DEFAULT_TRANSFORM };
       loc.clip.opacity = 1;
       touched++;
+      // "Sıfırla" da bir yerleşim yazımıdır: zincirin geri kalanı sıfırlanmazsa
+      // geçişin iki tarafı ayrışırdı (bkz. propagateTransformToChain).
+      if (propagateTransformToChain(d, clipId)) chained = true;
     }
-    result = touched > 0 ? OK : fail('no visual clip in selection');
+    result =
+      touched === 0
+        ? fail('no visual clip in selection')
+        : chained
+          ? okWith(TRANSFORM_APPLIED_TO_TRANSITION_CHAIN)
+          : OK;
   });
   assertDocValidDev('resetClipTransform');
   return result;
@@ -2296,10 +2750,12 @@ function overlayClipBase(startUs: MicroSec, durationUs: MicroSec): OverlayClipBa
 }
 
 /**
- * Shared insert path for every overlay kind. Duration is snapped to the project
- * frame grid and floored at one frame (a sub-frame overlay would be invisible
+ * Shared insert path for every overlay kind. The clip is laid out EDGE TO EDGE
+ * on the project frame grid — start snapped, length a whole-frame span from
+ * that start — and floored at one frame (a sub-frame overlay would be invisible
  * in the export, which is exactly the kind of silent no-op the review gate
- * exists to prevent).
+ * exists to prevent). Snapping the DURATION instead would put the end off the
+ * grid at 30 fps whenever the start sits on a 1/3-microsecond frame.
  */
 function insertOverlayClip(
   build: (startUs: MicroSec, durationUs: MicroSec) => Clip,
@@ -2312,9 +2768,10 @@ function insertOverlayClip(
   const fps = d.settings.fps;
   const startUs = snapUsToFrameGrid(Math.max(0, Math.round(timelineStartUs)), fps);
   const minDur = minClipDurationUs(fps);
-  const durationUs = Math.max(
-    minDur,
-    snapUsToFrameGrid(Math.max(minDur, Math.round(requestedDurationUs)), fps),
+  const durationUs = snapDurationToFrameSpan(
+    startUs,
+    Math.max(minDur, Math.round(requestedDurationUs)),
+    fps,
   );
   const clip = build(startUs, durationUs);
 
@@ -2755,10 +3212,13 @@ interface SpeedClipPlan {
   /** true = this clip's rate changes (the others only ripple-shift). */
   target: boolean;
   /**
-   * Re-derived out point, present on targets only. The duration is solved onto
-   * the frame grid FIRST and the source range follows it, so this is the value
-   * that keeps invariant 3 exact — see `solveSpeedChange`.
+   * Re-derived source range. On a TARGET it comes from `solveSpeedChange` (the
+   * duration is solved onto the frame grid first and the source follows it, so
+   * invariant 3 stays exact); on a rippled follower it comes from
+   * `refitToGrid`, which does the same job for the microsecond or two the new
+   * position costs. Absent when the source range does not change.
    */
+  sourceInUs?: MicroSec;
   sourceOutUs?: MicroSec;
 }
 
@@ -2814,13 +3274,21 @@ export function planClipSpeed(
     if (track.locked) return { reason: 'track is locked' };
 
     const plans: SpeedClipPlan[] = [];
+    // The ripple is carried in FRAMES: shifting a follower by a microsecond
+    // delta lands its end off the grid (the grid is not closed under addition),
+    // which the export compiler rejects. `shiftUs` is only the fallback for a
+    // clip that is already off the grid.
     let shiftUs = 0;
+    let shiftFrames = 0;
     for (const clip of track.clips) {
       const target = ids.has(clip.id) && clipSupportsSpeed(clip);
       if (target) sawSupported = true;
-      const startUs = clip.timelineStartUs + shiftUs;
-      let durationUs = clip.timelineDurationUs;
-      let sourceOutUs: MicroSec | undefined;
+      const startUs = shiftedStartUs(clip, shiftFrames, shiftUs, fps);
+      const refit = refitToGrid(clip, startUs, fps, assetDurations ?? new Map());
+      if (refit === null) return { reason: 'clip cannot keep its frame span here' };
+      let durationUs = refit.durationUs;
+      let sourceInUs: MicroSec | undefined = refit.sourceInUs;
+      let sourceOutUs: MicroSec | undefined = refit.sourceOutUs;
       if (target) {
         const media = clip as MediaClip;
         // The one-frame floor is judged on the IDEAL duration, before the grid
@@ -2832,16 +3300,27 @@ export function planClipSpeed(
         const solved = solveSpeedChange(media.sourceInUs, media.sourceOutUs, normalized, fps, {
           maxSourceOutUs: assetDurations?.get(media.assetId),
           minFrames: 1,
+          // The grid rule is about the clip's EDGES, so the solve has to know
+          // where this clip starts: at 30 fps a clip on frame 1 may be 33_334 us
+          // long and may NOT be 33_333 us long.
+          timelineStartUs: startUs,
         });
         if (solved === null) return { reason: 'speed leaves less than one frame' };
         durationUs = solved.durationUs;
+        sourceInUs = media.sourceInUs;
         sourceOutUs = solved.sourceOutUs;
         if (durationUs < minDurationUs) return { reason: 'speed leaves less than one frame' };
-        if (ripple) shiftUs += durationUs - clip.timelineDurationUs;
+        if (ripple) {
+          // Cumulative, measured between the OLD and NEW end EDGE (both grid
+          // values), so followers walk whole frames — see rippleFollowers.
+          const oldEndUs = clip.timelineStartUs + clip.timelineDurationUs;
+          shiftUs = startUs + durationUs - oldEndUs;
+          shiftFrames = usToFrame(startUs + durationUs, fps) - usToFrame(oldEndUs, fps);
+        }
         targetCount++;
       }
       if (startUs < 0) return { reason: 'before timeline start' };
-      plans.push({ clipId: clip.id, startUs, durationUs, target, sourceOutUs });
+      plans.push({ clipId: clip.id, startUs, durationUs, target, sourceInUs, sourceOutUs });
     }
 
     // Layout check — run for BOTH modes. Ripple cannot overlap by
@@ -2890,7 +3369,17 @@ export function applyClipSpeedToDraft(
       if (!clip) continue;
       const oldDurationUs = clip.timelineDurationUs;
       clip.timelineStartUs = entry.startUs;
-      if (!entry.target) continue;
+      if (!entry.target) {
+        // Rippled follower: the grid re-fit may have changed its length by a
+        // microsecond, and the source window has to follow (invariant 3).
+        clip.timelineDurationUs = entry.durationUs;
+        if (entry.sourceInUs !== undefined && isMediaClip(clip)) {
+          clip.sourceInUs = entry.sourceInUs;
+          clip.sourceOutUs = entry.sourceOutUs!;
+        }
+        clampAudioFadesToDuration(clip);
+        continue;
+      }
       const media = clip as MediaClip;
       // Measured BEFORE the write, in FRAMES rather than microseconds: the
       // question is "did the solver have to skip the NEAREST frame count?",
@@ -2898,7 +3387,12 @@ export function applyClipSpeedToDraft(
       // frame is 33_333.33 us at 30 fps, so a legitimate half-frame snap can
       // measure 16_667 against a 16_666.5 limit). See SPEED_DURATION_SNAPPED.
       const idealUs = clipTimelineDurationUs(media.sourceInUs, media.sourceOutUs, normalized);
-      if (usToFrame(entry.durationUs, fps) !== usToFrame(idealUs, fps)) snapped = true;
+      if (
+        frameSpanCount(entry.startUs, entry.durationUs, fps) !==
+        frameSpanCount(entry.startUs, idealUs, fps)
+      ) {
+        snapped = true;
+      }
       media.speed = { rate: normalized };
       // Source range BEFORE duration is irrelevant to the write order, but both
       // must land: the pair (sourceOutUs, timelineDurationUs) is what satisfies

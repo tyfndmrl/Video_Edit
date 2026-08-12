@@ -34,6 +34,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useDocStore } from '../../state/docStore';
 import { useEditorStore } from '../../state/editorStore';
 import { isLiveEditOpen, updateLiveEdit } from '../inspector/liveEdit';
+import { opFailureMessage } from '../timeline/feedback';
 import { KeyframeEasingPicker } from './KeyframeEasingPicker';
 import { AnimatedBadge, KeyframeToggle } from './KeyframeToggle';
 import {
@@ -122,21 +123,28 @@ export function useKeyframeInspector(sessionReady: boolean): KeyframeInspector {
     // teaches the user it does not exist.
     if (model.clipId !== null && !state.available) return null;
     const clipId = model.clipId;
+    // Dışa aktarıcının reddettiği bileşimler (geçişli klipte animasyon, ölçek
+    // animasyonu + dönme) kanalı KAPATIR: düğme yerinde kalır ama tıklanamaz ve
+    // ipucu gerekçeyi söyler. Var olan bir eğri yine de şeritten (elmas silme /
+    // easing menüsü) düzenlenebilir — çıkış yolu kapanmaz.
+    const guarded = state.blockReason !== null;
     return (
       <span className="flex shrink-0 items-center gap-1">
         {state.animated && <AnimatedBadge count={state.count} />}
         <KeyframeToggle
           channel={channel}
           state={state}
-          enabled={enabled && clipId !== null}
+          enabled={enabled && clipId !== null && !guarded}
           disabledReason={
             model.clipId === null
               ? 'Keyframe için TEK klip seçili olmalı'
               : !model.editable
                 ? 'Track kilitli'
-                : !model.inRange
-                  ? "Playhead klibin dışında — keyframe klip üzerinde eklenir"
-                  : 'Proje yükleniyor'
+                : guarded
+                  ? opFailureMessage(state.blockReason)
+                  : !model.inRange
+                    ? "Playhead klibin dışında — keyframe klip üzerinde eklenir"
+                    : 'Proje yükleniyor'
           }
           onToggle={() => {
             if (clipId !== null) toggleKeyframe(clipId, channel, timeNow());

@@ -43,6 +43,8 @@ import {
   OPACITY_DECIMALS,
   POSITION_DECIMALS,
   POSITION_LIMIT,
+  REASON_KEYFRAME_NEEDS_NO_TRANSITION,
+  REASON_SCALE_KEYFRAMES_NEED_NO_ROTATION,
   ROTATION_DECIMALS,
   ROTATION_LIMIT,
   SCALE_DECIMALS,
@@ -50,6 +52,9 @@ import {
   VOLUME_DECIMALS,
   VOLUME_MAX,
   VOLUME_MIN,
+  clipHasScaleKeyframes,
+  clipHasTransition,
+  clipRotationIsActive,
   maxClipScale,
 } from '../../state/timelineOps';
 
@@ -154,6 +159,40 @@ export function clampChannelValue(
 export function channelIsAvailable(clip: Clip, channel: KeyframeChannel): boolean {
   if (channel === 'volume') return isMediaClip(clip) && clip.audio !== null;
   return clip.kind !== 'audio';
+}
+
+/** Kanal bu klip TÜRÜNDE hiç animasyonlanamaz (elmas düğmesi hiç çizilmez). */
+export const REASON_CHANNEL_UNAVAILABLE = 'channel is not animatable on this clip';
+
+/**
+ * Bu kanala YENİ keyframe açılamamasının gerekçesi, yoksa null.
+ *
+ * `channelIsAvailable` klibin TÜRÜNE bakar ("ses klibinin opaklığı yoktur");
+ * burada ek olarak dışa aktarıcının reddettiği BİLEŞİMLER de kapatılır
+ * (state/timelineOps'taki "yönlendir-sonra-reddet" bölümü):
+ *  - geçişli klipte GÖRSEL kanal (volume hariç — ses zinciri geçişten etkilenmez);
+ *  - katman dönüyorken ÖLÇEK kanalı, ölçek animasyonluyken DÖNME kanalı.
+ *
+ * Kapı yalnız EKLEME yolundadır: var olan bir keyframe her zaman taşınabilir,
+ * değeri değiştirilebilir ve TEMİZLENEBİLİR — aksi halde (eski bir projeden
+ * gelen) yasak bileşimden çıkış yolu kalmazdı.
+ *
+ * `channelIsAvailable` bilinçli olarak DEĞİŞTİRİLMEDİ: false dönmesi paneldeki
+ * elması tamamen kaldırıyor ("bu klipte böyle bir özellik yok" demek), oysa
+ * buradaki kurallar geçici durumlardır ve kullanıcı NEDENİNİ görmelidir —
+ * düğme yerinde kalır, kapalı ve ipucu gerekçeyi söyler.
+ */
+export function channelBlockReason(clip: Clip, channel: KeyframeChannel): string | null {
+  if (!channelIsAvailable(clip, channel)) return REASON_CHANNEL_UNAVAILABLE;
+  if (channel === 'volume') return null;
+  if (clipHasTransition(clip)) return REASON_KEYFRAME_NEEDS_NO_TRANSITION;
+  if (channel === 'scale' && clipRotationIsActive(clip)) {
+    return REASON_SCALE_KEYFRAMES_NEED_NO_ROTATION;
+  }
+  if (channel === 'rotationDeg' && clipHasScaleKeyframes(clip)) {
+    return REASON_SCALE_KEYFRAMES_NEED_NO_ROTATION;
+  }
+  return null;
 }
 
 /** The STATIC value of a channel (what applies when the track is empty). */
@@ -271,6 +310,12 @@ export interface ChannelState {
   channel: KeyframeChannel;
   /** The clip kind can animate this property at all. */
   available: boolean;
+  /**
+   * Why a NEW keyframe cannot be added here (channelBlockReason), or null.
+   * `available === false` implies a reason; the reverse does not hold — a
+   * transition or a rotation blocks an otherwise animatable channel.
+   */
+  blockReason: string | null;
   /** The channel has at least one keyframe (the "animated" indicator). */
   animated: boolean;
   count: number;
@@ -306,6 +351,7 @@ export interface KeyframePanelModel {
 const EMPTY_CHANNEL_STATE = (channel: KeyframeChannel): ChannelState => ({
   channel,
   available: false,
+  blockReason: REASON_CHANNEL_UNAVAILABLE,
   animated: false,
   count: 0,
   value: null,
@@ -372,6 +418,7 @@ export function buildKeyframePanelModel(
     channels[channel] = {
       channel,
       available,
+      blockReason: channelBlockReason(clip, channel),
       animated: available && kfs.length > 0,
       count: available ? kfs.length : 0,
       value: available ? channelValueAt(clip, channel, clipTimeUs) : null,

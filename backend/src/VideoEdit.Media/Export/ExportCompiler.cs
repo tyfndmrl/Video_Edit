@@ -248,16 +248,22 @@ public static class ExportCompiler
             {
                 var planned = ValidateClip(clip, width, height);
 
-                // Frame-grid güvenlik ağı (rendering-semantics §1.4): editör klipleri zaten proje
-                // fps grid'inde üretir; grid dışı değer frame defterini bozup ±1 frame kayma üretir —
-                // sessiz snap yerine sözleşme ihlali görünür olur.
+                // Frame-grid güvenlik ağı (rendering-semantics §1.4): frame defteri klibi İKİ KENARLA
+                // tutar (aşağıda startFrame/endFrame → trim=start_frame:end_frame), uzunlukla DEĞİL.
+                // Kapı da bu yüzden kenarlardadır: grid tamsayı olmayan fps'te toplama altında KAPALI
+                // DEĞİLDİR (30 fps: frame1=33_333, frame2=66_667; 33_333+33_333=66_666 ızgarada yok),
+                // dolayısıyla "start ızgarada VE süre ızgarada" isteği bitişik klip zinciri için —
+                // yani her bölme ve her geçiş için — çelişkilidir. Kenarlar ızgaradaysa defter
+                // birebir tutar; ±1 frame kayma da imkânsız olur.
+                var plannedEndUs = planned.TimelineStartUs + planned.TimelineDurationUs;
                 if (SnapUs(planned.TimelineStartUs, fpsNum, fpsDen) != planned.TimelineStartUs
-                    || SnapUs(planned.TimelineDurationUs, fpsNum, fpsDen) != planned.TimelineDurationUs)
+                    || SnapUs(plannedEndUs, fpsNum, fpsDen) != plannedEndUs)
                 {
                     throw new InvalidTimelineException(
-                        $"clip '{planned.Id}' is not aligned to the project frame grid "
+                        $"clip '{planned.Id}' edges are not on the project frame grid "
                         + $"({fpsNum.ToString(CultureInfo.InvariantCulture)}/{fpsDen.ToString(CultureInfo.InvariantCulture)} fps): "
-                        + $"timelineStartUs={planned.TimelineStartUs}, timelineDurationUs={planned.TimelineDurationUs}.");
+                        + $"timelineStartUs={planned.TimelineStartUs}, "
+                        + $"timelineEndUs={plannedEndUs} (timelineDurationUs={planned.TimelineDurationUs}).");
                 }
 
                 clips.Add(planned);

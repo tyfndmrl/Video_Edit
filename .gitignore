@@ -28,8 +28,10 @@ coverage/
 TestResults/
 playwright-report/
 
-# E2E gecici fixture (commit'lenmez)
-apps/editor/public/e2e-test-video.mp4
+# E2E / olcum medyasi (commit'lenmez). ONEMLI: public/ ALTINA KONMAZ —
+# Vite public/ icerigini oldugu gibi dist/'e kopyalar ve uretim bundle'ina
+# sizar (bekci: apps/editor/scripts/check-public-assets.mjs).
+apps/editor/e2e/fixtures/media/
 
 # Playwright artefaktlari
 test-results/

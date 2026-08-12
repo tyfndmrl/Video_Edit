@@ -74,6 +74,35 @@ describe('syncServerAssets', () => {
     expect(a.height).toBe(1080);
   });
 
+  /**
+   * The API serializes an unknown duration as JSON `null`, and a still image
+   * has no duration to report (ffprobe's png_pipe demuxer emits none). The DTO
+   * type claims `number | undefined`, so nothing complained — but the null then
+   * reached the source-bounds invariant, where `4000000 > null` is TRUE and
+   * adding a photo to the timeline threw. Cut it at the source.
+   */
+  it('a null durationMicros off the wire is stored as undefined, never as null', () => {
+    syncServerAssets([
+      dto({
+        id: A1,
+        kind: 'image',
+        fileName: 'foto.png',
+        contentType: 'image/png',
+        durationMicros: null as unknown as undefined,
+      }),
+    ]);
+    const a = useAssetStore.getState().getAsset(A1)!;
+    expect(a.kind).toBe('image');
+    expect(a.durationUs, 'null must not survive into the store.').toBeUndefined();
+    expect(a.durationUs).not.toBeNull();
+  });
+
+  it('a null durationMicros does not clobber a duration already known', () => {
+    syncServerAssets([dto({ id: A1, durationMicros: 10_000_000 })]);
+    syncServerAssets([dto({ id: A1, durationMicros: null as unknown as undefined })]);
+    expect(useAssetStore.getState().getAsset(A1)?.durationUs).toBe(10_000_000);
+  });
+
   it('keeps the fresher local uploading progress over the polled one', () => {
     useAssetStore.getState().setAssets([
       { id: A1, kind: 'video', name: 'clip.mp4', status: 'uploading', progress: 0.8 },

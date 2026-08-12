@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './app/App';
+import { ErrorBoundary } from './app/ErrorBoundary';
 import { installTestBridge } from './state/testBridge';
 import './index.css';
 
@@ -13,8 +14,12 @@ if (!container) {
   throw new Error('Root element #root not found');
 }
 
+// ErrorBoundary EN DIŞTA: sınır olmadan, render/commit sırasında fırlayan tek
+// bir hata React'in kök ağacı sökmesine — yani BEYAZ EKRANA — yol açar.
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );

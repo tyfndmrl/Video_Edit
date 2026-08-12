@@ -476,12 +476,30 @@ describe('removeTransition / setTransitionType / setTransitionDuration', () => {
  * bırakırsa export 422 döner ("frame grid'inde değil").
  */
 describe('NTSC (29.97) ızgarasında geçiş', () => {
+  /**
+   * 180 kare = 6_006_000 µs. Fixture'ın kendisi 29.97 ızgarasında OLMAK
+   * zorundadır: 6 sn (6_000_000 µs) bu ızgarada bir kare sınırı DEĞİLDİR, yani
+   * "6 sn'lik klip" kurgusu daha ilk anda export'un reddedeceği bir doküman
+   * kurar ve testin ölçtüğü şeyi (geçiş süresinin ızgaraya oturması) ölçülemez
+   * hale getirir.
+   */
+  const NTSC_CLIP_US = 6_006_000;
   function loadNtsc(): void {
     load(
       docWith(
         [
-          mediaClip({ id: CLIP_A, startUs: 0, sourceInUs: 10 * US, sourceOutUs: 16 * US }),
-          mediaClip({ id: CLIP_B, startUs: 6 * US, sourceInUs: 20 * US, sourceOutUs: 26 * US }),
+          mediaClip({
+            id: CLIP_A,
+            startUs: 0,
+            sourceInUs: 10 * US,
+            sourceOutUs: 10 * US + NTSC_CLIP_US,
+          }),
+          mediaClip({
+            id: CLIP_B,
+            startUs: NTSC_CLIP_US,
+            sourceInUs: 20 * US,
+            sourceOutUs: 20 * US + NTSC_CLIP_US,
+          }),
         ],
         FPS2997,
       ),
@@ -500,12 +518,12 @@ describe('NTSC (29.97) ızgarasında geçiş', () => {
 
   it('üst sınıra dayanan istek kısaltılır ve sınırı BİR KARE bile aşmaz', () => {
     loadNtsc();
-    // Üst sınır: min(6 sn, 6 sn)/2 = 3 sn. 10 sn istenirse kısalır.
+    // Üst sınır: min(180 kare, 180 kare)/2 = 90 kare. 10 sn istenirse kısalır.
     const result = addTransition(CLIP_A, CLIP_B, 'crossfade', 10 * US);
     expect(result.ok && result.notice).toBe(TRANSITION_SHORTENED_LENGTH);
     const d = clipById(CLIP_A).transitionOut!.durationUs;
-    expect(d * 2).toBeLessThanOrEqual(6 * US);
-    expect(frameToUs(usToFrame(d, FPS2997) + 2, FPS2997) * 2).toBeGreaterThan(6 * US);
+    expect(d * 2).toBeLessThanOrEqual(NTSC_CLIP_US);
+    expect(frameToUs(usToFrame(d, FPS2997) + 2, FPS2997) * 2).toBeGreaterThan(NTSC_CLIP_US);
     expectDocValid();
   });
 

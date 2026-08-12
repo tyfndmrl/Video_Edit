@@ -39,7 +39,7 @@ import { isMediaClip } from '@videoedit/timeline-schema';
 import type { Transform, Uuid } from '@videoedit/timeline-schema';
 import { useDocStore, type Transaction } from '../../state/docStore';
 import { useEditorStore } from '../../state/editorStore';
-import { maxClipScale } from '../../state/timelineOps';
+import { clipHasScaleKeyframes, maxClipScale } from '../../state/timelineOps';
 import { keyframeTimeAtPlayhead } from '../keyframes/keyframeModel';
 import { applyTransformPatchToDraft } from '../keyframes/keyframeOps';
 import { useAssetStore } from '../../state/assetStore';
@@ -293,6 +293,17 @@ export function TransformGizmo({
     );
   }, [target]);
 
+  /**
+   * Rotation is refused while the SCALE channel is animated (the export
+   * compiler crops the layer in that combination — see
+   * timelineOps.rotationBlockReason). The knob is then neither drawn nor
+   * grabbable, so the gizmo never offers a drag the op would throw away.
+   */
+  const rotationBlocked = useMemo(
+    () => (target ? clipHasScaleKeyframes(target.clip) : false),
+    [target],
+  );
+
   const geometry: GizmoGeometry | null = useMemo(() => {
     if (!rects || !shownTransform || rects.width <= 0 || rects.height <= 0) return null;
     const mapping = fitViewport(compW, compH, rects);
@@ -343,6 +354,11 @@ export function TransformGizmo({
       // Miss: do NOT capture. The event keeps bubbling, so clicking the picture
       // next to a selected clip still toggles playback.
       if (!handle) return;
+      // The rotate knob is not drawn while rotation is blocked; the hit test is
+      // GEOMETRIC, so it would still report a hit on the invisible spot. Treat
+      // it as a miss (same bubbling behaviour) instead of opening a transaction
+      // whose every write the op refuses.
+      if (handle === 'rotate' && rotationBlocked) return;
       e.preventDefault();
       e.currentTarget.setPointerCapture(e.pointerId);
       const pointerComp = screenToComp(geometry.mapping, point);
@@ -398,6 +414,7 @@ export function TransformGizmo({
       target,
       shownTransform,
       keyframed,
+      rotationBlocked,
       localPoint,
       compW,
       compH,
@@ -502,50 +519,61 @@ export function TransformGizmo({
       />
       {/* Handles are present whether or not the clip is animated — the dashed
           outline is the only difference, because WHERE the drag lands changed,
-          not WHETHER it may happen. */}
+          not WHETHER it may happen.
+
+          The ROTATE handle is the one exception: on a clip whose SCALE is
+          animated the transform op refuses a rotation (the export compiler
+          would crop the layer — timelineOps.rotationBlockReason), so drawing a
+          knob that does nothing would be the "offer then refuse" defect this
+          guard exists to remove. The Inspector states the reason next to the
+          locked Döndürme field. */}
       <>
-          <line
-            x1={topMid.x}
-            y1={topMid.y}
-            x2={rotateHandle.x}
-            y2={rotateHandle.y}
-            stroke="rgba(0,0,0,0.55)"
-            strokeWidth={3}
-            pointerEvents="none"
-          />
-          <line
-            x1={topMid.x}
-            y1={topMid.y}
-            x2={rotateHandle.x}
-            y2={rotateHandle.y}
-            stroke="#ffffff"
-            strokeWidth={1.25}
-            pointerEvents="none"
-          />
-          <circle
-            data-testid="player-gizmo-rotate"
-            cx={rotateHandle.x}
-            cy={rotateHandle.y}
-            r={6}
-            fill="#ffffff"
-            stroke="rgba(0,0,0,0.55)"
-            strokeWidth={1.5}
-            pointerEvents="none"
-          />
-          {(['nw', 'ne', 'se', 'sw'] as CornerHandle[]).map((corner) => (
-            <rect
-              key={corner}
-              data-testid={`player-gizmo-corner-${corner}`}
-              x={corners[corner].x - 5}
-              y={corners[corner].y - 5}
-              width={10}
-              height={10}
+        {!rotationBlocked && (
+          <>
+            <line
+              x1={topMid.x}
+              y1={topMid.y}
+              x2={rotateHandle.x}
+              y2={rotateHandle.y}
+              stroke="rgba(0,0,0,0.55)"
+              strokeWidth={3}
+              pointerEvents="none"
+            />
+            <line
+              x1={topMid.x}
+              y1={topMid.y}
+              x2={rotateHandle.x}
+              y2={rotateHandle.y}
+              stroke="#ffffff"
+              strokeWidth={1.25}
+              pointerEvents="none"
+            />
+            <circle
+              data-testid="player-gizmo-rotate"
+              cx={rotateHandle.x}
+              cy={rotateHandle.y}
+              r={6}
               fill="#ffffff"
               stroke="rgba(0,0,0,0.55)"
               strokeWidth={1.5}
               pointerEvents="none"
             />
-          ))}
+          </>
+        )}
+        {(['nw', 'ne', 'se', 'sw'] as CornerHandle[]).map((corner) => (
+          <rect
+            key={corner}
+            data-testid={`player-gizmo-corner-${corner}`}
+            x={corners[corner].x - 5}
+            y={corners[corner].y - 5}
+            width={10}
+            height={10}
+            fill="#ffffff"
+            stroke="rgba(0,0,0,0.55)"
+            strokeWidth={1.5}
+            pointerEvents="none"
+          />
+        ))}
       </>
       {keyframed && (
         <title>
