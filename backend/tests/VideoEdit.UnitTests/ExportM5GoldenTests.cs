@@ -473,7 +473,7 @@ public sealed class ExportM5GoldenTests : IDisposable
             },
             ExportProfile.Hd1080p);
         Assert.DoesNotContain("sendcmd", compiled.FilterGraphScript);
-        Assert.Contains("overlay=x='if(lt(t,", compiled.FilterGraphScript);
+        Assert.Contains("overlay=x='floor(if(lt(t,", compiled.FilterGraphScript);
 
         var output = await RenderAsync(compiled, "kf-eased");
         foreach (var frame in (int[])[0, 15, 30, 45, 59])

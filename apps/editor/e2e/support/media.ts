@@ -261,6 +261,202 @@ export function ensureMisalignedVideo(projectFps: Rational = DEFAULT_PROJECT_FPS
   };
 }
 
+// ---------------------------------------------------------------------------
+// AŞIRI GENİŞ (afiş/panorama) kaynak — dejenerelik rejiminin tek tetikleyicisi
+// ---------------------------------------------------------------------------
+
+/**
+ * 1920×100 (**19.2:1**) afiş videosu.
+ *
+ * Neden ayrı bir fixture: takımdaki bütün medya normal oranlıdır (640×480, 16:9) ve normal oranlı
+ * bir kaynak dejenerelik rejimine **hiçbir ölçekte** giremez. 1920×1080 tuvalde ölçek `0.010`
+ * yazıldığında kutu `19×11` olur; ffmpeg'in aspect'i koruyarak sığdırdığı yükseklik `0.99 px`'e
+ * düşer, filtre o ekseni `0` hesaplar ve `0`'ı *"girdi boyutunu koru"* diye yorumlar → katman
+ * `18×100` çizilirdi (**100 kat** yüksek) ve normalize pad `-22` ile ölürdü.
+ *
+ * Eşik (`rendering-semantics` §2.5): `(ceil(1920/100) − 0.5) / 1920 = 0.010156` → editör
+ * ızgarasında **0.011**. Yani `0.010` reddedilir, `0.011` kabul edilir — bir ızgara adımı.
+ *
+ * Boyut `ensureTestVideo`'nunki gibi ölçülMEZ, ÜRETİLİR ve aşağıda ffprobe ile **doğrulanır**:
+ * fixture amacını kaybederse test sessizce yeşile dönmemeli.
+ */
+export const BANNER_VIDEO_SPEC = {
+  fileName: 'e2e-banner-1920x100.mp4',
+  width: 1920,
+  height: 100,
+  durationSeconds: 4,
+  contentType: 'video/mp4',
+  /** 1920×1080 tuvalde dejenere olan EN BÜYÜK ölçek (reddedilmeli). */
+  degenerateScale: '0.010',
+  /** Bir ızgara adımı üstü — kabul edilmeli. */
+  acceptedScale: '0.011',
+} as const;
+
+/** ffprobe ile gerçek kare boyutu (rotation uygulanmış) — `WxH` ya da null. */
+export function probeFrameSize(path: string): { width: number; height: number } | null {
+  const res = spawnSync(
+    'ffprobe',
+    [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height',
+      '-of', 'csv=p=0:s=x',
+      path,
+    ],
+    { encoding: 'utf8', timeout: 30_000 },
+  );
+  if (res.status !== 0) return null;
+  const [w, h] = (res.stdout ?? '').trim().split('x').map((v) => Number.parseInt(v, 10));
+  return Number.isFinite(w) && Number.isFinite(h) ? { width: w!, height: h! } : null;
+}
+
+export function ensureBannerVideo(): TestVideo {
+  const { fileName, width, height, durationSeconds, contentType } = BANNER_VIDEO_SPEC;
+  const path = join(MEDIA_DIR, fileName);
+
+  if (!existsSync(path)) {
+    if (ffmpegVersion() === null) throw new Error(FFMPEG_SKIP_REASON);
+    mkdirSync(MEDIA_DIR, { recursive: true });
+    const res = spawnSync(
+      'ffmpeg',
+      [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi',
+        '-i', `testsrc2=size=${width}x${height}:rate=30:duration=${durationSeconds}`,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+        '-b:v', '1500k', '-movflags', '+faststart',
+        path,
+      ],
+      { encoding: 'utf8', timeout: 120_000 },
+    );
+    if (res.status !== 0 || !existsSync(path)) {
+      throw new Error(`Afiş test videosu üretilemedi (ffmpeg exit ${res.status}):\n${res.stderr}`);
+    }
+  }
+
+  // Fixture'ın TEK amacı aşırı en-boy oranıdır; ölçmeden kullanmak testi anlamsızlaştırır.
+  const size = probeFrameSize(path);
+  if (size === null) {
+    throw new Error(`"${fileName}" kare boyutu ffprobe ile okunamadı (ffprobe PATH'te mi?).`);
+  }
+  if (size.width !== width || size.height !== height) {
+    throw new Error(
+      `"${fileName}" ${size.width}x${size.height} çıktı, beklenen ${width}x${height}. Bu fixture'ın ` +
+        'tek amacı 19.2:1 en-boy oranıydı; bu ffmpeg sürümüyle amacını kaybetmiş demektir. ' +
+        'Dosyayı silip yeniden üretin: e2e/.artifacts/media.',
+    );
+  }
+
+  return {
+    path,
+    fileName,
+    sizeBytes: statSync(path).size,
+    width,
+    height,
+    durationUs: durationSeconds * 1_000_000,
+    contentType,
+  };
+}
+
+export const TEST_AUDIO_SPEC = {
+  fileName: 'e2e-muzik-3s.m4a',
+  durationSeconds: 3,
+  contentType: 'audio/mp4',
+} as const;
+
+export interface TestAudio {
+  path: string;
+  fileName: string;
+  sizeBytes: number;
+  durationUs: number;
+  contentType: string;
+}
+
+/**
+ * 3 saniyelik GERÇEK bir .m4a (AAC) — kullanıcının "müzik ekle" yolunun birebir
+ * dosyası (yükleme whitelist'inde `audio/mp4`).
+ *
+ * Genlik bilerek yükseltilir (`volume=5`): dışa aktarılan MP4'te "ses var mı"
+ * sorusu ancak ÖLÇÜLEBİLİR bir seviyeyle yanıtlanabilir — dijital sessizlik de
+ * geçerli bir ses stream'idir ve yalnız stream sayan bir kontrol onu yeşil
+ * geçirirdi.
+ */
+export function ensureTestAudio(): TestAudio {
+  const path = join(MEDIA_DIR, TEST_AUDIO_SPEC.fileName);
+
+  if (!existsSync(path)) {
+    if (ffmpegVersion() === null) throw new Error(FFMPEG_SKIP_REASON);
+    mkdirSync(MEDIA_DIR, { recursive: true });
+    const res = spawnSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        `sine=frequency=440:duration=${TEST_AUDIO_SPEC.durationSeconds}`,
+        '-af',
+        'volume=5',
+        '-c:a',
+        'aac',
+        '-ar',
+        '48000',
+        path,
+      ],
+      { encoding: 'utf8', timeout: 120_000 },
+    );
+    if (res.status !== 0 || !existsSync(path)) {
+      throw new Error(`Test sesi üretilemedi: ${res.stderr ?? ''}`);
+    }
+  }
+
+  return {
+    path,
+    fileName: TEST_AUDIO_SPEC.fileName,
+    sizeBytes: statSync(path).size,
+    durationUs: TEST_AUDIO_SPEC.durationSeconds * 1_000_000,
+    contentType: TEST_AUDIO_SPEC.contentType,
+  };
+}
+
+/**
+ * Bir medya dosyasında ses akışı var mı ve ORTALAMA SEVİYESİ kaç dBFS?
+ * `null` = ses akışı yok (ya da ölçülemedi). ffmpeg `volumedetect` kullanılır.
+ */
+export function probeMeanVolumeDb(path: string): number | null {
+  const res = spawnSync(
+    'ffmpeg',
+    ['-nostdin', '-hide_banner', '-i', path, '-af', 'volumedetect', '-vn', '-f', 'null', '-'],
+    { encoding: 'utf8', timeout: 120_000 },
+  );
+  const match = /mean_volume:\s*(-?\d+(?:\.\d+)?) dB/.exec(res.stderr ?? '');
+  return match ? Number(match[1]) : null;
+}
+
+/** Dosyadaki stream türleri (ffprobe) — ör. `['video', 'audio']`. */
+export function probeStreamKinds(path: string): string[] {
+  const res = spawnSync(
+    'ffprobe',
+    [
+      '-v',
+      'quiet',
+      '-print_format',
+      'json',
+      '-show_streams',
+      '-show_entries',
+      'stream=codec_type',
+      path,
+    ],
+    { encoding: 'utf8', timeout: 60_000 },
+  );
+  if (res.status !== 0) return [];
+  const parsed = JSON.parse(res.stdout) as { streams?: { codec_type?: string }[] };
+  return (parsed.streams ?? []).map((s) => s.codec_type ?? '');
+}
+
 /**
  * Desteklenmeyen formatı reddetme testi için sahte dosya. İÇERİĞİ önemsiz:
  * reddetme UZANTI üzerinden yapılır (features/library/fileTypes.ts) ve dosya

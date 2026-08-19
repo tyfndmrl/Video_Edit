@@ -10,6 +10,7 @@ using VideoEdit.Infrastructure;
 using VideoEdit.Infrastructure.Jobs;
 using VideoEdit.Infrastructure.Storage;
 using VideoEdit.Media;
+using VideoEdit.Media.Export;
 using VideoEdit.Media.Probing;
 using VideoEdit.Media.Recipes;
 using VideoEdit.Media.Waveform;
@@ -440,8 +441,13 @@ public sealed class ProcessAssetJob(
     /// <summary>
     /// Image beyanlı asset'in "aslında video" sayıldığı süre eşiği: gerçek still image'lerin
     /// probe süresi yoktur ya da tek-kare (~0.04 sn) düzeyindedir.
+    /// <para>
+    /// TEK TANIM: aynı eşiği export'un durağan-giriş kapısı da kullanır
+    /// (<see cref="ExportAssetUse.StillSourceMaxDurationUs"/>). İki sayı ayrışırsa buradan Ready
+    /// çıkan bir görsel varlık orada reddedilebilirdi — yani yanlış ret.
+    /// </para>
     /// </summary>
-    public const long ImageMaxDurationUs = 1_000_000;
+    public const long ImageMaxDurationUs = ExportAssetUse.StillSourceMaxDurationUs;
 
     /// <summary>
     /// Kind ↔ probe tutarlılık gate'i (public: birim testleri process'siz doğrular).

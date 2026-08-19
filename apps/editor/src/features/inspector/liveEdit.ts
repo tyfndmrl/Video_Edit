@@ -17,8 +17,9 @@
  * the plain op wrappers. `isLiveEditOpen()` is how a control tells the two
  * apart.
  */
-import type { TimelineDoc } from '@videoedit/timeline-schema';
+import type { MicroSec, TimelineDoc } from '@videoedit/timeline-schema';
 import { useDocStore, type Transaction } from '../../state/docStore';
+import { useEditorStore } from '../../state/editorStore';
 import { assertDocValidDev } from '../../state/timelineOps';
 
 let active: Transaction | null = null;
@@ -69,6 +70,8 @@ export function beginLiveEdit(actionType: string, label: string): boolean {
   if (gestureOpen) endLiveEdit();
   const store = useDocStore.getState();
   gestureOpen = true;
+  // The gesture is anchored to the instant it STARTED (see the anchor section).
+  gestureAnchor = captureEditAnchor();
   if (typeof window !== 'undefined') {
     const onRelease = (): void => endLiveEdit();
     window.addEventListener('pointerup', onRelease);
@@ -93,11 +96,75 @@ export function endLiveEdit(): void {
   releaseListeners?.();
   releaseListeners = null;
   gestureOpen = false;
+  gestureAnchor = null;
   const tx = active;
   active = null;
   if (tx === null) return;
   tx.commit();
   assertDocValidDev('inspector live edit');
+}
+
+// ---------------------------------------------------------------------------
+// Edit anchor: WHEN an edit was written, not when it happened to commit
+// ---------------------------------------------------------------------------
+
+/**
+ * A panel edit does not always land in the instant that fires it:
+ * - typing into a field commits on BLUR, and the blur is caused by the very
+ *   click that moved the playhead somewhere else (the pointerdown handler runs
+ *   first, focus moves after it);
+ * - a slider/scrub gesture streams values for as long as the button is held,
+ *   and during PLAYBACK the playhead keeps running underneath it.
+ *
+ * Reading the playhead at write time therefore answers the wrong question.
+ * Measured with real input before this existed: typing -0.30 at 63 s and then
+ * clicking the ruler wrote a SECOND keyframe at 65 s and left the 63 s one at
+ * 0; one scrub-drag during playback left four keyframes strewn across the clip.
+ *
+ * So an edit carries an ANCHOR — the playhead of the moment it was written —
+ * and the keyframe layer writes there. The transform gizmo already worked this
+ * way (`TransformGizmo` freezes `clipTimeUs` at pointerdown); this is the same
+ * rule for the panel.
+ *
+ * Two lifetimes, deliberately different:
+ * - `gestureAnchor` lives exactly as long as `gestureOpen` (window pointerup
+ *   safety net included), i.e. it cannot outlive the drag that set it;
+ * - `commitAnchor` is only visible during the SYNCHRONOUS call inside
+ *   `runWithEditAnchor`, so a field that unmounts mid-edit cannot leave a stale
+ *   time behind for the next writer to pick up.
+ *
+ * Everything with no anchor (a diamond click, a stepper on a static field)
+ * keeps reading the live playhead — that IS the instant it happened.
+ */
+export interface EditAnchor {
+  readonly playheadUs: MicroSec;
+}
+
+let gestureAnchor: EditAnchor | null = null;
+let commitAnchor: EditAnchor | null = null;
+
+/** Snapshot of the ambient state an edit is being written against. */
+export function captureEditAnchor(): EditAnchor {
+  return { playheadUs: useEditorStore.getState().playheadUs };
+}
+
+/** Playhead of the edit in flight, or null when nothing is anchored. */
+export function editAnchorPlayheadUs(): MicroSec | null {
+  return (commitAnchor ?? gestureAnchor)?.playheadUs ?? null;
+}
+
+/**
+ * Runs a deferred commit against the anchor it was written with. Restores the
+ * previous anchor on the way out so nesting cannot leak.
+ */
+export function runWithEditAnchor<T>(anchor: EditAnchor | null, fn: () => T): T {
+  const previous = commitAnchor;
+  commitAnchor = anchor;
+  try {
+    return fn();
+  } finally {
+    commitAnchor = previous;
+  }
 }
 
 // ---------------------------------------------------------------------------

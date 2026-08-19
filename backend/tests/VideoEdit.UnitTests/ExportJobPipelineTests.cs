@@ -356,6 +356,238 @@ public sealed class ExportJobPipelineTests : IDisposable
     }
 
     [MinioAndFfmpegFact]
+    public async Task Export_MusicOnAnAudioTrack_Succeeds_AndTheOutputReallyCarriesThatSound()
+    {
+        // M6 DENETİMİ, N1 (KRİTİK): kullanıcı kitaplığa bir .m4a yükleyip ses track'ine
+        // koyduğunda export İMKÂNSIZDI. Worker'ın indirme döngüsü klip TÜRÜNE bakmadan HER
+        // varlıkta video stream'i şart koşuyordu; iş 'unsupported-media: ... has no video
+        // stream' ile ölüyordu. Bu testin varlık sebebi tam olarak O DÖNGÜDÜR: birim testleri
+        // ExportAssetSource'u doğrudan veriyor ve döngüye hiç girmiyorlardı.
+        //
+        // KANIT ÇITASI: "job Succeeded" YETMEZ, "çıktıda ses stream'i var" da yetmez —
+        // dijital sessizlik de bir stream'dir. Çıktının GERÇEK SEVİYESİ ölçülür.
+        var musicPath = media.AudioM4a();
+        var now = DateTimeOffset.UtcNow;
+        var music = Asset.Create(_userId, AssetKind.Audio, "music.m4a", "audio/mp4",
+            new FileInfo(musicPath).Length, now);
+        MarkReady(music, now);
+        _db.Assets.Add(music);
+
+        var projectId = Guid.CreateVersion7();
+        var doc = ExportTestDocs.MultiTrackDoc(
+            projectId: projectId, width: 320, height: 240,
+            tracks:
+            [
+                ExportTestDocs.AudioTrack(clips:
+                    [ExportTestDocs.AudioClip(music.Id, 0, 0, 2_000_000, ExportTestDocs.Audio())]),
+            ]);
+
+        var job = Job.Create(JobType.Export, _userId, now,
+            projectId: projectId,
+            timelineSnapshot: JsonDocument.Parse(ExportTestDocs.ToJson(doc)),
+            exportProfile: "1080p");
+        _db.Jobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        _cleanupPrefixes.Add($"u/{_userId}");
+        await _storage.EnsureBucketsExistAsync();
+        await _storage.UploadFileAsync(music.StorageKey, musicPath, "audio/mp4");
+
+        await CreateRunner(CreateCache()).Run(job.Id, CancellationToken.None);
+
+        Assert.True(job.Status == JobStatus.Succeeded,
+            $"expected Succeeded, got {job.Status}: {job.ErrorMessage}");
+
+        var localOutput = await DownloadExportAsync(job, "music-export.mp4");
+        Assert.True(MeanVolumeDb(localOutput) > -50,
+            "çıktı sessiz: ses klibi mikse girmemiş (yalnız stream sayısına bakan bir kontrol "
+            + "bunu göremezdi)");
+    }
+
+    [MinioAndFfmpegFact]
+    public async Task Export_MusicMixedWithVideo_Succeeds_AndKeepsBothSources()
+    {
+        // Aynı belgede SES + VİDEO: ses klibi ses varlığını, video klibi video varlığını
+        // gösterir. Worker artık her varlığa AYNI soruyu sormaz — defterden (plan.AssetUses)
+        // hangi varlıkta neyin arandığını okur.
+        var musicPath = media.AudioM4a();
+        var videoPath = media.VideoSolid320x240NoAudio(); // SESSİZ video: ses yalnız müzikten gelir
+        var now = DateTimeOffset.UtcNow;
+        var music = Asset.Create(_userId, AssetKind.Audio, "music.m4a", "audio/mp4",
+            new FileInfo(musicPath).Length, now);
+        MarkReady(music, now);
+        var video = Asset.Create(_userId, AssetKind.Video, "solid.mp4", "video/mp4",
+            new FileInfo(videoPath).Length, now);
+        MarkReady(video, now);
+        _db.Assets.AddRange(music, video);
+
+        var projectId = Guid.CreateVersion7();
+        var doc = ExportTestDocs.MultiTrackDoc(
+            projectId: projectId, width: 320, height: 240,
+            tracks:
+            [
+                ExportTestDocs.VideoTrack(clips:
+                    [ExportTestDocs.VideoClip(video.Id, 0, 0, 1_000_000)]),
+                ExportTestDocs.AudioTrack(clips:
+                    [ExportTestDocs.AudioClip(music.Id, 0, 0, 1_000_000, ExportTestDocs.Audio())]),
+            ]);
+
+        var job = Job.Create(JobType.Export, _userId, now,
+            projectId: projectId,
+            timelineSnapshot: JsonDocument.Parse(ExportTestDocs.ToJson(doc)),
+            exportProfile: "1080p");
+        _db.Jobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        _cleanupPrefixes.Add($"u/{_userId}");
+        await _storage.EnsureBucketsExistAsync();
+        await _storage.UploadFileAsync(music.StorageKey, musicPath, "audio/mp4");
+        await _storage.UploadFileAsync(video.StorageKey, videoPath, "video/mp4");
+
+        await CreateRunner(CreateCache()).Run(job.Id, CancellationToken.None);
+
+        Assert.True(job.Status == JobStatus.Succeeded,
+            $"expected Succeeded, got {job.Status}: {job.ErrorMessage}");
+
+        var localOutput = await DownloadExportAsync(job, "mixed-export.mp4");
+        Assert.True(MeanVolumeDb(localOutput) > -50, "karışık belgede müzik duyulmuyor");
+
+        // Görüntü de gerçekten VİDEO varlığından geliyor (0x804020 düz renk).
+        var pixel = CentrePixel(localOutput, 15);
+        Assert.True(
+            Math.Abs(pixel[0] - 0x80) <= 8 && Math.Abs(pixel[1] - 0x40) <= 8
+            && Math.Abs(pixel[2] - 0x20) <= 8,
+            $"görüntü kaynaktan gelmemiş: ({pixel[0]},{pixel[1]},{pixel[2]})");
+    }
+
+    [MinioAndFfmpegFact]
+    public async Task Export_AudioClipOnASilentVideo_FailsWithATypedError_NotAnFfmpegExitCode()
+    {
+        // Worker yarısının EMNİYET KEMERİ: senkron kapı DB'ye bakar, bu kapı DOSYAYA. Sessiz
+        // bir videoyu ses klibi olarak kullanan belge tipli 'unsupported-media' ile düşer —
+        // eskiden bu yol ya hiç sorulmuyor ya da anlamsız bir ffmpeg çıkış koduna dönüşüyordu.
+        var videoPath = media.Video1280x720NoAudio();
+        var now = DateTimeOffset.UtcNow;
+        var asset = Asset.Create(_userId, AssetKind.Video, "silent.mp4", "video/mp4",
+            new FileInfo(videoPath).Length, now);
+        MarkReady(asset, now);
+        _db.Assets.Add(asset);
+
+        var projectId = Guid.CreateVersion7();
+        var doc = ExportTestDocs.MultiTrackDoc(
+            projectId: projectId, width: 320, height: 240,
+            tracks:
+            [
+                ExportTestDocs.AudioTrack(clips:
+                    [ExportTestDocs.AudioClip(asset.Id, 0, 0, 1_000_000, ExportTestDocs.Audio())]),
+            ]);
+
+        var job = Job.Create(JobType.Export, _userId, now,
+            projectId: projectId,
+            timelineSnapshot: JsonDocument.Parse(ExportTestDocs.ToJson(doc)),
+            exportProfile: "1080p");
+        _db.Jobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        _cleanupPrefixes.Add($"u/{_userId}");
+        await _storage.EnsureBucketsExistAsync();
+        await _storage.UploadFileAsync(asset.StorageKey, videoPath, "video/mp4");
+
+        await CreateRunner(CreateCache()).Run(job.Id, CancellationToken.None);
+
+        Assert.Equal(JobStatus.Failed, job.Status);
+        Assert.Contains("unsupported-media", job.ErrorMessage);
+        Assert.Contains("ses akışı", job.ErrorMessage);
+        var clip = Assert.IsType<VideoEdit.Contracts.Timeline.MediaClip>(doc.Tracks[0].Clips[0]);
+        Assert.Contains(clip.Id.ToString(), job.ErrorMessage);
+    }
+
+    [MinioAndFfmpegFact]
+    public async Task Export_StickerClipPointingAtAVideoFile_FailsWithATypedError()
+    {
+        // M6 DENETİMİ, N3: çıkartma klibi bir VİDEO varlığını gösterdiğinde iş
+        // 'ffmpeg-failed: ... exited with code -1414549496' ile ölüyordu — kullanıcıya
+        // ANLAMSIZ bir çıkış kodu. Kural artık defterden okunur: çıkartma DURAĞAN giriş ister.
+        var videoPath = media.VideoSolid320x240NoAudio();
+        var now = DateTimeOffset.UtcNow;
+        var asset = Asset.Create(_userId, AssetKind.Image, "actually-a-video.mp4", "image/png",
+            new FileInfo(videoPath).Length, now);
+        MarkReady(asset, now); // DB "görsel" diyor, DOSYA video: kapı dosyaya bakar
+        _db.Assets.Add(asset);
+
+        var projectId = Guid.CreateVersion7();
+        var doc = ExportTestDocs.MultiTrackDoc(
+            projectId: projectId, width: 320, height: 240,
+            tracks:
+            [
+                ExportTestDocs.OverlayTrack(clips:
+                    [ExportTestDocs.StickerClip(asset.Id, 0, 1_000_000)]),
+            ]);
+
+        var job = Job.Create(JobType.Export, _userId, now,
+            projectId: projectId,
+            timelineSnapshot: JsonDocument.Parse(ExportTestDocs.ToJson(doc)),
+            exportProfile: "1080p");
+        _db.Jobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        _cleanupPrefixes.Add($"u/{_userId}");
+        await _storage.EnsureBucketsExistAsync();
+        await _storage.UploadFileAsync(asset.StorageKey, videoPath, "image/png");
+
+        await CreateRunner(CreateCache()).Run(job.Id, CancellationToken.None);
+
+        Assert.Equal(JobStatus.Failed, job.Status);
+        Assert.Contains("unsupported-media", job.ErrorMessage);
+        Assert.Contains("durağan görsel", job.ErrorMessage);
+        Assert.DoesNotContain("ffmpeg", job.ErrorMessage);
+    }
+
+    /// <summary>Çıktıyı exports bucket'ından yerel dosyaya indirir (piksel/ses ölçümü için).</summary>
+    private async Task<string> DownloadExportAsync(Job job, string localName)
+    {
+        var localOutput = Path.Combine(_cacheDir, localName);
+        using (var download = await _exportsBucketProbe.OpenReadAsync(job.OutputKey!))
+        await using (var file = File.Create(localOutput))
+        {
+            await download.Content.CopyToAsync(file);
+        }
+
+        return localOutput;
+    }
+
+    /// <summary>
+    /// Dosyanın ORTALAMA ses seviyesi (dBFS) — ffmpeg <c>volumedetect</c>. Ses stream'i yoksa
+    /// test AÇIKÇA düşer (ölçüm yapılamadı ≠ ses var).
+    /// </summary>
+    private double MeanVolumeDb(string mediaPath)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = _ffmpegOptions.FfmpegPath,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in (string[])[
+            "-nostdin", "-hide_banner", "-i", mediaPath,
+            "-af", "volumedetect", "-vn", "-f", "null", "-"])
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = System.Diagnostics.Process.Start(psi)!;
+        var stderr = process.StandardError.ReadToEnd();
+        Assert.True(process.WaitForExit(60_000), "volumedetect zaman aşımına uğradı");
+
+        var match = System.Text.RegularExpressions.Regex.Match(
+            stderr, @"mean_volume:\s*(-?\d+(\.\d+)?) dB");
+        Assert.True(match.Success, $"çıktıda ölçülebilir ses stream'i yok:\n{stderr}");
+        return double.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    [MinioAndFfmpegFact]
     public async Task Export_CanceledRow_LeavesCanceledUntouched()
     {
         // Cancel işareti koşudan ÖNCE konmuş: iş hiç başlamadan sessizce döner.

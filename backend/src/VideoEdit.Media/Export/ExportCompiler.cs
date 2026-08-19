@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using VideoEdit.Contracts;
 using VideoEdit.Contracts.Timeline;
 using VideoEdit.Media.Recipes;
@@ -58,6 +58,33 @@ public sealed record ExportPlan(
     /// indirip <c>sources</c> sözlüğüne YOL olarak koymalıdır (probe ETMEDEN).
     /// </summary>
     public IReadOnlyList<Guid> LutAssetIds { get; init; } = LutAssetIds;
+
+    /// <summary>
+    /// KULLANIM DEFTERİ: hangi klip hangi varlıktan NEYİ okuyor (<see cref="ExportAssetUse"/>).
+    /// <see cref="AssetIds"/> "hangi dosyalar inecek" sorusunu yanıtlar, bu defter "inen dosyada
+    /// ne bulunmalı" sorusunu. İkisi ayrıdır çünkü aynı dosya iki farklı klipte iki farklı
+    /// biçimde okunabilir (ör. aynı varlık hem ses klibinde hem video klibinde).
+    /// <para>
+    /// Defter yalnız GERÇEKTEN okunan kullanımları taşır: atıl klip (gizli + sessiz) hiç girmez,
+    /// gizli track'teki video klibi girmez (görüntüsü çizilmez, sesi varsa OPSİYONELDİR),
+    /// susturulmuş track'teki ses klibi girmez. Kapıların yanlış ret üretmemesi buna bağlıdır.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<ExportAssetUse> AssetUses { get; init; } = [];
+
+    /// <summary>
+    /// ÖLÇÜLEMEYEN metin klipleri: <see cref="ExportCompiler.Validate"/>'e bir ölçer VERİLDİĞİ HALDE bbox'ı
+    /// alınamayan (Skia/font kökü/manifest arızası) klipler. Boş liste = ölçüm sorunu YOK.
+    /// <para>
+    /// Neden planın parçası: bu bir DOKÜMAN hatası DEĞİL, KURULUM hatasıdır — derleyici onu
+    /// 422'ye çeviremez (yanlış ret olurdu), ama sessizce yutması da kabul edilemez: ölçüm
+    /// yolu kapalıyken metin katmanı kapıları (tavan + taban) yalnız alt sınırdan sorulabilir
+    /// ve METİN EXPORT'U ZATEN ÇALIŞAMAZ (worker rasterlemek için aynı Skia/font köküne
+    /// muhtaçtır). Kararı HTTP katmanı verir (ExportEndpoints: 503 + typed kod), çünkü
+    /// "istek şimdi karşılanamıyor" bir taşıma katmanı cevabıdır.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<Guid> UnmeasuredTextClipIds { get; init; } = [];
 }
 
 /// <summary>
@@ -184,6 +211,54 @@ public static class ExportCompiler
     };
 
     /// <summary>
+    /// Dokümanın atıfta bulunduğu TÜM asset id'leri (medya, çıkartma VE LUT) — DOĞRULAMADAN
+    /// ÖNCE, ham dokümandan okunur. API asset defterini (<see cref="ExportAssetFacts"/>) tek
+    /// sorguda bununla doldurur: <see cref="Validate"/>'i önce id'ler, sonra olgularla ikinci
+    /// kez koşmak METİN ÖLÇÜMÜNÜ (Skia) iki kez yapardı.
+    /// <para>
+    /// LUT id'leri de BURADADIR (eskiden dışarıdaydı): .cube'ün geometrisi yoktur ama VARLIĞI
+    /// ve DOSYA TÜRÜ senkron kapının sorularıdır. Defterde geometrisi olmayan fazladan bir
+    /// satırın bulunması zararsızdır — geometri kapısı yalnız <c>clip.AssetId</c>'yi arar.
+    /// </para>
+    /// Geçersiz/eksik doküman burada hata ÜRETMEZ (ayrıştırılamayan bir LUT assetId'si sessizce
+    /// atlanır); sözleşme ihlallerini <see cref="Validate"/> kendi diliyle raporlar.
+    /// </summary>
+    public static IReadOnlyList<Guid> ReferencedAssetIds(TimelineDoc doc)
+    {
+        ArgumentNullException.ThrowIfNull(doc);
+
+        var ids = new List<Guid>();
+        foreach (var track in doc.Tracks ?? [])
+        {
+            foreach (var clip in track.Clips ?? [])
+            {
+                var assetId = clip switch
+                {
+                    MediaClip media => media.AssetId,
+                    StickerClip sticker => sticker.AssetId,
+                    _ => (Guid?)null,
+                };
+                Add(assetId);
+
+                foreach (var lutId in ColorPipeline.RawLutAssetIds(EffectsOf(clip)))
+                {
+                    Add(lutId);
+                }
+            }
+        }
+
+        return ids;
+
+        void Add(Guid? candidate)
+        {
+            if (candidate is { } id && id != Guid.Empty && !ids.Contains(id))
+            {
+                ids.Add(id);
+            }
+        }
+    }
+
+    /// <summary>
     /// M4 dalga 2 kapsam + sözleşme doğrulaması. İhlalde ExportCompileException türevi fırlatır.
     /// <para>
     /// <paramref name="overlayMeasurer"/> METİN kliplerinin bbox'ını ÖLÇMEK içindir (yalnız
@@ -193,8 +268,19 @@ public static class ExportCompiler
     /// yalnız kapının yakalayabildiği vaka kümesini daraltır. Şekil klibinde ölçüm GEREKMEZ —
     /// bbox sözleşme gereği proje karesidir (<see cref="Media.Text.ShapeGeometry"/>).
     /// </para>
+    /// <para>
+    /// <paramref name="assets"/> = assetId → DB'den okunan olgular defteri
+    /// (<see cref="ExportAssetFacts"/>). Beş kapı bu TEK defterden beslenir: dejenerelik
+    /// (Width/Height), kaynak aralığı (DurationMicros), LUT dosya türü (FileName), varlık
+    /// mevcudiyeti (satırın KENDİSİ) ve ses keyframe bütçesi (HasAudio). Defter null ise
+    /// (worker yolu) asset kapılarının tamamı atlanır ve worker'ın ffprobe yarısı emniyet
+    /// kemeri kalır. Defter YALNIZ kapıya girer, üretilen filtergraph'a ASLA.
+    /// </para>
     /// </summary>
-    public static ExportPlan Validate(TimelineDoc doc, ITextRasterService? overlayMeasurer = null)
+    public static ExportPlan Validate(
+        TimelineDoc doc,
+        ITextRasterService? overlayMeasurer = null,
+        IReadOnlyDictionary<Guid, ExportAssetFacts>? assets = null)
     {
         ArgumentNullException.ThrowIfNull(doc);
 
@@ -240,11 +326,12 @@ public static class ExportCompiler
         // sözleşmesi tracks[0]'ı EN ÜST katman sayar (docs/design/01 §1.2). BOŞ track'ler
         // (clips.length == 0, tipi ne olursa olsun) yok sayılır: editör +V/+A ile içeriksiz
         // track ekler — bunlar export kapsamını değiştirmez, 422'ye düşürmez.
-        var geometry = new GeometryContext(settings, width, height, overlayMeasurer);
+        var geometry = new GeometryContext(settings, width, height, overlayMeasurer, assets, []);
         var trackPlans = new List<ExportTrackPlan>();
         var sourceRangeClips = new List<MediaClip>();
         var rasterClips = new List<ExportClipPlan>();
         var assetIds = new List<Guid>();
+        var assetUses = new List<ExportAssetUse>();
         var lutAssetIds = new List<Guid>();
         long totalDurationUs = 0;
         for (var i = tracks.Count - 1; i >= 0; i--)
@@ -295,9 +382,10 @@ public static class ExportCompiler
                 }
             }
 
-            // Geçiş sözleşmesi (§5.2): simetri + bitişiklik + çift-frame D + üst sınır + handle.
-            // Doğrulanan her kesim iki klibe D/2 payı yazar; ihlal TİPLİ Türkçe hatadır.
-            ResolveTransitions(clips, fpsNum, fpsDen);
+            // Geçiş sözleşmesi (§5.2): simetri + bitişiklik + çift-frame D + üst sınır + handle
+            // + GÖRÜNEN kesimde yerleşim eşitliği/çapa kuralı. Doğrulanan her kesim iki klibe
+            // D/2 payı yazar; ihlal TİPLİ Türkçe hatadır.
+            ResolveTransitions(clips, fpsNum, fpsDen, track, width, height);
 
             var last = clips[^1];
             totalDurationUs = Math.Max(
@@ -323,15 +411,41 @@ public static class ExportCompiler
 
                 if (clip.NeedsServerRaster)
                 {
+                    // RASTER SÖZLEŞMESİ BURADA sorulur, ValidateClip'te DEĞİL: kural yalnız
+                    // GERÇEKTEN rasterlenecek klipler için geçerlidir. Gizli track'in metni
+                    // hiçbir PNG üretmez (OverlayRasterPlanner.Collect onu atlar) — orada
+                    // sorulsaydı görünmeyen bir klip yüzünden geçerli belge reddedilirdi.
+                    EnsureRasterContract(clip);
                     rasterClips.Add(clip);
                     continue;
                 }
 
                 assetIds.Add(clip.AssetId!.Value);
+                if (NeedOf(clip, track) is { } need)
+                {
+                    assetUses.Add(new ExportAssetUse(
+                        clip.Id, clip.KindTr, clip.AssetId!.Value, need));
+                }
+
                 if (!clip.IsStillInput)
                 {
                     sourceRangeClips.Add(EffectiveRangeClip(clip));
                 }
+            }
+        }
+
+        // Raster dosya adı klip id'sinden türer ({id:N}.png). Aynı id iki kez rasterlenecek
+        // olursa hangi PNG'nin hangi klibe ait olduğu belirsizleşir; worker bunu tipli hatayla
+        // reddeder (OverlayRasterPlanner.RenderAllAsync). Kural SAF DOKÜMAN aritmetiğidir —
+        // karar için ne dosya ne asset gerekir, dolayısıyla senkron kapıda yaşamalıdır.
+        var rasterIds = new HashSet<Guid>();
+        foreach (var clip in rasterClips)
+        {
+            if (!rasterIds.Add(clip.Id))
+            {
+                throw new UnsupportedFeatureException("overlay-unsupported-clip",
+                    $"Timeline'da yinelenen klip kimliği var: {clip.Id} — bu kimlikten iki "
+                    + "overlay rasteri doğar ve hangisinin çizileceği belirsiz kalır.");
             }
         }
 
@@ -345,9 +459,21 @@ public static class ExportCompiler
             throw new InvalidTimelineException("timeline duration is shorter than one output frame.");
         }
 
-        return new ExportPlan(
+        var plan = new ExportPlan(
             doc, trackPlans, sourceRangeClips, assetIds.Distinct().ToList(), rasterClips,
-            totalDurationUs, fpsNum, fpsDen, width, height, lutAssetIds.Distinct().ToList());
+            totalDurationUs, fpsNum, fpsDen, width, height, lutAssetIds.Distinct().ToList())
+        {
+            UnmeasuredTextClipIds = geometry.Unmeasured,
+            AssetUses = assetUses,
+        };
+
+        // Plan HAZIR olduktan sonra sorulabilen iki kapı. İkisi de plana bakar (defterler
+        // atıl/gizli klipleri zaten elemiştir) ve ikisi de Compile'da bir KEZ DAHA koşar —
+        // orada olgular ffprobe'dan gelir, burada DB'den. Aynı hesabın iki kez yazılması
+        // DEĞİL, aynı fonksiyonun iki farklı veri kaynağıyla çağrılmasıdır.
+        EnsureAssetFacts(plan, assets);
+        EnsureSampleBudget(plan, assets);
+        return plan;
     }
 
     /// <summary>
@@ -450,7 +576,7 @@ public static class ExportCompiler
 
                 if (isVisual)
                 {
-                    var placement = PlacementOf(clip, raster, plan);
+                    var placement = PlacementOf(clip, asset, raster, plan);
 
                     // Geçiş kesimi VİDEODA onurlandırılır mı? Ancak önceki klip de görselse ve
                     // run'ın son segmentiyse — aksi halde kesim sıradan bir kesimdir.
@@ -463,10 +589,10 @@ public static class ExportCompiler
                     {
                         // xfade iki girişin AYNI boyutta olmasını şart koşar; farklı yerleşim
                         // sessizce kaydırmak yerine görünür sözleşme ihlalidir.
-                        throw new InvalidTimelineException(
-                            $"'{previous!.Id}' ve '{clip.Id}' klipleri arasında geçiş var ama iki klibin "
-                            + "yerleşimi (konum/ölçek/dönme/çapa) farklı — geçişli kliplerin yerleşimi "
-                            + "aynı olmalıdır. Geçişi kaldırın ya da iki klibe de aynı dönüşümü verin.");
+                        // SİGORTA: aynı soru artık Validate'te de sorulur
+                        // (EnsureTransitionPlacement) — API 422'si oradan gelir, bu dal
+                        // yalnız Compile'a doğrudan giren yolları (birim testleri) korur.
+                        throw TransitionPlacementMismatch(previous!.Id, clip.Id);
                     }
 
                     if (joined && !CanNormalizeToBox(placement))
@@ -477,10 +603,12 @@ public static class ExportCompiler
                         // sonrası iw kutu boyutudur → çapa, içeriğin letterbox payı kadar kayar.
                         // Sessizce kaydırmak yerine görünür hata (M4 dalga 1 denetiminin
                         // "1 px sessiz kayma" kararının aynısı).
-                        throw new InvalidTimelineException(
-                            $"'{clip.Id}' klibinde geçiş var ama katman hem DÖNDÜRÜLMÜŞ hem de çapası "
-                            + "merkezde değil — bu bileşimde geçiş katmanı kaydırırdı. Çapayı merkeze "
-                            + "alın ya da geçişi kaldırın.");
+                        //
+                        // GERİYE KALAN TEK GEREKÇE BUDUR: kutu paritesi artık kapı değil (pad
+                        // hedefi NormalizeBox* ile çifte indirildi), o yüzden buraya düşen klipte
+                        // rotationDeg≠0 VE çapa≠merkez olduğu KESİNDİR.
+                        // SİGORTA: aynı soru artık Validate'te de sorulur (EnsureTransitionPlacement).
+                        throw TransitionRotatedAnchor(clip.Id);
                     }
 
                     // KEYFRAME'li klip KENDİ run'ında yaşar (M5): run tuvale TEK overlay ile
@@ -576,10 +704,13 @@ public static class ExportCompiler
 
         // Örnekleme tavanı DERLEME GENELİNDEDİR (görsel + ses keyframe'leri aynı bütçeyi paylaşır)
         // — ses zinciri de §3.4'ün frame örneklemesini kullanır (volume keyframe'i, §8.1).
-        var sampleBudget = KeyframeCompiler.MaxSamples;
+        // Bütçe nesnesi TAZEDİR: Validate aynı hesabı kendi nesnesiyle ZATEN yaptı (senkron
+        // kapı). Buradaki koşum sigortadır — Compile'a doğrudan giren yollar (birim testleri,
+        // worker'ın defter olmadan çağırdığı Validate sonrası derleme) için.
+        var sampleBudget = new SampleBudget();
         foreach (var group in audioGroups)
         {
-            audioLines.Add(EmitAudioGroup(group, audioLines.Count, plan, ref sampleBudget));
+            audioLines.Add(EmitAudioGroup(group, audioLines.Count, plan, sampleBudget));
         }
 
         // ── 1b) Animasyon defterleri (§3.4). EĞRİLİ (non-linear easing) kanallar frame başına
@@ -587,7 +718,7 @@ public static class ExportCompiler
         //      ve buradan hiç komut çıkmaz.
         for (var n = 0; n < runs.Count; n++)
         {
-            sampleBudget = BuildAnimationCommands(runs[n], n, plan, sampleBudget);
+            BuildAnimationCommands(runs[n], n, plan, sampleBudget);
         }
 
         // ── 2) Video grafiği. Tek katmanlı hızlı yol: TEK run timeline'ı baştan sona kaplıyor,
@@ -764,6 +895,426 @@ public static class ExportCompiler
         public double OpacityInitial { get; init; } = 1d;
     }
 
+    // ───────────────── Asset olgularına dayanan kapılar (senkron) ─────────────────
+
+    /// <summary>
+    /// Kaynak-aralığı kuralının TEK tanımı: klip <paramref name="assetId"/>'nin süresinin
+    /// ötesini okuyamaz (+1 çıktı frame'i toleransı). Aşan klip ffmpeg'de sessiz kısa segment /
+    /// donmuş kare üretir. Defter (<see cref="ExportPlan.Clips"/>) geçiş paylarını ZATEN
+    /// içerir — geçişli klip kaynağından D/2 fazla okur.
+    /// <para>
+    /// İki çağıran vardır ve aynı fonksiyonu FARKLI veri kaynağıyla çağırırlar:
+    /// API senkron kapıda <c>Asset.DurationMicros</c> ile, worker indirdiği dosyanın ffprobe
+    /// süresiyle. İki sayı YAPISI GEREĞİ aynıdır (ikisi de aynı orijinalin
+    /// <c>MediaProbe.DurationUs</c>'u), o yüzden kapılar çelişemez.
+    /// </para>
+    /// </summary>
+    /// <returns>İhlal eden ilk klip; ihlal yoksa (ya da süre bilinmiyorsa) null.</returns>
+    public static MediaClip? FindSourceOutOfRange(
+        IReadOnlyList<MediaClip> clips, Guid assetId, long? probeDurationUs, int fpsNum, int fpsDen)
+    {
+        ArgumentNullException.ThrowIfNull(clips);
+        if (probeDurationUs is not { } durationUs)
+        {
+            return null; // süre ölçülemedi — gate atlanır
+        }
+
+        var toleranceUs = Timecode.FromFrameNumber(1, fpsNum, fpsDen).Micros; // 1 çıktı frame'i
+        return clips.FirstOrDefault(c => c.AssetId == assetId && c.SourceOutUs > durationUs + toleranceUs);
+    }
+
+    /// <summary>
+    /// LUT varlığının dosya adı gerçekten bir <c>.cube</c> mi? Domain'de LUT diye bir
+    /// <c>AssetKind</c> YOKTUR (yükleme whitelist'i .cube'ü bir medya
+    /// content-type'ıyla kabul eder), o yüzden tek ayırt edici uzantıdır.
+    /// </summary>
+    private static bool IsCubeFile(string? fileName) =>
+        fileName is not null
+        && fileName.EndsWith(".cube", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Varlık türünün kullanıcıya gösterilecek Türkçe adı (422 mesajları).</summary>
+    private static string MediaKindTr(ExportAssetMediaKind kind) => kind switch
+    {
+        ExportAssetMediaKind.Video => "video",
+        ExportAssetMediaKind.Audio => "ses",
+        ExportAssetMediaKind.Image => "görsel",
+        _ => "bilinmeyen tür",
+    };
+
+    /// <summary>Dosya adı biliniyorsa mesaja iliştirilecek ek (bilinmiyorsa boş).</summary>
+    private static string FileNameNote(string? fileName) =>
+        string.IsNullOrWhiteSpace(fileName) ? "" : $" — '{fileName}'";
+
+    /// <summary>
+    /// SENKRON YARI: kullanımın istediği akış, DB satırının BEYAN ettiği türle çelişiyor mu?
+    /// Worker yarısı aynı soruyu ffprobe olgularıyla sorar (<see cref="ExportAssetUse.UnmetBy"/>).
+    /// </summary>
+    private static bool IsTypeMismatch(ExportSourceNeed need, ExportAssetFacts facts) => need switch
+    {
+        // Aralık okuyan görüntü girişi ancak zaman eksenli bir görüntü kaynağından gelir.
+        ExportSourceNeed.Motion => facts.MediaKind != ExportAssetMediaKind.Video,
+
+        // -loop 1 girişi durağan bir görselden gelir; video/ses dosyası ffmpeg'i düşürür.
+        ExportSourceNeed.Still => facts.MediaKind != ExportAssetMediaKind.Image,
+
+        // Ses akışı: ses varlığında GARANTİDİR (GateByKind), görselde YOKTUR, videoda ise
+        // ancak PROBE EDİLMİŞ (Ready) satırda kesin bilinir.
+        ExportSourceNeed.Audio => facts.MediaKind == ExportAssetMediaKind.Image
+            || (facts.MediaKind == ExportAssetMediaKind.Video
+                && facts is { Readiness: ExportAssetReadiness.Ready, HasAudio: false }),
+
+        _ => false,
+    };
+
+    /// <summary>Uyuşmazlığın NEDEN uyuşmazlık olduğunu söyleyen cümle.</summary>
+    private static string NeedNoteTr(ExportSourceNeed need, ExportAssetFacts facts) => need switch
+    {
+        ExportSourceNeed.Motion =>
+            "video klibi kaynaktan bir zaman aralığı okur, bunun için dosyanın zaman eksenli "
+            + "bir görüntü akışı olması gerekir.",
+        ExportSourceNeed.Still =>
+            "görsel/çıkartma klibi dosyayı tek kare olarak açar, bunun için dosyanın durağan "
+            + "bir görsel olması gerekir.",
+        _ => facts.MediaKind == ExportAssetMediaKind.Video
+            ? "ses klibi yalnız ses akışını kullanır, ama bu videonun ses akışı yok."
+            : "ses klibi yalnız ses akışını kullanır, bu dosyada ses akışı yok.",
+    };
+
+    /// <summary>
+    /// ASSET OLGULARINA dayanan senkron kapılar. HEPSİ eskiden YALNIZ worker'daydı
+    /// (<c>ExportJob.Run</c> adım 2/4) — yani belge 202 alıyor, iş kuyruğa giriyor ve dakikalar
+    /// sonra "başarısız" oluyordu; LUT tür kontrolü ise HİÇ yoktu (lut3d bir .mp4 yolu alıyor,
+    /// ffmpeg <c>-22</c> ile ölüyordu: tipli hata bile üretilmiyordu). Hepsi SAF DB
+    /// ARİTMETİĞİDİR ve API o satırları ZATEN sorguluyor.
+    /// <para>
+    /// Defter null (worker yolu) ise hiçbiri koşmaz: worker'ın kendi yarısı (satır+Ready
+    /// kontrolü, ffprobe süresi/akışları) yerinde durur.
+    /// </para>
+    /// </summary>
+    private static void EnsureAssetFacts(
+        ExportPlan plan, IReadOnlyDictionary<Guid, ExportAssetFacts>? assets)
+    {
+        if (assets is null)
+        {
+            return;
+        }
+
+        // ── 1) VARLIK MEVCUDİYETİ. Defterde olmayan id = kullanıcının kütüphanesinde böyle bir
+        //      satır yok (silinmiş / başkasının / hiç var olmamış). Bu KALICI bir durumdur:
+        //      asset satırı yüklemenin İLK adımında yaratılır, soft-delete geri alınmaz →
+        //      "birazdan görünür" diye bir ihtimal yoktur, senkron ret güvenlidir.
+        //      (asset-not-ready BİLEREK burada DEĞİLDİR: işlenmekte olan bir asset worker'a
+        //      gelene kadar Ready olabilir; senkron reddi YANLIŞ RET olurdu.)
+        var missing = plan.AssetIds.Concat(plan.LutAssetIds)
+            .Distinct()
+            .Where(id => !assets.ContainsKey(id))
+            .ToList();
+        if (missing.Count > 0)
+        {
+            throw new UnsupportedFeatureException("asset-missing",
+                "Timeline artık var olmayan bir dosyayı kullanıyor (asset "
+                + string.Join(", ", missing) + "): varlık silinmiş ya da bu hesaba ait değil. "
+                + "İlgili klipleri timeline'dan kaldırın ya da dosyayı yeniden yükleyin.");
+        }
+
+        // ── 2) TERMİNAL BAŞARISIZLIK. 'asset-not-ready' worker'da kalır ama DÖRT durumdan
+        //      yalnız ÜÇÜ oraya AİTTİR: Uploading/Uploaded/Processing GEÇİCİDİR (iş kuyruktan
+        //      alınana kadar Ready olabilirler, senkron ret yanlış ret olurdu). Failed ise
+        //      TERMİNALDİR — domain'in durum makinesinde Failed'dan Ready'ye doğrudan geçiş
+        //      yoktur; yeniden deneme ancak kullanıcının başlattığı Failed → Processing
+        //      geçişiyle olur. Ölçüldü: böyle bir belge 202 alıyor ve iş dakikalar sonra
+        //      'asset-not-ready: ... (Failed)' ile ölüyordu (M6 denetimi, N2).
+        foreach (var assetId in plan.AssetIds.Concat(plan.LutAssetIds).Distinct())
+        {
+            if (assets[assetId].Readiness != ExportAssetReadiness.Failed)
+            {
+                continue;
+            }
+
+            throw new UnsupportedFeatureException("asset-failed",
+                $"Timeline, işlenemeyen bir dosyayı kullanıyor (asset {assetId}"
+                + $"{FileNameNote(assets[assetId].FileName)}): dosyanın yüklenmesi ya da "
+                + "işlenmesi kalıcı olarak başarısız oldu, bu haliyle dışa aktarılamaz. "
+                + "İlgili klipleri timeline'dan kaldırın ya da dosyayı yeniden yükleyin.");
+        }
+
+        // ── 3) LUT DOSYA TÜRÜ. lut3d yalnız .cube okur; başka bir dosya verildiğinde ffmpeg
+        //      grafiği kurarken -22 ile ölür ve kullanıcı TİPLİ hata bile görmez (ölçüldü).
+        foreach (var lutAssetId in plan.LutAssetIds)
+        {
+            if (IsCubeFile(assets[lutAssetId].FileName))
+            {
+                continue;
+            }
+
+            var owner = plan.Tracks
+                .SelectMany(t => t.Clips)
+                .FirstOrDefault(c => c.Effects.Lut?.AssetId == lutAssetId);
+            throw new UnsupportedFeatureException("lut-asset-type",
+                $"'{owner?.Id.ToString() ?? lutAssetId.ToString()}' klibindeki LUT efekti "
+                + $".cube olmayan bir dosyayı gösteriyor ('{assets[lutAssetId].FileName}'). "
+                + "LUT bir renk arama tablosudur (.cube); dışa aktarıcı başka bir dosyayı "
+                + "renk tablosu olarak okuyamaz. Efekti kaldırın ya da bir .cube dosyası "
+                + "yükleyip onu seçin.");
+        }
+
+        // ── 4) KLİP TÜRÜ ↔ VARLIK TÜRÜ. Sınıfı LUT kapısıyla BİREBİR aynıdır (dosya türü ile
+        //      onu kullanan klibin beklentisi çelişiyor) ve o kural zaten senkrondur.
+        //      Ölçüldü (M6 denetimi): (a) ses klibi bir SES varlığını gösterdiğinde export
+        //      'unsupported-media: ... has no video stream' ile ölüyordu — worker klip türüne
+        //      BAKMADAN her varlıkta görüntü akışı arıyordu, yani müzik eklemek export'u
+        //      imkânsız kılıyordu (N1); (b) çıkartma klibi bir VİDEO varlığını gösterdiğinde
+        //      ffmpeg 'exited with code -1414549496' veriyordu — kullanıcıya tipli hata bile
+        //      gitmiyordu (N3).
+        //
+        //      TÜR BEYANI GEÇİCİ DURUMDA DA SORULABİLİR ve bu yanlış ret ÜRETMEZ: beyan
+        //      yükleme anında yapılır, worker işleme sonunda beyanı ffprobe ile karşılaştırır
+        //      (ProcessAssetJob.GateByKind) ve tutmuyorsa asset Ready OLAMAZ. Yani beyanla
+        //      çelişen bir belgenin başarıya giden yolu yoktur. TEK İSTİSNA ses akışıdır:
+        //      "video varlığının sesi var mı" olgusu ancak probe'dan sonra yazılır, o yüzden
+        //      yalnız Ready satırda sorulur.
+        foreach (var use in plan.AssetUses)
+        {
+            var facts = assets[use.AssetId];
+            if (facts.MediaKind == ExportAssetMediaKind.Unknown || !IsTypeMismatch(use.Need, facts))
+            {
+                continue;
+            }
+
+            throw new UnsupportedFeatureException("asset-clip-type",
+                $"'{use.ClipId}' klibi bir {use.ClipKindTr} klibi ama gösterdiği dosya "
+                + $"{MediaKindTr(facts.MediaKind)} türünde{FileNameNote(facts.FileName)}: "
+                + NeedNoteTr(use.Need, facts)
+                + " Klibi timeline'dan kaldırın ya da türüne uygun bir dosya seçin.");
+        }
+
+        // ── 5) KAYNAK ARALIĞI. Defter (plan.Clips) geçiş paylarını uygulanmış halde taşır.
+        foreach (var assetId in plan.AssetIds)
+        {
+            if (FindSourceOutOfRange(
+                    plan.Clips, assetId, assets[assetId].DurationMicros,
+                    plan.FpsNum, plan.FpsDen) is not { } outOfRange)
+            {
+                continue;
+            }
+
+            // Geçiş payı, kullanıcının timeline'da GÖRMEDİĞİ bir uzatmadır — mesaj bunu
+            // söylemezse "klibim kaynağın içinde duruyor, neden reddedildi" sorusu doğar.
+            var handleUs = plan.Tracks.SelectMany(t => t.Clips)
+                .FirstOrDefault(c => c.Id == outOfRange.Id)?.HeadOutSourceUs ?? 0;
+            var handleNote = handleUs > 0
+                ? $" (bu klibin sonundaki geçiş, kaynaktan {handleUs.ToString(CultureInfo.InvariantCulture)}"
+                  + " us FAZLA okunmasını gerektiriyor)"
+                : "";
+
+            throw new UnsupportedFeatureException("source-out-of-range",
+                $"'{outOfRange.Id}' klibi kaynağın sonunun ötesini okuyor: "
+                + $"{outOfRange.SourceOutUs.ToString(CultureInfo.InvariantCulture)} us'e kadar "
+                + $"isteniyor ama varlık {assetId} yalnız "
+                + $"{assets[assetId].DurationMicros!.Value.ToString(CultureInfo.InvariantCulture)} "
+                + $"us uzunluğunda{handleNote}. Klibi sağ kenarından kısaltın"
+                + (handleUs > 0 ? " ya da kesimdeki geçişi kaldırın/kısaltın." : "."));
+        }
+    }
+
+    // ───────────────── Keyframe örnekleme bütçesi (§3.4, PAYLAŞILAN) ─────────────────
+
+    /// <summary>
+    /// Derleme genelindeki örnekleme bütçesinin TEK muhasebecisi. Sayaç bir <c>int</c> yerine
+    /// nesne olmasının sebebi mesajdır: aşımı bildiren cümle "önümde kaç klip ne kadar harcadı"
+    /// bilgisini taşımak ZORUNDADIR (aksi halde kullanıcıya, ölçülerek görüldüğü gibi, 60 000'in
+    /// yanında hiçbir şey olan 600 örneklik masum bir klip suçlanır ve o klibi kısaltmak sorunu
+    /// çözmez). Aynı nesne <see cref="Validate"/> kapısında ve <see cref="Compile"/> yayınında
+    /// kullanılır — iki yol aynı sırayla harcar, aynı cümleyi üretir.
+    /// </summary>
+    private sealed class SampleBudget
+    {
+        private readonly HashSet<Guid> _chargedClips = [];
+        private int _spent;
+
+        /// <summary>
+        /// Kanalın örneklerini bütçeden düşer; sığmıyorsa tipli hata fırlatır.
+        /// Eşik ORİJİNAL biçimin birebir aynısıdır: <c>samples &gt; kalan</c>.
+        /// </summary>
+        public void Charge(Guid clipId, int samples, string channelTr, string action)
+        {
+            if (_spent + samples > KeyframeCompiler.MaxSamples)
+            {
+                throw SampleBudgetExceeded(
+                    clipId, samples, _spent, _chargedClips.Count, channelTr, action);
+            }
+
+            _spent += samples;
+            _chargedClips.Add(clipId);
+        }
+    }
+
+    /// <summary>Görsel (x/y/scale/rotation/opacity) kanalların mesajdaki adı.</summary>
+    private const string VisualChannelTr = "keyframe animasyonu";
+
+    /// <summary>Ses seviyesi kanalının mesajdaki adı.</summary>
+    private const string VolumeChannelTr = "ses seviyesi (volume) animasyonu";
+
+    /// <summary>
+    /// GÖRSEL kanalın İŞE YARAYAN eylemi. Ölçülebilir gerekçe: tamamı lineer bir kanal
+    /// <see cref="KeyframeCompiler.LinearExpression"/> ile KAPALI FORMA derlenir ve
+    /// bütçeden SIFIR harcar (bkz. <c>Expression</c> içindeki <c>AllLinear</c> dalı) —
+    /// yani easing'i lineere çevirmek klibin katkısını tamamen SİLER.
+    /// </summary>
+    private const string VisualBudgetAction =
+        "İŞE YARAYAN EYLEM: eğrili (easing'li) keyframe'leri LİNEER yapın — lineer kanal "
+        + "kapalı forma derlenir ve bütçeden HİÇ harcamaz. Yalnız bu klibi kısaltmak, "
+        + "harcamanın çoğu BAŞKA kliplerdeyse yetmez.";
+
+    /// <summary>
+    /// SES kanalının İŞE YARAYAN eylemi — görselinkinden FARKLIDIR ve bu bilerek böyledir:
+    /// ses zincirinde kapalı-form yol YOKTUR (<c>volume</c> ifade almaz, asendcmd ile sürülür),
+    /// dolayısıyla "easing'i lineere çevirin" ses tarafında bütçeyi DÜŞÜRMEZ. Eskiden mesaj
+    /// "keyframe sayısını azaltın" diyordu; örnekleme KARE başınadır, keyframe başına değil —
+    /// o öneri de ölçülebilir biçimde işe yaramıyordu.
+    /// </summary>
+    private const string VolumeBudgetAction =
+        "İŞE YARAYAN EYLEM: ses seviyesi keyframe'lerini daha AZ klipte kullanın (sabit "
+        + "audio.volume bütçeden hiç harcamaz) ya da animasyonlu aralığı kısaltın. Bu kanalda "
+        + "easing'i lineere çevirmek bütçeyi DÜŞÜRMEZ — ses zincirinde kapalı-form yol yoktur.";
+
+    private static UnsupportedFeatureException SampleBudgetExceeded(
+        Guid clipId, int samples, int spent, int chargedClips, string channelTr, string action)
+    {
+        var max = KeyframeCompiler.MaxSamples.ToString(CultureInfo.InvariantCulture);
+        var wanted = samples.ToString(CultureInfo.InvariantCulture);
+
+        // Bütçe henüz HİÇ harcanmamışsa "başka klipler tüketti" demek yalan olurdu.
+        var reason = spent == 0
+            ? $"tek başına {max} örneklik tavanı aşıyor ({wanted} örnek istiyor)."
+            : $"ORTAK örnekleme bütçesini aşıyor: bu kanal {wanted} örnek istiyor ama "
+              + $"{max} örneklik bütçenin {spent.ToString(CultureInfo.InvariantCulture)} "
+              + $"kadarı ÖNCEKİ {chargedClips.ToString(CultureInfo.InvariantCulture)} klip "
+              + "tarafından zaten harcanmıştı.";
+
+        return new UnsupportedFeatureException("keyframe-sample-budget",
+            $"'{clipId}' klibinin {channelTr} {reason} "
+            + "Eğrili (easing'li) kanallar ve ses seviyesi kanalı KARE KARE örneklenir; bütçe "
+            + "TEK BİR KLİBE DEĞİL, derlemedeki TÜM kliplere ve kanallara aittir. "
+            + action);
+    }
+
+    /// <summary>
+    /// Bir kanalın üreteceği örnek sayısı — <see cref="Compile"/>'ın çağırdığı
+    /// <see cref="KeyframeCompiler.Samples"/>'ın AYNISI, yalnız sonucu atılır.
+    /// <para>
+    /// Frame aralığı olarak KLİBİN kendi aralığı verilir ve bu Compile'daki run aralığıyla
+    /// ÖZDEŞTİR: animasyonlu klip DAİMA kendi run'ındadır (komşusu ona katılamaz) ve geçişli
+    /// bir kesimde animasyon zaten yasaktır (<c>transition-keyframes</c>), yani run'ın
+    /// başlangıç/bitiş frame'i klibinkinden farklı OLAMAZ. Ses tarafında zaten klip aralığı
+    /// kullanılır. <c>offsetUs</c> yalnız komut zamanını kaydırır, SAYIYI değiştirmez → 0.
+    /// </para>
+    /// </summary>
+    private static int SampleCount(AnimationTrack track, ExportClipPlan clip, ExportPlan plan) =>
+        KeyframeCompiler.Samples(
+            track, clip.TimelineStartUs,
+            FrameOf(clip.TimelineStartUs, plan.FpsNum, plan.FpsDen),
+            FrameOf(clip.TimelineEndUs, plan.FpsNum, plan.FpsDen),
+            plan.FpsNum, plan.FpsDen, 0).Count;
+
+    /// <summary>
+    /// ÖRNEKLEME BÜTÇESİNİN SENKRON KAPISI. Kural eskiden yalnız <see cref="Compile"/>'daydı
+    /// (<c>BuildAnimationCommands</c> + <c>BuildAudioChain</c>), API'nin ön kapısı onu
+    /// görmüyordu ve böyle bir belge 202 alıp worker'da düşüyordu (ham API ile ölçüldü).
+    /// Hesap SAF DOKÜMAN ARİTMETİĞİDİR: örnek sayısı yalnız keyframe'lere, klibin frame
+    /// aralığına ve proje fps'ine bağlıdır.
+    /// <para>
+    /// TEK İSTİSNA ve onun EMNİYETLİ yönü: bir klibin <c>volume</c> zinciri ancak KAYNAKTA
+    /// ses stream'i varsa kurulur; bu olgu dokümanda yoktur, defterden gelir. Defter yoksa ya
+    /// da <c>HasAudio</c> false ise bu kapı o kanalı HİÇ SAYMAZ — eksik saymak kapıyı
+    /// zayıflatır (Compile'daki sigorta yakalar), fazla saymak YANLIŞ RET üretirdi.
+    /// </para>
+    /// <para>
+    /// Harcama SIRASI Compile'ınkiyle birebir aynıdır (önce ses grupları, sonra katman
+    /// run'ları; her ikisi de track/klip sırasında) — aksi halde iki yol aynı belgede FARKLI
+    /// klibi suçlardı.
+    /// </para>
+    /// </summary>
+    private static void EnsureSampleBudget(
+        ExportPlan plan, IReadOnlyDictionary<Guid, ExportAssetFacts>? assets)
+    {
+        var budget = new SampleBudget();
+
+        // ── 1) SES: Compile audioGroups'u katman run'larından ÖNCE yayınlar.
+        foreach (var trackPlan in plan.Tracks)
+        {
+            foreach (var clip in trackPlan.Clips)
+            {
+                if (clip.Animation.Volume is not { } volume
+                    || DeclaredAudioOf(clip, trackPlan.Track) is null
+                    || clip.AssetId is not { } assetId
+                    || assets is null
+                    || !assets.TryGetValue(assetId, out var facts)
+                    || !facts.HasAudio)
+                {
+                    continue;
+                }
+
+                budget.Charge(
+                    clip.Id, SampleCount(volume, clip, plan), VolumeChannelTr, VolumeBudgetAction);
+            }
+        }
+
+        // ── 2) GÖRSEL: gizli track görsel katman üretmez, ses klibi de üretmez.
+        foreach (var trackPlan in plan.Tracks)
+        {
+            foreach (var clip in trackPlan.Clips)
+            {
+                if (trackPlan.Track.Hidden || clip.Kind == ExportClipKind.Audio
+                    || !clip.Animation.Any)
+                {
+                    continue;
+                }
+
+                ChargeVisualChannels(clip, plan, budget);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Bir animasyonlu klibin görsel kanallarını bütçeden düşer —
+    /// <see cref="BuildAnimationCommands"/>'in ÖRNEKLEME KARARLARININ birebir aynası:
+    /// TAMAMI LİNEER kanal kapalı forma gider (0 örnek), eğrili kanal kare kare örneklenir,
+    /// opaklık ise <c>fade</c> hızlı yoluna düşmediği SÜRECE lineer olsa bile örneklenir
+    /// (colorchannelmixer zaman ifadesi almaz).
+    /// <para>
+    /// <c>scale</c> İKİ KEZ sayılır ve bu bir hata değil, derleyicinin gerçeğidir:
+    /// <c>ScaleWidth</c> ve <c>ScaleHeight</c> aynı kanalı ayrı ayrı örnekler. Kapı Compile'ın
+    /// GERÇEK harcamasını taklit etmek zorundadır; "daha akıllı" sayan bir kapı, Compile'ın
+    /// düşeceği bir belgeyi kabul ederdi.
+    /// </para>
+    /// </summary>
+    private static void ChargeVisualChannels(
+        ExportClipPlan clip, ExportPlan plan, SampleBudget budget)
+    {
+        var animation = clip.Animation;
+        ChargeCurved(animation.X);
+        ChargeCurved(animation.Y);
+        ChargeCurved(animation.Scale); // ScaleWidth
+        ChargeCurved(animation.Scale); // ScaleHeight
+        ChargeCurved(animation.Rotation);
+
+        if (animation.Opacity is { } opacity && OpacityFadeFilter(clip, 0) is null)
+        {
+            budget.Charge(
+                clip.Id, SampleCount(opacity, clip, plan), VisualChannelTr, VisualBudgetAction);
+        }
+
+        void ChargeCurved(AnimationTrack? track)
+        {
+            if (track is { AllLinear: false })
+            {
+                budget.Charge(
+                    clip.Id, SampleCount(track, clip, plan), VisualChannelTr, VisualBudgetAction);
+            }
+        }
+    }
+
     /// <summary>
     /// Animasyonlu run'ın ifade/komut defterini kurar (rendering-semantics §3 + tasarım 04 §2.5).
     /// Kanal başına karar:
@@ -775,16 +1326,14 @@ public static class ExportCompiler
     /// Opaklık ikisinden de ayrıdır: 0→1 / 1→0 lineer eğri <c>fade</c>'e map'lenir, diğer her
     /// şey aynı frame örneklemesiyle sendcmd komutlarına yazılır.
     /// </summary>
-    /// <returns>Kalan örnekleme bütçesi (tavan derleme genelindedir).</returns>
-    private static int BuildAnimationCommands(
-        LayerRun run, int index, ExportPlan plan, int sampleBudget)
+    private static void BuildAnimationCommands(
+        LayerRun run, int index, ExportPlan plan, SampleBudget budget)
     {
         if (run.AnimatedClip is not { } clip)
         {
-            return sampleBudget;
+            return;
         }
 
-        var budget = sampleBudget;
         var animation = clip.Animation;
         var placement = run.Placement;
         var halfFrameUs = UsOf(1, plan.FpsNum, plan.FpsDen) / 2;
@@ -821,20 +1370,23 @@ public static class ExportCompiler
             };
         }
 
-        return budget;
+        return;
 
         string? Coordinate(AnimationTrack? track, int size, double anchorFactor, string dimension)
         {
-            // §2.5 adım 4: overlay_x = P.x - anchor*w. P.x = W/2 + x*W.
+            // §2.5 adım 4: overlay_x = floor(P.x - anchor*w). P.x = W/2 + x*W.
+            // floor STATİK yoldakiyle AYNI nedenle burada da zorunludur (bkz. FloorOverlay):
+            // animasyon P'yi kare kare sürer, dolayısıyla hedefin işaret değiştirdiği pencereden
+            // TEK BİR belgede geçilebilir — kırpma kuralı kare başına değişmemelidir.
             var expression = Expression(track, clipRelative: false, v => (size / 2d) + (v * size));
             if (expression is null)
             {
                 return null;
             }
 
-            return anchorFactor == 0
+            return FloorOverlay(anchorFactor == 0
                 ? expression
-                : $"{expression}-{Num(anchorFactor)}*{dimension}";
+                : $"{expression}-{Num(anchorFactor)}*{dimension}");
         }
 
         string? Expression(AnimationTrack? track, bool clipRelative, Func<double, double> map)
@@ -859,15 +1411,7 @@ public static class ExportCompiler
             var samples = KeyframeCompiler.Samples(
                 track, clip.TimelineStartUs, run.StartFrame, run.EndFrame,
                 plan.FpsNum, plan.FpsDen, clipRelative ? -clip.TimelineStartUs : 0);
-            if (samples.Count > budget)
-            {
-                throw new UnsupportedFeatureException("keyframe-sample-budget",
-                    $"'{clip.Id}' klibindeki keyframe animasyonu çok fazla örnek üretiyor "
-                    + $"({samples.Count}). Eğrili (easing'li) animasyon KARE KARE örneklenir — "
-                    + "animasyonu kısaltın ya da lineer easing kullanın.");
-            }
-
-            budget -= samples.Count;
+            budget.Charge(clip.Id, samples.Count, VisualChannelTr, VisualBudgetAction);
             return samples;
         }
     }
@@ -875,8 +1419,16 @@ public static class ExportCompiler
     /// <summary>
     /// Animasyonlu ölçek kutusunun TABANI (<c>scale = 1</c> boyutu): medya/görsel/çıkartma
     /// klibinde proje tuvali, metin/şekil rasterinde kendi bbox'ı (§7). Kutu bunun
-    /// <c>scale(t)</c> katıdır — statik yoldaki <c>roundHalfUp</c> yerine ham çarpım kullanılır
-    /// (yuvarlamayı ffmpeg'in force_divisible_by=2 kuralı devralır).
+    /// <c>scale(t)</c> katıdır — statik yoldaki <c>roundHalfUp</c> yerine HAM ÇARPIM yazılır.
+    /// <para>
+    /// TAMSAYIYA ÇEVİREN ffmpeg'DİR VE YUVARLAMAZ, KIRPAR (ölçüldü:
+    /// <c>GoldenFrameTests.ScaleBoxTruncated_MatchesRealFfmpeg</c> — kaynak 223x104'te
+    /// <c>w='3.9' h='2.9'</c> çıkışı 2x2, yani kutu 3x2). Bu yüzden animasyonlu yolun kutu
+    /// modeli <see cref="LayerGeometry.ScaleBoxTruncated"/>'dır ve TABAN kapısı
+    /// (<see cref="EnsureLayerFloor"/>) o modeli kullanmak ZORUNDADIR. Eskiden bu satırın
+    /// yorumu "yuvarlamayı force_divisible_by=2 devralır" diyordu; kapı da roundHalfUp
+    /// varsaydığı için kabul ettiği bir belge ffmpeg'de ölüyordu (5. tur, BLOCKER 1).
+    /// </para>
     /// </summary>
     private static double ScaleBoxWidth(LayerRun run, ExportPlan plan) =>
         run.Segments[0].Raster?.NaturalWidthPx ?? plan.Width;
@@ -910,10 +1462,9 @@ public static class ExportCompiler
     /// simetrik şeffaf pad ile normalize edilir. Bu pad'in geometriyi KAYDIRMAMASI iki şart ister:
     ///  - çapa MERKEZDE (overlay telafi çarpanı 0.5): simetrik pad merkezi korur, çapa
     ///    merkezdeyse §2.5'in <c>P - 0.5*w</c> formülü pad'li ve pad'siz halde AYNI pikseli verir;
-    ///    merkez dışı çapada pad, çapayı görüntü içindeki oranından kaydırırdı;
-    ///  - kutu ÇİFT boyutlu: pad ofseti <c>(ow-iw)/2</c> tamsayı bölmedir; kutu ve ölçek çıktısı
-    ///    (force_divisible_by=2 sayesinde) çift olduğunda ofset TAM bölünür, aksi halde katman
-    ///    yarım piksel kayardı.
+    ///    merkez dışı çapada pad, çapayı görüntü içindeki oranından kaydırırdı.
+    /// Kutunun PARİTESİ şart DEĞİLDİR: pad hedefi kutunun çifte indirilmiş hali olduğu için
+    /// (<see cref="LayerPlacement.NormalizeBoxWidth"/>) ofset <c>(ow-iw)/2</c> daima TAM bölünür.
     /// Şart sağlanmazsa run tek segmentte kalır ve bugünkü klip-başına overlay yolu kullanılır.
     /// GEÇİŞ bu kararı EZER (kesim bölünemez): orada pad çapa-duyarlı yazılır, bkz. NormalizePad.
     /// </summary>
@@ -928,15 +1479,15 @@ public static class ExportCompiler
     ///    içinde doğru orana oturur ve §2.5'in <c>P - anchor*w</c> formülü aynı pikseli verir;
     ///  - ama katman DÖNÜYOR ve çapası merkezde DEĞİLSE (<c>NeedsAnchorPad</c>) §2.5'in çapa
     ///    telafisi pad'i gerçek görüntü boyutuna göre ölçeklenir; normalize sonrası iw kutu
-    ///    boyutu olduğu için telafi yanlış tabana oturur;
-    ///  - kutu TEK boyutluysa pad ofseti tamsayı bölmede yarım piksel kaybeder.
+    ///    boyutu olduğu için telafi yanlış tabana oturur.
+    /// Kutunun PARİTESİ artık şart değildir: pad TEK kutuyu değil, kutunun çifte indirilmiş
+    /// halini hedefler (<see cref="LayerPlacement.NormalizeBoxWidth"/>) → ofset tam bölünür ve
+    /// geometri, kesimde geçiş olup olmamasından BAĞIMSIZ kalır (rendering-semantics §5).
     /// Geçişsiz run bu durumda bölünür (optimizasyondan vazgeçilir); geçişli run BÖLÜNEMEZ →
     /// tipli hata verilir.
     /// </summary>
     private static bool CanNormalizeToBox(LayerPlacement placement) =>
-        !placement.NeedsAnchorPad
-        && placement.BoxWidth % 2 == 0
-        && placement.BoxHeight % 2 == 0;
+        !placement.NeedsAnchorPad;
 
     /// <summary>
     /// Yerleşim proje tuvalinin TAMAMINI birim dönüşümle kaplıyor mu (scale=1, merkez çapa,
@@ -1239,15 +1790,50 @@ public static class ExportCompiler
         // dönüşüm sokar ve ölçekleme chroma'yı gereksizce alt örneklerdi).
         chain.Add("format=rgba");
 
-        if (normalizeToBox)
+        // İKİ SEBEPTEN BİRİ yeterlidir:
+        //  (1) run BÖLÜNDÜ (concat/xfade girişleri aynı boyutta olmalı);
+        //  (2) katman DÖNÜYOR — çapası merkezdeyse. Dönen katmanda rotate'in KARE TUVALİ
+        //      GİRİŞİNDEN doğar (ow=2*ceil(hypot(iw,ih)/2)); giriş pad'li yolda kutu, pad'siz
+        //      yolda gerçek scale çıktısı olduğu sürece iki yol FARKLI tuval kurar ve katman
+        //      farklı ızgaraya oturur. Ölçüldü (gerçek ffmpeg 8.0, 320x240 tuval, 16:9 kaynak,
+        //      s=0.503, a=90): pad'siz sınır kutusu (114,39,205,200), pad'li (115,39,204,200).
+        //      Bu yüzden dönen katmanda pad KESİM DURUMUNDAN BAĞIMSIZ olarak üretilir: geçiş
+        //      eklemek katmanı oynatmaz (rendering-semantics §5).
+        //
+        // İKİ ADAY DA ÖLÇÜLDÜ ve İKİSİ DE piksel eşitliğini sağladı (16 satırlık
+        // AddingATransition_DoesNotMoveTheLayerByASinglePixel, gerçek ffmpeg): (a) normalize
+        // pad'ini rotate'ten SONRAYA alıp kare tuvali ortak bir kenara pad'lemek, (b) burada
+        // seçilen — rotate GİRİŞİNİ eşitlemek. (b) SEÇİLDİ çünkü:
+        //  - nedeni kaldırır (giriş eşitlenir), sonucu telafi etmez; zincirde TEK sıra kalır
+        //    (normalize daima format=rgba'dan hemen sonra), dönen/dönmeyen için iki ayrı
+        //    sıralama akılda tutulmaz;
+        //  - (a) pad'i çapa pad'inden SONRAYA taşıdığı için CanNormalizeToBox'ın (ve ona
+        //    dayanan 'transition-rotated-anchor' kapısının) YAZILI GEREKÇESİNİ geçersiz kılar;
+        //    o kapıyı da kaldırmak bu turun kapsamı dışındadır ve gerekçesiz bir kapı bırakmak
+        //    kabul edilemez;
+        //  - (a) yeni bir türev büyüklük ister (kare kenarı = CeilEven(hypot(nb))) ve onun
+        //    "gerçek rotate çıktısını asla kırpmaz" güvencesi fazladan bir monotonluk adımına
+        //    dayanır; (b) zaten ispatlanmış olan "scale çıktısı ≤ nb" güvencesini kullanır.
+        // BEDELİ ölçüldü: tek bir snapshot değişir (keyframe-eased) ve tek klipli dönen
+        // katmanlar bir pad filtresi kazanır.
+        //
+        // ÇAPASI MERKEZDE OLMAYAN dönen katman DIŞARIDADIR (NeedsAnchorPad): §2.5'in çapa
+        // telafisi pad'i GERÇEK görüntü boyutuna göre ölçeklenir (iw*2*mx), normalize sonrası
+        // iw kutu boyutu olurdu ve çapa görüntü içindeki oranından kayardı. Aynı gerekçeyle
+        // o katman zaten bölünemez (CanNormalizeToBox) — yani karşılaştırılacak bir pad'li
+        // yolu da yoktur.
+        if (normalizeToBox || (placement.Rotates && !placement.NeedsAnchorPad))
         {
-            // concat/xfade girişleri AYNI boyutta olmalı; gerçek ölçek çıktısı kaynağın
-            // aspect'ine bağlıdır → şeffaf pad ile kutuya sabitlenir. Ofset ÇAPA ORANINDADIR:
-            // merkez çapada (ow-iw)/2 ile birebir aynıdır, merkez dışı çapada ise §2.5'in
-            // "çapa görüntünün kendi kutusundaki oranındadır" kuralını korur (geçişli kesimde
-            // run bölünemediği için bu genel biçim şarttır).
-            chain.Add($"pad={placement.BoxWidth.ToString(CultureInfo.InvariantCulture)}"
-                      + $":{placement.BoxHeight.ToString(CultureInfo.InvariantCulture)}"
+            // Gerçek ölçek çıktısı kaynağın aspect'ine bağlıdır (compiler kaynağı bilmez) →
+            // şeffaf pad ile kutuya sabitlenir. Ofset ÇAPA ORANINDADIR: merkez çapada
+            // (ow-iw)/2 ile birebir aynıdır, merkez dışı çapada ise §2.5'in "çapa görüntünün
+            // kendi kutusundaki oranındadır" kuralını korur (geçişli kesimde run bölünemediği
+            // için bu genel biçim şarttır).
+            // HEDEF ham kutu DEĞİL, kutunun ÇİFTE İNDİRİLMİŞ hali (§2.5): scale çıktısı daima
+            // çift olduğu için bu hedef kırpmaz, ve çift/çift oranı (ow-iw)/2'yi TAM böler —
+            // ham TEK kutu, ofseti ve overlay'i AYNI YÖNE kırpıp katmanı 1 px kaydırırdı.
+            chain.Add($"pad={placement.NormalizeBoxWidth.ToString(CultureInfo.InvariantCulture)}"
+                      + $":{placement.NormalizeBoxHeight.ToString(CultureInfo.InvariantCulture)}"
                       + $":{NormalizePadOffset("ow", "iw", placement.OverlayAnchorFactorX)}"
                       + $":{NormalizePadOffset("oh", "ih", placement.OverlayAnchorFactorY)}"
                       + $":color={TransparentPad}");
@@ -1281,12 +1867,35 @@ public static class ExportCompiler
                           + $":color={TransparentPad}");
             }
 
-            // ow=oh=hypot(iw,ih) (= §2.5'in Dg'si) dönen kutuyu her açıda kapsar; c=none şeffaf
-            // arka plan. Bu tuvalin BÜYÜKLÜĞÜ LayerPlacement.Intermediate* ile önceden hesaplanıp
-            // MaxLayerDimension'a karşı doğrulanmıştır (denetim #2) — buradaki ifade ffmpeg'in
-            // gerçek iw/ih'siyle aynı değeri config anında bir kez üretir.
+            // Kare ara tuval: kenarı "köşegeni kapsayan en küçük ÇİFT tamsayı"dır, yani dönen
+            // kutuyu her açıda kapsar; c=none şeffaf arka plan.
+            //
+            // BU İFADE ffmpeg'in GERÇEK iw/ih'siyle değerlendirilir; LayerPlacement.Intermediate*
+            // ise aynı fonksiyonu KUTUDAN hesaplar. Defter bir ÜST SINIRDIR: scale çıktısı
+            // kutuyu aşamadığı ve dönüşüm monoton olduğu için çizilen ≤ defter. Bellek tavanı
+            // bilerek DEFTERDEN doğrulanır (güvenli taraf, denetim #2); konum aritmetiği ise
+            // daima ÇİZİLEN tuvale, yani overlay ifadesindeki w/h'ye aittir.
+            //
+            // GİRİŞ ARTIK NORMALİZE (çapası merkezde olan dönen katmanda): yukarıdaki pad
+            // sayesinde iw/ih kaynağın aspect'ine değil KUTUYA bağlıdır, dolayısıyla bu tuval
+            // de kaynaktan bağımsızdır — geçiş eklemek (run'ı bölmek) tuvali değiştirmez.
+            // Ölçüldü (gerçek ffmpeg 8.0, kutu 1066x599): normalize EDİLMEMİŞ 16:9 girişi
+            // 1064x598 → tuval 1222; normalize edilmiş 1066x598 girişi → tuval 1224.
+            // İki farklı tuval, iki farklı ızgara demekti; kaynak bu ayrışmaydı.
+            //
+            // TUVAL ÇİFTTİR (2*ceil(hypot/2)), ham hypot DEĞİL. GEREKÇE (gerçek ffmpeg 8.0,
+            // GoldenFrameTests.RotatedLayer_LandsOnTheSameCenterAsTheUnrotatedOne canlı ffmpeg'e
+            // yeniden sorar): rotate ifadeyi round-half-up ile tamsayıya çevirir ve sonuç SIKLIKLA
+            // TEKTİR (ölç.: 960x540→1101, 962x540→1103, 100x100→141, 480x270→551). TEK tuvalde
+            // içerik tuvalin ORTASINA oturamaz — ölçüldü (a=0, interpolasyon yok): 1101'de içerik
+            // merkezi tuval merkezinin 0.5 px sağında; 1102'de TAM ORTADA. Üstelik overlay
+            // telafisi 0.5*w de yarım tamsayı olurdu. İki yarım piksel a=90'da eksenlere ZIT
+            // işaretle düşüyordu (ölç.: x −0.5, y +0.5 — "sapma daima tek yönlü" iddiasını
+            // yalanlar). Çift tuvalde ikisi de 0.000 ve merkez tam olarak floor(P)'ye oturur,
+            // yani dönen katman dönmeyenle AYNI modele uyar.
             // Filtergraph içinde argüman virgülü KAÇIRILMALIDIR (\,) — aksi halde filtre ayracı sanılır.
-            chain.Add($"rotate=a={RotationArgument(run)}:c=none:ow=hypot(iw\\,ih):oh=ow");
+            chain.Add(
+                $"rotate=a={RotationArgument(run)}:c=none:ow=2*ceil(hypot(iw\\,ih)/2):oh=ow");
         }
 
         chain.Add("settb=AVTB");
@@ -1389,11 +1998,50 @@ public static class ExportCompiler
                 (clip.SourceOutUs + clip.HeadOutSourceUs)
                 - (clip.SourceInUs - clip.HeadInSourceUs));
 
-    /// <summary>overlay_x = P.x - anchorFactor * &lt;w|h&gt; (§2.5); çarpan 0 ise sade sabit.</summary>
+    /// <summary>
+    /// overlay_x = <c>floor</c>(P.x - anchorFactor * &lt;w|h&gt;) (§2.5 adım 4); çarpan 0 ise
+    /// hedefin kendisi. <see cref="FloorOverlay"/> neden ZORUNLU olduğunu anlatır.
+    /// </summary>
     private static string OverlayCoordinate(double target, double anchorFactor, string dimension) =>
-        anchorFactor == 0
+        FloorOverlay(anchorFactor == 0
             ? Num(target)
-            : $"{Num(target)}-{Num(anchorFactor)}*{dimension}";
+            : $"{Num(target)}-{Num(anchorFactor)}*{dimension}");
+
+    /// <summary>
+    /// overlay hedefini ifadenin İÇİNDE tamsayıya indirir (§2.5 "konum kırpması").
+    /// <para>
+    /// GEREKÇE (gerçek ffmpeg 8.0 ölçümü; <c>GoldenFrameTests.OverlayExpression_</c>
+    /// <c>TruncatesTowardZero_AndAcceptsFloor</c> canlı ffmpeg'e yeniden sorar):
+    /// overlay ifadeyi <c>(int)</c> ile, yani SIFIRA DOĞRU çevirir —
+    /// <c>floor</c> ile DEĞİL. 64 px tuval + 20 px katman: <c>x=-10.1 / -10.5 / -10.9 / -10.999</c>
+    /// → hepsi sol kenar <c>-10</c>; <c>x=-11</c> → <c>-11</c>. Pozitif tarafta ikisi aynıdır.
+    /// Bu yüzden hedef negatifken kırpma YÖN DEĞİŞTİRİR ve iki bağımsız sözleşme kırılır:
+    /// </para>
+    /// <para>
+    /// (1) <b>Pad'li ve pad'siz yol ayrışır</b> (rendering-semantics §5.2 invaryantı). Pad'li
+    /// yolda katmanın sol kenarı <c>trunc(P - nb/2) + (nb - w)/2</c>, pad'siz yolda
+    /// <c>trunc(P - w/2)</c>'dir. <c>(nb - w)/2</c> TAM SAYI olduğu için <c>floor</c> altında iki
+    /// ifade ÖZDEŞTİR (<c>floor(a) + k = floor(a + k)</c>); <c>trunc</c> altında değildir ve
+    /// <c>0 &lt; P - nb/2 + 1</c> penceresinde 1 px ayrışır. Ölçüldü (1080p, ölçek 1.005,
+    /// x=0.0025, kutu 1930x1085): 16:9 / 4:3 / kare / 9:16 / 3:4 kaynakların BEŞİ DE 1 px ayrıştı;
+    /// <c>floor</c> ile beşi de eşitlendi (21:9 kaynakta ayrışma zaten yoktu).
+    /// </para>
+    /// <para>
+    /// (2) <b>Ölçek &gt; 1'de sapma İŞARET DEĞİŞTİRİR.</b> §2.5(b) "export merkezi = trunc(P),
+    /// sapma daima orijine doğru" der; bu ancak overlay hedefi ≥ 0 iken doğrudur. Katman tuvali
+    /// taştığı an (her yakınlaştırma) hedef negatifleşir. Ölçüldü (1080p, 16:9, ölçek 1.2,
+    /// x=-0.1026, hedef -388.992): <c>trunc</c> ile merkez P'nin <b>+0.992 px</b> SAĞINA,
+    /// <c>floor</c> ile -0.008 px soluna düştü. <c>floor</c> altında sapma her ölçekte ve her
+    /// işarette <c>(-1, 0]</c> aralığındadır — dokümanın zaten iddia ettiği model.
+    /// </para>
+    /// <para>
+    /// <c>floor</c> ffmpeg ifade değerlendiricisinde VARDIR ve overlay onu kabul eder (aynı testte
+    /// negatif kontrol: uydurma bir fonksiyon adı <c>Unknown function</c> ile reddediliyor, yani
+    /// <c>floor</c> sessizce yutulmuyor). Sonuç tamsayı olduğu için overlay'in kendi
+    /// <c>(int)</c>'i no-op'a düşer.
+    /// </para>
+    /// </summary>
+    private static string FloorOverlay(string expression) => $"floor({expression})";
 
     /// <summary>
     /// Katmanın yerleşimi. Medya/görsel/ÇIKARTMA klibinde ölçek kutusunun tabanı proje
@@ -1401,11 +2049,19 @@ public static class ExportCompiler
     /// Raster kliplerinin bellek tavanı BURADA doğrulanır — Validate raster boyutunu bilmez.
     /// </summary>
     private static LayerPlacement PlacementOf(
-        ExportClipPlan clip, ExportRasterSource? raster, ExportPlan plan)
+        ExportClipPlan clip, ExportAssetSource? asset, ExportRasterSource? raster, ExportPlan plan)
     {
         if (raster is null)
         {
-            return LayerGeometry.Compute(PlacementTransform(clip), plan.Width, plan.Height);
+            var media = LayerGeometry.Compute(PlacementTransform(clip), plan.Width, plan.Height);
+
+            // Taban kapısının Compile yarısı: boyut ffprobe'tan gelir ve worker'da DAİMA
+            // bilinir (API'nin DB yarısı asset hâlâ işleniyorken boş olabilir). Burada tipli hata
+            // üretmek, ffmpeg'in -22'sinden ya da SESSİZ yanlış geometriden her hâlükârda iyidir.
+            EnsureLayerFloor(
+                clip.Id, clip.KindTr, clip, plan.Width, plan.Height,
+                asset?.SourceWidth ?? 0, asset?.SourceHeight ?? 0);
+            return media;
         }
 
         if (!double.IsFinite(raster.NaturalWidthPx) || !double.IsFinite(raster.NaturalHeightPx)
@@ -1419,7 +2075,17 @@ public static class ExportCompiler
         var placement = LayerGeometry.Compute(
             PlacementTransform(clip), plan.Width, plan.Height,
             raster.NaturalWidthPx, raster.NaturalHeightPx);
-        EnsureLayerFits(clip.Id, clip.KindTr, placement);
+        EnsureLayerCeiling(clip.Id, clip.KindTr, placement);
+
+        // Metin/şekil rasterinde kutu ≥ 2 sağlandığı sürece dejenerelik eşitsizliği sağlanmaz
+        // (fit kutusu rasterin KENDİ bbox'ı olduğu için kaynak aspect'i ≈ kutu aspect'i —
+        // SweptRasterBboxes_AreNotDegenerate_WhenTheScaleFloorHolds bunu tarar). Ama KUTU ≥ 2
+        // ULAŞILABİLİR biçimde ihlal edilir: ölçek animasyonunun tabanı kutuyu 2x1'e ya da
+        // 0x0'a indirebilir (5. tur BLOCKER 1, canlı ölçüm). Kapı bu yüzden burada da KOŞAR
+        // ve PNG'nin gerçek boyutuyla tam modeli sorar.
+        EnsureLayerFloor(
+            clip.Id, clip.KindTr, clip, raster.NaturalWidthPx, raster.NaturalHeightPx,
+            raster.SourceWidth ?? 0, raster.SourceHeight ?? 0);
         return placement;
     }
 
@@ -1429,10 +2095,32 @@ public static class ExportCompiler
     /// Track içindeki geçiş kesimlerini doğrular ve D/2 paylarını kliplere yazar (liste
     /// YERİNDE güncellenir). Kurallar §5.2'dir: bitişiklik, simetri (iki taraf derin-eşit),
     /// D proje frame grid'inde ve ÇİFT frame (D/2 tam frame olsun), D*2 ≤ kısa komşunun
-    /// süresi, ve kaynak payı (handle). İhlaller sessizce düzeltilMEZ — editör bu dokümanı
-    /// üretmemeliydi.
+    /// süresi, kaynak payı (handle) ve GÖRÜNEN kesimde YERLEŞİM kuralları. İhlaller sessizce
+    /// düzeltilMEZ — editör bu dokümanı üretmemeliydi.
+    /// <para>
+    /// Yerleşim kuralları (eşitlik + dönmüş/merkez-dışı çapa yasağı) eskiden YALNIZ
+    /// <see cref="Compile"/>'ın run kurma dalındaydı; API'nin ön kapısı yalnız
+    /// <see cref="Validate"/> çağırdığı için onları GÖRMÜYORDU ve böyle bir belge 202 alıp
+    /// worker'da düşüyordu (ham API ile ölçüldü). İkisi de SAF DOKÜMAN ARİTMETİĞİDİR —
+    /// <see cref="LayerGeometry.Compute(Transform, int, int)"/> yalnız transform + proje tuvali
+    /// ister, kaynak dosyasına DOKUNMAZ — dolayısıyla buraya aittirler. Compile'daki dal KALDIRILMADI
+    /// (aynı fonksiyon, aynı sonuç; kaynak bilgisi oraya sonradan girdiği için ucuz sigorta).
+    /// </para>
     /// </summary>
-    private static void ResolveTransitions(List<ExportClipPlan> clips, int fpsNum, int fpsDen)
+    /// <param name="clips">Track'in derlenmiş klip planları — YERİNDE güncellenir (kaynak payı, atrim).</param>
+    /// <param name="fpsNum">Proje fps pay'ı; geçiş süresi bu grid'e (çift frame'e) oturtulur.</param>
+    /// <param name="fpsDen">Proje fps payda'sı.</param>
+    /// <param name="width">Proje tuval genişliği — yerleşim kuralı yalnız bunu ve transform'u okur.</param>
+    /// <param name="height">Proje tuval yüksekliği.</param>
+    /// <param name="track">
+    /// Kesimin görünürlük bağlamı. Geçiş VİDEODA yalnız iki taraf da GÖRSEL katman ürettiğinde
+    /// onurlandırılır (Compile'daki <c>joined</c> koşulu): gizli track'te ya da ses klibinde
+    /// kesim sıradan bir kesimdir, xfade hiç kurulmaz ve yerleşim de rol oynamaz. Kapı bu
+    /// yüzden aynı koşula bağlıdır — aksi halde gizli bir track'teki geçiş yanlışlıkla
+    /// reddedilirdi.
+    /// </param>
+    private static void ResolveTransitions(
+        List<ExportClipPlan> clips, int fpsNum, int fpsDen, Track track, int width, int height)
     {
         if (!clips.Any(c => c.Media is { } m && (m.TransitionIn is not null || m.TransitionOut is not null)))
         {
@@ -1539,6 +2227,8 @@ public static class ExportCompiler
                     + "kısaltın ya da klibi kaynakta biraz ileriden başlatın.");
             }
 
+            EnsureTransitionPlacement(current, next, track, width, height);
+
             outTransition[i] = transition;
             inTransition[i + 1] = transition;
             halfFrames[i + 1] = half;
@@ -1578,6 +2268,68 @@ public static class ExportCompiler
             };
         }
     }
+
+    /// <summary>
+    /// GÖRÜNEN geçiş kesiminin YERLEŞİM kuralları — <see cref="Validate"/> ve
+    /// <see cref="Compile"/> AYNI iki soruyu sorar, farkları yalnız NE ZAMAN sorduklarıdır.
+    /// <list type="number">
+    ///   <item>iki tarafın yerleşimi EŞİT olmalı: <c>xfade</c> girişlerin aynı boyutta
+    ///     olmasını şart koşar, farklı yerleşim katmanı geçiş boyunca sessizce kaydırırdı;</item>
+    ///   <item>katman DÖNMÜŞ + çapası merkez dışı olamaz: geçişte run bölünemez, kutuya
+    ///     normalize pad zorunludur ve o pad §2.5'in çapa telafisini yanlış tabana oturtur.</item>
+    /// </list>
+    /// KAYNAK DOSYASINA DOKUNMAZ: <see cref="LayerGeometry.Compute(Transform, int, int)"/>'un medya dalı yalnız
+    /// transform + proje tuvali okur. Geçişin iki tarafı ŞEMA GEREĞİ medya klibidir (yukarıda
+    /// <c>next.Media is null</c> ile reddedilir), dolayısıyla raster bbox'ı hiç gerekmez.
+    /// </summary>
+    private static void EnsureTransitionPlacement(
+        ExportClipPlan a, ExportClipPlan b, Track track, int width, int height)
+    {
+        // Compile'daki `joined` koşulunun DOKÜMAN yarısı: kesim ancak İKİ TARAF DA GÖRSEL
+        // katman ürettiğinde xfade'e çevrilir. Gizli track'te (yalnız ses kalır) ya da ses
+        // klibinde kesim sıradan bir kesimdir — yerleşimin hiçbir rolü yoktur ve kapıyı
+        // oraya da uygulamak YANLIŞ RET olurdu (acrossfade yerleşim bilmez).
+        if (track.Hidden || a.Kind == ExportClipKind.Audio || b.Kind == ExportClipKind.Audio)
+        {
+            return;
+        }
+
+        var placementA = LayerGeometry.Compute(PlacementTransform(a), width, height);
+        var placementB = LayerGeometry.Compute(PlacementTransform(b), width, height);
+        if (placementA != placementB)
+        {
+            throw TransitionPlacementMismatch(a.Id, b.Id);
+        }
+
+        if (!CanNormalizeToBox(placementB))
+        {
+            throw TransitionRotatedAnchor(b.Id);
+        }
+    }
+
+    /// <summary>
+    /// Geçişli kesimde yerleşim farkı. Mesaj TEK yerde yaşar: Validate (senkron 422) ve
+    /// Compile (worker sigortası) kullanıcıya AYNI cümleyi göstermek ZORUNDADIR.
+    /// </summary>
+    private static InvalidTimelineException TransitionPlacementMismatch(Guid previousId, Guid clipId) =>
+        // Tip adı AÇIKÇA yazılır (hedef-tipli `new(...)` değil): ExportGateInventoryTests
+        // fırlatma noktalarını KAYNAK TARAYARAK sayar, gizlenen bir tip adı defterin
+        // tamlığını sessizce delerdi.
+        new InvalidTimelineException(
+            $"'{previousId}' ve '{clipId}' klipleri arasında geçiş var ama iki klibin "
+            + "yerleşimi (konum/ölçek/dönme/çapa) farklı — geçişli kliplerin yerleşimi "
+            + "aynı olmalıdır. Geçişi kaldırın ya da iki klibe de aynı dönüşümü verin.");
+
+    /// <summary>
+    /// Geçişli kesimde dönmüş + merkez dışı çapa. Editör çapayı hiç yazmadığı (daima 0.5)
+    /// için bu yol ARAYÜZDEN ULAŞILAMAZ; mesaj bu yüzden yalnız kullanıcının GERÇEKTEN
+    /// yapabileceği iki eylemi söyler.
+    /// </summary>
+    private static UnsupportedFeatureException TransitionRotatedAnchor(Guid clipId) =>
+        new UnsupportedFeatureException("transition-rotated-anchor",
+            $"'{clipId}' klibinde geçiş var ve katman DÖNDÜRÜLMÜŞ; bu klibin dönme "
+            + "merkezi (çapası) karesinin ortasında olmadığı için geçiş katmanı "
+            + "kaydırırdı. Klibin dönmesini 0 yapın ya da kesimdeki geçişi kaldırın.");
 
     /// <summary>
     /// §5.2: timeline-domain D/2 payının kaynak-domain karşılığı —
@@ -1625,8 +2377,26 @@ public static class ExportCompiler
     /// Ayrı bir kayıt, çünkü <see cref="ValidateClip"/> zincirinde dört parametre daha
     /// taşımak imza gürültüsünden başka bir şey üretmezdi.
     /// </summary>
+    /// <param name="Settings">Proje ayarları (fps, örnekleme oranı) — klip doğrulamasının zaman tarafı.</param>
+    /// <param name="Width">Proje tuval genişliği; ölçek kutusunun ve <c>P</c>'nin tabanı (§2.3).</param>
+    /// <param name="Height">Proje tuval yüksekliği.</param>
+    /// <param name="Measurer">
+    /// Metin bbox ölçeri. <c>null</c> = kurulumda ölçer YOK → eski hoşgörülü davranış korunur
+    /// (kapı zayıflar, yanlış ret üretilmez). Kayıtlı olup ölçüm BAŞARISIZ olursa durum farklıdır:
+    /// klip <paramref name="Unmeasured"/>'a yazılır ve HTTP katmanı 503 döndürür.
+    /// </param>
+    /// <param name="Assets">
+    /// Referans verilen asset satırlarının olgu defteri (<see cref="ExportAssetFacts"/>).
+    /// <c>null</c> = defter geçirilmemiş (worker yolu) → asset olgusuna dayanan kapılar atlanır.
+    /// </param>
+    /// <param name="Unmeasured">
+    /// Ölçer VERİLDİĞİ HALDE bbox'ı alınamayan metin klipleri — YERİNDE doldurulur ve plana
+    /// taşınır (<see cref="ExportPlan.UnmeasuredTextClipIds"/>). Sayaç değil liste: HTTP
+    /// katmanı hangi kliplerin etkilendiğini mesajda söyleyebilmelidir.
+    /// </param>
     private readonly record struct GeometryContext(
-        ProjectSettings Settings, int Width, int Height, ITextRasterService? Measurer);
+        ProjectSettings Settings, int Width, int Height, ITextRasterService? Measurer,
+        IReadOnlyDictionary<Guid, ExportAssetFacts>? Assets, List<Guid> Unmeasured);
 
     private static ExportClipPlan ValidateClip(Clip clip, GeometryContext geometry)
     {
@@ -1875,8 +2645,116 @@ public static class ExportCompiler
             return;
         }
 
+        // TAVAN ve TABAN aynı transform'un ZIT uçlarından sorulur (bkz. PlacementTransform):
+        // tavan animasyonun en büyük karesinde, taban en küçük karesinde ihlal edilir. Bunları
+        // tek bir yerleşimden sormak 5. tur denetiminin BLOCKER 1'iydi — tavan MAKSİMUMDAN
+        // kurulmuş yerleşime bakarken taban da o yerleşimden soruluyordu, yani animasyonun
+        // tabanı hiç görülmüyordu ve belge 202 alıp worker'da ölüyordu.
         var placement = LayerGeometry.Compute(PlacementTransform(clip), width, height);
-        EnsureLayerFits(clip.Id, clip.KindTr, placement);
+        EnsureLayerCeiling(clip.Id, clip.KindTr, placement);
+
+        // Kaynak boyutu DB defterinden geldiyse taban SORUSU tam modelle sorulur (senkron 422,
+        // iş kuyruğa HİÇ girmez); gelmediyse yalnız kaynaktan bağımsız yarısı sorulur ve
+        // Compile'daki ffprobe yarısı emniyet kemeri kalır.
+        var source = clip.AssetId is { } assetId
+                     && geometry.Assets is { } assets
+                     && assets.TryGetValue(assetId, out var facts)
+                     && facts is { Width: { } w, Height: { } h }
+            ? ((long)w, (long)h)
+            : (0L, 0L);
+        EnsureLayerFloor(
+            clip.Id, clip.KindTr, clip, width, height, source.Item1, source.Item2);
+    }
+
+    /// <summary>
+    /// Taban kapısının baktığı EN KÜÇÜK ölçek: statikte <c>transform.scale</c>, ölçek
+    /// animasyonunda KEYFRAME MİNİMUMU.
+    /// <para>
+    /// Animasyonlu dalda statik alan HESABA KATILMAZ çünkü üretilen filtergraph onu hiç
+    /// okumaz: ifade yalnız keyframe'lerden örneklenir ve ilk/son keyframe'in dışında
+    /// uçlara sabitlenir (bkz. <see cref="ScaleFilter"/>). Statik alanı da hesaba katmak
+    /// kapıyı derlenmeyecek bir değerden ötürü ret verebilir hale getirirdi.
+    /// (TAVAN kuralı simetrik değildir ve bilerek öyledir: <see cref="PlacementTransform"/>
+    /// bellek tavanını <c>max(statik, keyframe max)</c> ile kurar — orada fazladan güvenlik
+    /// payı yanlış ret değil, yalnız daha erken bir ret üretir.)
+    /// </para>
+    /// <para>
+    /// KAPSAM NOTU: "keyframe minimumu" örneklenen eğrinin minimumu DEĞİLDİR — undershoot'lu
+    /// bir <c>cubicBezier</c> (y1 ya da y2 &lt; 0) ara değerleri keyframe tabanının altına
+    /// indirebilir. Editör böyle bir eğri YAZAMAZ (<c>keyframeModel</c> yalnız hazır easing
+    /// tiplerini sunar, serbest bezier'i dışarıda bırakır); ham API'den yazılan bir belgede
+    /// ise kapı Compile aşamasında ffprobe/PNG boyutuyla yeniden koşar.
+    /// </para>
+    /// </summary>
+    private static double MinScaleOf(ExportClipPlan clip) =>
+        clip.Animation.Scale is { } animated ? animated.MinValue : clip.Transform?.Scale ?? 1d;
+
+    /// <summary>
+    /// Rasterlenecek klibin, ÇİZİM BAŞLAMADAN karar verilebilen sözleşmesi: renk alanları
+    /// ayrıştırılabiliyor mu ve şekil klibinin <c>shape</c> gövdesi var mı.
+    /// <para>
+    /// NEDEN BURADA: bu kuralların tamamı SAF DOKÜMAN aritmetiğidir — ne dosya, ne asset, ne
+    /// font gerekir. Kural yalnız raster hattında yaşadığı sürece belge 202 alıyor, kullanıcı
+    /// render'ı bekliyor ve iş <c>overlay-unsupported-clip</c> ile düşüyordu (ham API ile
+    /// ölçüldü). Artık istek kuyruğa hiç girmiyor.
+    /// </para>
+    /// <para>
+    /// KOD BİLEREK RASTER HATTININ KODUYLA AYNIDIR (<c>overlay-unsupported-clip</c>): aynı
+    /// kusur, hangi kapının yakaladığından bağımsız olarak kullanıcıya aynı makine kodunu
+    /// göstermelidir. Koşullar da raster hattının koşullarının AYNADAKİ EŞİDİR
+    /// (<c>SkiaOverlayRasterService.RenderText</c>/<c>RenderShape</c>): kontur rengi yalnız
+    /// <c>widthPx &gt; 0</c> iken, arka plan rengi yalnız arka plan varken okunur. Kapı daha
+    /// GENİŞ olsaydı raster hattının sorunsuz çizeceği belgeleri reddederdi (yanlış 422).
+    /// </para>
+    /// </summary>
+    private static void EnsureRasterContract(ExportClipPlan clip)
+    {
+        switch (clip.Source)
+        {
+            case TextClip { Text: { } text }:
+                EnsureColor(clip.Id, text.Fill, "text.fill");
+                if (text.Stroke is { WidthPx: > 0 } textStroke)
+                {
+                    EnsureColor(clip.Id, textStroke.Color, "text.stroke.color");
+                }
+
+                if (text.Background is { } background)
+                {
+                    EnsureColor(clip.Id, background.Color, "text.background.color");
+                }
+
+                break;
+
+            case ShapeClip shapeClip:
+                // 'shape' gövdesiz bir şekil klibi çizilemez. (Metin tarafının aynı kuralı
+                // RasterBoxOf'ta, kutuyu sorarken yaşar.)
+                var shape = shapeClip.Shape
+                    ?? throw new UnsupportedFeatureException("overlay-unsupported-clip",
+                        $"'{clip.Id}' şekil klibinde 'shape' gövdesi yok — çizilecek bir şey "
+                        + "tanımlanmamış.");
+                EnsureColor(clip.Id, shape.Fill, "shape.fill");
+                if (shape.Stroke is { WidthPx: > 0 } shapeStroke)
+                {
+                    EnsureColor(clip.Id, shapeStroke.Color, "shape.stroke.color");
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Tek renk alanı. Dilbilgisi TEK YERDEN (<see cref="HexColor.TryParse"/>) sorulur —
+    /// ikinci bir ayrıştırıcı yazmak iki kapının zamanla ayrışması demekti (kapı kabul eder,
+    /// raster reddeder ya da tersi).
+    /// </summary>
+    private static void EnsureColor(Guid clipId, string? value, string field)
+    {
+        if (!HexColor.TryParse(value, out _))
+        {
+            throw new UnsupportedFeatureException("overlay-unsupported-clip",
+                $"'{clipId}' klibinin '{field}' alanı geçersiz renk değeri taşıyor: "
+                + $"'{value}'. Beklenen biçim: #RGB, #RRGGBB ya da #RRGGBBAA.");
+        }
     }
 
     /// <summary>
@@ -1919,16 +2797,23 @@ public static class ExportCompiler
         var placement = LayerGeometry.Compute(
             PlacementTransform(clip), geometry.Width, geometry.Height, box.WidthPx, box.HeightPx);
 
-        if (box.Exact)
+        // TAVAN her hâlükârda: alt sınır GERÇEĞİ AŞMAZ, dolayısıyla ondan doğan ret KESİNDİR.
+        EnsureLayerCeiling(clip.Id, clip.KindTr, placement);
+
+        if (!box.Exact)
         {
-            // Kutu gerçek → Compile'daki kapının BİREBİR aynısı (asgari boyut dahil).
-            EnsureLayerFits(clip.Id, clip.KindTr, placement);
+            // TABAN alt sınırdan SORULAMAZ ve bu yön simetrik değildir: tavan için "gerçek ≥
+            // alt sınır" yeterlidir, taban için ÜST sınır gerekir — metin genişliğinin
+            // fonttan bağımsız bir üst sınırı YOKTUR. Alt sınırdan taban sorulsaydı ölçüm
+            // yolu kapalı her kurulumda geçerli metinler reddedilirdi (yanlış 422).
             return;
         }
 
-        // Alt sınır → yalnız TAVAN doğrulanır. Asgari boyut ("bir pikselin altına düşüyor")
-        // burada SORULAMAZ: alt sınır zaten küçüktür, sorulsaydı geçerli her metni reddederdi.
-        EnsureLayerCeiling(clip.Id, clip.KindTr, placement);
+        // Kutu GERÇEK (şekilde sözleşme gereği, metinde ölçümle) → taban sorulabilir. Kaynak
+        // (PNG'nin kendi piksel boyutu) Validate aşamasında henüz yok; kapı kaynaktan BAĞIMSIZ
+        // yarıyı sorar. Bu yarı 5. tur denetiminin BLOCKER 1'indeki iki varyantı da kapatır:
+        // bbox 223x104 @ölçek 0.010 → kutu 2x1, bbox 6x20 @0.010 → kutu 0x0.
+        EnsureLayerFloor(clip.Id, clip.KindTr, clip, box.WidthPx, box.HeightPx, 0, 0);
     }
 
     /// <summary>
@@ -1969,21 +2854,69 @@ public static class ExportCompiler
                 if (double.IsFinite(layout.BboxWidthPx) && double.IsFinite(layout.BboxHeightPx)
                     && layout.BboxWidthPx > 0 && layout.BboxHeightPx > 0)
                 {
-                    return new RasterBox(layout.BboxWidthPx, layout.BboxHeightPx, Exact: true);
+                    if (layout.FontIsDeterministic)
+                    {
+                        return new RasterBox(layout.BboxWidthPx, layout.BboxHeightPx, Exact: true);
+                    }
+
+                    // ÖLÇÜM YAPILDI AMA PİNLİ DEĞİL (sistem fontu — üç modlu politikanın 2.
+                    // modu). Bu kutu küratörlü fontun kutusunun ne üst ne alt sınırıdır: ölçüldü,
+                    // bbox genişliği -21,1% ile +7,9% arasında ayrışıyor (TextLayout
+                    // .FontIsDeterministic'te düzenek ve tam tablo). Ona dayanan bir RET, üst
+                    // sınırı KURULUM DURUMUNA bağlar ve yanlış 422 üretebilirdi; ona dayanan bir
+                    // KABUL de aldatıcıdır. Kapı font-BAĞIMSIZ alt sınıra düşer (aşağıda) —
+                    // gerçek tavan render anında, çizilen rasterin GERÇEK kutusuyla sorulur.
+                    //
+                    // 'Unmeasured' defterine YAZILMAZ: ölçüm patlamadı, yalnız pinli değil.
+                    // Yazılsaydı fontları indirilmemiş her kurulumda metin içeren her istek
+                    // 503 alırdı — oysa o kurulumda export ÇALIŞIR (belirlenimci olmayan
+                    // piksellerle).
+                    return LowerBoundBox(text);
                 }
+            }
+            catch (FontNotFoundException unknownId) when (unknownId.ExpectedPath is null)
+            {
+                // BELGE HATASI — kurulum arızası DEĞİL. ExpectedPath'in null olması
+                // FontNotFoundException'ın iki fabrikasını birbirinden ayırır: UnknownId
+                // (manifestte BÖYLE BİR ID YOK) yol taşımaz, FileMissing (id tanımlı ama TTF
+                // indirilmemiş) taşır. İlki kurulumdan BAĞIMSIZ ve KALICIDIR — font kökü
+                // düzeltilse bile aynı belge aynı hatayı verir, dolayısıyla "yeniden deneyin"
+                // demek (503) yanlış olurdu.
+                //
+                // Bu dal API'nin manifest ön kontrolünün ARDINDADIR ve onunla AYNI kodu
+                // taşır: iki manifest okuyucusu (FontManifestProvider ile ölçerin kendi
+                // manifesti) ayrıştığında ya da API tarafı manifesti hiç okuyamadığında
+                // cevabın 503'e KAYMAMASINI garanti eder — kullanıcı hangi okuyucunun fark
+                // ettiğinden bağımsız olarak aynı 'font-missing' 422'sini görür.
+                throw new UnsupportedFeatureException("font-missing",
+                    $"'{clip.Id}' metin klibi sunucunun tanımadığı bir fontId taşıyor: "
+                    + $"'{text.FontId}'. {unknownId.Message}");
             }
             catch (Exception)
             {
-                // BİLEREK GENİŞ. Buradaki her hata ALTYAPIDANDIR: font kökü yok
-                // (OverlayRasterException), manifest bozuk, SkiaSharp yerel kütüphanesi
-                // yüklenemedi (TypeInitializationException/DllNotFoundException — API süreci
-                // bu hattı bu değişiklikten ÖNCE hiç kullanmıyordu). Hiçbiri kullanıcının
-                // belgesiyle ilgili değildir: dar bir catch, ölçümün patladığı bir kurulumda
-                // her export isteğini 500'e çevirirdi. Kapı alt sınıra düşer, gerçek tavan
-                // Compile'da durmaya devam eder.
+                // BURADAN SONRASI ALTYAPIDANDIR (ve bilerek geniştir): küratörlü TTF
+                // indirilmemiş (FontNotFoundException.FileMissing — ExpectedPath dolu),
+                // manifest bozuk (FontManifestException), font dosyası açılamıyor/sha pini
+                // tutmuyor (FontLoadException), SkiaSharp yerel kütüphanesi yüklenemedi
+                // (TypeInitializationException/DllNotFoundException — API süreci bu hattı bu
+                // değişiklikten ÖNCE hiç kullanmıyordu). Hiçbiri kullanıcının belgesiyle
+                // ilgili değildir: dar bir catch, ölçümün patladığı bir kurulumda her export
+                // isteğini 500'e çevirirdi. Kapı alt sınıra düşer, gerçek tavan Compile'da
+                // durmaya devam eder.
             }
+
+            // Ölçer VARDI ama kesin kutu ÜRETMEDİ (istisna ya da geçersiz/0 bbox). Bu bir
+            // KURULUM arızasıdır — derleyici onu 422'ye çeviremez (belge suçsuz), ama artık
+            // sessizce de yutmaz: plana yazılır ve kararı HTTP katmanı verir (İŞ 4; bkz.
+            // ExportEndpoints — ölçüm yolu kapalıyken metin export'u ZATEN çalışamaz).
+            geometry.Unmeasured.Add(clip.Id);
         }
 
+        return LowerBoundBox(text);
+    }
+
+    private static RasterBox LowerBoundBox(TextClipText text)
+    {
         var (lowW, lowH) = TextBoxLowerBound(text);
         return new RasterBox(lowW, lowH, Exact: false);
     }
@@ -2048,25 +2981,101 @@ public static class ExportCompiler
     }
 
     /// <summary>
-    /// Katman bellek tavanı. Tavan ARA TUVALDEN doğrulanır (denetim #2): çapa telafisi pad'i
-    /// kutuyu 2x'e, rotate hypot'u ~1.41x'e büyütür — kutuyu doğrulamak gerçek tavanı ~23170
-    /// piksele (rgba'da ~2.1 GB/kare, worker OOM) taşırdı. Mesaj hem kutuyu hem ara tuvali
-    /// verir ki kullanıcı "ölçek küçük ama neden reddedildi" sorusunun cevabını görsün.
+    /// TABAN KAPISI (§2.3 adım 1'in önkoşulu) — dejenerelik. Kutu tek başına yeterli değildir:
+    /// kaynağın EN-BOY ORANI kutununkinden çok farklıysa <c>scale</c>'in sığdırdığı eksen
+    /// 1 pikselin ALTINA düşer, ffmpeg o ekseni 0 hesaplar ve 0'ı "girdi boyutunu koru" diye
+    /// yorumlar. Sonuç iki dala ayrılır ve İKİSİ DE kabul edilemez (gerçek ffmpeg 8.0 ölçümü):
+    /// <list type="bullet">
+    ///   <item>çıktı normalize pad hedefini AŞARSA → <c>Padded dimensions cannot be smaller</c>,
+    ///     ffmpeg <c>-22</c>: iş KUYRUK SONRASI ölür (1920x100 kaynak, kutu 19x11 → 18x100);</item>
+    ///   <item>pad hedefine SIĞARSA → hiçbir hata yok, katman SESSİZCE yanlış boyutta çizilir
+    ///     (200x10 kaynak, kutu 19x11 → 18x10; önizleme 20x1 çizerken export 10 KAT yüksek).</item>
+    /// </list>
+    /// <para>
+    /// EN KÜÇÜK ölçekle sorulur: <c>scale</c> animasyonlu yolda <c>eval=frame</c> ile kare kare
+    /// yeniden değerlendirilir (bkz. <see cref="ScaleFilter"/>), yani ölçeğin tabanı dejenere
+    /// bir kareye düşerse o karelerde katman bozulur. TAVAN kuralı (<see cref="EnsureLayerCeiling"/>)
+    /// simetrik olarak MAKSİMUM ölçekle sorulur — bkz. <see cref="PlacementTransform"/>.
+    /// İkisini aynı uçtan sormak 5. tur denetiminin BLOCKER 1'iydi.
+    /// </para>
+    /// <para>
+    /// KAYNAK BİLİNİYORken tam model (<see cref="LayerGeometry.IsDegenerate"/>), bilinmiyorken
+    /// yalnız kaynaktan bağımsız yarı (<see cref="LayerGeometry.IsBelowScaleFloor"/>) sorulur:
+    /// ölçüm/defter yokluğu yanlış ret üretmez, kapının gördüğü kümeyi daraltır.
+    /// </para>
     /// </summary>
-    private static void EnsureLayerFits(Guid clipId, string kindTr, LayerPlacement placement)
+    private static void EnsureLayerFloor(
+        Guid clipId, string kindTr, ExportClipPlan clip, double fitWidth, double fitHeight,
+        long srcWidth, long srcHeight)
     {
-        if (placement.BoxWidth < 2 || placement.BoxHeight < 2)
+        var minScale = MinScaleOf(clip);
+        if (!double.IsFinite(minScale) || minScale <= 0
+            || !double.IsFinite(fitWidth) || !double.IsFinite(fitHeight)
+            || fitWidth <= 0 || fitHeight <= 0)
         {
-            throw new InvalidTimelineException(
-                $"'{clipId}' klibinin ölçeği katmanı bir pikselin altına düşürüyor.");
+            return; // bu ihlalleri ValidateGeometry/ClipAnimation kendi diliyle raporlar
         }
 
-        EnsureLayerCeiling(clipId, kindTr, placement);
+        // KUTU ARİTMETİĞİ YOLA GÖRE DEĞİŞİR ve kapı hangisinin derleneceğini bilmek ZORUNDADIR:
+        // statik ölçekte kutuyu compiler yuvarlar ve sabit yazar; animasyonlu ölçekte ham çarpım
+        // ifadesi yazılır ve tamsayıya çeviren ffmpeg'dir — KIRPARAK. Kapı ilk sürümünde iki
+        // yolda da roundHalfUp varsayıyordu; sonuç, kapının kabul ettiği bir belgenin ffmpeg'de
+        // ölmesiydi (223x104 bbox, taban 0.015 → ifade 3.345/1.56 → ffmpeg kutusu 3x1 → çıkış
+        // 2x104, exit -12). GERÇEK FARE E2E'si bunu yakaladı; kapı artık yolun aritmetiğini kullanır.
+        var truncated = clip.Animation.Scale is not null;
+        var (boxWidth, boxHeight) = truncated
+            ? LayerGeometry.ScaleBoxTruncated(fitWidth, fitHeight, minScale)
+            : LayerGeometry.ScaleBox(fitWidth, fitHeight, minScale);
+        var known = srcWidth > 0 && srcHeight > 0;
+        var rejected = known
+            ? LayerGeometry.IsDegenerate(boxWidth, boxHeight, srcWidth, srcHeight)
+            : LayerGeometry.IsBelowScaleFloor(boxWidth, boxHeight);
+        if (!rejected)
+        {
+            return;
+        }
+
+        var suggestion = LayerGeometry.MinScaleFor(fitWidth, fitHeight, srcWidth, srcHeight, truncated);
+        var box = $"{boxWidth.ToString(CultureInfo.InvariantCulture)}x"
+                  + $"{boxHeight.ToString(CultureInfo.InvariantCulture)}";
+        // Animasyonlu klipte ret STATİK alandan değil KEYFRAME'den doğar; kullanıcı hangi
+        // sayıyı düzelteceğini bilmeli (statik alan 1.0 iken "ölçeğiniz çok küçük" demek,
+        // canlı ölçümde tam olarak yaşandığı gibi, panelde karşılığı olmayan bir mesajdır).
+        var animated = clip.Animation.Scale is not null
+            ? $" (ölçek animasyonlu; en küçük keyframe değeri {Num(minScale)})"
+            : "";
+
+        // Hangi eksen ve NE KADAR altına düşüyor — kullanıcı "ölçeği küçülttüm, neden
+        // reddedildi" sorusunun cevabını sayıyla görmeli (EnsureLayerCeiling'in kardeş dili).
+        var reason = known
+            ? $"{srcWidth.ToString(CultureInfo.InvariantCulture)}x"
+              + $"{srcHeight.ToString(CultureInfo.InvariantCulture)} piksellik kaynak {box} "
+              + $"piksellik kutuya sığdırılınca {FittedAxisNote(boxWidth, boxHeight, srcWidth, srcHeight)} "
+              + "düşüyor ve dışa aktarıcı katmanı çizemez. Bu klibin kaynağı çok geniş (ya da "
+              + "çok dar) en-boy oranlı."
+            : $"katmanın çizim kutusu {box} piksele iniyor; dışa aktarıcı her eksende en az "
+              + "2 piksel ister (altında ffmpeg kutuyu 0 hesaplar ve katmanı kaynağın kendi "
+              + "boyutunda çizer).";
+
+        throw new UnsupportedFeatureException("degenerate-layer",
+            $"'{clipId}' klibinin ölçeği çok küçük{animated}: {reason} "
+            + $"{kindTr} klibinin ölçeğini en az {Num(suggestion)} yapın.");
+    }
+
+    /// <summary>Dejenere eksenin adı ve sığdırılan kesirli boyutu ("yüksekliği 0.93 px'e").</summary>
+    private static string FittedAxisNote(long boxWidth, long boxHeight, long srcWidth, long srcHeight)
+    {
+        var fittedWidth = (double)boxHeight * srcWidth / srcHeight;
+        var fittedHeight = (double)boxWidth * srcHeight / srcWidth;
+        var axis = fittedHeight < 1 ? "yüksekliği" : "genişliği";
+        var fitted = fittedHeight < 1 ? fittedHeight : fittedWidth;
+        return $"{axis} bir pikselin altına ({Num(Math.Round(fitted, 2))} px)";
     }
 
     /// <summary>
-    /// Tavanın kendisi — asgari boyut kuralı OLMADAN. Ayrı durur çünkü raster kliplerinin
-    /// ALT SINIR yolu (bkz. <see cref="EnsureRasterFits"/>) yalnız bu yarıyı sorabilir.
+    /// TAVAN KAPISI — asgari boyut kuralı OLMADAN. Ayrı durur çünkü tavan MAKSİMUM ölçekten,
+    /// taban (<see cref="EnsureLayerFloor"/>) MİNİMUM ölçekten sorulur; ayrıca raster
+    /// kliplerinin alt sınır yolu (bkz. <see cref="EnsureRasterFits"/>) yalnız bu yarıyı sorabilir.
     /// </summary>
     private static void EnsureLayerCeiling(Guid clipId, string kindTr, LayerPlacement placement)
     {
@@ -2207,7 +3216,7 @@ public static class ExportCompiler
     /// acrossfade toplam süreyi Σd'de tuttuğu için A/V senkronu korunur (§5.4).
     /// </summary>
     private static string EmitAudioGroup(
-        AudioGroup group, int audioIndex, ExportPlan plan, ref int sampleBudget)
+        AudioGroup group, int audioIndex, ExportPlan plan, SampleBudget budget)
     {
         var label = $"a{audioIndex.ToString(CultureInfo.InvariantCulture)}";
         var delayMs = (group.StartUs + 500) / 1000; // µs → ms, half-up
@@ -2217,7 +3226,7 @@ public static class ExportCompiler
 
         if (group.Segments.Count == 1)
         {
-            var only = BuildAudioChain(group.Segments[0], audioIndex, 0, plan, ref sampleBudget);
+            var only = BuildAudioChain(group.Segments[0], audioIndex, 0, plan, budget);
             var parts = delay is null ? only : only + "," + delay;
             return $"[{group.Segments[0].InputIndex.ToString(CultureInfo.InvariantCulture)}:a]"
                    + parts + $"[{label}]";
@@ -2231,7 +3240,7 @@ public static class ExportCompiler
                                + $"_{i.ToString(CultureInfo.InvariantCulture)}";
             segmentLabels.Add(segmentLabel);
             lines.Add($"[{group.Segments[i].InputIndex.ToString(CultureInfo.InvariantCulture)}:a]"
-                      + BuildAudioChain(group.Segments[i], audioIndex, i, plan, ref sampleBudget)
+                      + BuildAudioChain(group.Segments[i], audioIndex, i, plan, budget)
                       + $"[{segmentLabel}]");
         }
 
@@ -2304,6 +3313,70 @@ public static class ExportCompiler
         track.Hidden && DeclaredAudioOf(clip, track) is null;
 
     /// <summary>
+    /// KLİP-VARLIK TÜR KURALININ TEK TANIMI: bu klip kaynak dosyadan NEYİ okur (okumuyorsa null)?
+    /// <para>
+    /// Cevap klip TÜRÜNDEN değil, derleyicinin o klip için kuracağı zincirden çıkar — aşağıdaki
+    /// üç dal <see cref="Compile"/>'ın giriş açma koşullarının birebir aynısıdır:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>metin/şekil klibi kendi PNG'siyle girer, hiçbir varlık okumaz;</item>
+    ///   <item>ses klibi YALNIZ ses okur, o da beyan edilen bir ses varsa (susturulmuş track'te
+    ///     giriş bile açılmaz — orada ses akışı ARAMAK yanlış ret olurdu);</item>
+    ///   <item>görsel klipler (video/görsel/çıkartma) görüntü okur, o da GÖRÜNÜR track'te:
+    ///     gizli track'teki video klibinin görüntüsü çizilmez, sesi varsa mikse girer ama
+    ///     sesin varlığı OPSİYONELDİR (sessiz video meşrudur) — bu yüzden defterde yeri yoktur.
+    ///     Zaman ekseni olmayan giriş (<c>-loop 1</c>) ile aralık okuyan giriş (<c>-ss/-t</c>)
+    ///     AYRI ihtiyaçlardır; ikisini karıştıran belge ffmpeg'i anlamsız bir çıkış koduyla
+    ///     düşürür (M6 denetimi, N3).</item>
+    /// </list>
+    /// </summary>
+    private static ExportSourceNeed? NeedOf(ExportClipPlan clip, Track track)
+    {
+        if (clip.NeedsServerRaster || clip.AssetId is null)
+        {
+            return null;
+        }
+
+        if (clip.Kind == ExportClipKind.Audio)
+        {
+            return DeclaredAudioOf(clip, track) is null ? null : ExportSourceNeed.Audio;
+        }
+
+        if (track.Hidden)
+        {
+            return null;
+        }
+
+        return clip.IsStillInput ? ExportSourceNeed.Still : ExportSourceNeed.Motion;
+    }
+
+    /// <summary>
+    /// WORKER YARISI: indirilen dosyanın ffprobe olguları defterdeki kullanımlardan birini
+    /// karşılamıyorsa o kullanımı ve eksikliğin Türkçe adını döndürür (yoksa null).
+    /// <para>
+    /// Senkron yarısı <c>asset-clip-type</c>'tır ve AYNI defteri (<see cref="ExportPlan.AssetUses"/>)
+    /// DB olgularıyla sorar. İki yarının farklı karar vermesi ancak DB satırı ile dosyanın
+    /// çelişmesiyle mümkündür — ki o hâlde asset zaten Ready olamaz
+    /// (<c>ProcessAssetJob.GateByKind</c>).
+    /// </para>
+    /// </summary>
+    public static (ExportAssetUse Use, string Missing)? FindStreamMismatch(
+        ExportPlan plan, Guid assetId, bool hasVideo, bool hasAudio, long? durationUs)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+
+        foreach (var use in plan.AssetUses.Where(u => u.AssetId == assetId))
+        {
+            if (use.UnmetBy(hasVideo, hasAudio, durationUs) is { } missing)
+            {
+                return (use, missing);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Klip ses zinciri (rendering-semantics §8 + görev sözleşmesi):
     /// [atempo] → [atrim] → asetpts → [adelay = atempo telafisi] → aformat → apad + atrim=end
     /// (UZUNLUK KİLİDİ) → volume (sabit ya da asendcmd'li keyframe) → afade in/out (curve=tri)
@@ -2324,7 +3397,7 @@ public static class ExportCompiler
     /// </summary>
     private static string BuildAudioChain(
         AudioSegment segment, int audioIndex, int segmentIndex, ExportPlan plan,
-        ref int sampleBudget)
+        SampleBudget budget)
     {
         var clip = segment.Clip;
         var audio = segment.Audio;
@@ -2397,15 +3470,7 @@ public static class ExportCompiler
                 // Komut ekseni ZİNCİR eksenidir: t=0 pencerenin başıdır, klip timeline başı
                 // headIn kadar sonradır (geçiş payı) → offset = headIn - timelineStart.
                 headInUs - clip.TimelineStartUs);
-            if (samples.Count > sampleBudget)
-            {
-                throw new UnsupportedFeatureException("keyframe-sample-budget",
-                    $"'{clip.Id}' klibindeki ses seviyesi animasyonu çok fazla örnek üretiyor "
-                    + $"({samples.Count.ToString(CultureInfo.InvariantCulture)}). Ses keyframe'leri "
-                    + "KARE KARE örneklenir — animasyonu kısaltın ya da keyframe sayısını azaltın.");
-            }
-
-            sampleBudget -= samples.Count;
+            budget.Charge(clip.Id, samples.Count, VolumeChannelTr, VolumeBudgetAction);
             parts.Add(KeyframeCompiler.ASendCmdFilter(
                 samples.Select(s => KeyframeCompiler.Command(
                     s.TimeUs, $"volume{tag}", "volume", Num(s.Value)))));

@@ -107,6 +107,20 @@ oturduğunda önizleme **en yakın proxy frame'ini** gösterir; bu, export çık
 golden-frame testleri bu toleransla yazılır (bkz. §9). Zaman/pozisyon matematiğinde tolerans
 YOKTUR — tolerans yalnız "hangi kaynak karesi ekranda" sorusuna aittir.
 
+> Bu madde **zamansaldır**. Uzaysal tarafta AYRI ve bağımsız bir tolerans vardır ve §2.5'te
+> NORMATİF olarak beyan edilir; **İKİ kaynağı** vardır, biri değil: (a) katmanın **boyutunu**
+> çift piksele niceleyen `force_divisible_by=2`, (b) katmanın **konumunu** tamsayı piksele
+> KIRPAN `overlay` filtresi.
+>
+> **"Pozisyon matematiğinde tolerans YOKTUR" cümlesi ne demektir, ne demek değildir.** Doğru
+> okuması: *hesapta* tolerans yoktur — compiler `P = (W/2 + x·W, H/2 + y·H)`'yi kesirli haliyle,
+> yuvarlamadan yazar ve iki taraf aynı sayıyı kullanır. YANLIŞ okuması: "iki rasterin merkezi
+> aynı piksele düşer". Düşmez: export koordinatı `floor` ile aşağı kırpılır (§2.5 adım 4),
+> önizleme ise kesirli konuma çizer. Sapma rastgele değil, **tam olarak `P`'nin kesirli
+> kısmıdır** — yani öngörülebilir, ama sıfır değil (ölçümler §2.5'te). Bu son cümle
+> **dönmeyen katman ile 90°'nin katı dönmeler için** ölçülmüştür; ara açılarda katmanın kendi
+> DIŞ KENARI ayrıca yeniden örneklenir ve ≤ 1 px'lik bir pay ekler (§2.5(b) ve §9.3).
+
 ---
 
 ## 2. Koordinat Sistemi ve Transform → Piksel Matrisi
@@ -204,9 +218,83 @@ boxW = roundHalfUp(W * scale);  boxH = roundHalfUp(H * scale)
 scale=w=<boxW>:h=<boxH>:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic
 ```
 
-`decrease` aspect'i koruyup kutuya sığdırdığı için sonuç tam olarak `w_fit*scale × h_fit*scale`
-(= §2.2'nin `w_d × h_d`'si) olur. Filtre çıkışındaki gerçek boyut `w_px × h_px` ile gösterilir
-(`w_px ≤ boxW`, `h_px ≤ boxH`).
+Filtre çıkışındaki gerçek boyut `w_px × h_px` ile gösterilir. Kutu bir **ÜST SINIRDIR**, sonucun
+kendisi değil: `decrease` aspect'i korur, `force_divisible_by=2` sonucu **çifte indirir** ve artan
+farkı **SAR'a taşır**. Yani `w_px ≤ boxW`, `h_px ≤ boxH` (ffmpeg 8.0 ile ölçüldü: kutu `962×541` +
+16:9 kaynak → `962×540`, `sar 480/481`; kare kaynak → `542×540`, `sar 270/271`).
+`w_fit*scale × h_fit*scale` yalnız o çarpım zaten çift tamsayıyken birebir tutar; genel kural
+yukarıdaki eşitsizliktir.
+
+> **ÖNKOŞUL — DEJENERELİK (NORMATİF).** "Çıktı ≤ kutu" sözleşmesi, sığdırılan boyut **≥ 1 px**
+> olduğu sürece geçerlidir. Bir eksen alt-piksele düşerse ffmpeg o ekseni `0` hesaplar ve `scale`
+> `0`'ı *"girdi boyutunu koru"* diye yorumlar — çıktı kutudan **büyük** olur ve bu bölümün
+> aritmetiği çöker. Tamsayı yüklemi (kutu ≥ 2 iken):
+>
+> ```
+> dejenere  ⟺  boxW * h_s < w_s   ∨   boxH * w_s < h_s
+> ```
+>
+> **Böyle bir katman derlenmez:** `degenerate-layer` tipli hatasıyla reddedilir — kaynak boyutu
+> DB'den biliniyorsa API'de **senkron 422**, bilinmiyorsa worker'da `Compile` aşamasında tipli
+> hata (`LayerGeometry.IsDegenerate` / `ExportCompiler.EnsureLayerFloor`). Kaynak boyutu hiç
+> bilinmiyorsa tam model yerine kaynaktan bağımsız yarısı (`LayerGeometry.IsBelowScaleFloor`:
+> kutu her eksende ≥ 2) sorulur — ölçüm yokluğu yanlış ret üretmez, yalnız kapının gördüğü
+> kümeyi daraltır.
+>
+> > **METİN KLİBİNDE "ÖLÇÜM YOKSA KAPI ATLANIR" ARTIK TEK BAŞINA DOĞRU DEĞİL.** Metin katmanının
+> > kutusu rasterin kendi bbox'ından türer; bbox ölçülemiyorsa TABAN kapısı gerçekten sorulamaz
+> > (metin genişliğinin fonttan bağımsız bir ÜST sınırı yoktur, dolayısıyla alt sınırdan
+> > "kutu çok küçük" sonucu çıkarılamaz). Ama bunun sessizce geçilmesi bir KURULUM arızasını
+> > gizliyordu: canlı A/B ile ölçüldü — md5-özdeş iki API, tek fark `VIDEOEDIT_FONT_ROOT`;
+> > font kökü sağlamken aynı belge **422** alıyor, font kökü yokken **202** alıp dakikalar
+> > sonra worker'da `failed` oluyordu. Kural artık şu: **ölçer kayıtlıysa ve ölçüm DENENİP
+> > BAŞARISIZ olduysa** istek tipli bir **503** (`text-measure-unavailable`) ile durur — 422
+> > değil, çünkü kusur belgede değil kurulumdadır. Hiç ölçer kayıtlı OLMAYAN kurulumlarda eski
+> > hoşgörülü davranış aynen korunur. Ayrıntı ve gerekçe: `docs/poc-bilinen-sinirlar.md` §3.3.
+>
+> **ÇİFTLİK BU ÖNKOŞULA BAĞLIDIR.** Dejenere OLMAYAN rejimde `w_px` ve `h_px` **daima ÇİFTTİR**;
+> dejenere rejimde bu da düşer, çünkü ikame edilen değer kaynağın kendi boyutudur ve o tek
+> olabilir (ölçüldü: kaynak `1920×101`, kutu `19×11` → çıktı `18×101`). Bölümün geri kalanındaki
+> "çıktı çift ve kutudan küçük/eşit" cümleleri bu yüzden **koşulludur** ve o koşul bir KAPIYLA
+> sağlanır, varsayımla değil.
+>
+> *Neden ret, neden "zaten görünmezdi" değil.* Bu rejimin İKİ sonuç sınıfı vardır ve gerçek
+> render'la ölçülmüştür; ikisi de kabul edilemez:
+>
+> 1. **GÜRÜLTÜLÜ** — ikame edilen kaynak boyutu normalize pad hedefini **AŞAR**. Ölçüldü: kaynak
+>    `1920×100`, kutu `19×11` → çıktı `18×100`, pad hedefi `18×10` →
+>    `Padded dimensions cannot be smaller than input dimensions`, ffmpeg `-22`; iş **kuyruk
+>    sonrası** ölür.
+> 2. **SESSİZ** — ikame edilen boyut pad hedefine **SIĞAR**. Ölçüldü: kaynak `200×10`, kutu
+>    `19×11` → çıktı `18×10`; ffmpeg **hiç şikâyet etmez** (exit 0) ve katman, önizlemenin çizdiği
+>    `20×1` yerine `18×10` çizilir — **10 kat** yüksek, tamamen sessiz. (Canlı worker'la da
+>    doğrulandı: kural devre dışıyken tek klipli afiş belgesi hatasız render edildi.)
+>
+> "Katman zaten görünmez ölçektedir" **YANLIŞTIR**: dejenere katman `1920×1080` karede `18×100`'lük
+> **görünür bir bant** olarak çizilir. Sessiz sınıf bu düzeltmeden **önce de** vardı ve hiçbir kapı
+> onu görmüyordu; kapı yalnız yeni bir sınıfı değil, o eski sessiz bozulmayı da kapatır.
+>
+> *Erişilebilirlik (bilgilendirici).* Yüklemin **kaynak-oranı** yarısına `1920×1080` tuvalde ancak
+> kaynak en-boy oranı **> 19:1** ya da **< 1:11** iken girilir; normal medya (16:9, 4:3, kare,
+> dikey, 21:9) STATİK olarak editörün yazabildiği hiçbir ölçekte oraya giremez.
+>
+> **Yüklemin ikinci yarısı (kutu < 2) RASTER katmanlarda EDİTÖRDEN ULAŞILABİLİRDİR** —
+> metin/şekil/çıkartma. Bu, "her katman türünde ulaşılabilir" DEMEK DEĞİLDİR ve o genelleme
+> düzeltilmiştir: medya/görsel klibinde kutu PROJE TUVALİNDEN türer, yani editörün ölçek tabanı
+> `TRANSFORM_SCALE_MIN = 0.01`'de kutu `1920×1080` tuvalde `19×11`'dir. Bir eksenin `< 2`'ye
+> inmesi için (kısa eksen bağlar) ölçeğin statik yolda `1.5/1080 ≈ 0.0014`, animasyonlu yolda
+> `2/1080 ≈ 0.0019` altına düşmesi gerekir — editör alanının tabanından **beş kattan fazla**
+> aşağısı, ve editör (statik alan da, ölçek keyframe'i de) oraya **yazamaz**.
+> O yarıya medya klibiyle ancak **ham API'ye doğrudan yazarak** girilir; kapı orada
+> da koşar, ama "kullanıcı bunu farkında olmadan kurabilir" cümlesi YALNIZ raster katmanları için
+> doğrudur. "Raster yapısal olarak bağışıktır" cümlesi ise 5. tur denetiminde ÖLÇÜLEREK
+> yanlışlandı: bağışıklık, kutunun her eksende ≥ 2 kalmasına KOŞULLUDUR ve ölçek **animasyonu**
+> o koşulu kırar (kutu, animasyonun en küçük keyframe'inde `bbox × scale`'e iner). Gerçek fareyle
+> ölçüldü: metin klibi + ölçek keyframe'i `0.010` → bbox `223×104` için kutu `2×1`; bbox `6×20`
+> için kutu `0×0` ve ffmpeg 99 kare yazdıktan SONRA `Picture size 0x4 is invalid` ile öldü.
+> Kapı bu yüzden raster kliplerinde de koşar (`ExportCompiler.EnsureRasterFits` → `EnsureLayerFloor`),
+> ve taraması bu koşulu adıyla söyler
+> (`LayerGeometryTests.SweptRasterBboxes_AreNotDegenerate_WhenTheScaleFloorHolds`).
 
 **Adım 2 — çapa pad'i (yalnız θ ≠ 0 **ve** çapa merkezde değilse):** görüntü, ÇAPASI padded
 tuvalin tam merkezine gelecek şekilde şeffaf tuvale yerleştirilir:
@@ -223,13 +311,46 @@ padW = w_px * 2*mx;   padH = h_px * 2*my
 fiilen **çapa etrafında** dönmedir:
 
 ```
-Dg = ceil(hypot(padW, padH))                  // dönen kutuyu her açıda kapsar
-rotate=a=<θ_rad>:c=none:ow=hypot(iw\,ih):oh=ow
+ÇİZİLEN tuval:  D = 2*ceil(hypot(w_px, h_px)/2)     // ffmpeg'in gerçek iw/ih'siyle
+DEFTER (tavan):  Dg = 2*ceil(hypot(padW, padH)/2)   // compiler'ın KUTUDAN hesabı
+rotate=a=<θ_rad>:c=none:ow=2*ceil(hypot(iw\,ih)/2):oh=ow
 ```
 
 `ow/oh` ffmpeg ifadesiyle yazılır çünkü compiler `w_px/h_px`'i bilmez; ifade **config anında bir
-kez** değerlendirilir (frame başına değil) → determinism korunur. `Dg` yine de compiler
-tarafından kutudan (üst sınır olarak) hesaplanır — **bellek tavanı bu değerden doğrulanır**:
+kez** değerlendirilir (frame başına değil) → determinism korunur.
+
+> **`Dg` ÇİZİLEN TUVAL DEĞİL, YALNIZ BELLEK ÜST SINIRIDIR (ölçüldü).** İkisi aynı fonksiyondur
+> ("x'ten büyük/eşit en küçük çift sayı") ama **farklı girdilerden** hesaplanır: `Dg` KUTUDAN
+> (`padW/padH`), çizilen tuval ise `scale`'in GERÇEK çıktısından (`w_px/h_px`). Kutu bir üst
+> sınır olduğu ve dönüşüm monoton olduğu için `D ≤ Dg`'dir — ama **eşit değildir**. Ölçüldü
+> (gerçek ffmpeg 8.0, `ow` ifadesi tek tek soruldu): 16:9 kaynak, ölçek `0.555` → kutu
+> `1066×599`, gerçek çıktı `1064×598`; defter `Dg = 1224`, ÇİZİLEN tuval `1222`. Tavan
+> doğrulaması bilerek `Dg` üzerinden yapılır (güvenli taraf), ama §2.5'in **konum** aritmetiği
+> daima ÇİZİLEN tuvale (`overlay` girişinin kendi `w`'sine) aittir — `Dg` oraya konursa 2 px
+> kayar. Bu ayrım **koşulludur**: dejenere rejimde gerçek çıktı kaynağın kendi boyutuna sıçrar
+> ve `D ≤ Dg` de düşer (ölç.: kutu `19×11` → gerçek `18×100`; `hypot(18,100) = 101.6` iken
+> defter `hypot(19,11) = 22` der). O rejim adım 1'in önkoşuluyla reddedilir.
+
+**Bellek tavanı `Dg`'den doğrulanır:**
+
+> **TUVAL NEDEN ÇİFT (NORMATİF, ölçüldü).** `rotate` `ow` ifadesini **round-half-up** ile
+> tamsayılar ve ham `hypot` sıklıkla **TEK** çıkar (gerçek ffmpeg 8.0, `ow=hypot(iw\,ih)` ile
+> ölçüldü: `960×540 → 1101`, `962×540 → 1103`, `100×100 → 141`, `480×270 → 551`, `1064×598 →
+> 1221`, `1066×599 → 1223`; aynı girdilerde `ow=2*ceil(hypot(iw\,ih)/2)` sırasıyla `1102`,
+> `1104`, `142`, `552`, `1222`, `1224` verdi). TEK tuvalde içerik tuvalin **ortasına oturamaz**:
+> ölçüldü (`a=0`, interpolasyon yok) — `1101`'lik tuvalde içerik merkezi tuval merkezinin
+> **+0.5 px** sağında, `1102`'de **tam ortada** (`100×100` kaynakta da aynısı: `141` → `+0.5`,
+> `142` → `0.000`). Üstelik overlay telafisi `0.5*w` de yarım tamsayı olurdu. İki yarım piksel
+> `a=90°`'de eksenlere **ZIT işaretle** düşüyordu (ölç.: x `−0.5`, y `+0.5`) — yani "sapma daima
+> tek yönlü" iddiası orada yanlıştı. Çift tuvalde iki eksende de `0.000` ve dönen katmanın
+> merkezi tam olarak `floor(P)`'ye oturur, yani **dönen katman dönmeyenle aynı modele uyar**
+> (uçtan uca ölçüm §2.5(b)'de; ara açıların kenar rampası ORADA ayrıca beyan edilir).
+> Sabitleyen testler:
+> `GoldenFrameTests.RotateCanvas_CentersTheContent_OnlyWhenTheCanvasIsEven` (dış sözleşme —
+> canlı ffmpeg'e `a=0` ile sorar, TEK tuvalde 0.5 px, ÇİFT tuvalde 0.0 px ölçer) ve
+> `…RotatedLayer_LandsOnTheSameCenterAsTheUnrotatedOne` (uçtan uca piksel, `a=90°`).
+> Defter tarafı (`LayerGeometry.CeilEven`) aynı sayıyı üretir: "x'ten büyük/eşit en küçük çift
+> sayı" iki biçimde de aynıdır ve monoton olduğu için üst sınır olma özelliği korunur.
 
 ```
 MaxLayerDimension = 8192       // ara tuval kenarı; 8192² rgba ≈ 256 MB/kare
@@ -240,20 +361,202 @@ Tavanı **scale kutusuna** uygulamak yetmez: pad 2x, rotate ~1.41x büyütür; k
 gerçek tavanı ≈23170 piksele (rgba'da ~2.1 GB/kare → worker OOM) taşır (denetim bulgusu #2).
 
 **Adım 4 — overlay pozisyonu:** çapa, dönen katmanda tuvalin tam ortasındadır; dönmeyende kendi
-kutusundaki oranındadır:
+kutusundaki oranındadır. Hedef **ifadenin İÇİNDE** `floor` ile tamsayılanır:
 
 ```
-θ ≠ 0:   overlay_x = P.x - 0.5 * w        overlay_y = P.y - 0.5 * h
-θ = 0:   overlay_x = P.x - anchorX * w    overlay_y = P.y - anchorY * h
+θ ≠ 0:   overlay_x = floor(P.x - 0.5 * w)        overlay_y = floor(P.y - 0.5 * h)
+θ = 0:   overlay_x = floor(P.x - anchorX * w)    overlay_y = floor(P.y - anchorY * h)
 ```
 
-(`w/h` = overlay girişinin ffmpeg değişkenleridir; adım 3'ten sonra ikisi de `Dg`'dir.)
+(`w/h` = **overlay girişinin** ffmpeg değişkenleridir. Adım 3'ten sonra ikisi de ÇİZİLEN kare
+tuvalin kenarıdır — yani `D = 2*ceil(hypot(w_px,h_px)/2)`, defterdeki `Dg` DEĞİL; ikisi
+eşit olmak zorunda değildir, bkz. adım 3'ün kutusu.)
+
+> **`floor` NEDEN ZORUNLU (NORMATİF, ölçüldü).** overlay'in **kendi** tamsayı çevrimi
+> (`normalize_xy`'nin `(int)`'i) **SIFIRA DOĞRU** kırpar, `floor` ile değil. Gerçek ffmpeg 8.0,
+> 64 px tuval + 20 px katman: `x=-10.1 / -10.5 / -10.9 / -10.999` → **hepsi** sol kenar `-10`;
+> `x=-11` → `-11`. Pozitif tarafta ikisi aynıdır, yani `floor` **pozitif rejimi hiç
+> değiştirmez**. Hedef negatifleştiği an ise iki bağımsız sözleşme kırılırdı:
+>
+> 1. **pad'li ve pad'siz yol ayrışırdı** (§5.2 invaryantı). Pad'li yolda sol kenar
+>    `⌊·⌋(P − nb/2) + (nb − w)/2`, pad'siz yolda `⌊·⌋(P − w/2)`'dir; `(nb − w)/2` **tam sayı**
+>    olduğu için `floor` altında iki ifade **özdeştir**, `trunc` altında değildir. Ölçüldü
+>    (1080p, ölçek `1.005`, `x=0.0025`, kutu `1930×1085`): 16:9 / 4:3 / kare / 9:16 / 3:4
+>    kaynakların **beşi de** 1 px ayrıştı, `floor` ile **beşi de** eşitlendi.
+> 2. **ölçek > 1'de sapmanın İŞARETİ değişirdi.** Katman tuvali taştığı an (her yakınlaştırma)
+>    hedef negatife düşer. Ölçüldü (1080p, 16:9, ölçek `1.2`, `x=-0.1026`, hedef `-388.992`):
+>    `trunc` ile merkez `P`'nin **+0.992 px sağına**, `floor` ile `-0.008 px` soluna düştü.
+>
+> `floor` ffmpeg ifade değerlendiricisinde **vardır** ve overlay onu kabul eder; negatif kontrol
+> aynı testtedir (uydurma bir fonksiyon adı `Unknown function` ile reddedilir, yani `floor`
+> sessizce yutulmuyor). Sonuç tamsayı olduğu için overlay'in kendi `(int)`'i no-op'a düşer.
+> Sabitleyen testler: `GoldenFrameTests.OverlayExpression_TruncatesTowardZero_AndAcceptsFloor`
+> (dış sözleşme), `…ZoomedLayer_LandsOnTheFlooredTarget_EvenWhenItIsNegative` (piksel),
+> `ExportCompilerSnapshotTests.EveryOverlayCoordinate_IsFloored` (yapısal muhafız).
 
 **Konum kuantalanması (NORMATİF):** overlay konumu **alt örneklenmemiş** bir kompozisyon
 tuvalinde değerlendirilmelidir. ffmpeg `overlay`, 4:2:0 tuvalde `x/y`'yi chroma adımına kırpar
-(`normalize_xy`) — `overlay=x=201` yuv420'de **200**'e oturur, rgb'de 201'de kalır. Bu yüzden
-kompozisyon tuvali daima RGB'dir (§6.3); aksi halde aynı transform, katmanın opaklığına göre
-1 px farklı yere düşerdi.
+(`normalize_xy`) — `overlay=x=11` yuv420'de **10**'a, `x=−11` ise **−12**'ye oturur; `:format=rgb`
+ile ikisi de yerinde kalır (ölçüldü; tablo ve bekçi test §6.3'te). Bu yüzden kompozisyon tuvali
+daima RGB'dir (§6.3); aksi halde aynı transform, katmanın opaklığına göre 1 px farklı yere
+düşerdi.
+
+**Tamsayı kırpmasının DİĞER İKİ kaynağı (NORMATİF).** Chroma kuantalaması tek kaynak değildir;
+aşağıdaki ikisi de tamsayıya kırpar ve **aynı yöne toplanabilir**:
+
+1. kutuya normalize eden pad'in ofseti — `(ow-iw)/2`;
+2. overlay ifadesinin kendisi — `P - anchor*w`.
+
+Kutu TEK boyutluyken ikisi birlikte katmanı **1 tam piksel** kaydırır (ölç.: kutu `962×541`,
+içerik `962×540` → ham kutuya pad'lenirse `y[269..808]`, doğrusu `y[270..809]`). Kural bu yüzden:
+
+> **Kutuya normalize eden pad'in HEDEFİ, kutunun ÇİFTE İNDİRİLMİŞ halidir (`Box & ~1`, alt sınır 2);
+> `scale`'in hedefi ise HAM kutudur.** Çıktı daima çift ve kutudan küçük/eşit olduğu için bu hedef
+> kırpmaz; çift hedef + çift içerik `(ow-iw)/2`'yi tam böler. Ölçek hedefini de indirmek YASAKTIR:
+> içeriği küçültür (`962 → 960`) ve pad'siz yolla ayrıştırır.
+
+**MERKEZ ÇAPADA KAYNAK 2 ARTIK HİÇ KIRPMAZ (ölçüldü).** Yukarıdaki çift-hedef kuralı `(ow-iw)/2`'yi
+tam böldürür, adım 4'ün `floor`'u ise overlay ifadesini `trunc`'un işaret bağımlılığından kurtarır.
+İkisi birlikte şunu verir: pad'li yolun sol kenarı `⌊·⌋(P − nb/2) + (nb − w)/2`, pad'siz yolunki
+`⌊·⌋(P − w/2)`; `(nb − w)/2` tam sayı olduğu için **iki ifade özdeştir** (`⌊a⌋ + k = ⌊a + k⌋`).
+Yani merkez çapada toplanacak İKİ kırpma kalmaz, **bir** tane kalır. Merkez DIŞI çapada pad ofseti
+`(ow-iw)*anchor` ile oransaldır, tam bölünmez ve iki kırpma **hâlâ** toplanabilir — o rejim
+editörden ulaşılamaz ve §5.2'nin invaryantı bu yüzden merkez çapayla koşulludur.
+
+**UZAYSAL TOLERANS — önizleme ↔ export (ürün kararı, BEYAN; NORMATİF).** §1.7 yalnız **zamansal**
+toleransı (±1 frame) beyan eder. Uzaysal sapmanın **İKİ BAĞIMSIZ kaynağı** vardır; ikisi de gerçek
+ffmpeg 8.0 ve gerçek tarayıcı ölçümüyle kurulmuştur ve **aynı eksende toplanabilirler**.
+
+**(a) BOYUT nicelemesi — simetrik, merkezi korur.** `force_divisible_by=2` her ekseni çift
+tamsayıya niceler, yani çizilen kutu önizlemenin kesirli kutusundan sapar:
+
+```
+her eksende:  w_px − w_fit*scale ∈ [−1.600, +1.480] px  (ÖLÇÜLEN zarf);  kenar başına ≤ 1 px
+bu bileşen MERKEZİ KORUR  (w_px ÇİFT olduğu için merkez = floor(P), w_px'ten BAĞIMSIZ)
+```
+
+- Ölçüm (kaynak taraması: 16:9, 9:16, 4:3, kare, 21:9 kaynak × editörün yazabildiği bütün ölçek
+  ızgarası; taramanın bulduğu uç vakalar tek tek gerçek ffmpeg'e sorulup doğrulandı): tam kutuda
+  sapma **[−1.600, +1.480] px** aralığında kaldı → kenar başına **[−0.80, +0.74] px**. En büyük
+  negatif: 16:9 kaynak, ölçek `1.08` → kutu `2074×1166`, çıkış `2072×1166` (ideal `2073.6`);
+  aynı `−1.600` ölçek `0.555`'te de ölçüldü (kutu `1066×599` → `1064×598`, ideal `1065.6`).
+  En büyük **pozitif**: KARE kaynak, ölçek `3.819` → kutu `7332×4125`, çıkış `4126×4124`
+  (ideal `4124.52`) → **+1.480**. 720p'de zarf `[−1.600, +1.440]`. Üç uç da gerçek ffmpeg 8.0'a
+  tek tek soruldu ve tarama modelinin verdiği sayının aynısı çıktı.
+
+  > **"Kapalı bir üst sınır vardır" DEMEK YANLIŞTI (ölçümle düzeltildi).** Buraya bir tur önce
+  > *"kutu `roundHalfUp` ile idealden en çok 0.5 px sapar, `force_divisible_by=2` en çok 2 px
+  > indirir"* yazılmıştı; **iki yarısı da yanlış.**
+  >
+  > 1. `force_divisible_by=2` **yalnız İNDİRMEZ, ARTIRABİLİR de.** ffmpeg aspect'i koruyan adayı
+  >    `av_rescale` ile **en yakın** 2 katına çeker (yarım → sıfırdan uzağa), ancak ondan sonra
+  >    kutuya `min` ile kırpıp `/2*2` ile aşağı indirir. Doğrudan ölçüldü (kare kaynak, kutu
+  >    `7332×4125`): `force_divisible_by` **YOKKEN** çıkış `4125×4125`, **VARKEN** `4126×4124` —
+  >    genişlik 1 px **YUKARI** gitti. Zaten `+1.480` ucu tam olarak budur.
+  > 2. İndirme payı da 2 değil **en çok 1 px**'tir (`w/2*2` bir tamsayıdan en çok 1 götürür).
+  >
+  > Gerçek zarf tek bir sabit değildir: aspect'in BAĞLADIĞI eksende hata, diğer eksenin kutu
+  > yuvarlamasıyla **aspect oranı kadar çarpılarak** taşınır (16:9'da 0.5 px → 0.89 px) ve
+  > üstüne `av_rescale`'in ≤1 px'i biner. Bu yüzden burada kapalı bir formül değil, **taranan
+  > küme üstünde ölçülmüş bir zarf** beyan edilir; kapsam dışı bir kaynak aspect'i eklenirse
+  > zarf yeniden ölçülmelidir.
+- Sapma **simetriktir** (her iki kenardan eşit): bu bileşen katmanı **kaydırmaz**. Ölçüldü
+  (1080p, `x=0`): ölçek `0.501` → kutu `962×541`, çizilen `962×540`, merkez `960.0` — ideal de
+  `960.0`. Ölçek `0.555` → kenarlar `+0.8 / −0.8`, merkez yine tam.
+- Editörün yazabildiği ölçeklerin **%98'inde** en az bir eksende oluşur (1080p, 16:9 kaynak;
+  `0.010…4.266` ızgarasının 4257 değerinden 4172'si). 720p'de **%96**. Yani istisna değil,
+  **normal** haldir.
+
+**(b) KONUM kırpması — tek yönlü, merkezi KAYDIRIR.** Derleyici çapa hedefini **ifadenin içinde
+`floor` ile** aşağı kırpar (adım 4). Ölçüldü (gerçek ffmpeg 8.0, 64 px tuval + 20 px katman,
+aydınlanan sütunlar okunarak): `x=10.1`, `10.5`, `10.9` → **hepsi 10. sütundan başlar**; `x=11`
+→ 11. Yuvarlama olsaydı `10.5+` değerleri 11'e giderdi.
+
+**Genel form (NORMATİF).** `w` = **overlay GİRİŞİNİN** genişliği (adım 3'ten sonraki akışın
+`w`'si), `a` = o girişteki çapa oranı (dönende `0.5`, dönmeyende `anchorX`). overlay TAMSAYI bir
+sol kenara yerleşir; çapa oradan `a*w` kadar içeridedir:
+
+```
+sol kenar   = floor(P − a*w)
+çapa nerede = floor(P − a*w) + a*w
+sapma       = P − (çapa nerede) = frac(P − a*w) ∈ [0, 1)   // DAİMA AŞAĞI/SOLA
+```
+
+Sapmanın **büyüklüğü** (< 1 px, tek yönlü) `a*w`'den bağımsızdır. `a*w`'nin TAMSAYI olması ise
+ayrı ve daha güçlü iki şey verir: (i) sapma tam olarak **`frac(P)`** olur — yani §9.3'ün
+"beklenen değer hesaplanabilir" satırı ancak o zaman geçerlidir; (ii) çapa tamsayı bir piksel
+sınırına oturur. İki koşul birlikte bunu garanti eder ve ikisi de bu dokümanın başka bir
+yerinde zaten zorunludur:
+
+1. **`a = 0.5`** — editör çapa alanı sunmaz, dokümana daima `0.5` yazar (§5.2'nin merkez-çapa
+   koşulu). Dönen katmanda `a` zaten sözleşme gereği `0.5`'tir (adım 2'nin pad'i çapayı tuval
+   merkezine taşır).
+2. **`w` ÇİFT** — dönmeyende `force_divisible_by=2` (dejenere OLMAYAN rejimde, bkz. adım 1'in
+   önkoşulu), dönende `ow = 2*ceil(hypot(iw,ih)/2)` (adım 3).
+
+Koşullardan biri düşerse `a*w` yarım tamsayı olur; sapma yine `[0, 1)`'dedir ama artık
+`frac(P)` DEĞİL `frac(P ∓ 0.5)`'tir — yani önizlemeyle karşılaştırma için **öngörülebilir
+referans kaybolur**. **İki rejim de KAPSAM DIŞIDIR ve ölçülmemiştir:** merkez dışı çapa
+editörden ulaşılamaz (§5.2), tek `w` yalnız dejenere rejimde doğar ve o rejim tipli hatayla
+**reddedilir** (adım 1'in önkoşulu).
+
+> **`(int)` SIFIRA DOĞRU kırpar, `floor` ile DEĞİL.** Yukarıdaki `floor` ffmpeg'in kendi
+> çevrimi değil, **bizim ifadeye yazdığımızdır**. overlay'in `normalize_xy`'sindeki `(int)`
+> sıfıra doğru kırpar: aynı koşumda `x=-10.1 / -10.5 / -10.9 / -10.999` → **hepsi** sol kenarı
+> `-10`'a koydu, `x=-11` → `-11`; `floor(-10.1)` ise sol kenarı `-11`'e koydu. Pozitif tarafta
+> ikisi **aynıdır** — `x=10.1` ile `x=floor(10.1)` aynı sütundan (`10`) başladı — yani `floor`
+> pozitif rejimi hiç değiştirmez. İfadenin sonucu zaten tamsayı olduğu için `(int)` no-op'a
+> düşer. Negatif kontrol AYNI koşumda: uydurma bir fonksiyon adı (`gloor(-10.5)`) ffmpeg'i
+> `Unknown function in 'gloor(-10.5)'` ile düşürdü, yani bilinmeyen bir ad sessizce yutulmuyor
+> — `floor`'un gerçekten değerlendirildiği bu şekilde kanıtlanır.
+>
+> **Ölçek > 1 rejimi (ölçüldü).** Hedef ancak katman tuvali taştığında negatifleşir — yani her
+> yakınlaştırmada. `trunc` orada sapmanın **işaretini** çevirirdi; `floor` altında sapma her
+> ölçekte ve her işarette aynı pencerede kalır. Ölçümler adım 4'ün altındaki kutuda.
+>
+> **Dönme rejimi (ölçüldü).** Ara tuval ÇİFT olduğu için `0.5*w` tamsayıdır ve dönen katmanın
+> merkezi de `floor(P)`'ye oturur. Uçtan uca ölçüm (gerçek ffmpeg, 1080p, 16:9 kaynak,
+> ölçek `0.555`, `P = (964.992, 540)` → `floor(P) = (964, 540)`; katmanın parlaklık ağırlık
+> merkezi): `a=0` → `(964.000, 539.998)`, `a=90°` → `(964.002, 540.000)`. **ARA AÇILAR AYRI BİR
+> ŞEYDİR ve konumla ilgili değildir:** `rotate` katmanın DIŞ KENARINI yeniden örneklerken kenar
+> rampasını asimetrik bırakır ve ağırlık merkezi ölçümü ~0.4–0.7 px sapar (aynı düzenekte
+> `a=15/30/45` → `x` 963.6–963.7). Bunun kaynağı yerleşim DEĞİLDİR: aynı ölçüm dönmeye duyarsız
+> bir DİSKLE her açıda `0.000` verdi, ve kendi çerçevesine DEĞMEYEN bir kareyle de
+> (`a=0/1/30/45/90`) `0.000` verdi. Yani sapma katmanın kendi alfa kenarındadır, merkezinde
+> değil. Bu etki §9.3'ün merkez satırında ayrıca koşullandırılmıştır.
+
+- Uçtan uca ölçüm — AYNI belge, iki taraf. 1080p tuval, `320×320` kaynak, ölçek `0.5`
+  (kutu `960×540` → çizim `540×540`, boyut nicelemesi YOK), `x = 0.0026` → `P = 964.992`:
+  **önizleme** (gerçek tarayıcı, kompozitörün kendi `probePixel`'i, proje koordinatında
+  `gl.readPixels`) katmanı `695…1234` sütunlarına çizdi; **export** (gerçek ffmpeg, derleyicinin
+  yazdığı `overlay=x=964.992-0.5*w` biçimiyle) `694…1233`. İki raster **tam 1 piksel** ayrı.
+- Negatif kontrol AYNI ölçümde: `x = 0.0125` → `P = 984` (TAMSAYI) → önizleme de export de
+  ideal sol kenarı `714`'e koydu — **0 px**. Yani sapma tam olarak `frac(P)`'dir.
+- **ULAŞILABİLİRLİK.** `x`/`y` 4 ondalıkla saklanır (`POSITION_DECIMALS = 4`, `timelineOps` ve
+  gizmo). 1920 px tuvalde `P` ancak `x` 0.0125'in katıyken tamsayıdır → 4 ondalıklı ızgaranın
+  yalnız **%0.8'i**; kalan **%99.2'sinde merkez KAYAR** (1280 px'te de aynı oran: orada da
+  koşul `x`'in 0.0125'in katı olmasıdır). Gerçek fareyle ölçüldü: gizmo ile katmanı yana
+  sürükleyen **7 jestin 7'sinde** de `P` kesirli çıktı.
+
+**(c) İKİSİ AYNI EKSENDE TOPLANIR.** (a) simetriktir, (b) tek yönlü; bir kenarda birbirini götürür,
+KARŞI kenarda toplanır. Ölçüldü (gerçek ffmpeg, 1080p, 16:9 kaynak, ölçek `0.555`, `x = 0.0026`):
+
+```
+sol kenar : 432  (ideal 432.192)  → −0.19 px
+sağ kenar : 1496 (ideal 1497.792) → −1.79 px     ← iki kaynak AYNI YÖNE toplandı
+merkez    : 964  (ideal 964.992)  → −0.99 px
+```
+
+Yani **kenar başına sapmanın üst sınırı ~1.8 pikseldir**, "≤ 1 px" değil; ve **merkez birebir
+korunmaz**. Golden-frame eşikleri (§9.3) bu üç ölçüme göre yazılır.
+
+**Dejenere rejim bu toleransın DIŞINDADIR** — orada sapma sınırsızdır (10–100 kat) ve o yüzden
+tolere edilmez, **reddedilir** (yukarıdaki dejenerelik önkoşulu).
+
+> **Bu blok neden yeniden yazıldı (kayda geçsin).** Önceki hali "MERKEZ birebir korunur" ve
+> "sapma simetriktir" diyordu; ikisi de yalnız (a) için doğrudur ve (b) ölçülmeden yazılmıştı.
+> §9.3'ün "çapa/merkez 0 px — tolerans yok" satırı da bu yüzden ürünle çelişiyordu: kullanıcının
+> gizmoyla yaptığı hemen her taşımada merkez bir piksel kayıyor ve hiçbir test bunu görmüyordu.
 
 #### 2.5.1 Eşdeğer kapalı form (bilgilendirici)
 
@@ -262,14 +565,16 @@ Kaynak boyutu biliniyorsa aynı sonuç pad'siz de yazılabilir — iki hat aritm
 ```
 cx = w_px / 2;  cy = h_px / 2                          // çizim merkezi
 ax = anchorX * w_px;  ay = anchorY * h_px              // çapa
-D  = ceil(hypot(w_px, h_px))
-a'x = D/2 + cos(θ)*(ax - cx) - sin(θ)*(ay - cy)
-a'y = D/2 + sin(θ)*(ax - cx) + cos(θ)*(ay - cy)
+Dc = ceil(hypot(w_px, h_px))                           // KAPALI FORMUN kendi tuvali
+a'x = Dc/2 + cos(θ)*(ax - cx) - sin(θ)*(ay - cy)
+a'y = Dc/2 + sin(θ)*(ax - cx) + cos(θ)*(ay - cy)
 overlay_x = P.x - a'x ;   overlay_y = P.y - a'y
 ```
 
-Bu form daha küçük bir ara tuval kullanır (`D ≤ Dg`) ama kaynak boyutuna bağımlıdır; MVP'de
-tercih edilmemiştir. Geçilirse §2.5'in tavan kuralı `D` üzerinden uygulanır.
+Bu form daha küçük bir ara tuval kullanır (`Dc ≤ Dg`) ama kaynak boyutuna bağımlıdır; MVP'de
+tercih edilmemiştir. Geçilirse §2.5'in tavan kuralı `Dc` üzerinden uygulanır — ve `Dc` de
+ÇİFTE tamamlanmalıdır, aksi halde §2.5 adım 3'ün ölçülmüş yarım-piksel sorunu bu hatta
+yeniden doğar (`a'x` yarım tamsayı olur).
 
 Doğrulama invaryantı (unit test): her iki hattın formülüne aynı `(x, y, scale, rotationDeg,
 anchor)` girildiğinde **çapa pikselinin ekran koordinatı birebir aynı çıkmalı**; köşe
@@ -564,14 +869,134 @@ olarak uygulanır: bir klibin yerleşimini yazan her işlem (transform yazma/sı
 geçiş EKLEME**) zincirin tamamını hizalar ve kullanıcıya bunu bildirir; kullanıcı komşuyu
 elle düzeltmek zorunda kalmaz.
 
+**Geçişten bağımsız geometri invaryantı (NORMATİF — çapa MERKEZDE).** Çapası merkezde olan
+(`anchor = 0.5, 0.5`) bir katmanın **ekrandaki geometrisi**, kesiminde geçiş olup olmamasından
+**BAĞIMSIZDIR**. Kullanıcı bir kesime geçiş ekleyip kaldırdığında katman **tek piksel**
+oynamamalıdır. Editör çapa alanı sunmaz ve dokümana daima `0.5` yazar — yani bu koşul
+**kullanıcının görebildiği her belgede** sağlanır.
+
+> **İNVARYANT DÖNEN KATMANDA DA GEÇERLİDİR — bu tur öyle OLMADIĞI ölçüldü ve düzeltildi.**
+>
+> - **DÖNMEYEN katmanda: BAYT AYNI.** Gerçek ffmpeg 8.0 ile ölçüldü (1080p, pad'li ve pad'siz
+>   iki hat aynı `P` ile render edilip kare kareye çıkarıldı): **5 kaynak aspect'i** (16:9, 4:3,
+>   kare, 9:16, 3:4) × **2 rejim** (`ölçek 0.555` → kutu `1066×599` TEK, hedef pozitif; ve
+>   `ölçek 1.005, x=0.0025` → kutu `1930×1085` TEK, hedef NEGATİF) = 10 vakanın **hepsinde**
+>   farklı piksel sayısı **0**, merkez farkı `0.000`, aydınlanan sınır kutusu birebir aynı.
+> - **DÖNEN katmanda: ÖNCE ayrışıyordu, ARTIK ayrışmıyor.** Ayrışmanın kaynağı konum değil
+>   **rotate'in GİRİŞİYDİ**: kare ara tuvalin kenarı `2*ceil(hypot(iw,ih)/2)` ile GİRİŞTEN doğar;
+>   pad'siz yolda giriş gerçek `scale` çıktısıdır (kaynağın aspect'ine bağlı), pad'li yolda kutuya
+>   normalize edilmiş halidir. İki farklı giriş → iki farklı kare tuval → içerik farklı ızgaraya
+>   oturur. Ölçüldü (16:9, `s=0.503`, `a=90`, 320×240 tuval): pad'siz `(114,39,205,200)`, pad'li
+>   `(115,39,204,200)`.
+>
+>   **DÜZELTME:** dönen ve çapası merkezde olan katmanda kutuya normalize eden pad artık
+>   **KESİM DURUMUNDAN BAĞIMSIZ** olarak üretilir (`ExportCompiler.BuildPlacementChain`). Böylece
+>   `rotate`'in girişi her iki yolda da kutudur ve kare tuval **kaynağın aspect'inden bağımsız**
+>   hale gelir. Nedeni kaldırır, sonucu telafi etmez.
+
+*Bu invaryantı bugün CI'da koşan şey.* `GoldenFrameTests.AddingATransition_`
+`DoesNotMoveTheLayerByASinglePixel` — **16 satır**: 8'i DÖNMEYEN (4 kaynak aspect'i × 2 rejim),
+8'i DÖNEN — `a=90` dört aspect'te (birinci rejim) ve iki aspect'te (ikinci rejim), `a=30` iki
+aspect'te. `a=90` interpolasyon üretmez (kenarlar kesindir), `a=30` üretir: kural yalnız dik
+açılarda tutuyorsa yeterli olmazdı, o yüzden eğik açı da koşar. İddia sınır kutusu
+**eşitliğidir** (merkez eşitliği değil), yani dış kenar rampası dahil. Dönen 8 satır bu turda
+eklendi; öncesinde `rotationDeg` hiçbir satırda YAZILMIYORDU, yani invaryantın dönen yarısı
+**üç tur boyunca hiç koşmamıştı** — ayrışma tam olarak orada yaşıyordu.
+
+> **KAPSAM: çapası merkezde OLMAYAN dönen katman DIŞARIDADIR.** §2.5'in çapa telafisi pad'i
+> GERÇEK görüntü boyutuna oranlanır (`iw*2*mx`); normalize önce yapılırsa `iw` kutu boyutu olur ve
+> çapa, görüntü içindeki oranından kayar. Aynı gerekçeyle o katman zaten **bölünemez**
+> (`transition-rotated-anchor` kapısı onu 422 ile reddeder) — yani karşılaştırılacak bir pad'li
+> yolu da yoktur. Editör çapa alanı sunmadığı için bu rejim kullanıcıdan ULAŞILAMAZ.
+
+> Bu invaryant **EXPORT İÇİDİR**: aynı belgenin iki derleme yolu (pad'li ve pad'siz) aynı
+> pikselleri boyamalıdır. §2.5'in **uzaysal toleransı** ise önizleme ↔ export arasındadır ve
+> ayrı bir sorudur; ikisi karıştırılmamalıdır.
+>
+> **DÜZELTME (ölçüldü).** Bu satır bir tur önce "konum kırpması her iki yolda AYNI `P`'den
+> doğduğu için invaryantı bozmaz" diyordu; **yanlıştı** ve gerçek ffmpeg ölçümüyle yanlışlandı.
+> İki yol aynı `P`'yi kullanır ama kırpılan **ifade** farklıdır: pad'li yolda `P − nb/2`, pad'siz
+> yolda `P − w/2`. `nb > w` olduğunda pad'li ifade **negatife** düşebilir ve overlay'in kendi
+> `(int)`'i sıfıra doğru kırptığı için iki yol 1 px ayrışırdı. Ölçüldü (1080p, ölçek `1.005`,
+> `x=0.0025`): 16:9 / 4:3 / kare / 9:16 / 3:4 — **beşi de** ayrıştı. Çözüm ifadeye `floor`
+> yazmaktır (§2.5 adım 4); `floor` altında `(nb − w)/2` tam sayı olduğu için iki ifade
+> **özdeşleşir** ve invaryant aritmetik olarak sağlanır.
+
+> **BU KURAL DEĞİŞİKLİĞİNİN GERİYE DÖNÜK BEDELİ (ölçüldü, kayda geçsin).** Aynı belge eski
+> kuralla (overlay'de `floor` YOK + rotate tuvali ham `hypot` + pad hedefi HAM kutu) ve yeni
+> kuralla render edilip karşılaştırıldı; **DÖNEN katmanın** pad'li (birleşen run) yolunda çıktı
+> kayıyor. Ölçüm (gerçek ffmpeg 8.0, 1080p, 16:9 kaynak, ölçek `0.555` → kutu `1066×599`,
+> `P = (964.992, 540)`, katmanın parlaklık ağırlık merkezi; eski → yeni fark):
+>
+> ```
+> a=  0   (−0.376, +0.498)      a= 45   (−1.434, +0.347)
+> a= 15   (−0.845, +0.786)      a= 90   (−1.498, −0.376)
+> a= 30   (−1.167, +0.653)
+> ```
+>
+> Yani sınıf **≤ 1.5 px / eksen**tir ve tek yönlü değildir. Doğru yorum: kayan taraf ESKİ
+> kuraldır — yeni kural `a=0` ve `a=90`'da tam olarak `floor(P) = (964, 540)`'a oturuyor
+> (`964.000/539.998` ve `964.002/540.000`), eski kural `0.38`–`1.50` px uzağında duruyordu.
+> Bu sınıf HEAD'te de vardı (dönen katman + pad'li yol her zaman mümkündü); bu turda **KÜMESİ
+> GENİŞLEDİ**, çünkü kutu paritesi kapısının kalkması TEK kutulu bitişik klipleri de birleşen
+> (pad'li) yola soktu — yani aynı belge artık daha sık bu yoldan geçiyor. Snapshot/golden
+> tarafında bu, "aynı belge HEAD'e göre birkaç piksel farklı" olarak görünür ve **beklenen**
+> davranıştır.
+
+*Neden ayrı bir kural.* Geçiş, run'ın bölünmesini **YASAKLAR** (kesim tek `xfade` akışında
+katlanır) ve bu yüzden segmentleri kutuya normalize eden pad'i **ZORUNLU** kılar. İki yol aynı
+pikselleri boyamak zorundadır — pad hedefi §2.5'in `Box & ~1` kuralına, overlay hedefi de §2.5
+adım 4'ün `floor`'una uyduğu sürece uyar. Gerçek ffmpeg render'ıyla ölçüldü: **dört kaynak
+aspect'i** (16:9, 4:3, kare, 9:16) × **iki rejim** — `(ölçek 0.503, x=0)` yani kutu TEK ama
+overlay hedefi pozitif, ve `(ölçek 1.005, x=0.0025)` yani overlay hedefi NEGATİF. Ayrışma yalnız
+ikinci rejimde doğar ve orada da yalnız katmanın yatayda tuvale sığdığı iki aspect'te GÖRÜNÜR
+olur.
+
+**PAD'İN NE ZAMAN ÜRETİLDİĞİ (NORMATİF — bu turda değişti).** Kutuya normalize eden pad iki
+sebepten BİRİ yeterlidir:
+
+1. **run BÖLÜNDÜ** (geçiş/birleşen bitişik klipler) — `concat`/`xfade` girişleri aynı boyutta
+   olmalıdır; **ya da**
+2. **katman DÖNÜYOR ve çapası merkezde** — kesimde geçiş olsun olmasın. Sebep yukarıdaki
+   düzeltmedir: `rotate`'in kare tuvali GİRİŞİNDEN doğduğu için girişin iki yolda da aynı olması
+   gerekir.
+
+Yani **dönmeyen** tek klip hâlâ pad'siz yoldan geçer (tek katmanlı belgelerin filtre grafikleri
+bayt bayt korunur), **dönen** tek klip ise artık pad kazanır. Bunu koşan iddia yukarıdaki testin
+son satırındadır: pad'in varlığı `rotationDeg != 0` ile birebir eşitlenir.
+
+*Koşulun NEDEN koşul olduğu (merkez dışı çapa).* Merkez dışı çapada pad ofseti simetrik değildir,
+`(ow-iw) * anchor` ile **oransal** yazılır ki §2.5'in "çapa görüntünün kendi kutusundaki
+oranındadır" kuralı korunsun. O halde pad'li yolda katmanın kenarı **iki** bağımsız tamsayı
+kırpmasından geçer (`pad` ofseti ve `overlay` ifadesi), pad'siz yolda **bir** — `floor` yalnız
+ikincisini tekilleştirir, pad ofsetinin kendi kırpmasını kaldırmaz. İki kırpma aynı yöne
+toplandığında ≤ 1 px ayrışma doğar. Bu ayrışma **editörden ULAŞILAMAZ** (editör çapa alanı sunmaz
+ve dokümana daima `0.5` yazar) ve **ÖLÇÜLMEMİŞTİR**; invaryant bu yüzden merkez çapayla
+koşullandırılmıştır — kanıtlanandan fazlasını iddia etmemek için. **Merkez dışı çapa KAPSAM
+DIŞIDIR:** desteklenirse bu satır önce **ölçülmeli**, sonra genişletilmelidir.
+
+*Dejenere rejim bu invaryantın kapsamı DIŞINDADIR.* Orada geçişsiz yol (pad yok) ile geçişli yol
+(pad zorunlu) farklı sonuçlar üretirdi — biri sessizce yanlış çizer, diğeri `-22` ile ölür. §2.5'in
+dejenerelik önkoşulu tam da bu yüzden bir **kapıdır**: o rejimdeki belge **iki yolda da** aynı
+tipli hatayla (`degenerate-layer`) reddedilir, dolayısıyla "geometri geçişten bağımsızdır"
+invaryantı orada da **ihlal edilmez** — belge hiç render edilmez.
+
+*Bunun bir sonucu:* geometriyi geçişe uydurmak için **ölçeği nicelemek YASAKTIR**. Ölçeği
+"geçişe uygun" bir ızgaraya çekmek, geçiş eklendiğinde görüntüyü zıplatır (üstelik yerleşim
+eşitliği yüzünden **komşu klibi de** zıplatır) ve geçiş kaldırılınca geri gelmez — asimetrik ve
+kayıplı. Kutu paritesi de bu yüzden bir kabul kapısı **değildir**.
+
 *Nerede uygulanır (bilgilendirici).* Doküman değişmezi: `packages/timeline-schema` →
 `invariants.ts` `checkTransitionPlacement` (DEV doküman kapısı her `commit`'te koşar).
 Editör: `state/timelineOps.ts` → `propagateTransformToChain` (yerleşim yazan op'lar) ve
 `alignTransitionChainTransforms` (geçiş uzlaştırma pass'i — kesim YARATAN düzenlemeler de
-buradan geçer). Derleyici: `ExportCompiler.cs`, `open.Placement != placement` dalı — bu kapı
-`Validate`'te değil **`Compile`** aşamasındadır, yani API'nin 422 ön kapısı onu görmez;
-sözleşmeyi ayakta tutan asıl kapı bu yüzden yukarıdaki ilk ikisidir
-(`docs/poc-bilinen-sinirlar.md` §3, 9. satır).
+buradan geçer). Derleyici: `ExportCompiler.EnsureTransitionPlacement` — kural artık
+**`Validate`** aşamasındadır, yani API'nin ön kapısı onu **GÖRÜR** ve ham API'ye doğrudan
+yazılmış bir belge de 202 değil **senkron 422** alır. Buraya taşınabilmesinin nedeni hesabın
+saf doküman aritmetiği olmasıdır: `LayerGeometry.Compute` yalnız transform + proje tuvali
+okur, kaynak dosyasına dokunmaz. `Compile`'daki eski dal (`open.Placement != placement`)
+KALDIRILMADI — aynı fabrika metodunu çağıran ucuz bir sigortadır ve iki kapının mesajı
+bayt-aynıdır (testle sabitlendi). Ayrıntı: `docs/poc-bilinen-sinirlar.md` §3.
 
 ### 5.3 xfade offset matematiği
 
@@ -722,6 +1147,27 @@ out.a   = src.a + dst.a * (1 - src.a)
   2. **Konum kuantalanması.** 4:2:0 tuval tek piksellik overlay konumunu temsil edemez
      (`normalize_xy`, §2.5): opak katman çift piksele snap olur, alpha'lı katman olmaz → *aynı*
      transform opaklığa göre 1 px farklı yere oturur. Alt örneklemesiz tuval bunu kaldırır.
+
+     **ÖLÇÜLMÜŞ KANIT (gerçek ffmpeg 8.0; bu satırı koşan test
+     `GoldenFrameTests.CompositingInRgb_IsWhatKeepsOddOverlayPositionsFromSnapping`).**
+     `320×240` taban + `64×48` katman, ürünün kendi zinciri, tek fark overlay'in son parçası:
+
+     | overlay | `x = 11` | `x = 10` | `x = −11` | `x = −12` |
+     |---|---|---|---|---|
+     | `format=auto` (varsayılan) | sol kenar **10** | 10 | sağ kenar **51** | 51 |
+     | `:format=rgb` | sol kenar **11** | 10 | sağ kenar **52** | 51 |
+
+     Okunuşu: `auto` kolunda TEK konum en yakın ÇİFTE **aşağı** iniyor (`11 → 10`, `−11 → −12`);
+     yön `floor`'dur, sıfıra doğru DEĞİL. `:format=rgb` ile kırpma yok. ÇİFT konumlarda (`10`,
+     `−12`) iki kol AYNI kutuyu verir — yani fark tam olarak ve yalnızca tek-konum
+     nicelemesidir, genel bir geometri farkı değil. Aynı davranış `y` ekseninde de ölçüldü
+     (`yuv420`'de `vsub` de 1'dir).
+
+     **`format=rgba` tek başına YETMEZ — yükü taşıyan parça overlay'in kendi seçeneğidir.**
+     Ölçüldü: taban ve katman `format=rgba` ile girse bile overlay'in `format=auto` pazarlığı
+     `yuva420p`'ye iniyor (ffmpeg'in kendi satırı: `main … fmt:yuva420p overlay … fmt:yuva420p`)
+     ve niceleme aynen oluşuyor; `:format=rgb` ile pazarlık `rgba`'da kalıyor. Bu yüzden kural
+     "zincirde bir yerde rgba olsun" değil, **her overlay `:format=rgb` taşısın**dır.
 
   Bedeli ölçüldü ve kabul edildi: 1080p/150 kare/2 katman filtre hattı ~0.86 s → ~1.20 s.
   "Hızlı yol" (yalnız alpha varken RGB'ye geçmek) doğru sonucu üretemez, çünkü 2. madde
@@ -911,6 +1357,105 @@ Her test timeline'ında zorunlu örnekleme noktaları:
 | SSIM (gri, global) | ≥ 0.98 | ≥ 0.95 |
 | Ortalama ΔE2000 | ≤ 2.0 | ≤ 3.0 |
 | 95. yüzdelik ΔE2000 | ≤ 5.0 | ≤ 8.0 |
+| Katman **çapası/merkezi** (px) — DÖNMEYEN, ya da dönme 90°'nin katı | **`P` tamsayıysa 0; değilse `P − floor(P)`, ±0.5 px pay** | aynı |
+| Katman **çapası/merkezi** (px) — dönme 90°'nin katı DEĞİL | yukarıdakinin üstüne **+1 px kenar-rampası payı** (aşağıdaki üçüncü madde) | aynı |
+| Katman **kenarı** (px, her eksen) | ≤ 2 (kenar başına; `frac(P)` + boyut nicelemesi) | ≤ 2 |
+
+Son ÜÇ satır §2.5'in **uzaysal tolerans** beyanının test karşılığıdır ve o bölümün ölçümlerine
+birebir dayanır:
+
+- **Merkez bir "tolerans" değil, HESAPLANABİLİR bir ofsettir.** Beklenen değer `floor(P)`'dir
+  (derleyici overlay hedefini ifadenin içinde `floor`'lar, §2.5 adım 4); önizleme `P`'ye çizer.
+  Golden karşılaştırma bu yüzden merkezi `P` ile değil **`floor(P)`** ile sınar. `P` tamsayı
+  olduğunda fark sıfırdır — ölçüldü. Kural `floor`'dur, `trunc` DEĞİL: ikisi yalnız hedef
+  negatifken ayrışır (ölçek > 1) ve orada `trunc` sapmanın işaretini ters çevirirdi.
+- **"`frac(P)`'den farklı her sapma HATADIR" cümlesi KOŞULLUDUR (ölçümle daraltıldı).** Bir tur
+  önce burada koşulsuz yazıyordu; **ara dönme açılarında yanlıştır**. Kural şu ikisinde geçerlidir
+  ve orada gerçekten sapmasızdır: (i) dönmeyen katman, (ii) dönme 90°'nin katı. Uçtan uca ölçüm
+  (gerçek ffmpeg, 1080p, 16:9 kaynak, ölçek `0.555`, `P = (964.992, 540)`, katmanın parlaklık
+  ağırlık merkezi): `a=0` → `(964.000, 539.998)`, `a=90°` → `(964.002, 540.000)`, beklenen
+  `floor(P) = (964, 540)`.
+- **ARA AÇILARDA ek bir pay vardır ve bu bir konum hatası DEĞİLDİR.** `rotate` katmanın DIŞ
+  KENARINI yeniden örneklerken alfa rampasını asimetrik bırakır; ağırlık merkezi ölçümü bu yüzden
+  kayar. Aynı düzenekte `a=15/30/45` → `x` `963.712 / 963.608 / 963.709` (yani ≤ 0.4 px);
+  çerçevesini tam dolduran `100×100` bir karede aynı etki `+0.68 px`'e kadar çıktı. Bu pay
+  katmanın **kendi kenarına** aittir, merkezine değil; eşiğe **+1 px** olarak yazılır ve tuval
+  paritesinden BAĞIMSIZDIR (tek tuvalde de aynı büyüklükte ölçüldü). Gerekçe iki negatif
+  kontroldür — ama ikisi de **koşullu**dur, koşulları bir sonraki maddededir.
+
+- **NEGATİF KONTROLLERİN İKİ ÖNKOŞULU (yeniden üretilebilirlik şartı).** Aşağıdaki iki kontrol
+  "sapma katmanın kendi kenarındandır, konumundan değildir" iddiasını taşır: (i) dönmeye duyarsız
+  bir **disk**, (ii) kendi çerçevesine **değmeyen** bir kare. Bir tur önce burada yalnız sonuçları
+  (`0.000`) yazılıydı; o haliyle kurulum **yeniden üretilemezdi** — aşağıdaki iki koşuldan biri
+  ihlal edilirse aynı kontrol `0.000` yerine gerçek katmanınkiyle AYNI BÜYÜKLÜK BANDINDA bir sapma
+  verir ve hiçbir şey ayırt etmez. Ölçüm düzeneği: `100×100` kaynak çerçevesi, ürünün kendi
+  zinciri (`format=rgba` → `rotate=a:c=none:ow=2*ceil(hypot(iw\,ih)/2):oh=ow` →
+  `overlay=x=floor(P−0.5*w)`), `P = (964.992, 540)`, ölçülen büyüklük kompozitin parlaklık ağırlık
+  merkezi, açılar `0/1/15/30/45/90/180`.
+
+  1. **MERKEZLEME (zorunlu).** Kaynağın KENDİ ağırlık merkezi `(X, Y)`, kendi çerçevesinin piksel
+     merkezine TAM oturmalıdır:
+
+     ```
+     hypot(X − (w−1)/2,  Y − (h−1)/2) = 0        (piksel indeks koordinatında)
+     ```
+
+     Ölçüldü — koşul sağlandığında disk ve kare her açıda `0.000`; kaynak yalnız **yarım piksel**
+     kaçık kurulduğunda (`hypot = 0.5`) aynı kontroller açı boyunca `0.500 … 0.508` (kare) ve
+     `0.499 … 0.505` (disk) veriyor. Gerçek katmanın bandı `0.000 … 0.707` olduğuna göre bu
+     değerler onun İÇİNDE kalır: kaçık kurulmuş bir negatif kontrol, kanıtlamaya çalıştığı şeyi
+     çürütür gibi görünür. Sapmanın açıyla DEĞİŞMESİ (`a=0` → `0.500`, `a=180` → `0.500`, ama
+     bileşenler `+0.500/+0.000` → `−0.500/+0.000` diye dönmesi) kurulum hatasının imzasıdır.
+  2. **ÇERÇEVE PAYI ≥ 2 px (zorunlu).** İçerik kendi çerçevesinin kenarına yaklaşırsa `rotate`'in
+     yeniden örneklemesi rampayı yine asimetrik bırakır — şekil dönmeye duyarsız OLSA BİLE.
+     Merkezli disk, `100×100` çerçevede yarıçapa göre ölçüldü: pay `0 px` (çerçeveye değiyor) →
+     `≤ 0.077`; pay `1 px` → `≤ 0.068`; pay **`2 px` ve üstü → her açıda tam `0.000`**. Yani
+     "dönmeye duyarsız disk" tek başına yetmez; kontrolün geçerli olduğu rejim **payı ≥ 2 px olan**
+     disktir. (Aynı çerçeveyi TAM DOLDURAN `100×100` kare, yani gerçek katmanın analogu, aynı
+     düzenekte `0.000 … 0.707` verir: `a ∈ {0, 90, 180}` → `0.000`, ara açılarda `y` bileşeni
+     `+0.682`'ye kadar çıkar. Mekanizmanın atfı bu karşıtlıkla kurulur.)
+  3. **DİSKİN RASTERLEŞTİRMESİ (zorunlu — 8. turda ölçülerek eklendi).** Yukarıdaki iki sayı
+     (`0.077` / `0.068`) diskin **nasıl çizildiğine** bağlıdır ve önceki sürümde bu koşul
+     yazılı olmadığı için kontrol **yeniden üretilemiyordu**: aynı düzenek, alfası ikili
+     (kenarı sert) bir diskle sınırı AŞIYOR. Ölçüm (8. tur, gerçek ffmpeg 8.0, aynı zincir,
+     `overlay` ürünün `format=rgb` kompozisyonuyla; her hücre `a ∈ {0,1,15,30,45,90,180}`
+     üzerinden EN KÖTÜ sapma):
+
+     | Diskin alfası | pay 0 px | pay 1 px | pay 2 px | pay 3 px |
+     |---|---|---|---|---|
+     | ikili / sert kenar (AA yok) | **0.089** | 0.072 | **0.000** | **0.000** |
+     | 4×4 süperörnekli kapsama | 0.079 | 0.068 | **0.000** | **0.000** |
+     | 16×16 süperörnekli kapsama | 0.077 | 0.068 | **0.000** | 0.0001 |
+
+     Yani dokümandaki `0.077 / 0.068` çifti **süperörnekli (kapsama-alfalı) diskin** sayısıdır;
+     sert kenarlı diskle pay `0 px`'te `0.089` ölçülür ve yazılı sınır aşılır. Sayıyı
+     alıntılayan bir kurulum diskin alfasını da söylemek zorundadır. **Taşıyıcı iddia —
+     "pay ≥ 2 px'te sapma yok" — üç rasterleştirmenin ÜÇÜNDE de ayakta**: pay `2 px`'te üçü de
+     her açıda **tam `0.000`**, pay `3 px`'te ikisi `0.000` ve 16×16 örnekli disk `0.0001`
+     (yani `0` değil ama gerçek katmanın bandından — `0.000 … 0.707` — **binlerce kat** küçük;
+     sıfırdan ayırt edilebilir bir mekanizma değil, sayısal artık). Yani negatif kontrolün mekanizma atfı
+     rasterleştirmeden BAĞIMSIZDIR; kırılgan olan yalnız pay `0–1 px`'teki artık sayılardır. (Aynı koşumda tam çerçeveli kare `0.000 … 0.707`
+     verdi — yukarıdaki karşıtlık yeniden üretildi.)
+
+  > Bu iki koşul KURULUM koşuludur, ürün sözleşmesi değil: ürünün kendi katmanları çerçevesini
+  > doldurur ve merkezleme kaynağın içeriğine bağlıdır. Koşullar yalnız §9.3'ün negatif
+  > kontrollerini kuranı bağlar.
+- **Kenar** iki bileşenin toplamıdır: boyut nicelemesi (kenar başına ölçülen aralık
+  `[−0.80, +0.74]`) + konum kırpması (`[0, 1)`). Ölçülen en kötü tek kenar **1.79 px**; eşik bu
+  yüzden 2 px'tir. Eşiği 1 px'te tutmak, ürünün ULAŞILABİLİR normal davranışını "hata" ilan
+  ederdi — 4. tur öncesinde tam olarak bu yazıyordu ve hiçbir test bunu koşmadığı için fark
+  edilmemişti.
+- **±0.5 px pay** yalnız rasterleştirme farkı içindir: önizleme kenarı piksel MERKEZİNE göre
+  yuvarlar (kaplanan ilk piksel `round(kenar)`), ffmpeg ise tamsayı sütun indeksiyle çalışır.
+
+> **KAPSAM UYARISI (bu satırlar bugün TESTLE KORUNMUYOR).** Yukarıdaki merkez/kenar eşikleri
+> ölçülmüştür ama
+> onları koşan bir CI testi **yoktur**: preview ↔ export tam-kare golden karşılaştırması hâlâ
+> yazılmadı (`docs/poc-bilinen-sinirlar.md` §5, "test edilmeyen yüzeyler"). Bugün koşan şey, bu
+> bölümün ölçümlerinin **her iki yarısı ayrı ayrı**: export tarafında gerçek ffmpeg golden'ları
+> (`GoldenFrameTests`), önizleme tarafında nokta örneklemeli `probePixel` e2e'leri. Eşik tablosu
+> bu yüzden bir **beyandır**, bir bekçi değil — golden hattı kurulduğunda ilk sabitlenecek satır
+> budur.
 
 - ΔE2000, sRGB → Lab dönüşümüyle piksel başına hesaplanır; kenar antialias farklarını
   ayıklamak için karşılaştırma öncesi her iki görüntüye `1px` Gauss blur uygulanır.

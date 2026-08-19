@@ -248,10 +248,22 @@ public sealed class ExportJob(
                     return;
                 }
 
-                if (!probe.HasVideo)
+                // AKIŞ KAPISI, KLİP TÜRÜNE GÖRE. Eskiden burada koşulsuz bir "video stream'i
+                // olmalı" şartı vardı ve MÜZİK EKLEMEK EXPORT'U İMKÂNSIZ KILIYORDU: kitaplığa
+                // yüklenen bir .m4a, ses track'ine konup dışa aktarıldığında iş
+                // 'unsupported-media: ... has no video stream' ile ölüyordu (M6 denetimi, N1).
+                // Doğru soru dosyanın ne İÇERDİĞİ değil, o dosyayı okuyan KLİBİN ne İSTEDİĞİdir;
+                // defter (plan.AssetUses) tam olarak bunu taşır ve senkron kapı
+                // ('asset-clip-type') AYNI defteri DB olgularıyla sorar.
+                if (ExportCompiler.FindStreamMismatch(
+                        plan, asset.Id, probe.HasVideo, probe.HasAudio, probe.DurationUs)
+                    is { } mismatch)
                 {
+                    // Mesaj kullanıcıya gider (Job.ErrorMessage → dışa aktarma paneli), o yüzden
+                    // derleyicinin 422 metinleriyle aynı dildedir.
                     await FailAsync(job, "unsupported-media",
-                        $"source of asset {asset.Id} has no video stream.");
+                        $"'{mismatch.Use.ClipId}' {mismatch.Use.ClipKindTr} klibinin gösterdiği "
+                        + $"dosya ({asset.Id}) bu klip için uygun değil: {mismatch.Missing}.");
                     return;
                 }
 
@@ -268,8 +280,13 @@ public sealed class ExportJob(
                     return;
                 }
 
+                // Boyutlar TABAN (dejenerelik) kapısı içindir (ExportCompiler.EnsureLayerFloor) —
+                // filtergraph'a girmezler, geometri kaynaktan bağımsız kalır. probe.Width/Height
+                // ROTATION UYGULANMIŞ değerlerdir, yani ffmpeg'in decode'da göreceği iw/ih ile
+                // eşleşir (MediaProbe sözleşmesi); DB'deki kolonlar da aynı yerden yazılır.
                 sources[asset.Id] = new ExportAssetSource(
-                    path, probe.HasAudio, probe.ColorTransfer, probe.ColorPrimaries);
+                    path, probe.HasAudio, probe.ColorTransfer, probe.ColorPrimaries,
+                    probe.Width, probe.Height);
             }
 
             // ── 5a) Overlay hazırlığı: metin/şekil PNG'leri (tasarım 04 §4.2 adım 3). — %15
@@ -329,7 +346,11 @@ public sealed class ExportJob(
             // karşılığı ExportRasterSource + LayerGeometry'nin fit parametresidir.
             var rasterSources = overlays.Rasters.ToDictionary(
                 kv => kv.Key,
-                kv => new ExportRasterSource(kv.Value.Path, kv.Value.BboxWidthPx, kv.Value.BboxHeightPx));
+                kv => new ExportRasterSource(
+                    kv.Value.Path, kv.Value.BboxWidthPx, kv.Value.BboxHeightPx,
+                    // PNG'nin GERÇEK piksel boyutu (bbox × rasterScale) — bbox ile aynı şey
+                    // DEĞİLDİR; dejenerelik kapısı ffmpeg'in göreceği boyutu ister.
+                    kv.Value.Width, kv.Value.Height));
 
             await progress.ReportAsync(15, "compile", ct);
             CompiledExport compiled;
@@ -590,19 +611,17 @@ public sealed class ExportJob(
 
     /// <summary>
     /// probeDurationUs bilinen bir asset için sourceOutUs'u kaynak süresi + 1 çıktı frame'i
-    /// toleransını aşan İLK klibi döndürür (yoksa null). Saf ve statik — birim testleri sabitler.
+    /// toleransını aşan İLK klibi döndürür (yoksa null).
+    /// <para>
+    /// KURALIN KENDİSİ ARTIK BURADA DEĞİL: <see cref="ExportCompiler.FindSourceOutOfRange"/>
+    /// tek tanımdır ve API'nin senkron kapısı da onu çağırır (orada süre DB'den, burada
+    /// ffprobe'dan gelir — iki sayı yapısı gereği aynıdır). Bu sarmalayıcı worker'ın çağrı
+    /// yerini ve birim testlerinin yüzeyini korur.
+    /// </para>
     /// </summary>
     internal static MediaClip? FindSourceOutOfRange(
-        IReadOnlyList<MediaClip> clips, Guid assetId, long? probeDurationUs, int fpsNum, int fpsDen)
-    {
-        if (probeDurationUs is not { } durationUs)
-        {
-            return null; // süre ölçülemedi — gate atlanır (probe zaten HasVideo'yu doğruladı)
-        }
-
-        var toleranceUs = Timecode.FromFrameNumber(1, fpsNum, fpsDen).Micros; // 1 çıktı frame'i
-        return clips.FirstOrDefault(c => c.AssetId == assetId && c.SourceOutUs > durationUs + toleranceUs);
-    }
+        IReadOnlyList<MediaClip> clips, Guid assetId, long? probeDurationUs, int fpsNum, int fpsDen) =>
+        ExportCompiler.FindSourceOutOfRange(clips, assetId, probeDurationUs, fpsNum, fpsDen);
 
     private long MeasureFreeSpace(string path) =>
         FreeSpaceProbe?.Invoke(path) ?? TryGetAvailableFreeSpace(path);

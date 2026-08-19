@@ -33,6 +33,16 @@ public static class ExportEndpoints
     /// <summary>Kullanıcı başına eşzamanlı (Queued|Running) export tavanı — aşımı 429.</summary>
     public const int MaxConcurrentExportsPerUser = 2;
 
+    /// <summary>
+    /// Asset OLGULARINDAN doğan tipli kodlar. Bunlar "dışa aktarıcının henüz desteklemediği
+    /// özellik" değildir: belge, kullanıcının kendi kütüphanesindeki bir dosyayla çelişir.
+    /// Yalnız 422 BAŞLIĞINI seçmek için ayrılırlar — gövde ve kod her ikisinde de aynıdır.
+    /// </summary>
+    private static readonly HashSet<string> AssetFactFeatures = new(StringComparer.Ordinal)
+    {
+        "asset-missing", "source-out-of-range", "lut-asset-type", "asset-clip-type", "asset-failed",
+    };
+
     public static IEndpointRouteBuilder MapExportEndpoints(this IEndpointRouteBuilder app)
     {
         var projects = app.MapGroup("/api/projects").WithTags("Exports").RequireAuthorization();
@@ -95,12 +105,54 @@ public static class ExportEndpoints
         {
             var doc = project.Timeline.RootElement.Deserialize<TimelineDoc>(TimelineJson.Options)
                 ?? throw new InvalidTimelineException("timeline document is empty.");
-            ExportCompiler.Validate(doc, overlayMeasurer);
+
+            // ASSET OLGU DEFTERİ — TEK SORGU, YEDİ KAPI. Compiler'ın senkron kapıları
+            // (dejenerelik, kaynak aralığı, LUT dosya türü, varlık mevcudiyeti, ses keyframe
+            // bütçesi, KLİP-VARLIK TÜR EŞLEŞMESİ, TERMİNAL BAŞARISIZLIK) hep AYNI asset
+            // satırlarını sorar; ayrı ayrı sorulsalardı hem sorgu tekrarlanır hem iki kapı
+            // farklı anların verisiyle karar verebilirdi.
+            // Sahiplik ve soft-delete filtresi BURADADIR: başkasının satırı defteri besleyemez
+            // (aksi halde id tahmin ederek başkasının belgesi reddettirilebilirdi) ve silinmiş
+            // varlık "yok" sayılır. Tek tek alanların null olması (asset hâlâ işleniyor) yalnız
+            // o alanın kapısını atlatır — yanlış 422 üretmez.
+            // Kind ve Status DA OKUNUR (M6 denetimi, N1-N3): kapı zaten bu satırı okuyordu,
+            // iki kolon daha okumak ek sorgu DEĞİLDİR — ama o iki kolon olmadan "ses klibi ses
+            // dosyası ister" ve "işlenemeyen dosya dışa aktarılamaz" kuralları senkron
+            // sorulamıyor, belge 202 alıp worker'da ölüyordu.
+            var referenced = ExportCompiler.ReferencedAssetIds(doc);
+            var assetRows = referenced.Count == 0
+                ? null
+                : await db.Assets.AsNoTracking()
+                    .Where(a => referenced.Contains(a.Id) && a.OwnerId == userId && a.DeletedAt == null)
+                    .Select(a => new
+                    {
+                        a.Id,
+                        a.Width,
+                        a.Height,
+                        a.DurationMicros,
+                        a.OriginalFileName,
+                        a.HasAudio,
+                        a.Kind,
+                        a.Status,
+                    })
+                    .ToListAsync(ct);
+            var assetFacts = assetRows?.ToDictionary(
+                a => a.Id,
+                a => new ExportAssetFacts(
+                    a.Width, a.Height, a.DurationMicros, a.OriginalFileName, a.HasAudio,
+                    MediaKindOf(a.Kind), ReadinessOf(a.Status)));
 
             // FONT ÖN KONTROLÜ (M4 dalga-2 denetimi, bulgu #1d): manifestte olmayan bir
             // fontId, raster aşamasında 'font-missing' ile düşer — ama o noktaya gelmek
             // dakikalar sürer. Kuyruğa hiç girmesin. Manifest okunamıyorsa kontrol ATLANIR
             // (yanlış 422 vermektense worker'ın deterministik hatasına bırakılır).
+            //
+            // SIRA BİLEREK ÖLÇÜMDEN ÖNCEDİR ve bu bir düzeltmedir: kontrol Validate'ten SONRA
+            // koştuğu sürece bilinmeyen bir fontId önce ÖLÇÜMÜ patlatıyor, ölçüm hatası da
+            // kurulum arızası sayılıp 503 üretiyordu. Kullanıcı "sunucu şu an ölçemiyor,
+            // yeniden deneyin" görüyor, ama o istek ASLA çalışmıyordu — kusur belgededir.
+            // Manifest tek başına kesin cevap verebiliyorken (id manifestte var mı?) hiçbir
+            // ölçüm denenmemelidir; ucuz ve KESİN kapı önce koşar.
             if (fonts.Manifest is { } manifest
                 && FontCatalogue.UnknownFontIds(doc, manifest) is { Count: > 0 } unknown)
             {
@@ -116,12 +168,49 @@ public static class ExportEndpoints
                         ["unknownFontIds"] = unknown,
                     });
             }
+
+            var plan = ExportCompiler.Validate(doc, overlayMeasurer, assetFacts);
+
+            // METİN ÖLÇÜM YOLU KAPALIYSA 503 (İŞ 4 kararı — 422 DEĞİL). Gerekçe ölçüldü:
+            // ölçüm yolu kapalıyken (a) metin katmanı kapıları alt sınıra düşer ve GERÇEK
+            // ihlaller görünmez olur, (b) aynı kurulumda font manifesti de okunamadığı için
+            // 'font-missing' ön kontrolü de sessizce atlanır, (c) worker metni rasterlemek
+            // için AYNI Skia + font köküne muhtaçtır → iş her hâlükârda 'failed' olur.
+            // Bugünkü davranış "202 → dakikalar → başarısız"tı. 422 yanlış olurdu: kusur
+            // kullanıcının belgesinde değil KURULUMDA; 503 ise doğru anlamı taşır ve
+            // yeniden denenebilir (yönetici font kökünü düzeltince istek çalışır).
+            //
+            // 503'ÜN DAR OLMASI ŞARTTIR ve iki mekanizmayla sağlanır: (1) manifestten
+            // kesin karar verilebilen font hatası YUKARIDA 422 olarak biter, buraya hiç
+            // ulaşmaz; (2) derleyici ölçüm istisnalarını TÜRÜNE göre ayırır — belge kaynaklı
+            // olan tipli 422 fırlatır, yalnız altyapı arızası bu listeye yazılır
+            // (ExportCompiler.RasterBoxOf).
+            if (overlayMeasurer is not null && plan.UnmeasuredTextClipIds.Count > 0)
+            {
+                return Results.Problem(
+                    statusCode: StatusCodes.Status503ServiceUnavailable,
+                    title: "Text layers cannot be measured on this server right now.",
+                    detail: "Metin klibinin çizim kutusu ölçülemiyor (sunucuda font kurulumu "
+                            + "ya da metin motoru eksik) — bu durumda metin içeren bir dışa "
+                            + "aktarma zaten tamamlanamaz. Sunucu font kurulumu düzeltilince "
+                            + "aynı istek çalışır; GET /api/fonts durumu gösterir. Etkilenen "
+                            + $"klipler: {string.Join(", ", plan.UnmeasuredTextClipIds)}.",
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["feature"] = "text-measure-unavailable",
+                        ["clipIds"] = plan.UnmeasuredTextClipIds,
+                    });
+            }
         }
         catch (UnsupportedFeatureException ex)
         {
             return Results.Problem(
                 statusCode: StatusCodes.Status422UnprocessableEntity,
-                title: "Timeline uses a feature the exporter does not support yet.",
+                title: AssetFactFeatures.Contains(ex.Feature)
+                    // Bu üç kod bir "henüz desteklenmeyen özellik" DEĞİL, kullanıcının kendi
+                    // kütüphanesiyle belge arasındaki uyuşmazlıktır — başlık da öyle demeli.
+                    ? "Timeline references an asset that cannot be exported."
+                    : "Timeline uses a feature the exporter does not support yet.",
                 detail: ex.Message,
                 extensions: new Dictionary<string, object?> { ["feature"] = ex.Feature });
         }
@@ -246,6 +335,43 @@ public static class ExportEndpoints
     }
 
     // ---------- Helpers ----------
+
+    /// <summary>
+    /// Domain <c>AssetKind</c> → derleyicinin tür olgusu. VideoEdit.Media, VideoEdit.Domain'e
+    /// referans VERMEZ (katman kuralı) — çeviri bu yüzden API'dedir.
+    /// <para>
+    /// Varsayılan dal <see cref="ExportAssetMediaKind.Unknown"/>'dur ve bu EMNİYETLİ yöndür:
+    /// tanınmayan bir tür kapıyı ATLATIR (yanlış ret üretmez), kararı worker'ın ffprobe yarısına
+    /// bırakır. Yeni bir <c>AssetKind</c> eklenip burası güncellenmezse
+    /// <c>ExportGateInventoryTests.TheWholeClipKindAssetKindMatrixBehavesAsTheLedgerClaims</c>
+    /// kırmızıya döner: matris tamlığı enum'ın DEĞER SAYISINDAN türetilir.
+    /// </para>
+    /// </summary>
+    private static ExportAssetMediaKind MediaKindOf(AssetKind kind) => kind switch
+    {
+        AssetKind.Video => ExportAssetMediaKind.Video,
+        AssetKind.Audio => ExportAssetMediaKind.Audio,
+        AssetKind.Image => ExportAssetMediaKind.Image,
+        _ => ExportAssetMediaKind.Unknown,
+    };
+
+    /// <summary>
+    /// Domain <c>AssetStatus</c> → kapının okuduğu üç hal. Uploading/Uploaded/Processing
+    /// GEÇİCİDİR (worker'a bırakılır), Failed TERMİNALDİR (senkron reddedilir), Ready kapıyı
+    /// açar. Eşleme <see cref="ExportAssetReadiness"/> yorumunda gerekçelendirilmiştir.
+    /// <para>
+    /// Yeni bir durum eklenip burası güncellenmezse sessizce "geçici" sayılırdı; bunu
+    /// <c>ExportGateInventoryTests.EveryAssetStatusHasAnOwnerRow</c> engeller (durum enum'ı
+    /// refleksiyonla taranır) ve <c>EveryAssetStatusBehavesAsItsRowClaims</c> her durumu
+    /// GERÇEKTEN uç noktaya gönderir.
+    /// </para>
+    /// </summary>
+    private static ExportAssetReadiness ReadinessOf(AssetStatus status) => status switch
+    {
+        AssetStatus.Ready => ExportAssetReadiness.Ready,
+        AssetStatus.Failed => ExportAssetReadiness.Failed,
+        _ => ExportAssetReadiness.Pending,
+    };
 
     private static ExportJobDto ToDto(Job job, IStorageService storage)
     {

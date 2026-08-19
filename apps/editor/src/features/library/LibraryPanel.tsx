@@ -777,6 +777,14 @@ function AssetRow({
         KULLANICI belirler, o yüzden ayrı bir düğme (çift tık hâlâ video
         track'ine ekler). pointerdown durdurulur: satırın sürükleme kaynağı bu
         tıklamayı hayalet sürüklemeye çevirmesin.
+
+        ÇİFT TIK KORUMASI: satırın kendi title'ı "Çift tık: timeline'a ekle"
+        diyerek bu jesti DAVET ediyor ve düğme satırın ORTASINDA duruyor
+        (ölçüldü: 255 px genişlikte satırın orta ekseni düğmenin kutusuna
+        düşüyor). Çift tıkta tarayıcı İKİ ayrı `click` üretir — `onDoubleClick`
+        yalnız yayılımı durduğu için ikisi de buraya geliyordu ve İKİ çıkartma
+        ekleniyordu (ölçüldü: Δ2). `detail` tıklama SAYACIdır; jestin ikinci ve
+        sonraki tıklamaları tek bir eyleme katlanır.
       */}
       {dto.kind === 'image' && dto.status === 'ready' && (
         <button
@@ -789,6 +797,7 @@ function AssetRow({
           onDoubleClick={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
+            if (e.detail > 1) return;
             addStickerAtPlayhead(dto.id);
           }}
         >

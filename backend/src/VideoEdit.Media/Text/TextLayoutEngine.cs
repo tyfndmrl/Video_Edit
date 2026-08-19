@@ -92,6 +92,24 @@ public sealed record TextLayout(
     public double OriginXPx => -BboxLeftPx;
 
     public double OriginYPx => -BboxTopPx;
+
+    /// <summary>
+    /// Bu ölçüm KÜRATÖRLÜ (sürüm pinli) bir fontla mı yapıldı? <c>false</c> ise ölçüm bir SİSTEM
+    /// fontuyla yapılmıştır (üç modlu politikanın 2. modu, fonts/README.md) ve BAŞKA BİR
+    /// KURULUMDA BAŞKA SAYI verir.
+    /// <para>
+    /// NEDEN ALAN OLARAK TAŞINIYOR: export'un ön kapısı metin kutusunu bu ölçümden alır. Sistem
+    /// fontuyla ölçülen kutu, küratörlü fontun kutusunun ne üst ne alt sınırıdır — ÖLÇÜLDÜ
+    /// (Windows 11, SkiaSharp 3.116.1, küratörlü set ↔ Arial/Segoe UI/Times New Roman;
+    /// 4 fontId × 3 boyut × 2 ağırlık × 5 metin): bbox genişliği <b>-21,1% ile +7,9%</b>
+    /// arasında, yüksekliği en çok <b>3,8%</b> ayrışıyor. Kapı bu sayıya güvenirse üst sınırı
+    /// (8192 px) KURULUM DURUMUNA bağlanır ve yanlış 422 üretebilir; bu yüzden ölçüm
+    /// belirlenimci değilse kapı font-BAĞIMSIZ alt sınıra düşer (ExportCompiler.RasterBoxOf).
+    /// Ölçüm YAPILAMADI ile ölçüm BELİRLENİMCİ DEĞİL aynı şey değildir: ilki kurulum
+    /// arızasıdır (503), ikincisi çalışan ama pinlenmemiş bir kurulumdur.
+    /// </para>
+    /// </summary>
+    public bool FontIsDeterministic { get; init; } = true;
 }
 
 /// <summary>Layout girdisi — şema alanlarının Skia'dan bağımsız kopyası.</summary>

@@ -18,11 +18,14 @@ import { MIXED_LABEL } from './clipInspectorModel';
 import {
   beginBurstEdit,
   beginLiveEdit,
+  captureEditAnchor,
   endBurstEdit,
   endLiveEdit,
   isBurstEditOpen,
   isGestureActive,
   isLiveEditBlocked,
+  runWithEditAnchor,
+  type EditAnchor,
 } from './liveEdit';
 import {
   commitNumberText,
@@ -36,6 +39,52 @@ export interface GestureLabel {
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+
+// ---------------------------------------------------------------------------
+// Deferred typing: an edit belongs to the moment it was WRITTEN
+// ---------------------------------------------------------------------------
+
+/**
+ * A text field commits on blur/Enter, so its write is separated from the
+ * keystrokes that produced it — and in between, the thing that caused the blur
+ * has usually changed the world. Measured with real input:
+ * - typing into a clip's field and then clicking ANOTHER clip wrote the number
+ *   onto the clip the user had just selected (position AND colour: `0.25` and
+ *   `#123456` landed on the wrong clip);
+ * - typing and then clicking the ruler wrote the value at the NEW playhead.
+ *
+ * Both have one cause: the blur handler runs the CURRENT render's `onChange`
+ * against the CURRENT ambient state. So the first keystroke arms the pending
+ * edit with the write it belongs to plus an `EditAnchor`, and the commit uses
+ * that pair instead of whatever is on screen by then.
+ *
+ * `take()` also answers "did the user type anything at all?" — a blur with no
+ * keystrokes is not an edit, and committing the field's own mirror there wrote
+ * a redundant keyframe at the new playhead (measured).
+ */
+interface PendingEdit<T> {
+  write(value: T): void;
+  anchor: EditAnchor;
+}
+
+function usePendingEdit<T>(): {
+  arm(write: (value: T) => void): void;
+  take(): PendingEdit<T> | null;
+} {
+  const ref = useRef<PendingEdit<T> | null>(null);
+  return {
+    // Only the FIRST keystroke arms: the whole burst belongs to the context it
+    // started in, exactly like a drag belongs to its pointerdown.
+    arm: (write) => {
+      if (ref.current === null) ref.current = { write, anchor: captureEditAnchor() };
+    },
+    take: () => {
+      const pending = ref.current;
+      ref.current = null;
+      return pending;
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Layout helpers
@@ -156,6 +205,15 @@ export function SliderField({
           // pixel of this drag. Keyboard arrows never open a gesture, so they
           // still fall through to the plain op.
           if (isLiveEditBlocked()) return;
+          // A range input reports every user move as `input`; the trailing
+          // `change` on release carries no new user intent. It normally never
+          // reaches React (the value tracker swallows it) — but it DOES when
+          // React repainted the box mid-drag, which is exactly what an animated
+          // channel does while playback moves the playhead. The value it then
+          // carries is the sampled curve, not the user's number, and it arrives
+          // AFTER the window pointerup closed the gesture: measured, one extra
+          // keyframe at the end of every drag-during-playback.
+          if (e.nativeEvent.type === 'change') return;
           onChange(Number(e.target.value));
         }}
       />
@@ -217,6 +275,7 @@ export function NumberField({
   const [text, setText] = useState('');
   const [editing, setEditing] = useState(false);
   const drag = useRef<{ startX: number; base: number } | null>(null);
+  const pending = usePendingEdit<number>();
 
   // While the user is not typing, the input mirrors the document.
   useEffect(() => {
@@ -233,18 +292,31 @@ export function NumberField({
    * focus. Committing then would fold a stale typed number into someone else's
    * drag, under someone else's history label. Stand down instead; the effect
    * above redraws the field from the document.
+   *
+   * The armed edit is taken FIRST so every exit below also disarms it.
    */
   const commit = (raw: string): void => {
+    const armed = pending.take();
+    const revert = (): void => setText(displayNumberText(value, decimals));
     if (isGestureActive()) {
-      setText(displayNumberText(value, decimals));
+      revert();
+      return;
+    }
+    // Focus + blur is not an edit. Committing here would write the field's own
+    // mirror of the document, which after a playhead move belongs to another
+    // instant entirely (measured: a redundant keyframe at the new time).
+    if (armed === null) {
+      revert();
       return;
     }
     const result = commitNumberText(raw, { min, max, decimals });
     if (result.kind === 'revert') {
-      setText(displayNumberText(value, decimals));
+      revert();
       return;
     }
-    onChange(result.value);
+    // Anchored: the number goes where it was typed, not where the click that
+    // ended the typing happened to leave the editor.
+    runWithEditAnchor(armed.anchor, () => armed.write(result.value));
   };
 
   const onScrubDown = (e: ReactPointerEvent<HTMLSpanElement>): void => {
@@ -310,6 +382,7 @@ export function NumberField({
         onChange={(e) => {
           setEditing(true);
           setText(e.target.value);
+          pending.arm(onChange);
         }}
         onBlur={(e) => {
           setEditing(false);
@@ -324,6 +397,7 @@ export function NumberField({
             commit((e.target as HTMLInputElement).value);
           } else if (e.key === 'Escape') {
             setEditing(false);
+            pending.take(); // abandoned: the later blur must not resurrect it
             setText(displayNumberText(value, decimals));
           }
         }}
@@ -463,6 +537,10 @@ export function ColorField({
   const swatchRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState('');
   const [editing, setEditing] = useState(false);
+  // Same deferred-commit hazard as NumberField, measured on this very field:
+  // typing #123456 into one shape's fill and then clicking a second shape
+  // painted the SECOND one.
+  const pending = usePendingEdit<string>();
 
   useEffect(() => {
     if (editing) return;
@@ -470,12 +548,17 @@ export function ColorField({
   }, [value, editing]);
 
   const commit = (raw: string): void => {
+    const armed = pending.take();
+    if (armed === null) {
+      setText(value ?? ''); // focus + blur without typing is not an edit
+      return;
+    }
     const trimmed = raw.trim();
     if (!HEX_RE.test(trimmed)) {
       setText(value ?? ''); // invalid: revert, never write a broken color
       return;
     }
-    onChange(trimmed);
+    armed.write(trimmed);
   };
 
   return (
@@ -514,6 +597,7 @@ export function ColorField({
         onChange={(e) => {
           setEditing(true);
           setText(e.target.value);
+          pending.arm(onChange);
         }}
         onBlur={(e) => {
           setEditing(false);
@@ -525,6 +609,7 @@ export function ColorField({
             commit((e.target as HTMLInputElement).value);
           } else if (e.key === 'Escape') {
             setEditing(false);
+            pending.take();
             setText(value ?? '');
           }
         }}

@@ -110,9 +110,14 @@ Her üst klip:
      katmanın **örtmediği** bölgede MSE 89.07, doygun renklerde 24 birim sapma; grafik başına
      modda aynı ölçüm 0.05).
   2. 4:2:0 tuval overlay konumunu **temsil edemez**: ffmpeg `overlay` x/y'yi `normalize_xy` ile
-     chroma adımına kırpar (ölçüm: `overlay=x=201` → yuv420'de 200, rgb'de 201). Opak katman çift
-     piksele snap olurken alpha'lı katman olmazdı; yani **aynı transform, opaklığa göre 1 px
-     farklı** yere otururdu. Alt örneklemesiz tuval bunu kökten kaldırır.
+     chroma adımına kırpar (ölçüm: `overlay=x=11` → yuv420'de **10**, `x=−11` → **−12**; yani
+     yön `floor`'dur, sıfıra doğru değil. `:format=rgb` ile ikisi de yerinde kalır; ÇİFT
+     konumlarda iki mod aynı sonucu verir). Opak katman çift piksele snap olurken alpha'lı katman
+     olmazdı; yani **aynı transform, opaklığa göre 1 px farklı** yere otururdu. Alt örneklemesiz
+     tuval bunu kökten kaldırır. **`format=rgba` tek başına YETMEZ** (ölçüldü): her iki giriş
+     rgba olsa bile `overlay`'in `format=auto` pazarlığı `yuva420p`'ye iner ve niceleme aynen
+     oluşur — yükü taşıyan parça overlay'in kendi `:format=rgb` seçeneğidir. Bekçi:
+     `GoldenFrameTests.CompositingInRgb_IsWhatKeepsOddOverlayPositionsFromSnapping`.
 - Kaynak katmanların renk varsayımı (`§6.1`: untagged SDR = BT.709/tv) **RGB'ye geçişten ÖNCE**
   `setparams` ile beyan edilir; sonra beyan etmek dönüşümü etkilemez, yalnız etiketi düzeltir
   (ölçüm: beyansız RGB kompozisyonu SD kaynakta 68 birime varan sapma üretiyor).
@@ -167,9 +172,9 @@ N keyframe için iç içe `if` zinciri (compiler üretir, insan yazmaz). Paramet
 
 | Parametre | Filtre | Not |
 |---|---|---|
-| Pozisyon x,y | `overlay=x='EXPR':y='EXPR':eval=frame` | Doğrudan desteklenir, ucuz. `eval=frame` şart. |
+| Pozisyon x,y | `overlay=x='floor(EXPR)':y='floor(EXPR)':eval=frame` | Doğrudan desteklenir, ucuz. `eval=frame` şart. `floor` şart: overlay'in kendi `(int)`'i SIFIRA DOĞRU kırpar (rendering-semantics §2.5 adım 4). |
 | Ölçek | `scale=w='EXPR':h='EXPR':eval=frame` | Frame başına yeniden ölçekleme; çıktı boyutu değiştiğinde overlay bunu kaldırır. Çift sayıya yuvarla (`trunc(EXPR/2)*2`). |
-| Rotasyon | `rotate=a='EXPR':c=none:ow=hypot(iw,ih):oh=ow` | `c=none` şeffaf arka plan; rgba format şart. `t` değişkeni desteklenir. |
+| Rotasyon | `rotate=a='EXPR':c=none:ow=2*ceil(hypot(iw,ih)/2):oh=ow` | `c=none` şeffaf arka plan; rgba format şart. `t` değişkeni desteklenir. Tuval ÇİFT olmak zorundadır (rendering-semantics §2.5 adım 3): tek tuvalde içerik ortaya oturmaz. |
 | Opaklık | Sorunlu — aşağıda | |
 
 **Opaklık ffmpeg'in zayıf noktası:** `overlay`'in alpha'sı, `colorchannelmixer=aa=` ise zaman expression'ı almaz. MVP stratejisi iki kademeli:
@@ -381,3 +386,4 @@ Fark kaynakları ve stratejiler:
 13. Retriable olmayan ffmpeg hatasını 3 kez retry edip kaynak yakmak → hata sınıflandırması.
 14. Kullanıcı export sürerken timeline'ı değiştirir → snapshot job'a gömülür, referans değil.
 15. HDR iPhone videosu (HLG/Dolby Vision): tone-map edilmezse export soluk/patlamış çıkar; MVP'de bile en azından tespit + SDR tonemap şart (iPhone kullanıcı tabanında çok yaygın).
+16. `rotate`'in kare ara tuvali **GİRİŞİNDEN** doğar (`ow=2*ceil(hypot(iw,ih)/2)`) — yani aynı katman, girişi kutuya normalize edilmiş yolda (geçiş/concat) ve edilmemiş yolda (tek klip) **farklı tuval** alır ve farklı ızgaraya oturur. Ölçüldü (16:9 kaynak, `s=0.503`, `a=90`, 320×240 tuval): `(114,39,205,200)` vs `(115,39,204,200)`. Çözüm sonucu telafi etmek DEĞİL, girişi eşitlemektir: dönen + çapası merkezde katmanda normalize pad **kesim durumundan bağımsız** üretilir (`rendering-semantics §5.2`).

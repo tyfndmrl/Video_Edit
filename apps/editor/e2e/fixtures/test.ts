@@ -15,7 +15,9 @@
  * burada elle uygulanır.
  *
  * Proje HER TEST İÇİN TAZE'dir (API üzerinden oluşturulup timeline seed edilir):
- * testler birbirinin dokümanını bozamaz.
+ * testler birbirinin dokümanını bozamaz. Kliplerin gösterdiği asset satırı ise
+ * worker başına BİR kez kurulur (seedAssetId) — sunucunun eşzamanlı yükleme
+ * tavanı test başına yeni satır açmaya izin vermez; gerekçe: fixtures/seed.ts.
  *
  * E2E_PROJECT_ID verilirse HAZIR bir proje kullanılır (gerçek medyalı senaryolar
  * için); o projede en az 2 klipli bir track yoksa testler nedeniyle atlanır.
@@ -27,6 +29,7 @@ import { E2E_BASE_URL, E2E_VIEWPORT } from '../support/constants';
 import {
   buildSeedDoc,
   createProject,
+  createSeedAsset,
   getProject,
   loginUser,
   registerUser,
@@ -41,6 +44,12 @@ export interface WorkerFixtures {
     password: string;
     accessToken: string;
   };
+  /**
+   * Seed dokümanlarının gösterdiği GERÇEK asset satırı — worker başına BİR kez
+   * kurulur (gerekçesi ve sınırları: fixtures/seed.ts başlığı). Hazır proje
+   * modunda (E2E_PROJECT_ID) doküman sunucudan geldiği için kurulmaz: null.
+   */
+  seedAssetId: string | null;
 }
 
 export interface Fixtures {
@@ -82,6 +91,24 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: 'worker' },
   ],
 
+  seedAssetId: [
+    async ({ account }, use) => {
+      if (EXTERNAL_PROJECT_ID) {
+        await use(null);
+        return;
+      }
+      // Satır AYRI bir projede durur: seed projesinin kitaplık paneli, bugüne
+      // kadar olduğu gibi boş kalsın (kapı proje bağını değil sahipliği sorar).
+      const depot = await createProject(
+        account.context.request,
+        account.accessToken,
+        `E2E asset deposu ${Date.now().toString(36)}`,
+      );
+      await use(await createSeedAsset(account.context.request, account.accessToken, depot.id));
+    },
+    { scope: 'worker' },
+  ],
+
   context: async ({ account }, use) => {
     await use(account.context);
   },
@@ -100,7 +127,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     await page.close();
   },
 
-  seed: async ({ account }, use) => {
+  seed: async ({ account, seedAssetId }, use) => {
     const request = account.context.request;
 
     if (EXTERNAL_PROJECT_ID) {
@@ -110,7 +137,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
         EXTERNAL_PROJECT_ID,
       )) as unknown as {
         id: string;
-        timeline: { tracks: { id: string; clips: { id: string }[] }[] };
+        timeline: { tracks: { id: string; clips: { id: string; assetId?: string }[] }[] };
       };
       const track = detail.timeline.tracks.find((t) => t.clips.length >= 2);
       if (!track) {
@@ -131,9 +158,14 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
         trackBottomId: other?.id ?? track.id,
         clipAId: track.clips[0].id,
         clipBId: track.clips[1].id,
+        assetId: track.clips[0].assetId ?? null,
         external: true,
       });
       return;
+    }
+
+    if (seedAssetId === null) {
+      throw new Error('Seed asset satırı kurulmadı — buildSeedDoc gerçek bir assetId ister.');
     }
 
     const project = await createProject(
@@ -141,7 +173,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       account.accessToken,
       `E2E ${Date.now().toString(36)}`,
     );
-    const seedDoc = buildSeedDoc(project.id);
+    const seedDoc = buildSeedDoc(project.id, seedAssetId);
     await saveTimeline(request, account.accessToken, project.id, seedDoc.timeline, project.revisionNumber);
 
     await use({
@@ -153,6 +185,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       trackBottomId: seedDoc.trackBottomId,
       clipAId: seedDoc.clipAId,
       clipBId: seedDoc.clipBId,
+      assetId: seedAssetId,
       external: false,
     });
   },

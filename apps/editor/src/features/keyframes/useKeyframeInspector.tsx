@@ -27,13 +27,14 @@
  * playhead-dependent thing is whether the diamond buttons are usable, which is
  * a boolean; the hook subscribes to that boolean instead, so selecting a clip
  * does not turn the Inspector into a 60 Hz re-render during playback. The WRITE
- * path never trusts the rendered value: it reads the playhead from the store at
- * click time.
+ * path never trusts the rendered value: a diamond click reads the playhead from
+ * the store, and a field edit reads the ANCHOR it was written with (see
+ * `anchoredTime` and inspector/liveEdit) — never the value React last painted.
  */
 import { useMemo, type ReactNode } from 'react';
 import { useDocStore } from '../../state/docStore';
 import { useEditorStore } from '../../state/editorStore';
-import { isLiveEditOpen, updateLiveEdit } from '../inspector/liveEdit';
+import { editAnchorPlayheadUs, isLiveEditOpen, updateLiveEdit } from '../inspector/liveEdit';
 import { opFailureMessage } from '../timeline/feedback';
 import { KeyframeEasingPicker } from './KeyframeEasingPicker';
 import { AnimatedBadge, KeyframeToggle } from './KeyframeToggle';
@@ -109,10 +110,28 @@ export function useKeyframeInspector(sessionReady: boolean): KeyframeInspector {
   const clip = selected?.clip ?? null;
   const enabled = model.clipId !== null && model.editable && model.inRange && sessionReady;
 
-  /** The write time, read from the LIVE store (never from a rendered value). */
+  /**
+   * Time of a DIAMOND click, read from the LIVE store (never from a rendered
+   * value). A click is one instant, so "now" is the right question for it.
+   */
   const timeNow = (): number => {
     if (clip === null) return 0;
     return keyframeTimeAtPlayhead(clip, useEditorStore.getState().playheadUs, doc.settings.fps);
+  };
+
+  /**
+   * Time of a FIELD edit. Unlike a diamond click, a field edit spans time: it
+   * commits on blur (after the click that moved the playhead) or streams for a
+   * whole drag (while playback keeps moving the playhead underneath). Both
+   * belong to the instant the user was looking at, which is what the edit's
+   * anchor carries — see inspector/liveEdit. With no anchor this is `timeNow`,
+   * so nothing changes for edits that really are instantaneous.
+   */
+  const anchoredTime = (): number => {
+    if (clip === null) return 0;
+    const anchored = editAnchorPlayheadUs();
+    if (anchored === null) return timeNow();
+    return keyframeTimeAtPlayhead(clip, anchored, doc.settings.fps);
   };
 
   const adornment = (channel: KeyframeChannel): ReactNode | null => {
@@ -182,7 +201,7 @@ export function useKeyframeInspector(sessionReady: boolean): KeyframeInspector {
     const clipId = model.clipId;
     if (clipId === null || !model.editable || !sessionReady) return false;
     if (!model.channels[channel].animated) return false;
-    const at = timeNow();
+    const at = anchoredTime();
     if (isLiveEditOpen()) {
       updateLiveEdit((d) => void applyKeyframeValueToDraft(d, clipId, channel, at, value));
     } else {

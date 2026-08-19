@@ -10,8 +10,9 @@ M4 dalga 1 denetimi, seçilen MVP özelliklerinden altısının "eksik **ve kay�
 tespit etti. Aşağıdaki tablo bundan sonra her teslim notunun kaynağıdır; buraya yazılmadan
 hiçbir özellik ertelenmiş sayılmaz.
 
-**Son doğrulama: 2026-08-12, `6ef7498` + 3. tur düzeltmeleri — her satır KODDA
-denetlendi.** "✅ tam"
+**Son doğrulama: 2026-08-13, `d9f045f` + 8. tur düzeltmeleri. (5. turda her satır KODDA
+denetlendi ve satır numarası atıfları ÜYE/TEST adlarıyla değiştirildi; 8. turda "Ses
+katmanları" satırı ölçümle yanlışlanıp düzeltildi — aşağıdaki nota bakın.)** "✅ tam"
 yalnızca özelliğin uçtan uca (editör + şema + export) erişilebilir olduğu anlamına gelir;
 bilinen sınırlar `⚠︎` dipnotlarıyla ve
 [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) ile birlikte okunmalıdır.
@@ -23,7 +24,7 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 | Frame, zoom, timecode, player, kısayollar | ✅ tam | — |
 | Undo/Redo + işlem geçmişi | ✅ tam | — |
 | Hesap + proje yönetimi, autosave | ✅ tam (versiyon geçmişi UI'ı M6'da geldi) | — |
-| **Ses katmanları** (waveform, seviye, fade, detach) | ✅ tam (M4 dalga 1) | — |
+| **Ses katmanları** (waveform, seviye, fade, detach) | ✅ tam (M4 dalga 1) ⚠︎ *dışa aktarma yolu 8. tura kadar KIRIKTI — aşağıya bakınız* | — |
 | **Çoklu katman export + transform** | ✅ tam (M4 dalga 1) | — |
 | **Görseller (PNG/JPG/WebP)** | ✅ tam (önizleme kusuru teslim düzeltme turunda kapandı — aşağıya bakınız) | — |
 | **Yazı & overlay** (metin, sticker, şekil) | ✅ tam (M4 dalga 2) ⚠︎ emoji yok; shaping iki motorda | sonraki dilim |
@@ -57,6 +58,29 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 > yüzey hiç okunmuyordu.**
 > Dört bacaklı kural (şema / editör UI / önizleme / export — §1.3) bu yüzden bağlayıcıdır ve
 > önizleme bacağının kanıtı ancak PİKSEL olabilir.
+
+> **Ses katmanları satırının hikâyesi (8. tur denetimi, 2026-08-13 — kayda geçer).** Satır
+> M4 dalga 1'den beri "✅ tam" diyordu ve bu **YANLIŞTI**: kullanıcının en doğal ses işi —
+> kitaplığa bir müzik dosyası yükleyip ses track'ine koymak — projeyi **dışa aktarılamaz**
+> hale getiriyordu (`POST /exports` 202, iş worker'da `unsupported-media: … has no video
+> stream`). Üstelik `.m4a` bu makinede **yüklenemiyordu** bile (istemci içerik tipini
+> `File.type`'tan alıyordu; Chromium/Windows `audio/x-m4a` diyor, sunucu whitelist'i
+> reddediyor) — yani ürün, arayüzünde vaat ettiği bir formatı kabul etmiyordu.
+> İkisi de 8. turda kapandı: içerik tipi **uzantıdan** türetiliyor
+> (`library/fileTypes.ts` `contentTypeForFileName`) ve export kapısı artık "dosyada ne var"
+> yerine **"o dosyayı okuyan KLİP ne istiyor"** sorusunu soruyor
+> (`ExportCompiler.NeedOf` → `ExportPlan.AssetUses`; senkron `asset-clip-type`, worker
+> `unsupported-media`). Kullanıcı anlatımı:
+> [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) **§1.8** + §3 matrisi.
+>
+> **Alınacak ders (silmeyin) — Görseller satırının dersiyle AYNI SINIF.** Satır M4 dalga 1'den
+> 8. tura kadar "✅ tam" kaldı çünkü kabul kriteri "editörde ses özellikleri
+> var mı" idi: waveform çiziliyor, seviye/fade/detach çalışıyor, ses klibi export
+> **derleyicisinden** geçiyordu. Kimse **uçtan uca** "yalnız ses varlığı gösteren bir belge
+> gerçekten render ediliyor mu" diye sormamıştı; worker'ın indirme döngüsü birim testlerde
+> `ExportAssetSource` doğrudan verildiği için hiç koşmuyordu. Kural: bir özelliğin
+> "tam" sayılması için **kullanıcının kurabileceği en yalın belgenin gerçekten render
+> edildiği** ölçülmelidir — yeşil birim testi bunu göstermez.
 
 > **Renk satırının ikiye ayrılma gerekçesi (M5 denetimi, 2026-08-12).** Tek satır "⚠️ motor
 > hazır, UI yok" iki farklı gerçeği gizliyordu. `colorAdjust` M5'te uçtan uca kapandı: altı
@@ -152,6 +176,20 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
   **yeniden dağıtılamaz** (lisans). POC için kabul, üretim için blocker.
   *Bu makinede set kurulu ve API `"pinned":true` döndürüyor (16 TTF, 7.8 MB) — yani mod 1'de
   koşuyor; borç, kurulumu bir DAĞITIM KAPISI yapmaktır, bugünkü makinenin durumu değil.*
+  - **ÖLÇÜLDÜ (8. tur, N4): sistem fontuyla ölçülen kutu, küratörlü kutunun ne üstü ne altıdır.**
+    Windows 11 + SkiaSharp 3.116.1, küratörlü set ↔ sistemin seçtiği aileler (roboto→Arial,
+    open-sans/noto-sans→Segoe UI, noto-serif→Times New Roman); düzenek 4 fontId × 3 punto ×
+    2 ağırlık × 5 metin: bbox **genişliği −21,1% … +7,9%**, **yüksekliği en çok 3,8%** ayrışıyor.
+    Sonuç: 8192 px'lik overlay tavanı bu sayıya güvenseydi **kurulum durumuna** bağlanırdı
+    (+ yönü YANLIŞ 422 üretir). **Karar (uygulandı):** ölçüm pinli değilse
+    (`TextLayout.FontIsDeterministic = false`) kutu KESİNLEŞTİRİLMEZ — kapı font-bağımsız alt
+    sınıra düşer, rejim **503 DEĞİLDİR** (ölçüm patlamadı; 503 olsaydı fontları indirilmemiş her
+    kurulumda metin içeren HER export reddedilirdi) ve gerçek tavan render anında çizilen
+    rasterin gerçek kutusuyla sorulmaya devam eder. Testler:
+    `ExportEndpointsTests.StartExport_SystemFontMeasurement_DoesNotDecideTheCeiling` +
+    `…_StillRejectsWhatTheLowerBoundCanSee`. Ayrıntı: `poc-bilinen-sinirlar.md` §3.3.
+    *Bu, yukarıdaki borcu KAPATMAZ — yalnız borcun ödenmemiş halinde kapının yanlış 422
+    üretmesini engeller; üretimde küratörlü set hâlâ ZORUNLUDUR (belirlenimcilik + lisans).*
 - **Worker uyarı kanalı `ILogger`'a bağlanmalı**: `SkiaOverlayRasterService` belirlenimcilik
   uyarısını `onWarning` geri çağrısıyla yayar; bağlanmadığında `stderr`'e yazar. Worker DI'da
   tek satır: `new SkiaOverlayRasterService(opts, onWarning: m => logger.LogWarning("{Msg}", m))`.
@@ -255,7 +293,7 @@ yazılı ve motorda uygulanıyor. Aşağıdakiler bilerek dışarıda bırakıld
   30 fps'te kenarları ızgarada olan 144 klip kombinasyonundan **32'si (%22)** ızgara dışı süre
   üretiyordu. Kapsam yalnız kırpma değildi: **bölme** ve **asset ekleme** de bir SÜREYE karar
   verdiği için aynı kapıya çarpıyordu.
-  **Düzeltme, 1. tur:** (a) compiler kapısı kenarlara alındı — `ExportCompiler.cs:270-279`,
+  **Düzeltme, 1. tur:** (a) compiler kapısı kenarlara alındı — `ExportCompiler.Validate` (frame ızgarası kapısı),
   artık `timelineStartUs` VE `timelineStartUs + timelineDurationUs` denetleniyor, hata metni
   *"clip … edges are not on the project frame grid"*; (b) editör süreyi kendi başlangıcına göre
   TAM KARE seçiyor (`packages/timeline-schema/src/time.ts`: `frameSpanUs`, `frameSpanCount`,
@@ -274,7 +312,7 @@ yazılı ve motorda uygulanıyor. Aşağıdakiler bilerek dışarıda bırakıld
   Kullanıcı anlatımı: [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) **§1.2**
   (eski metinde yanlışlıkla "§1.1" yazıyordu).
 - **[ORTA — AÇIK] Inspector'ın "ripple'sız en yavaş hız" sınırı yarım kare eksik.**
-  `clipInspectorModel.minRateWithoutRipple` (`clipInspectorModel.ts:465`) sınırı İDEAL süreden
+  `clipInspectorModel.minRateWithoutRipple` (`clipInspectorModel.ts`) sınırı İDEAL süreden
   türetiyor (`(sourceOut − sourceIn) / (süre + boşluk)`, sonra 3 ondalığa yukarı yuvarlama);
   ızgara snap'i yarım kare ekleyebildiği için panelin önerdiği oran reddedilebiliyor. Ölçülen
   vaka (30 fps): klip frame 2'de (66_667 µs), 1 kare kaynak, sonraki klip frame 4'te
@@ -295,17 +333,17 @@ yazılı olmayan** sınırlar. Hepsi kullanıcıya
 
 Zincir üç yerde birden tutarsızdı ve hiçbir test bunu yakalamıyordu:
 
-1. `Worker/Jobs/ProcessAssetJob.cs:392` — görsel asset için **proxy üretilmez** (yorum bunu
+1. `ProcessAssetJob.ProcessImageAsync` — görsel asset için **proxy üretilmez** (yorum bunu
    açıkça söylüyor); yalnız `ThumbnailKey` (poster) yazılır. *Bu hâlâ böyle; değişen, önizleme
    tarafının ne istediğidir.*
 2. `Api/Endpoints/AssetMediaUrlBuilder.cs` — dolayısıyla `media-urls` görsel için
    `proxy: null` döner.
 3. `features/player/PlayerPanel.tsx` — oynatıcı çözücüsü KOŞULSUZ `proxyUrl` okuyordu →
-   `url = null` → `engineV1.ts:1076` `imageDrawItem` çizmeden dönüyordu.
+   `url = null` → `engineV1.ts`'in `imageDrawItem`'ı hiçbir şey çizmeden dönüyordu.
 
 **Düzeltme.** Kaynak seçimi asset KIND'ına göre karar veren tek bir saf fonksiyona alındı:
 `apps/editor/src/features/player/previewSource.ts` (video/ses → `proxy`, görsel → `poster`);
-`PlayerPanel.tsx:51` bunu çağırıyor. Poster her hazır görselde zaten var, `PosterRecipe`
+`PlayerPanel.tsx` (`previewSourceUrl(asset)` çağrısı) bunu çağırıyor. Poster her hazır görselde zaten var, `PosterRecipe`
 genişliği 1280 px'e sınırlıyor ve HDR'de proxy/export ile aynı tonemap zincirini koşuyor.
 Sticker'ın ayrı vakası yok — karar klip türüne değil ASSET türüne göre veriliyor.
 
@@ -337,36 +375,45 @@ kapısı (`ExportEndpoints.StartExport`) yalnız `Validate`'i çağırıyor — 
 | Kural | Eskiden | Şimdi |
 |---|---|---|
 | Overlay katman tavanı 8192 px (metin/şekil) | yalnız `Compile` (`PlacementOf`) → 202 + worker'da düşüş | `Validate` içinde `EnsureRasterFits` → **422 `overlay-too-large`**; şekilde kutu kesin, metinde ölçüm varsa gerçek bbox yoksa font-bağımsız **alt sınır**; `Compile` kapısı yedek olarak duruyor |
-| Geçişli kliplerin yerleşim eşitliği | yalnız `Compile` → 202 + worker'da düşüş | **doküman değişmezi** (`invariants.checkTransitionPlacement`) + editör yayılımı (`propagateTransformToChain`, `alignTransitionChainTransforms`); `Compile` kapısı yerinde |
+| Geçişli kliplerin yerleşim eşitliği | yalnız `Compile` → 202 + worker'da düşüş | **doküman değişmezi** (`invariants.checkTransitionPlacement`) + editör yayılımı (`propagateTransformToChain`, `alignTransitionChainTransforms`); *(3. turda `Compile` kapısı yerinde bırakılmıştı — 6. turda `Validate`'e alındı, aşağıya bkz.)* |
 
-**Neden ikisi farklı çözüldü.** Overlay tavanı sunucunun tek başına karar verebileceği bir
-şeydir (bbox ölçülebilir) → ön kapıya taşındı. Yerleşim eşitliği ise bir **doküman
-sözleşmesidir** (`rendering-semantics.md` §5.2, bu turda normatif madde olarak yazıldı):
-kullanıcıya 422 göstermek yanlış ürün kararı olurdu — editör yerleşimi geçiş zincirine yayar,
-kullanıcı hiçbir hata görmez. Sunucuda bu kural hâlâ `Compile` aşamasındadır; **API'ye
-doğrudan yazan bir istemci için ön kapı onu göremez** ve bu artık üç teslim dokümanında da
-açıkça yazılıdır (README dışa aktarma maddesi, `poc-bilinen-sinirlar.md` §3 girişi + tablo
-9. satırı + §4.7).
+**Neden ikisi o turda farklı çözüldü.** Overlay tavanı sunucunun tek başına karar
+verebileceği bir şeydir (bbox ölçülebilir) → ön kapıya taşındı. Yerleşim eşitliği ise bir
+**doküman sözleşmesidir** (`rendering-semantics.md` §5.2): kullanıcıya 422 göstermek yanlış
+ürün kararı olurdu — editör yerleşimi geçiş zincirine yayar, kullanıcı hiçbir hata görmez.
+O tur, sunucudaki kuralı `Compile`'da bırakmakla yetindi.
 
-**Açık kalan (düşük):** yerleşim eşitliği kuralının `Validate`'e de taşınması. Bugün
-gerekmiyor (editör üretmiyor, sessiz bozulma yok, iş açık gerekçeyle düşüyor), ama ön kapının
-"tam" olması için doğru yer orasıdır.
+**[KAPANDI, 6. tur] Yerleşim eşitliği de `Validate`'e taşındı.** Yukarıdaki "açık kalan"
+madde kapandı: kapı `ExportCompiler.EnsureTransitionPlacement`'tır, hesap saf doküman
+aritmetiğidir (`LayerGeometry.Compute` yalnız transform + proje tuvali okur), dolayısıyla
+API'nin ön kapısı onu görür ve ham API'ye doğrudan yazılmış belge de **senkron 422** alır.
+`Compile`'daki dal aynı fabrika metodunu çağıran sigorta olarak kaldı — iki kapının mesajı
+bayt-aynıdır. Kullanıcı yüzeyi DEĞİŞMEDİ (editör hâlâ yayar, kimse hata görmez); değişen,
+API'ye doğrudan yazan istemcinin dakikalar sonra değil **anında** cevap almasıdır.
+Bu düzeltme üç teslim dokümanına da işlendi (README dışa aktarma maddesi,
+`poc-bilinen-sinirlar.md` §3 + §4.7, `rendering-semantics.md` §5.2 "nerede uygulanır").
+
+**Metin tarafında bir NÜANS eklendi (6. tur).** "Metinde ölçüm varsa gerçek bbox, yoksa
+font-bağımsız alt sınır" satırı hâlâ geçerlidir, ama tek başına eksikti: ölçer KAYITLI olup
+ölçüm BAŞARISIZ olduğunda istek artık sessizce geçmez, tipli **503 `text-measure-unavailable`**
+ile durur (kusur belgede değil kurulumdadır — 422 yanlış olurdu). Gerekçe ve ölçüm:
+`poc-bilinen-sinirlar.md` §3.3.
 
 ### Diğerleri (düşük/orta) — hepsi HÂLÂ AÇIK
 
 - **Track yeniden sıralama / yeniden adlandırma yok.** `timelineOps` yalnız `addTrack`
-  ve `deleteTrack` sunar; track sağ tık menüsü (`contextMenu.ts:262`)
+  ve `deleteTrack` sunar; track sağ tık menüsü (`contextMenu.trackMenu`)
   yapıştır + üç bayrak + silme ile sınırlı. `addTrack` diziye **sona** ekler (`d.tracks.push`),
   `tracks[0]` en üst katmandır — yani katman sırası ancak track'leri doğru sırada ekleyerek
   kurulabiliyor.
 - **Ölçek animasyonu + dönme bileşimi export'ta reddediliyor**
-  (`ExportCompiler.cs:1867`, `scale-keyframes-with-rotation`). Gerekçe doğru (ffmpeg `rotate`
+  (`ExportCompiler.ValidateGeometry`, `scale-keyframes-with-rotation`). Gerekçe doğru (ffmpeg `rotate`
   çıkış tuvalini bir kez kurar, büyüyen girişi sessizce kırpardı) ve hata tipli — ama
   **editör bunu önceden uyarmıyor**, kullanıcı 422'yi export anında görüyor. Proaktif rozet
   M3 backlog'undaki "kapsam haritasının UI'da gösterimi" maddesiyle aynı ailedendir.
-- **Keyframe örnek bütçesi 60 000** (`ClipAnimation.cs:83`) — tipli hata verir
+- **Keyframe örnek bütçesi 60 000** (`ClipAnimation.MaxSamples`) — tipli hata verir
   (`keyframe-sample-budget`), editörde önden uyarı yok.
-- **Katman boyut tavanı 8192 px** (`LayerGeometry.cs:81`) — *bu satırın "editörde önden uyarı
+- **Katman boyut tavanı 8192 px** (`LayerGeometry.MaxLayerDimension`) — *bu satırın "editörde önden uyarı
   yok" iddiası YANLIŞTI, düzeltildi (3. tur).* Editör ölçek alanının tavanını proje
   çözünürlüğünden türetiyor (`invariants.maxScaleFor` → `timelineOps.maxClipScale`, 1080p'de
   ~4.266) ve yazma anında kırpıyor. **Kalan gerçek boşluk:** editörün tavanı ölçek
@@ -375,7 +422,7 @@ gerekmiyor (editör üretmiyor, sessiz bozulma yok, iş açık gerekçeyle düş
   `transform-scale` 422'si alabilir. Editör tarafının dönmeyi hesaba katması açık iş.
 - **Tek export profili.** `ExportProfiles.cs` yalnız `Hd1080p` tanır; 720p/4K/dikey ön ayarı yok.
 - **Ses klibinde görsel keyframe / renk efekti reddediliyor**
-  (`ExportCompiler.cs:1701` `keyframes-audio-clip`, `:1708` `effects-audio-clip`) — doğru
+  (`ExportCompiler.ValidateClip`: `keyframes-audio-clip`, `effects-audio-clip`) — doğru
   davranış, editörde önden engellenmiyor.
 
 ## M6 (Dayanıklılık / hardening)
@@ -386,12 +433,12 @@ gerekmiyor (editör üretmiyor, sessiz bozulma yok, iş açık gerekçeyle düş
 
 | Madde | Doğrulama (2026-08-12) |
 |---|---|
-| `fx.*` keyframe'i | `packages/timeline-schema/src/schema.ts:109` `KeyframeTracksSchema` hâlâ STRICT, 6 kanal |
-| LUT editör yüzeyi **+ önizleme shader'ı** | `apps/editor/src/features/library/fileTypes.ts:12` `SUPPORTED_EXTENSIONS` içinde `.cube` yok; ayrıca `rendering-semantics.md` §4.2'nin NORMATİF önizleme uniform'ları (`uLut3D`, `uLutScale`, `uLutOffset`) `apps/`+`packages/` altında **0 kez** geçiyor — `player/core/resolve.ts:391` `colorAdjustOf` yalnız `colorAdjust` okur |
-| Revision retention job | `backend/src/VideoEdit.Worker/Program.cs:155` — kayıtlı tek yinelenen iş `asset-reaper` |
+| `fx.*` keyframe'i | `packages/timeline-schema/src/schema.ts` `KeyframeTracksSchema` hâlâ STRICT, 6 kanal |
+| LUT editör yüzeyi **+ önizleme shader'ı** | `apps/editor/src/features/library/fileTypes.ts` `SUPPORTED_EXTENSIONS` içinde `.cube` yok; ayrıca `rendering-semantics.md` §4.2'nin NORMATİF önizleme uniform'ları (`uLut3D`, `uLutScale`, `uLutOffset`) `apps/`+`packages/` altında **0 kez** geçiyor — `player/core/resolve.ts` `colorAdjustOf` yalnız `colorAdjust` okur |
+| Revision retention job | `backend/src/VideoEdit.Worker/Program.cs` (`AddOrUpdate<AssetReaperJob>`) — kayıtlı tek yinelenen iş `asset-reaper` |
 | Container hardening | `Api/Dockerfile` + `Worker/Dockerfile` içinde `USER` direktifi **0 kez** geçiyor |
-| Per-device logout | `AuthEndpoints.cs:169` `RevokeAllForUserAsync` — tüm cihazlar düşer |
-| Dockerfile restore (sln üyesi tüm csproj) | `Api/Dockerfile:11-16` — 6 csproj kopyalanıyor; sln'de **8** csproj var (SchemaGen + UnitTests eksik) |
+| Per-device logout | `AuthEndpoints` `RevokeAllForUserAsync` — tüm cihazlar düşer |
+| Dockerfile restore (sln üyesi tüm csproj) | `Api/Dockerfile`'ın restore katmanı **6** csproj kopyalıyor (`COPY src/VideoEdit.*/…csproj` satırları); `backend/VideoEdit.sln` **8** csproj listeliyor (SchemaGen + UnitTests eksik) |
 | `tsconfig.node.json` tip denetimi | `.github/workflows/ci.yml` ve `apps/editor/package.json` içinde geçmiyor (`build` = `check-public-assets` + `tsc -b` + `vite build`) |
 
 - **fx.\* keyframe'i** (colorAdjust/LUT parametrelerinin animasyonu): şema `KeyframeTracks`
@@ -432,6 +479,216 @@ gerekmiyor (editör üretmiyor, sessiz bozulma yok, iş açık gerekçeyle düş
 - **M4**: OfflineAudioContext tabanlı ses parity testi (rendering-semantics §9.3 — micro-fade/gain zincirinin preview↔export RMS karşılaştırması). Editör↔compiler kapsam haritasının UI'da gösterimi (hangi özellik hangi milestone'da export edilebilir — 422 mesajlarının ötesinde proaktif rozet).
 - **Sürekli**: API DTO'ları için C#→TS tip üretimi (timeline-schema'daki desenin API kontratlarına genişletilmesi) — FE/BE alan-adı drift sınıfını (M3'te yakalanan error/errorMessage vakası) CI'da kalıcı önler.
 - **Düşük öncelikli 8 bulgu**: `docs/audits/m3-denetim.json`.
+
+## 4. tur denetiminden ertelenenler (2026-08-12, dejenerelik kapısı)
+
+- **Editörde ölçek TABANI (kaynak-bağımlı `minScale`)** — *bilinçli olarak ertelendi, review-gate
+  kural 4 gereği buraya yazıldı.* Bu turda kapatılan `degenerate-layer` kuralı **sunucu tarafında**
+  yaşıyor: kaynak boyutu DB'den biliniyorsa `POST /exports` **senkron 422** döner (iş kuyruğa hiç
+  girmez), worker'da da ffprobe boyutuyla tipli hata verir. Editör ise ölçek alanının tabanını
+  hâlâ sabit `0.01`'de tutuyor — yani kullanıcı reddedilecek belgeyi **yazabiliyor** ve hatayı
+  ancak "Dışa Aktar"a bastığında görüyor.
+  - *Yapılacak:* `packages/timeline-schema/src/invariants.ts`'e `maxScaleFor`'un simetriği olan
+    `minScaleForSourcePx(fitW, fitH, srcW, srcH)`; `state/timelineOps.ts`'te clamp;
+    `clipInspectorModel.ts` → `VisualSection.minScale` ("en katı kazanır"); `ClipPropertiesPanel`
+    ölçek alanının `min`'i + limit notu; gizmo `clampScale`'e taban. Kaynak boyutu zaten
+    istemcide var (`assetStore` `AssetSummary.width/height`; gizmo onu bugün de okuyor).
+  - *Neden bu turda YAPILMADI (üç gerekçe):* (1) **kapatıcı sunucu kapısıdır** — istemci tabanı
+    tek başına yeterli olamaz, çünkü asset probe'u gelmeden (yükleme sürerken) ya da belge başka
+    bir istemciden geldiğinde taban bilinmez; (2) kural o zaman **üç kopyada** yaşar (C#
+    `LayerGeometry`, TS `invariants`, ön kontrol) — `MAX_LAYER_DIMENSION`'ın bugünkü "iki değer
+    eşit kalmalı" borcunu üçe çıkarır ve bu borç ayrı bir dilim olarak ödenmelidir; (3) istemci
+    tabanı, "POST'un kendisi 422 döner" iddiasının **gerçek fare e2e'siyle kanıtlanmasını
+    imkânsız** kılardı (belge hiç kurulamazdı) — kapı önce kanıtlanabilir olmalı.
+  - *Bugünkü etkisi (5. tur ölçümüyle GENİŞLETİLDİ).* Kuralın **kaynak-oranı** yarısı gerçekten
+    yalnız **19:1'den geniş / 1:11'den dar** kaynaklarda görünür. Ama ikinci yarısı — kutunun bir
+    ekseninin **2 pikselin altına** inmesi — **her katman türünde ve ölçek ANİMASYONUYLA
+    ulaşılabilir**: metin/şekil klibinde `bbox × en küçük keyframe` doğrudan kutuyu verir
+    (ölçüldü: bbox `223×104` @ `0.010` → `2×1`; bbox `6×20` @ `0.010` → `0×0`). Yani "normal
+    medyada değişiklik yok" cümlesi **statik** ölçek için doğru, **animasyonlu** ölçek için
+    değil.
+  - *Kullanıcı bunu ÖNCEDEN BİLMİYOR — bu bir kabul, gerekçe değil.* Ne Inspector ölçek alanının
+    tabanı (`0.01`) ne de keyframe editörü bu sınırı gösterir; **dışa aktarma penceresi de istek
+    ATILMADAN önce hiçbir uyarı vermez** (`ExportDialog.tsx`: tek `role=alert` yalnız istek
+    başarısız olduktan sonra basılır, düğme yalnız gönderim sürerken devre dışı). Kullanıcı
+    sınırı ilk kez 422 mesajından öğrenir. Teslim notlarında "kullanıcı önden korunuyor"
+    denemez; korunan tek şey **sessiz bozulmanın olmaması**dır.
+  - *Ek yapılacak (bu turda doğdu):* ölçek **keyframe'i** de aynı tabana kırpılmalı — yalnız
+    statik alana taban koymak animasyonlu yolu açık bırakır.
+
+## 5. tur denetiminden ertelenenler (2026-08-12, doküman/yorum turu)
+
+- **[DÜŞÜK — AÇIK] `GenerateDocumentationFile` kapalı: XML yorumları derleyici tarafından hiç
+  denetlenmiyor.** Bu turda kapatılan F-1 bulgusu (bir `<summary>` bloğu YANLIŞ ÜYEYE yapışmıştı;
+  o üye iki `<summary>` taşıyor ve sahip olmadığı parametrelere `paramref` veriyordu, `Validate`
+  ise dokümansız kalmıştı) **derleme uyarısı üretmiyordu**, çünkü bayrak kapalı.
+  - *Ölçüm (6. turda YENİDEN alındı; ağacın `git ls-files` kopyası scratchpad'e çıkarılıp orada
+    derlendi, yani repo'nun `obj/bin`'ine dokunulmadı):*
+    `dotnet build backend/src/VideoEdit.Media/VideoEdit.Media.csproj -p:GenerateDocumentationFile=true`
+    → MSBuild özeti **244**, ama **benzersiz** (dosya, satır, sütun, kod) uyarı **229**. İki sayı
+    farklıdır çünkü MSBuild aynı uyarıyı birden fazla hedefte tekrar sayar; anlamlı olan
+    benzersiz olandır. Dağılım: **215 CS1591** ("public üyede XML yorumu yok") + **14 CS1573**
+    (bir üyenin parametrelerinin bir kısmı belgelenmiş, kalanı değil). **CS0419 = 0, CS1574 = 0.**
+    CS1591'in 68'i bağımlılık projesi `VideoEdit.Contracts`'tandır (bayrak ona da uygulanır),
+    147'si `VideoEdit.Media`'dır.
+    > Bir tur önce buraya "252 uyarı → CS1591 susturulunca 21 kalıyor, içinde CS0419 var,
+    > 6 dosyaya yayılıyor" yazılmıştı. Bu turun ölçümü o sayıları TUTMADI; sayı ağacın
+    > durumuna bağlıdır ve alıntılanmadan önce yeniden koşulmalıdır.
+  - *Gerçek sinyal 14 satır, 4 dosya:* `ClipAnimation.cs` (8), `Easing.cs` (2),
+    `FfmpegRunner.cs` (2), `SkiaOverlayRasterService.cs` (2). Hepsi bu iş diliminin dışında.
+  - *Bu turda kapatılan REGRESYON.* Aynı ölçüm 6. tur düzeltmeleri yazıldıktan HEMEN SONRA
+    **266 / 251 benzersiz** veriyordu: **36** CS1591-dışı uyarı, **7** dosya, içinde **2 CS0419**
+    ve **3 CS1574**. HEAD (`d9f045f`) ile aynı ölçüm 14/4 verdiği için fark birebir bu diffin
+    ürünüydü: `ExportCompiler.cs` 14, `CompiledExport.cs` 7, `ExportAssetFacts.cs` 1 = **22**.
+    Hepsi bu doküman turunda kapatıldı (yalnız XML yorumu düzenlendi, kod davranışı değişmedi):
+    eksik `<param>` blokları yazıldı, çözülemeyen `cref`'ler (`Domain.AssetKind`, `Validate`)
+    düzeltildi, belirsiz `LayerGeometry.Compute` cref'i imzayla ayrıştırıldı. Yani "export
+    geometrisi tarafı temiz" cümlesi ancak ŞİMDİ doğrudur ve ölçümü yukarıdadır.
+  - *Yapılacak:* kalan 14 uyarıyı kapat → `Directory.Build.props`'a
+    `<GenerateDocumentationFile>true</GenerateDocumentationFile>` +
+    `<NoWarn>$(NoWarn);CS1591</NoWarn>` ekle. Bundan sonra F-1 sınıfı bir hata **derlemede**
+    yakalanır, denetimde değil — ve yukarıdaki gibi bir 22 uyarılık regresyon sessizce giremez.
+
+## 6. tur denetiminden — overlay koordinatının TEKLİĞİ (2026-08-12, KAPATILDI + kapsam beyanı)
+
+Kapatılanlar (ölçümler `docs/rendering-semantics.md` §2.5 adım 3-4 ve §5.2'de):
+overlay hedefi artık ifadenin içinde `floor`'lanıyor (pad'li/pad'siz yol eşitliği + ölçek > 1'de
+işaret bağımlılığı), rotate ara tuvali ÇİFTE sabitlendi (dönen katmanın merkezi).
+
+**KAPSAM DIŞI ilan edilenler — ölçülmedi, iddia da EDİLMİYOR:**
+
+- **[AÇIK — merkez DIŞI çapa]** `floor` overlay ifadesinin kırpmasını tekilleştirir ama kutuya
+  normalize eden pad'in kendi ofseti merkez dışı çapada `(ow-iw)*anchor` ile **oransaldır** ve
+  tam bölünmez → pad'li yolda hâlâ İKİ bağımsız kırpma vardır. §5.2'nin invaryantı bu yüzden
+  merkez çapayla **koşulludur**. Editör çapa alanı sunmadığı için rejim ULAŞILAMAZ; çapa alanı
+  açılırsa önce ÖLÇÜLMELİ sonra invaryant genişletilmelidir.
+- **[AÇIK — dönme açısı]** Dönen katmanın "merkez = `floor(P)`" iddiası uçtan uca **90°'de**
+  ölçüldü (interpolasyon bulanıklığı olmadığı için sınır kutusu kesindir). Ara tuval yerleşimi
+  ayrıca `a=0` ve `a=90` ile izole ölçüldü ve TEK tuvalde 0.5 px, ÇİFT tuvalde 0.000 px çıktı;
+  **ara açılarda (30°/45°) uçtan uca piksel ölçümü YAPILMADI** — orada bbox kenarları
+  interpolasyonla yumuşadığı için mevcut ölçüm aracı ±0.5 px'ten iyisini söyleyemez.
+- **[AÇIK — animasyonlu konum]** `floor` animasyonlu (keyframe'li) overlay ifadesine de yazılır ve
+  bu **yapısal muhafızla** sabitlenmiştir (`EveryOverlayCoordinate_IsFloored` keyframe
+  fixture'larını da tarar), ama animasyonun hedefi negatiften pozitife geçirdiği bir belgede
+  **kare kare piksel ölçümü yapılmadı**. Statik rejimde ölçülen davranışın kare başına aynısı
+  olması beklenir; bu bir BEKLENTİDİR, ölçüm değil.
+- **[AÇIK — rotate tuvalinin köşe kırpması]** `rotate`'in `ow` ifadesini round-half-up'la
+  tamsayılaması, ham `hypot` aşağı yuvarlandığında köşeyi kuramsal olarak 0.5 px'e kadar
+  kırpabilir. ÇİFTE yuvarlama bu payı kapatır gibi görünüyor (`2*ceil(hypot/2) ≥ hypot`) ama
+  **ölçülmedi** — kenar yumuşaması bu mertebeyi mevcut araçla görünmez kılıyor. İddia edilmiyor.
+
+## 7. tur denetiminden (2026-08-13, KAPATILDI + kapsam beyanı)
+
+Kapatılanlar:
+
+- **503 `text-measure-unavailable` BELGE hatasını KURULUM hatası gibi raporluyordu.** Bilinmeyen
+  bir `fontId` (gerçekçi tetikleyicisi: editörün eski varsayılanı `inter`'i taşıyan eski belge)
+  503 alıyor, kullanıcıya "yeniden deneyin" deniyor ama istek asla çalışmıyordu. İki bağımsız
+  mekanizmayla kapandı — **TÜR** (ölçüm istisnası belge/altyapı diye ayrıldı; ayrımın taşıyıcısı
+  `FontNotFoundException.ExpectedPath`) ve **SIRA** (font ön kontrolü `Validate`'ten öne alındı).
+  Ayrıntı: `poc-bilinen-sinirlar.md` §3.3.
+- **Raster çizim sözleşmesi senkron kapıya taşındı.** Geçersiz `text.fill` (ve kardeşleri:
+  `text.stroke.color`, `text.background.color`, `shape.fill`, `shape.stroke.color`, gövdesiz
+  `shape`, yinelenen raster klip kimliği) artık istek anında 422. Yapısal muhafız **raster
+  hattını da kapsayacak** biçimde genişletildi (`RasterRefusals`, kimlikle eşleşir).
+- **Geçiş eklemek DÖNEN katmanı oynatıyordu.** Kök neden `rotate`'in GİRİŞİYDİ; giriş artık iki
+  yolda da kutuya normalize ediliyor. Bekçi 8'den **16 satıra** çıktı (`rotationDeg` yazan yarı
+  ilk kez koşuyor). Ayrıntı: `rendering-semantics.md` §5.2.
+- **§6.3'ün "kompozisyon RGB'de yapılır" kuralının KONUM yarısı artık testle korunuyor**
+  (`CompositingInRgb_IsWhatKeepsOddOverlayPositionsFromSnapping`). Aynı ölçümle **yeni bir olgu**
+  kayda geçti: `format=rgba` tek başına yetmez — overlay'in `format=auto` pazarlığı, her iki
+  giriş rgba olsa bile `yuva420p`'ye iner.
+- **§9.3'ün negatif kontrolleri artık yeniden üretilebilir**: iki önkoşulu (merkezleme = 0, çerçeve
+  payı ≥ 2 px) ölçülerek yazıldı.
+
+**Bu turda ölçülen ama KAPSAM DIŞI kalanlar:**
+
+- **[AÇIK — ara açıda merkez iddiası]** Yukarıdaki "dönme açısı" maddesi **kısmen** daraldı:
+  `a=30` artık uçtan uca koşuyor, ama koştuğu iddia *pad'li yol = pad'siz yol* eşitliğidir,
+  "merkez = `floor(P)`" DEĞİL. Ara açıda merkezin `floor(P)`'ye oturduğu hâlâ ölçülmemiştir ve
+  ölçülemez: §9.3'te gösterildiği gibi orada katmanın kendi kenar rampası ağırlık merkezini
+  `0.7 px`'e kadar kaydırır, yani mevcut araç konum hatasıyla rampa payını ayıramaz.
+- **[AÇIK — 503'ün kalan varsayımı]** API ile worker'ın AYNI font kökünü gördüğü varsayımı
+  sürüyor. Fontları worker'da olup API'de olmayan bir dağıtımda 503 yanlış ret olurdu (o dağıtım
+  metin için zaten bozuktur: `/api/fonts` 503 döner). Ölçülmedi, iddia edilmiyor.
+- **[AÇIK — raster sözleşmesinin İÇERİK yarısı]** Yeni kapı renk **dilbilgisini** ve gövde
+  varlığını sorar; rasterin gerçekten çizilebilir olduğunu (glif kapsamı, aşırı uzun tek satır,
+  vb.) SORMAZ. O yarı worker'da kalmaya devam ediyor ve `RasterRefusals` defterinde yazılı
+  gerekçesi vardır.
+
+## 8. tur denetiminden (2026-08-13, KAPATILDI + kapsam beyanı)
+
+Kapatılanlar (kullanıcı anlatımı `poc-bilinen-sinirlar.md` §1.8, §3 tablosu + matris, §3.3):
+
+- **[KRİTİK — N1] Müzik eklemek dışa aktarmayı imkânsız kılıyordu.** Worker'ın indirme döngüsü
+  klip TÜRÜNE bakmadan (LUT hariç) her varlıkta video akışı şart koşuyordu. Soru yeniden
+  tanımlandı — "dosyada ne var" değil, **"o dosyayı okuyan KLİP ne istiyor"**: defter
+  `ExportPlan.AssetUses` (Motion / Still / Audio) TEK yerde (`ExportCompiler.NeedOf`) üretilir,
+  senkron kapı onu DB olgularıyla (`asset-clip-type`), worker aynı defteri ffprobe olgularıyla
+  (`FindStreamMismatch` → `unsupported-media`) sorar. **Aynı kullanıcı yolunun ilk adımı da
+  kırıktı:** `.m4a` yüklemek bu makinede imkânsızdı (tarayıcı `audio/x-m4a` der, whitelist
+  reddeder); içerik tipi artık uzantıdan türetiliyor (`contentTypeForFileName`).
+- **[YÜKSEK — N2] `asset-not-ready` dört durumdan üçünü kapsıyordu.** TERMİNAL `Failed` senkron
+  kapıya alındı (`asset-failed`); geçici durumlar (Uploading/Uploaded/Processing) BİLEREK
+  worker'da kaldı. Muhafız boşluğu da kapandı: `AssetStatusOwners` defteri `AssetStatus`
+  enum'ını refleksiyonla tarar ve **her durumu uç noktaya göndererek** koşar.
+- **[ORTA — N3] Çıkartma klibi VİDEO varlığını gösterince tipli hata bile yoktu**
+  (`ffmpeg exited with code -1414549496`). Aynı `asset-clip-type` kapısı kapsıyor; TÜM matris
+  (4 klip türü × 3 varlık türü + "sessiz video" = 13 satır) uç noktaya gerçekten gönderilerek
+  koşuyor.
+- **[DÜŞÜK — N4] `Fonts:AllowSystemFallback` ile ölçülen kutu kapıyı kurulum durumuna
+  bağlıyordu.** Ölçüm ve karar aşağıdaki "Fontlar" bölümüne işlendi; kapı artık pinli olmayan
+  ölçümle kutuyu KESİNLEŞTİRMİYOR.
+- **Ek muhafız:** sunucunun `AssetFactFeatures` listesi ile istemcinin `ASSET_FACT_CODES`
+  listesi bir testle karşılaştırılıyor (`TheClientAndServerAgreeOnWhichCodesMeanAnAssetProblem`)
+  — ayrışma çökme değil YANLIŞ CÜMLE üretirdi.
+
+**8. turun DOKÜMAN yüzünde ölçülen/kapatılan borçlar (aynı turun ikinci yarısı):**
+
+- Teslim paketindeki test sayıları bayatlamıştı; hepsi yeniden koşuldu (README + §5):
+  backend **1198** (MinIO'suz 1181 + **17** atlandı — eski metin 13 diyordu ve kendi alt
+  kırılımıyla tutmuyordu), editör **1196**, şema **191**. E2E paketi **koşulmadı**, yalnız
+  listelendi: 33 dosyada 143 test (geçme sayısı DEĞİL).
+- `rendering-semantics.md` §9.3'ün negatif kontrolüne **üçüncü önkoşul** eklendi (diskin
+  rasterleştirmesi) — eski `0.077 / 0.068` çifti süperörnekli diskin sayısıdır, sert kenarlı
+  diskle sınır aşılıyor (ölçüldü). Taşıyıcı iddia (pay ≥ 2 px → `0.000`) üç rasterleştirmede de
+  ayakta.
+- `git worktree` kayıtları temizlendi (`degen/pre`, `degen/post`): kayıtlar depoda
+  (`.git/worktrees/`) yaşıyor ama oturumluk bir scratchpad dizinini gösteriyordu; `post`'un
+  taşıdığı diff, teslim edilen çalışma ağacının **daha eski bir iterasyonuydu** (işlevsel her
+  satırın ana ağaçta karşılığı olduğu doğrulandı, fark yalnız yorum ifadeleriydi).
+
+**KAPSAM DIŞI / AÇIK kalanlar (iddia EDİLMİYOR):**
+
+- **[AÇIK] Tur numaralandırması kodda ayrıştı.** 8. turun bıraktığı bazı kod yorumları bu
+  dilimi "6. tur denetimi" ya da "M6 denetimi" diye adlandırıyor
+  (`ExportCompiler.EnsureAssetFacts` yorumu, `e2e/audio-export.spec.ts` başlığı). Dokümanlarda
+  numaralandırma 8. tura göre düzeltildi; kod yorumları DOKUNULMADI (davranış değiştirmemek
+  için) — bir sonraki kod dilimi bunları düzeltmelidir.
+- **[AÇIK — 8. turun doküman yüzünde KOD OKUMASIYLA bulundu, ölçülmedi] "Sesi ayır" sessiz bir
+  videoda da açık.** Yeni `asset-clip-type` kapısının "ses klibi + SESSİZ video" hücresi,
+  matrisin editörden ULAŞILAMAZ sanılan tek istisnası olabilir: ses klibinin üçüncü üretim yolu
+  `timelineOps.detachAudio`'dur ve `detachAudioBlockReason` varlığın sesi olup olmadığına
+  bakmaz — editör `hasAudio` olgusunu (API `AssetSummary`'de DÖNER) hiçbir yerde okumaz
+  (`grep hasAudio apps/editor/src` → 0 sonuç) ve `buildClipFromAsset` her video varlığında
+  `audio` alanını dolu doğurur. Sonuç: sessiz bir videoda menü eylemi sunuluyor, belge
+  dışa aktarmada 422 alıyor. **Sessiz bozulma yok** ve bu yol düzeltmeden önce de
+  çalışmıyordu (worker'da ffmpeg hatası) — eksik olan ÖNDEN UYARI.
+  - *Yapılacak:* `AssetSummary`'ye `hasAudio` alanını taşı (API zaten döner) ve
+    `detachAudioBlockReason`'a "kaynağında ses yok" dalını ekle (menü otomatik olarak grileşir,
+    aynı sözleşme). Gerçek fare e2e'si: sessiz video → sağ tık → "Sesi ayır" DEVRE DIŞI.
+  - *Bu turda YAPILMADI:* doküman turu kod davranışı değiştirmez; ayrıca iddia **ölçülmedi**
+    (Playwright koşulmadı), yalnız kod okumasıyla kuruldu — düzeltmeden önce ölçülmelidir.
+- **[AÇIK] `.github/workflows/ci.yml` içinde doğrulanamayan bir sayı duruyor:** bir yorum
+  satırı "temiz klonda 139 test bunsuz kırılır" diyor. Bu, paketin büyüklüğü (bugün 143) değil
+  "kaç test kırılır" iddiasıdır ve ancak o adım kaldırılıp suite koşturularak ölçülebilir; bu
+  doküman turu Playwright koşmadığı için DOKUNULMADI. Ya ölçülmeli ya sayısızlaştırılmalıdır.
+- **[AÇIK] Ses parity'si (preview ↔ export RMS) hâlâ ölçülmedi** (`poc-bilinen-sinirlar.md`
+  §2.6). N1 "ses çıktıda var ve seviyesi sıfır değil"i kanıtlar; "önizlemedekiyle aynı"yı
+  KANITLAMAZ.
+- **[AÇIK] Ses/müzik yolu demo senaryosunun ölçülmüş 41 adımına dâhil değildir.** Kalıcı
+  testleri var, ama `demo-senaryosu.md` §7'nin koşumu bu adımı içermez ve demo medyası bir
+  müzik dosyası üretmez (senaryoya not olarak yazıldı).
 
 ## Kayda geçen doğrulamalar (aksiyon gerekmez)
 - Restore'da "PreRestore satırı görünmüyor" davranışı veri kaybı DEĞİL — aynı revision'da zaten snapshot varsa terfi ediliyor; invaryant korunuyor (denetim #32).

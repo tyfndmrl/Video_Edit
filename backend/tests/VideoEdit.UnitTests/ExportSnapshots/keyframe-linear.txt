@@ -5,9 +5,9 @@
 # filter_complex_script
 color=c=0x000000:s=1920x1080:r=30/1:d=3.033333,trim=end_frame=90,format=rgba,setsar=1,settb=AVTB,setpts=PTS-STARTPTS[base];
 [0:v]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,fps=30/1,trim=end_frame=90,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,setsar=1,format=rgba,settb=AVTB,setpts=PTS-STARTPTS[v0];
-[base][v0]overlay=x=960-0.5*w:y=540-0.5*h:enable='between(t,0.000000,2.983334)':eval=frame:format=rgb[c0];
+[base][v0]overlay=x=floor(960-0.5*w):y=floor(540-0.5*h):enable='between(t,0.000000,2.983334)':eval=frame:format=rgb[c0];
 [1:v]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,fps=30/1,trim=end_frame=60,setpts=PTS-STARTPTS,scale=w='if(lt(t,0.000000),960,if(lt(t,2.000000),960+(1920-960)*(t-0.000000)/(2.000000-0.000000),1920))':h='if(lt(t,0.000000),540,if(lt(t,2.000000),540+(1080-540)*(t-0.000000)/(2.000000-0.000000),1080))':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic:eval=frame,setsar=1,format=rgba,settb=AVTB,setpts=PTS-STARTPTS+1.000000/TB,fade=t=in:st=1.000000:d=0.500000:alpha=1[v1];
-[c0][v1]overlay=x='if(lt(t,1.000000),480,if(lt(t,2.000000),480+(1440-480)*(t-1.000000)/(2.000000-1.000000),if(lt(t,3.000000),1440+(960-1440)*(t-2.000000)/(3.000000-2.000000),960)))-0.5*w':y='if(lt(t,1.000000),540,if(lt(t,3.000000),540+(324-540)*(t-1.000000)/(3.000000-1.000000),324))-0.5*h':enable='between(t,1.000000,2.983334)':eval=frame:format=rgb[c1];
+[c0][v1]overlay=x='floor(if(lt(t,1.000000),480,if(lt(t,2.000000),480+(1440-480)*(t-1.000000)/(2.000000-1.000000),if(lt(t,3.000000),1440+(960-1440)*(t-2.000000)/(3.000000-2.000000),960)))-0.5*w)':y='floor(if(lt(t,1.000000),540,if(lt(t,3.000000),540+(324-540)*(t-1.000000)/(3.000000-1.000000),324))-0.5*h)':enable='between(t,1.000000,2.983334)':eval=frame:format=rgb[c1];
 [c1]setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv[vout];
 [0:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000,apad,atrim=end=3.000000,afade=t=in:st=0:d=0.005000:curve=tri,afade=t=out:st=2.995000:d=0.005000:curve=tri[a0];
 [a0]amix=inputs=1:duration=longest:normalize=0,alimiter=limit=0.98[aout]

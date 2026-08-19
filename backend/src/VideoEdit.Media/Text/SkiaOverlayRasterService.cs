@@ -96,7 +96,12 @@ public sealed class SkiaOverlayRasterService : ITextRasterService, IDisposable
 
         var font = ResolveFont(text);
         using var measurer = CreateMeasurer(font, text);
-        return TextLayoutEngine.Layout(LayoutRequestOf(text), measurer);
+
+        // Ölçümün BELİRLENİMCİ olup olmadığı sonucun parçasıdır: sistem fontuyla ölçülen kutu
+        // başka bir kurulumda başka çıkar ve export'un ön kapısı ona güvenemez
+        // (gerekçe + ölçüm: TextLayout.FontIsDeterministic).
+        return TextLayoutEngine.Layout(LayoutRequestOf(text), measurer)
+            with { FontIsDeterministic = font.Deterministic };
     }
 
     // ───────────────────────── Metin ─────────────────────────

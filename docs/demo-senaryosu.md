@@ -128,6 +128,18 @@ kurgu yapılmaz. Desteklenen formatlar: MP4/MOV/WebM, MP3/M4A/WAV, PNG/JPEG/WebP
 > 41 adımlık koşum bu hat üzerinde ölçüldü. Görseli göstermek isterseniz adım
 > 11'in altındaki nota bakın.
 
+> **MÜZİK — anlatılabilir, ama bu senaryonun ÖLÇÜLMÜŞ adımlarından biri DEĞİL.**
+> Ses dosyası yükleme (MP3/M4A/WAV) → çift tıkla ses track'i → dışa aktarılan
+> MP4'te gerçekten duyulan ses yolu **8. tur denetiminde kapatıldı** ve kalıcı
+> testleri var (`ExportJobPipelineTests.Export_MusicOnAnAudioTrack_…` gerçek
+> ffmpeg + gerçek MinIO ile çıktının ses seviyesini ölçer; `e2e/audio-export.spec.ts`
+> gerçek fareyle aynı yolu koşar). **Ama §7'deki 41 adımlık koşum bu adımı
+> içermez** ve demo medyası bir müzik dosyası üretmez — doğaçlama eklerseniz
+> kendi dosyanızla ve önceden bir kez deneyerek ekleyin. Sınırlar:
+> `poc-bilinen-sinirlar.md` §1.8 (ses klibi SES akışı ister: sessiz bir videoyu
+> gösteren ses klibi senkron 422 alır) ve §2.6 (önizleme ↔ export ses parity'si
+> ölçülmedi).
+
 ---
 
 ### Adım 4 — İlk klibi timeline'a al + görünümü ayarla (35 sn)
@@ -292,7 +304,7 @@ klip uzar, isim çubuğunda hız rozeti belirir.
 **Anlat:** Hız kaynağın in/out aralığını değil süresini yeniden ölçekler;
 sonraki klibe çarpacaksa değişiklik **reddedilir** ve "Sonrakileri kaydır"
 seçeneği önerilir. Ürünün hız aralığı **0,1x – 10x**'tir; bunu şema dayatır
-(`schema.ts:195`), yani önizleme ve dışa aktarma aynı aralıkta çalışır.
+(`schema.ts`, `MediaClipSchema.speed`), yani önizleme ve dışa aktarma aynı aralıkta çalışır.
 Tarayıcının `<video>` elemanı 0,0625x–16x arasını kabul eder — yani motor
 tarafı hiçbir zaman sınırlayıcı değildir.
 
@@ -447,7 +459,7 @@ Sürpriz olmasın.
 3. **Videonun ÜSTÜNE bir katman koymanın UI'daki yolu overlay katmanlarıdır**
    (**Metin ekle / Şekil ekle / Çıkartma**). Ölçüldü: dışa aktarılan karede
    overlay katmanı videonun üstünde çiziliyor — `tracks[0]` en üst katman
-   (derleyici track'leri sondan başa gezer: `ExportCompiler.cs:250`).
+   (derleyici track'leri sondan başa gezer: `ExportCompiler.Validate` — track döngüsü sondan başa gider).
    `+V` ile açılan video track'i ve "son track'in altına bırak" jesti diziye
    **sona** eklenir, yani görsel yığında **arkaya** düşer (kod okumasıyla:
    `timelineOps.addTrack` → `d.tracks.push`);
@@ -481,6 +493,11 @@ doğrulandı. Uygulama durumu yalnızca **doğrulama için** okundu
 
 **Koşum sonucu: iki ardışık tam koşum, her ikisinde de 41/41 adım geçti.**
 
+> **8. tur (2026-08-13) bu dosyada NE değiştirdi:** yalnız adım 3'ün altına bir **müzik notu**
+> eklendi; senaryonun 17 adımının METİNLERİ değişmedi. Koşum kaydı bu yüzden bu turdan da
+> etkilenmez — ama kayıt hâlâ AŞAĞIDA yazan tarihe aittir ve teslim öncesi yeniden koşulması
+> önerilir (bu tur Playwright koşmadı).
+>
 > **Bu koşum ne zaman yapıldı, sonra ne değişti.** Kayıt, teslim düzeltme turlarından
 > ÖNCEKİ koşuma aittir. O turlarda **senaryonun adımları değişmedi** — değişenler §3'teki
 > notlar, §5'teki süre aritmetiği ve §6'nın kısıt listesidir (iki madde düzeltildiği için

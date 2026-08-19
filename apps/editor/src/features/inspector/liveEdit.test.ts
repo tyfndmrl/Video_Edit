@@ -10,16 +10,20 @@ import { createEmptyDoc, defaultProjectSettings, useDocStore } from '../../state
 import { useAssetStore } from '../../state/assetStore';
 import { applyClipAudioToDraft, addTextClip, applyClipTextToDraft } from '../../state/timelineOps';
 import { defaultTextStyle } from '../text/overlayDefaults';
+import { useEditorStore } from '../../state/editorStore';
 import {
   BURST_EDIT_IDLE_MS,
   beginBurstEdit,
   beginLiveEdit,
+  captureEditAnchor,
+  editAnchorPlayheadUs,
   endBurstEdit,
   endLiveEdit,
   isBurstEditOpen,
   isGestureActive,
   isLiveEditBlocked,
   isLiveEditOpen,
+  runWithEditAnchor,
   updateBurstEdit,
   updateLiveEdit,
 } from './liveEdit';
@@ -166,6 +170,72 @@ describe('liveEdit', () => {
   });
 });
 
+/**
+ * Edit anchors — "an edit belongs to the instant it was WRITTEN".
+ *
+ * These are the store-level rules only; that the Inspector's keyframe writes
+ * actually consult them is proven with real mouse/keyboard in
+ * e2e/inspector-edit-anchor.spec.ts.
+ */
+describe('edit anchors', () => {
+  beforeEach(() => {
+    endLiveEdit();
+    useEditorStore.getState().setPlayheadUs(0);
+  });
+
+  it('reports no anchor while nothing is being edited', () => {
+    useEditorStore.getState().setPlayheadUs(7 * US);
+    expect(editAnchorPlayheadUs()).toBeNull();
+  });
+
+  it('holds the pointerdown playhead for the whole gesture, even while playback moves it', () => {
+    useEditorStore.getState().setPlayheadUs(63 * US);
+    expect(beginLiveEdit('clipTransform', 'Konum değiştirildi')).toBe(true);
+    expect(editAnchorPlayheadUs()).toBe(63 * US);
+
+    // Playback keeps running underneath the drag.
+    useEditorStore.getState().setPlayheadUs(63.5 * US);
+    expect(
+      editAnchorPlayheadUs(),
+      'sürükleme başladığı ana çapalı kalmalı — yoksa tek jest birçok keyframe yazar',
+    ).toBe(63 * US);
+
+    endLiveEdit();
+    expect(editAnchorPlayheadUs()).toBeNull();
+  });
+
+  it('applies a deferred commit against its own anchor, then restores', () => {
+    const anchor = captureEditAnchor(); // "the user typed here"
+    useEditorStore.getState().setPlayheadUs(65 * US); // ...then clicked the ruler
+    expect(editAnchorPlayheadUs()).toBeNull();
+
+    const seen = runWithEditAnchor(anchor, () => editAnchorPlayheadUs());
+    expect(seen, 'commit yazıldığı ana gitmeli').toBe(0);
+    expect(editAnchorPlayheadUs(), 'çapa commit dışına SIZMAMALI').toBeNull();
+  });
+
+  it('restores the previous anchor even when the commit throws', () => {
+    useEditorStore.getState().setPlayheadUs(10 * US);
+    beginLiveEdit('clipTransform', 'Konum değiştirildi');
+    expect(() =>
+      runWithEditAnchor(captureEditAnchor(), () => {
+        throw new Error('op failed');
+      }),
+    ).toThrow('op failed');
+    expect(editAnchorPlayheadUs()).toBe(10 * US);
+    endLiveEdit();
+  });
+
+  it('lets a commit anchor win over the gesture anchor', () => {
+    useEditorStore.getState().setPlayheadUs(20 * US);
+    beginLiveEdit('clipTransform', 'Konum değiştirildi');
+    useEditorStore.getState().setPlayheadUs(30 * US);
+    const later = captureEditAnchor();
+    expect(runWithEditAnchor(later, () => editAnchorPlayheadUs())).toBe(30 * US);
+    expect(editAnchorPlayheadUs()).toBe(20 * US);
+    endLiveEdit();
+  });
+});
 
 /**
  * Burst edits (typing into the text content field, dragging in the colour

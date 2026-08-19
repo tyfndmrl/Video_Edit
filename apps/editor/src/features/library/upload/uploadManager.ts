@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import { queryClient } from '../../../app/queryClient';
 import { projectAssetsQueryKey, quotaQueryKey } from '../../../entities/assets';
 import { useAssetStore, type AssetKind } from '../../../state/assetStore';
+import { contentTypeForFileName } from '../fileTypes';
 import { uploadApi } from './uploadApi';
 import {
   UploadEngine,
@@ -125,7 +126,12 @@ export function startUpload(file: File, projectId: string): string | null {
   }
 
   const localId = crypto.randomUUID();
-  const contentType = file.type || 'application/octet-stream';
+  // Tip UZANTIDAN türetilir, `File.type`'tan DEĞİL: tarayıcı/işletim sistemi aynı
+  // dosya için whitelist dışı bir MIME bildirebiliyor (ölçüldü: Chromium/Windows
+  // `.m4a` → `audio/x-m4a` → yükleme sunucuda reddediliyordu). Gerekçe ve eşleme:
+  // fileTypes.EXTENSION_CONTENT_TYPES. Uzantı tanınmıyorsa (bu kapıya normalde
+  // gelinmez, isSupportedMediaFile önce eler) tarayıcının dediğine düşülür.
+  const contentType = contentTypeForFileName(file.name) ?? file.type ?? 'application/octet-stream';
   const store = useUploadStore.getState();
 
   store.upsert({

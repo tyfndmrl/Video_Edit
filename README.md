@@ -40,9 +40,18 @@ Medyanı yükle, zaman çizgisinde kes, katmanla, metin ve geçiş ekle, renk ve
   uyarısıyla), eksik medya bildirimi
 
 ### Ses
+- **Müzik / ses dosyası ekleme** — MP3 / M4A / WAV kitaplığa yüklenir, çift tıkla ses
+  track'ine düşer ve dışa aktarılan MP4'te **gerçekten duyulur** (yalnız "ses akışı var" değil,
+  çıktının ses SEVİYESİ ölçülerek doğrulanır:
+  `ExportJobPipelineTests.Export_MusicOnAnAudioTrack_Succeeds_AndTheOutputReallyCarriesThatSound`,
+  gerçek worker + gerçek ffmpeg + gerçek MinIO). *Bu yol 8. tur denetimine kadar **kırıktı** —
+  kaydı ve sınırları: [poc-bilinen-sinirlar.md](docs/poc-bilinen-sinirlar.md) §1.8*
 - Track ve klip düzeyinde **ses seviyesi**, fade in / fade out, sessize alma
 - **Sesi ayır** (detach): video klibinin sesini ayrı bir ses track'ine indirir
 - Waveform çizimi; geçişlerde `acrossfade` ile toplam kazancı 1'de tutan ses rampası
+- Klibin türü ile dosyanın türü **uyuşmak zorundadır** (ses klibi ses okur, çıkartma durağan
+  görsel okur…); uyuşmazlık **senkron 422** ile reddedilir — tam matris
+  [poc-bilinen-sinirlar.md](docs/poc-bilinen-sinirlar.md) §3'te
 
 ### Kompozisyon ve efektler
 - **Transform gizmo** — oynatıcı üzerinde doğrudan taşıma / ölçekleme / döndürme;
@@ -76,12 +85,22 @@ Medyanı yükle, zaman çizgisinde kes, katmanla, metin ve geçiş ekle, renk ve
 - Desteklenmeyen bir bileşim varsa export **kuyruğa hiç girmez**: sunucu 422 ile
   **gerekçesini** döner ve dialogda kırmızı olarak gösterilir (dakikalarca render edip
   düşmek yerine). Kapsam hatalarının metni Türkçe, şema ihlallerininki İngilizcedir.
-  Bunun **tek istisnası** dürüstçe yazılıdır: geçişli iki klibin yerleşim eşitliği kuralı
-  derleyicide `Validate` değil `Compile` aşamasındadır, yani sunucunun 422 ön kapısı onu
-  göremez. Editör böyle bir doküman **üretmez** (yerleşimi geçiş zincirine yayar, doküman
-  değişmezi her değişiklikte doğrular) — ama API'ye doğrudan yazılmış bir doküman 202 alır ve
-  worker'da düşer. Kuralın hangi kapıda olduğu satır satır:
-  [poc-bilinen-sinirlar.md](docs/poc-bilinen-sinirlar.md) §3
+  Bu vaadin **istisnası kalmadı**: geçişli iki klibin yerleşim eşitliği dahil, ham API'ye
+  doğrudan yazılmış bir dokümanla ulaşılabilen derleyici kurallarının hepsi artık `Validate`
+  aşamasındadır ve senkron 422 döner. Kuralların hangi kapıda olduğu — ve hangilerinin
+  **bilerek** worker'da kaldığı (ancak indirilen dosya ölçülünce anlaşılabilen şeyler) —
+  satır satır yazılıdır: [poc-bilinen-sinirlar.md](docs/poc-bilinen-sinirlar.md) §3.
+  Bunu iddia değil **ölçüm** yapan bir bekçi vardır: `ExportGateInventoryTests` defterdeki
+  her `SyncGate` satırını gerçekten `StartExport`'a sokup 422 + doğru kod + **iş satırı
+  oluşmadığını** doğrular; bekçi **raster hattını** (metin/şekil çizim sözleşmesi — ör. geçersiz
+  bir `text.fill`) ve **kullanıcının kütüphanesinden gelen olguları** da kapsar: klip türü ile
+  dosya türünün uyuşmadığı **13 kombinasyonun tamamı** ve asset'in **beş durumunun her biri**
+  tek tek uç noktaya gönderilerek koşturulur (ör. işlenmesi kalıcı olarak başarısız bir dosyayı
+  kullanan belge artık dakikalar sonra değil **istek anında** reddedilir).
+  Ayrı bir durum: metin ölçüm yolu (Skia/font kökü) bozuk bir kurulumda sunucu **503** döner —
+  belgeyi suçlamaz, çünkü kusur belgede değildir. **503 dar tutulur:** sunucunun tanımadığı bir
+  yazı tipi bir KURULUM arızası değil bir BELGE hatasıdır ve 422 `font-missing` alır
+  (ayrım ve gerekçesi: [poc-bilinen-sinirlar.md](docs/poc-bilinen-sinirlar.md) §3.3).
 
 **Ölçülmüş export süreleri** (i9-10850K, 1080p30, gerçek boru hattı): 60 sn tek klip →
 **10.8 sn**; 60 sn, 2 klip + crossfade + renk + metin + şekil → **33.4 sn**. Aynı uzunluk,
@@ -185,27 +204,36 @@ klipleri **sistem fontuyla** çizilir; o zaman render **belirlenimci değildir**
 
 ## Testler
 
-Tümü **2026-08-12**, `6ef7498` + 3. tur düzeltmeleri üzerinde bizzat koşuldu:
+Aşağıdaki sayılar **2026-08-13**, `d9f045f` + 4.–8. tur düzeltmeleri üzerinde bizzat
+koşuldu (E2E satırı hariç — nedeni satırın yanında yazılı):
 
 ```bash
-# Backend — 980 test.  MinIO ayaktaysa env değişkenini VERİN, yoksa 13 test Skip olur
-#   (ProcessAssetPipelineTests, MinioStorageSmokeTests, ExportJobPipelineTests).
-MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 980/980 ✓
+# Derleme
+dotnet build backend/VideoEdit.sln                           # 0 uyarı, 0 hata ✓
+
+# Backend — 1198 test.  MinIO ayaktaysa env değişkenini VERİN, yoksa 17 test Skip olur
+#   (ProcessAssetPipelineTests 7, MinioStorageSmokeTests 2, ExportJobPipelineTests 8).
+MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 1198/1198 ✓ (0 atlandı)
+dotnet test backend/VideoEdit.sln                            # 1181 ✓ + 17 atlandı
 
 # Editör + şema paketi birlikte
-pnpm -r test                                                 # editor 1186 ✓ · schema 191 ✓
+pnpm -r test                                                 # editor 1196 ✓ · schema 191 ✓
 
 # Tip denetimi
-pnpm --filter @videoedit/editor exec tsc -b
-pnpm --filter @videoedit/editor test:e2e:typecheck
+pnpm --filter @videoedit/editor exec tsc -b                  # temiz ✓
+pnpm --filter @videoedit/editor test:e2e:typecheck           # temiz ✓
 
 # Production build (teslim edilen artefakt)
-pnpm --filter @videoedit/editor build
+pnpm --filter @videoedit/editor build                        # ✓
 
 # E2E — GERÇEK tarayıcıda GERÇEK fare/klavye ile (page.mouse / page.keyboard).
 # API (5000), worker ve Vite (5173) AYAKTA olmalı; Playwright hiçbir süreci
 # başlatmaz/öldürmez, ayakta olanlara bağlanır.
-pnpm --filter @videoedit/editor test:e2e                     # 129/129 ✓ (28 spec, 6.0 dk)
+pnpm --filter @videoedit/editor test:e2e                     # BU TURDA KOŞULMADI
+#   ^ Bu doküman turu servis başlatmaz ve Playwright koşmaz. Paketin BÜYÜKLÜĞÜ
+#     ölçüldü (`playwright test --list`, hiçbir test çalıştırmadan): 33 dosyada
+#     143 test. Bu bir GEÇME sayısı DEĞİLDİR — geçme oranı ancak suite gerçekten
+#     koşturulunca yazılabilir; nedeni: docs/poc-bilinen-sinirlar.md §5.
 ```
 
 > **Neden gerçek fare?** Teslim edilen ilk sürümde "E2E" testleri store'u doğrudan
@@ -247,7 +275,7 @@ backend/
   src/VideoEdit.Infrastructure/  EF Core, R2/S3 istemcisi, JWT
   src/VideoEdit.Media/           ffmpeg reçeteleri, probe, Export/ (FilterGraph compiler), Text/ (SkiaSharp)
   src/VideoEdit.Worker/          Hangfire: ProcessAssetJob, ExportJob, AssetReaperJob
-  tests/VideoEdit.UnitTests/     980 test + ExportSnapshots/ (filtre grafiği metin snapshot'ları)
+  tests/VideoEdit.UnitTests/     1198 test + ExportSnapshots/ (filtre grafiği metin snapshot'ları)
   tests/GoldenFrames/            export karesi piksel golden'ları (11 PNG)
   tests/RasterGoldens/           SkiaSharp şekil rasteri golden'ları (4 PNG)
   tools/SchemaGen/               JSON Schema → C# DTO üretici

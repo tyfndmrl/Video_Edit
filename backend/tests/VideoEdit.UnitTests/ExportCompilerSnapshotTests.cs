@@ -251,6 +251,28 @@ public sealed class ExportCompilerSnapshotTests
         return ExportTestDocs.Doc(clips: [a, b]);
     }
 
+    /// <summary>
+    /// Geçişli kesim + TEK boyutlu ölçek kutusu. 1920x1080 tuvalde scale 0.501 →
+    /// roundHalfUp: 962 x 541 — YÜKSEKLİK TEK. Bu fixture kuralın İKİ yarısını tek dizede
+    /// sabitler:
+    ///   * <c>scale=962:541</c> — ölçek hedefi HAM kutudur, çifte indirilMEZ (indirseydik
+    ///     içerik 962→960 küçülür ve geçişSİZ yolla ayrışırdı; gerçek ffmpeg ile ölçüldü);
+    ///   * <c>pad=962:540:...</c> — normalize pad hedefi kutunun ÇİFTE İNDİRİLMİŞ halidir,
+    ///     çünkü scale çıktısı daima çifttir ve tek hedefe pad'lemek ofseti kırpıp katmanı
+    ///     1 px kaydırırdı.
+    /// Kutu paritesi kapısı kalkmadan bu doküman derlenemiyordu (worker'da "Başarısız").
+    /// </summary>
+    private static TimelineDoc TransitionOddBox()
+    {
+        var odd = ExportTestDocs.Transform(scale: 0.501);
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            transform: odd);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            transform: odd);
+        ExportTestDocs.Link(a, b, 400_000);
+        return ExportTestDocs.Doc(clips: [a, b]);
+    }
+
     /// <summary>Zincirleme: 3 klip, 2 geçiş (farklı tipler) — kümülatif offset §5.3'ten gelir.</summary>
     private static TimelineDoc TransitionChain()
     {
@@ -484,7 +506,7 @@ public sealed class ExportCompilerSnapshotTests
         "hidden-muted-tracks", "audio-track-mix", "opaque-over-alpha",
         "layer-run-concat", "image-clip", "image-over-video",
         "transition-single", "transition-audio", "transition-chain",
-        "transition-pip-layer", "text-over-video", "shape-and-sticker",
+        "transition-pip-layer", "transition-odd-box", "text-over-video", "shape-and-sticker",
         // M5: hız, renk düzeltme, LUT, keyframe (ifade yolu + sendcmd yolu)
         "speed-change", "color-adjust", "lut-effects", "keyframe-linear", "keyframe-eased",
         "volume-keyframes",
@@ -503,6 +525,7 @@ public sealed class ExportCompilerSnapshotTests
             "transition-audio" => (TransitionSingle(audio: ExportTestDocs.Audio(volume: 0.8)), SdrSources()),
             "transition-chain" => (TransitionChain(), SdrSources()),
             "transition-pip-layer" => (TransitionWithPipLayer(), SdrSources()),
+            "transition-odd-box" => (TransitionOddBox(), SdrSources(hasAudio: false)),
             "text-over-video" => (TextOverVideo(), SdrSources()),
             "shape-and-sticker" => (ShapeAndSticker(), ImageSources()),
             "single-clip" => (SingleClip(), SdrSources(hasAudio: false)),
@@ -598,6 +621,51 @@ public sealed class ExportCompilerSnapshotTests
 
         var expected = File.ReadAllText(snapshotPath).Replace("\r\n", "\n");
         Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [MemberData(nameof(FixtureNames))]
+    public void EveryOverlayCoordinate_IsFloored(string name)
+    {
+        // YAPISAL MUHAFIZ: overlay hedefi TEK BİR kuralla tamsayıya iner ve o kural ifadenin
+        // İÇİNDEDİR. Yeni bir kod yolu (yeni klip türü, yeni animasyon kanalı) floor'suz bir
+        // koordinat yazarsa burası KIRMIZIYA düşer — ölçüm gerektiren piksel testleri yalnız
+        // kendi fixture'larını görür, bu tarama grafın TAMAMINI görür.
+        //
+        // NEDEN TEK KURAL: floor'suz bırakılan bir koordinat, overlay'in kendi (int) çevrimiyle
+        // SIFIRA DOĞRU kırpılır; aynı belgenin pad'li ve pad'siz yolu o an 1 px ayrışır ve
+        // ölçek > 1'de sapmanın işareti değişir (ölçümler ExportCompiler.FloorOverlay'de).
+        var script = Render(CompileFixture(name));
+        var coordinates = 0;
+        foreach (var line in script.Split(";\n"))
+        {
+            var marker = line.IndexOf("]overlay=", StringComparison.Ordinal);
+            if (marker < 0)
+            {
+                continue;
+            }
+
+            var arguments = line[(marker + "]overlay=".Length)..].Split(':');
+            foreach (var argument in arguments)
+            {
+                if (!argument.StartsWith("x=", StringComparison.Ordinal)
+                    && !argument.StartsWith("y=", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var value = argument[2..].Trim('\'');
+                Assert.True(
+                    value.StartsWith("floor(", StringComparison.Ordinal)
+                    && value.EndsWith(')'),
+                    $"{name}: overlay koordinatı floor'a sarılmamış → '{argument}'");
+                coordinates++;
+            }
+        }
+
+        // İfade x/y'yi virgülle bölmediğinden emin ol: bölme yanlışsa yukarıdaki döngü hiç
+        // koordinat görmeden "geçerdi". Overlay varsa EN AZ iki koordinat sayılmalıdır.
+        Assert.Equal(script.Contains("]overlay=", StringComparison.Ordinal), coordinates >= 2);
     }
 
     [Fact]
@@ -792,7 +860,7 @@ public sealed class ExportCompilerSnapshotTests
         Assert.Contains(
             "scale=672:378:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic",
             compiled.FilterGraphScript);
-        Assert.Contains("overlay=x=1440-0.5*w:y=270-0.5*h:", compiled.FilterGraphScript);
+        Assert.Contains("overlay=x=floor(1440-0.5*w):y=floor(270-0.5*h):", compiled.FilterGraphScript);
         // Opak PiP de rgba ile girer ve RGB'de blend edilir: kompozisyon modu grafik başınadır,
         // katman başına DEĞİL (denetim #1) — 4:2:0 tuval overlay konumunu çift piksele kırpardı.
         Assert.Contains("format=rgba,settb=AVTB,setpts=PTS-STARTPTS+1.000000/TB[v1]",
@@ -862,10 +930,10 @@ public sealed class ExportCompilerSnapshotTests
         // ardından merkez etrafında rotate = ÇAPA etrafında rotate.
         Assert.Contains("pad=w=iw*2:h=ih*2:x=iw*1:y=ih*0:color=#00000000",
             compiled.FilterGraphScript);
-        Assert.Contains("rotate=a=0.523599:c=none:ow=hypot(iw\\,ih):oh=ow",
+        Assert.Contains("rotate=a=0.523599:c=none:ow=2*ceil(hypot(iw\\,ih)/2):oh=ow",
             compiled.FilterGraphScript);
         // Dönen katmanda overlay telafisi w/2, h/2'ye sadeleşir.
-        Assert.Contains("overlay=x=960-0.5*w:y=540-0.5*h:", compiled.FilterGraphScript);
+        Assert.Contains("overlay=x=floor(960-0.5*w):y=floor(540-0.5*h):", compiled.FilterGraphScript);
     }
 
     [Fact]
@@ -1052,7 +1120,7 @@ public sealed class ExportCompilerSnapshotTests
         Assert.DoesNotContain("concat=", compiled.FilterGraphScript);
         Assert.Equal(3, compiled.FilterGraphScript.Split(";\n").Count(l => l.Contains("]overlay=")));
         // Çapa (0,0) → telafi çarpanı 0 → overlay konumu sade sabittir (P'nin kendisi).
-        Assert.Contains("overlay=x=960:y=540:", compiled.FilterGraphScript);
+        Assert.Contains("overlay=x=floor(960):y=floor(540):", compiled.FilterGraphScript);
     }
 
     [Fact]
@@ -1754,10 +1822,15 @@ public sealed class ExportCompilerSnapshotTests
     }
 
     [Fact]
-    public void Compile_TransitionBetweenDifferentPlacements_ThrowsInvalidTimeline()
+    public void Validate_TransitionBetweenDifferentPlacements_ThrowsInvalidTimeline()
     {
         // xfade iki girişin AYNI boyutta olmasını şart koşar; run bölünemeyeceği için farklı
         // yerleşim sessizce kaydırmak yerine görünür sözleşme ihlalidir.
+        //
+        // KURAL YERİ DEĞİŞTİ (İŞ 1): eskiden YALNIZ Compile'daydı, dolayısıyla API'nin 422 ön
+        // kapısı onu göremiyordu ve böyle bir belge 202 alıp worker'da düşüyordu (ham API ile
+        // ölçüldü). Hesap saf doküman aritmetiğidir → artık Validate'te. Compile'daki dal
+        // SİGORTA olarak duruyor ve AYNI cümleyi üretiyor (aşağıda ikisi de sınanır).
         var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
             transform: ExportTestDocs.Transform(scale: 0.5));
         var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
@@ -1765,10 +1838,72 @@ public sealed class ExportCompilerSnapshotTests
         ExportTestDocs.Link(a, b, 400_000);
         var doc = ExportTestDocs.Doc(clips: [a, b]);
 
-        ExportCompiler.Validate(doc); // doğrulama geçer — yerleşim çakışması DERLEME kararıdır
-        var ex = Assert.Throws<InvalidTimelineException>(
+        var validated = Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(doc));
+        Assert.Contains("yerleşimi", validated.Message);
+
+        var compiled = Assert.Throws<InvalidTimelineException>(
             () => ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p));
-        Assert.Contains("yerleşimi", ex.Message);
+        Assert.Equal(validated.Message, compiled.Message);
+    }
+
+    [Fact]
+    public void Validate_TransitionPlacementGate_DoesNotFireWhereNoXfadeIsBuilt()
+    {
+        // YANLIŞ RET KONTROLÜ. Kapı Compile'daki `joined` koşuluna bağlıdır: geçiş VİDEODA
+        // ancak iki taraf da GÖRSEL katman ürettiğinde xfade'e çevrilir.
+        //  - GİZLİ track: yalnız ses kalır (acrossfade yerleşim bilmez),
+        //  - SES klibi: görsel katman zaten yok.
+        // İki halde de farklı yerleşim reddedilMEMELİDİR.
+        var hiddenA = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            audio: ExportTestDocs.Audio(), transform: ExportTestDocs.Transform(scale: 0.5));
+        var hiddenB = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            audio: ExportTestDocs.Audio(), transform: ExportTestDocs.Transform(scale: 0.25));
+        ExportTestDocs.Link(hiddenA, hiddenB, 400_000);
+
+        var audioA = ExportTestDocs.AudioClip(ExportTestDocs.AssetC, 0, 1_000_000, 3_000_000);
+        var audioB = ExportTestDocs.AudioClip(ExportTestDocs.AssetC, 2_000_000, 1_000_000, 3_000_000);
+        audioA.Transform = ExportTestDocs.Transform(scale: 0.5);
+        audioB.Transform = ExportTestDocs.Transform(scale: 0.25);
+        ExportTestDocs.Link(audioA, audioB, 400_000);
+
+        Assert.NotNull(ExportCompiler.Validate(ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(hidden: true, clips: [hiddenA, hiddenB]),
+            ExportTestDocs.AudioTrack(clips: [audioA, audioB]),
+        ])));
+    }
+
+    [Fact]
+    public void Validate_TransitionOnARotatedOffCenterAnchorLayer_ThrowsUnsupportedFeature()
+    {
+        // İkinci geçiş-yerleşim kuralı da Validate'e taşındı (İŞ 1): dönmüş + merkez dışı
+        // çapa, kutuya normalize pad'in çapa telafisini yanlış tabana oturtur.
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.5, rotationDeg: 30, anchorX: 0.25));
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.5, rotationDeg: 30, anchorX: 0.25));
+        ExportTestDocs.Link(a, b, 400_000);
+        var doc = ExportTestDocs.Doc(clips: [a, b]);
+
+        var validated = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
+        Assert.Equal("transition-rotated-anchor", validated.Feature);
+
+        var compiled = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p));
+        Assert.Equal(validated.Message, compiled.Message);
+    }
+
+    [Fact]
+    public void Validate_RotatedOffCenterAnchor_WithoutATransition_IsAccepted()
+    {
+        // Negatif kontrol: kural GEÇİŞE bağlıdır. Aynı yerleşim, geçiş OLMADAN kabul edilir
+        // (run bölünebilir, normalize pad'e gerek yoktur).
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.5, rotationDeg: 30, anchorX: 0.25));
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.5, rotationDeg: 30, anchorX: 0.25));
+
+        Assert.NotNull(ExportCompiler.Validate(ExportTestDocs.Doc(clips: [a, b])));
     }
 
     [Fact]
@@ -1800,7 +1935,7 @@ public sealed class ExportCompilerSnapshotTests
     }
 
     [Fact]
-    public void Compile_TransitionOnARotatedOffCenterAnchorLayer_ThrowsInvalidTimeline()
+    public void Compile_TransitionOnARotatedOffCenterAnchorLayer_ThrowsUnsupportedFeature()
     {
         // Geçişte run BÖLÜNEMEZ → kutuya normalize pad ZORUNLUDUR. §2.5'in çapa telafisi pad'i
         // gerçek görüntü boyutuna (iw/ih) göre ölçeklenir; normalize sonrası iw kutu boyutudur
@@ -1813,9 +1948,17 @@ public sealed class ExportCompilerSnapshotTests
         ExportTestDocs.Link(a, b, 400_000);
         var doc = ExportTestDocs.Doc(clips: [a, b]);
 
-        var ex = Assert.Throws<InvalidTimelineException>(
+        var ex = Assert.Throws<UnsupportedFeatureException>(
             () => ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p));
+        Assert.Equal("transition-rotated-anchor", ex.Feature);
         Assert.Contains("DÖNDÜRÜLMÜŞ", ex.Message);
+        // Mesaj YALNIZ bu gerekçeyi anlatmalı: kutu paritesi artık kapı değil, dolayısıyla
+        // "çift kutu" gibi ikinci bir gerekçe mesaja karışmamalı…
+        Assert.DoesNotContain("çift", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // …ve önerilen eylem arayüzde GERÇEKTEN yapılabilir olmalı (çapa alanı editörde YOK,
+        // dönme alanı var: clip-rotation).
+        Assert.DoesNotContain("Çapayı merkeze", ex.Message);
+        Assert.Contains("dönmesini 0", ex.Message);
 
         // Aynı çapa, DÖNMESİZ → geçiş çalışır ve pad çapa ORANLI yazılır (geometri korunur).
         var flat = ExportTestDocs.Transform(scale: 0.5, anchorX: 0, anchorY: 1);
@@ -1827,6 +1970,225 @@ public sealed class ExportCompilerSnapshotTests
             ExportTestDocs.Doc(clips: [c, d]), SdrSources(hasAudio: false), ExportProfile.Hd1080p);
         Assert.Contains("pad=960:540:0:(oh-ih)*1:color=#00000000", ok.FilterGraphScript);
         Assert.Contains("xfade=transition=fade:", ok.FilterGraphScript);
+    }
+
+    [Fact]
+    public void Compile_ContiguousClipsWithAnOddBox_StillConcatIntoOneRun()
+    {
+        // Kutu paritesi CanConcatRun'ın da kapısıydı: TEK kutulu bitişik klipler eskiden run'ı
+        // BÖLDÜRÜR ve klip başına ayrı overlay üretirdi. Pad hedefi çifte indirildiği için o
+        // kapı kalktı — aynı yerleşimli bitişik klipler artık geçişsiz yolda da TEK concat'e
+        // düşer (görüntü değişmez: ölçülen bbox pad'siz yolla BİREBİR aynı).
+        var odd = ExportTestDocs.Transform(x: 0.25, y: -0.25, scale: 0.501);
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 1_000_000, transform: odd),
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetC, 1_000_000, 0, 1_000_000, transform: odd),
+            ]),
+        ]);
+
+        var script = ExportCompiler.Compile(
+            doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p).FilterGraphScript;
+
+        Assert.Contains("concat=n=2:v=1:a=0[v0]", script);
+        Assert.Equal(1, script.Split(";\n").Count(l => l.Contains("]overlay=")));
+        // Ölçek hedefi HAM kutu (962x541), pad hedefi ÇİFT (962x540) — iki karar tek satırda.
+        Assert.Contains("scale=962:541:force_original_aspect_ratio=decrease", script);
+        Assert.Contains("pad=962:540:(ow-iw)/2:(oh-ih)/2:color=#00000000", script);
+        Assert.DoesNotContain("pad=962:541", script);
+        Assert.DoesNotContain("scale=962:540", script);
+    }
+
+    // ───────────────────── Dejenerelik kapısı (4. tur denetimi) ─────────────────────
+
+    /// <summary>Afiş kaynak defteri (1920x100 — en-boy 19.2:1, dejenerelik eşiği 0.011).</summary>
+    private static Dictionary<Guid, ExportAssetSource> BannerSources(int width = 1920, int height = 100) =>
+        new()
+        {
+            [ExportTestDocs.AssetA] = new("a.mp4", false, "bt709", "bt709", width, height),
+            [ExportTestDocs.AssetB] = new("b.mp4", false, "bt709", "bt709", width, height),
+            [ExportTestDocs.AssetC] = new("c.mp4", false, "bt709", "bt709", width, height),
+        };
+
+    /// <summary>
+    /// Yalnız BOYUT taşıyan asset defteri (dejenerelik kapısının kolu). Süre/dosya adı
+    /// bilerek boştur: bu testlerin konusu geometri kapısıdır ve defterin diğer alanları
+    /// null iken ilgili kapılar (kaynak aralığı, LUT türü) ATLANIR.
+    /// </summary>
+    private static Dictionary<Guid, ExportAssetFacts> Sizes(int width, int height) => new()
+    {
+        [ExportTestDocs.AssetA] = new ExportAssetFacts(width, height),
+        [ExportTestDocs.AssetB] = new ExportAssetFacts(width, height),
+        [ExportTestDocs.AssetC] = new ExportAssetFacts(width, height),
+    };
+
+    /// <summary>Sağ tık "böl"ün ürettiği şekil: aynı asset, aynı yerleşim, BİTİŞİK iki klip.</summary>
+    private static TimelineDoc SplitBannerDoc(double scale)
+    {
+        var transform = ExportTestDocs.Transform(scale: scale);
+        return ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000, transform: transform),
+                ExportTestDocs.VideoClip(
+                    ExportTestDocs.AssetA, 1_000_000, 1_000_000, 2_000_000, transform: transform),
+            ]),
+        ]);
+    }
+
+    [Fact]
+    public void Compile_DegenerateLayer_ThrowsTypedError_InsteadOfDyingInFfmpeg()
+    {
+        // RAPOR EDİLEN VAKA: 1920x100 afiş → böl (iki bitişik klip) → ikisine de ölçek 0.010 →
+        // kutu 19x11. Sığdırılan yükseklik 0.99 px → ffmpeg o ekseni 0 hesaplar, 18x100 çizer ve
+        // normalize pad (hedef 18x10) "Padded dimensions cannot be smaller" ile -22 verirdi.
+        // Artık derleme TİPLİ hatayla durur; ffmpeg hiç çağrılmaz.
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Compile(
+            SplitBannerDoc(0.010), BannerSources(), ExportProfile.Hd1080p));
+
+        Assert.Equal("degenerate-layer", ex.Feature);
+        Assert.Contains("1920x100", ex.Message);        // NEDEN: kaynağın oranı
+        Assert.Contains("19x11", ex.Message);           // hangi kutuda
+        Assert.Contains("yüksekliği", ex.Message);      // hangi eksen
+        Assert.Contains("en az 0.011", ex.Message);     // EYLEM: tek ve kesin bir sayı
+    }
+
+    [Fact]
+    public void Compile_DegenerateLayer_IsRejectedOnTheTransitionPathToo()
+    {
+        // Geçişli kesimde run BÖLÜNEMEZ → pad ZORUNLU → bu vaka parite düzeltmesinden sonra
+        // "202 kabul + worker'da ölüm"e dönüşmüştü (4. tur RED'inin S13 vakası). Kapı onu
+        // yeniden SENKRON hataya çevirir — ama artık DOĞRU gerekçeyle ('degenerate-layer',
+        // eskiden 'katman döndürülmüş ve çapası merkezde değil' deniyordu).
+        var transform = ExportTestDocs.Transform(scale: 0.010);
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000, transform: transform);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000, transform: transform);
+        ExportTestDocs.Link(a, b, 400_000);
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Compile(
+            ExportTestDocs.Doc(clips: [a, b]), BannerSources(), ExportProfile.Hd1080p));
+
+        Assert.Equal("degenerate-layer", ex.Feature);
+        Assert.DoesNotContain("DÖNDÜRÜLMÜŞ", ex.Message);
+    }
+
+    [Fact]
+    public void Compile_DegenerateLayer_IsRejectedEvenWhenFfmpegWouldNotComplain()
+    {
+        // ÖNCEDEN DE VAR OLAN SESSİZ SINIF: 200x10 kaynak, kutu 19x11 → çıktı 18x10. Pad hedefi
+        // 18x10 olduğu için ffmpeg HİÇ ŞİKÂYET ETMEZ (exit 0) — katman, önizlemenin çizdiği
+        // 20x1 yerine 10 KAT yüksek çizilirdi. Bu vaka düzeltme ÖNCESİNDE de sessizce bozuktu;
+        // kapı yalnız yeni bir sınıfı değil, eski sessiz bozulmayı da kapatır.
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Compile(
+            SplitBannerDoc(0.010), BannerSources(200, 10), ExportProfile.Hd1080p));
+
+        Assert.Equal("degenerate-layer", ex.Feature);
+        Assert.Contains("200x10", ex.Message);
+    }
+
+    [Fact]
+    public void Compile_ScaleJustAboveTheThreshold_StillConcatsIntoOneRun()
+    {
+        // Kapının ÜST tarafı: bir ızgara adımı yukarısı hem kabul edilmeli hem de parite
+        // düzeltmesinin kazancını (tek kutulu bitişik kliplerin TEK concat'e düşmesi) korumalı.
+        // 0.011 → kutu 21x12: genişlik TEK. Eskiden bu doküman run'ı böldürürdü.
+        var script = ExportCompiler.Compile(
+            SplitBannerDoc(0.011), BannerSources(), ExportProfile.Hd1080p).FilterGraphScript;
+
+        Assert.Contains("concat=n=2:v=1:a=0[v0]", script);
+        Assert.Equal(1, script.Split(";\n").Count(l => l.Contains("]overlay=")));
+        Assert.Contains("scale=21:12:force_original_aspect_ratio=decrease", script);
+        Assert.Contains("pad=20:12:(ow-iw)/2:(oh-ih)/2:color=#00000000", script);
+    }
+
+    [Fact]
+    public void Compile_WithoutSourceSizes_SkipsTheGateAndProducesTheIdenticalScript()
+    {
+        // KAPI ÇIKTIYI DEĞİŞTİRMEZ: boyut defteri yalnız RET üretir, filtergraph'a girmez.
+        // (Bu tur ExportSnapshots altındaki 29 mevcut snapshot'ın bayt bayt korunmasının nedeni
+        // budur — snapshot fixture'ları boyut taşımaz; 30. dosya, transition-odd-box.txt, bu
+        // turda YENİ üretildi.) Aynı doküman, boyutlu ve boyutsuz defterle AYNI script'i vermeli.
+        var doc = SplitBannerDoc(0.5);
+        var withSizes = ExportCompiler.Compile(doc, BannerSources(), ExportProfile.Hd1080p);
+        var without = ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p);
+
+        Assert.Equal(without.FilterGraphScript, withSizes.FilterGraphScript);
+
+        // Ve boyut BİLİNMEZKEN dejenere doküman bile derlenir (yanlış ret imkânsız).
+        Assert.NotNull(ExportCompiler.Compile(
+            SplitBannerDoc(0.010), SdrSources(hasAudio: false), ExportProfile.Hd1080p));
+    }
+
+    [Fact]
+    public void Validate_DegenerateLayer_IsRejectedSynchronouslyWhenSizesAreKnown()
+    {
+        var doc = SplitBannerDoc(0.010);
+
+        // Boyut defteri YOKSA Validate geçer (API asset hâlâ işlenirken yanlış 422 vermez)…
+        Assert.NotNull(ExportCompiler.Validate(doc));
+
+        // …VARSA aynı doküman senkron olarak reddedilir (iş kuyruğa hiç girmez).
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(doc, null, Sizes(1920, 100)));
+        Assert.Equal("degenerate-layer", ex.Feature);
+    }
+
+    [Fact]
+    public void Validate_DegeneracyIsAskedAtTheSmallestScaleKeyframe_NotTheLargest()
+    {
+        // scale animasyonu eval=frame ile KARE KARE uygulanır: tabanı dejenere bir kareye düşen
+        // animasyon o karelerde bozulur. Tavan kuralı (MaxLayerDimension) simetrik olarak
+        // MAKSİMUM ölçekle sorulur — bu iki kural aynı transform'un iki UCUNA bakar.
+        var clip = ExportTestDocs.VideoClip(
+            ExportTestDocs.AssetA, 0, 0, 1_000_000,
+            transform: ExportTestDocs.Transform(scale: 1.0));
+        clip.Keyframes = new KeyframeTracks
+        {
+            Scale = [ExportTestDocs.Kf(0, 1.0), ExportTestDocs.Kf(1_000_000, 0.010)],
+        };
+        var doc = ExportTestDocs.Doc(clips: clip);
+
+        // Statik ölçek 1.0 olduğu için TAVAN kuralı hiçbir şey görmez; TABAN dejeneredir.
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(doc, null, Sizes(1920, 100)));
+        Assert.Equal("degenerate-layer", ex.Feature);
+        // Kutu ANİMASYONLU yolun aritmetiğiyle: floor(1920*0.010)=19, floor(1080*0.010)=10.
+        // (Statik yolda aynı ölçek 19x11 verir — iki yol iki farklı kutu üretir.)
+        Assert.Contains("19x10", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_NormalAspectSources_AreNeverRejectedAcrossTheWholeEditorScaleGrid()
+    {
+        // YANLIŞ RET TARAMASI: kapı normal medyada HİÇ tetiklenmemeli. Editörün yazabildiği her
+        // ölçek (0.010 … 4.266, 3 ondalık) × yaygın kaynak oranları. Tavana çarpanlar 'transform-scale'
+        // ile reddedilir; burada aranan YALNIZ 'degenerate-layer'dır.
+        int[][] sources = [[1920, 1080], [1080, 1920], [3840, 2160], [640, 480], [512, 512], [2560, 1080]];
+        foreach (var src in sources)
+        {
+            var sizes = Sizes(src[0], src[1]);
+            for (var step = 10; step <= 4266; step++)
+            {
+                var doc = ExportTestDocs.Doc(clips: ExportTestDocs.VideoClip(
+                    ExportTestDocs.AssetA, 0, 0, 1_000_000,
+                    transform: ExportTestDocs.Transform(scale: step / 1000d)));
+                try
+                {
+                    ExportCompiler.Validate(doc, null, sizes);
+                }
+                catch (UnsupportedFeatureException ex) when (ex.Feature != "degenerate-layer")
+                {
+                    // tavan (transform-scale) — bu testin konusu değil
+                }
+                catch (UnsupportedFeatureException ex)
+                {
+                    Assert.Fail($"yanlış ret: kaynak {src[0]}x{src[1]}, ölçek {step / 1000d} → {ex.Message}");
+                }
+            }
+        }
     }
 
     [Fact]
@@ -1888,7 +2250,7 @@ public sealed class ExportCompilerSnapshotTests
             compiled.Inputs[1].ToArgs());
         Assert.Contains("scale=640:160:force_original_aspect_ratio=decrease", compiled.FilterGraphScript);
         // P = (960, 540 + 0.3*1080) = (960, 864); çapa merkez.
-        Assert.Contains("overlay=x=960-0.5*w:y=864-0.5*h:", compiled.FilterGraphScript);
+        Assert.Contains("overlay=x=floor(960-0.5*w):y=floor(864-0.5*h):", compiled.FilterGraphScript);
         Assert.Contains("enable='between(t,1.000000,2.983334)'", compiled.FilterGraphScript);
 
         // Metin SES ÜRETMEZ: mikse yalnız video klibi girer.
@@ -1915,7 +2277,8 @@ public sealed class ExportCompilerSnapshotTests
         Assert.Contains("scale=960:540:force_original_aspect_ratio=decrease", script); // şekil
         Assert.Contains("colorchannelmixer=aa=0.4", script);
         Assert.Contains("scale=480:270:force_original_aspect_ratio=decrease", script); // çıkartma
-        Assert.Contains("overlay=x=480-0.5*w:y=810-0.5*h:", script);                   // çıkartma P
+        // çıkartma P
+        Assert.Contains("overlay=x=floor(480-0.5*w):y=floor(810-0.5*h):", script);
         Assert.Equal(3, script.Split(";\n").Count(l => l.Contains("]overlay=")));
 
         // İkisi de sessiz: yalnız video klibinin sesi mikse girer.
@@ -2099,8 +2462,8 @@ public sealed class ExportCompilerSnapshotTests
 
         // P.x = W/2 + x*W → -0.25 ⇒ 480, +0.25 ⇒ 1440. Zaman ekseni 1.0 → 2.0 sn.
         Assert.Contains(
-            "x='if(lt(t,1.000000),480,if(lt(t,2.000000),480+(1440-480)*(t-1.000000)"
-            + "/(2.000000-1.000000),1440))-0.5*w'",
+            "x='floor(if(lt(t,1.000000),480,if(lt(t,2.000000),480+(1440-480)*(t-1.000000)"
+            + "/(2.000000-1.000000),1440))-0.5*w)'",
             compiled.FilterGraphScript);
         Assert.DoesNotContain("sendcmd", compiled.FilterGraphScript);
     }
@@ -2127,8 +2490,8 @@ public sealed class ExportCompilerSnapshotTests
         var compiled = ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p);
 
         Assert.DoesNotContain("sendcmd", compiled.FilterGraphScript);
-        Assert.Contains("overlay=x='if(lt(t,", compiled.FilterGraphScript);
-        Assert.EndsWith("-0.5*w'", OverlayXArgument(compiled.FilterGraphScript), StringComparison.Ordinal);
+        Assert.Contains("overlay=x='floor(if(lt(t,", compiled.FilterGraphScript);
+        Assert.EndsWith("-0.5*w)'", OverlayXArgument(compiled.FilterGraphScript), StringComparison.Ordinal);
 
         // Örneklenen HER kare için bir yaprak vardır ve yaprak değeri §3.2'nin C# referansıyla
         // (32 iterasyon bisection) BİREBİR aynı olmalıdır — preview ile aynı fonksiyon ailesi.
@@ -2209,11 +2572,14 @@ public sealed class ExportCompilerSnapshotTests
     }
 
     [Fact]
-    public void Compile_ExcessivelyLongEasedAnimation_HitsTheSampleBudget()
+    public void Validate_ExcessivelyLongEasedAnimation_HitsTheSampleBudget()
     {
         // §3.4 örneklemesi klip uzunluğuyla DOĞRUSAL büyür. Tavan aşıldığında graph okunamaz
-        // hale gelir (worker onu loglar) — sessiz kırpma yerine tipli hata, ve mesaj çözümü
-        // (lineer easing) söyler.
+        // hale gelir (worker onu loglar) — sessiz kırpma yerine tipli hata, ve mesaj İŞE
+        // YARAYAN eylemi (easing'i lineere çevirmek) söyler.
+        //
+        // KURAL YERİ DEĞİŞTİ (İŞ 1): kural artık Validate'te de yaşar — hesap saf doküman
+        // aritmetiğidir. Compile'daki sigorta AYNI cümleyi üretir.
         const long durationUs = 2_100_000_000; // 2100 sn @30fps = 63_000 kare
         var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, durationUs,
             transform: ExportTestDocs.Transform(scale: 0.5));
@@ -2229,11 +2595,46 @@ public sealed class ExportCompilerSnapshotTests
                 [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, durationUs)]),
         ]);
 
-        var ex = Assert.Throws<UnsupportedFeatureException>(
-            () => ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p));
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
         Assert.Equal("keyframe-sample-budget", ex.Feature);
-        Assert.Contains("lineer easing", ex.Message);
+        Assert.Contains("LİNEER yapın", ex.Message);
+        // TEK klip bütçeyi tek başına aşıyor → mesaj "önceki klipler tüketti" DEMEMELİ.
+        Assert.Contains("tek başına", ex.Message);
+        Assert.DoesNotContain("ÖNCEKİ", ex.Message);
+
+        var compiled = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Compile(doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p));
+        Assert.Equal(ex.Message, compiled.Message);
     }
+
+    [Fact]
+    public void Validate_SharedSampleBudget_BlamesTheSharingNotTheClip_AndLinearEasingFixesIt()
+    {
+        // ÖLÇÜLEN MESAJ KUSURU: bütçe TÜM klipler arasında PAYLAŞILIR, ama aşımı bildiren
+        // mesaj yalnız son klibi ve onun (60 000 yanında hiç olan) kendi örnek sayısını
+        // söylüyordu — kullanıcı suçlanan klibi kısaltarak sorunu ÇÖZEMEZDİ.
+        //
+        // Aşağıdaki belgede hiçbir klip tek başına bütçeyi aşmaz; toplamları aşar.
+        // (60 sn @30fps = 1800 kare; 'scale' kanalı ScaleWidth + ScaleHeight olarak İKİ KEZ
+        // örneklenir → klip başına ~3600 örnek. 17 klip ≈ 61 200 > 60 000.)
+        var doc = ExportTestDocs.CurvedScaleDoc(clipCount: 17);
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
+        Assert.Equal("keyframe-sample-budget", ex.Feature);
+        Assert.Contains("ORTAK örnekleme bütçesini aşıyor", ex.Message);
+        Assert.Contains("ÖNCEKİ", ex.Message);      // kaç klip harcadı
+        Assert.Contains("TÜM kliplere", ex.Message); // bütçe klibe ait DEĞİL
+        Assert.Contains("LİNEER yapın", ex.Message);
+
+        // ÖNERİLEN EYLEMİN GERÇEKTEN İŞE YARADIĞININ KANITI: aynı belgede yalnız easing
+        // lineere çevrilir (klip sayısı, süre, keyframe sayısı AYNI) → kabul edilir, çünkü
+        // lineer kanal kapalı forma derlenir ve bütçeden hiç harcamaz.
+        var linear = ExportTestDocs.LinearScaleDoc(clipCount: 17);
+        Assert.NotNull(ExportCompiler.Validate(linear));
+        Assert.NotNull(ExportCompiler.Compile(
+            linear, SdrSources(hasAudio: false), ExportProfile.Hd1080p));
+    }
+
 
     [Fact]
     public void Compile_KeyframedClip_GetsItsOwnRun_AndDisablesTheFastPath()
@@ -2417,11 +2818,12 @@ public sealed class ExportCompilerSnapshotTests
 
     // ---------- Raster (metin/şekil) katman tavanı — 3. tur denetim, blocker 2 ----------
     //
-    // KÖK NEDEN: EnsureLayerFits raster klipleri için YALNIZ Compile'da (PlacementOf)
-    // çağrılıyordu; ValidateGeometry "if (clip.NeedsServerRaster) return;" ile erken
-    // dönüyordu. API'nin 422 ön kapısı yalnız Validate'i çağırdığı için kural GÖRÜNMÜYORDU:
-    // iş kuyruğa giriyor ve dakikalar sonra worker'da düşüyordu (canlı ölçümle doğrulandı).
-    // Aşağıdaki testler kuralın Validate'te olduğunu ve gevşemediğini sabitler.
+    // KÖK NEDEN (3. tur): tavan+taban kuralı raster klipleri için YALNIZ Compile'da
+    // (PlacementOf) koşuyordu; ValidateGeometry raster dalında erken dönüyordu. API'nin 422
+    // ön kapısı yalnız Validate'i çağırdığı için kural GÖRÜNMÜYORDU: iş kuyruğa giriyor ve
+    // dakikalar sonra worker'da düşüyordu (canlı ölçümle doğrulandı).
+    // Aşağıdaki testler TAVANIN Validate'te olduğunu ve gevşemediğini sabitler; TABAN
+    // (EnsureLayerFloor) ayrı bir bölümde, ölçek animasyonuyla birlikte sınanır.
 
     /// <summary>Sabit bbox döndüren ölçer — kurulu font olmadan ÖLÇÜMLÜ yolu sürer.</summary>
     private sealed class StubMeasurer(double widthPx, double heightPx) : ITextRasterService
@@ -2506,21 +2908,48 @@ public sealed class ExportCompilerSnapshotTests
     [Fact]
     public void Validate_MeasurementFailure_FallsBackToTheLowerBound_NeverToAFalse422()
     {
-        // Ölçüm ALTYAPI işidir (font kökü, manifest, Skia). Patlaması kullanıcının belgesini
-        // geçersiz YAPMAZ — alt sınıra düşülür ve geçerli belge kabul edilir.
+        // ALTYAPI arızası (küratörlü TTF indirilmemiş): kullanıcının belgesini geçersiz
+        // YAPMAZ — alt sınıra düşülür, belge kabul edilir ve klip "ölçülemedi" defterine
+        // yazılır (HTTP katmanı oradan 503 üretir).
         var plan = ExportCompiler.Validate(
-            TextDoc(ExportTestDocs.TextClip(0, 1_000_000)), new ThrowingMeasurer());
+            TextDoc(ExportTestDocs.TextClip(0, 1_000_000)), new FontsNotInstalledMeasurer());
         Assert.Single(plan.RasterClips);
+        Assert.Single(plan.UnmeasuredTextClipIds);
     }
 
-    private sealed class ThrowingMeasurer : ITextRasterService
+    [Fact]
+    public void Validate_MeasurerDoesNotKnowTheFontId_IsADocumentFault_NotAnOutage()
+    {
+        // AYNI METODUN ZIT YARISI. İki fabrika farklı OLGU taşır ve ayrımın tek işareti
+        // ExpectedPath'tir: FileMissing yol taşır (kurulum), UnknownId taşımaz (belge).
+        // Ayrım yapılmazsa bilinmeyen bir fontId "sunucu şu an ölçemiyor, yeniden deneyin"
+        // (503) diye raporlanır — ama o istek hiçbir kurulumda çalışmaz.
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(
+            TextDoc(ExportTestDocs.TextClip(0, 1_000_000)), new UnknownFontIdMeasurer()));
+
+        Assert.Equal("font-missing", ex.Feature);
+    }
+
+    /// <summary>KURULUM arızası: id manifestte tanımlı, TTF diskte yok.</summary>
+    private sealed class FontsNotInstalledMeasurer : ITextRasterService
     {
         public Task<RasterResult> RenderAsync(
             Clip clip, ProjectSettings settings, string outputPath, CancellationToken ct = default) =>
             throw new InvalidOperationException("Validate raster ÜRETMEZ, yalnız ölçer.");
 
         public TextLayout Measure(TextClipText text, ProjectSettings settings) =>
-            throw FontNotFoundException.UnknownId("roboto", "(test)", []);
+            throw FontNotFoundException.FileMissing("roboto", "400", "/fonts/roboto/Regular.ttf");
+    }
+
+    /// <summary>BELGE hatası: manifestte böyle bir fontId yok (yol YOK).</summary>
+    private sealed class UnknownFontIdMeasurer : ITextRasterService
+    {
+        public Task<RasterResult> RenderAsync(
+            Clip clip, ProjectSettings settings, string outputPath, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Validate raster ÜRETMEZ, yalnız ölçer.");
+
+        public TextLayout Measure(TextClipText text, ProjectSettings settings) =>
+            throw FontNotFoundException.UnknownId(text.FontId, "(test)", []);
     }
 
     [Fact]
@@ -2557,12 +2986,277 @@ public sealed class ExportCompilerSnapshotTests
     }
 
     [Fact]
-    public void Validate_ShapeLayerBelowOnePixel_ThrowsInvalidTimeline()
+    public void Validate_ShapeLayerBelowTheScaleFloor_IsRejectedAsADegenerateLayer()
     {
-        // Kutu KESİN olduğunda asgari boyut kuralı da Validate'te işler (Compile'daki ile aynı).
+        // Kutu KESİN olduğunda TABAN kuralı da Validate'te işler. Hata sınıfı 'degenerate-layer':
+        // kutu < 2 dejenereliğin KAYNAKTAN BAĞIMSIZ yarısıdır (force_divisible_by=2 onu 0'a
+        // indirir), yani ayrı bir arıza değil aynı arızanın ölçülebilen yarısıdır.
         var doc = ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips:
             [ExportTestDocs.ShapeClip(0, 1_000_000, transform: ExportTestDocs.Transform(scale: 0.0005))])]);
-        Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(doc));
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
+        Assert.Equal("degenerate-layer", ex.Feature);
+        Assert.Contains("en az 0.002", ex.Message);   // EYLEM: (2-0.5)/1080 = 0.00139 → 0.002
+
+        // NEGATİF KONTROL: önerilen sayı GERÇEKTEN kabul edilir (mesaj yalan söylememeli).
+        var fits = ExportTestDocs.MultiTrackDoc([ExportTestDocs.OverlayTrack(clips:
+            [ExportTestDocs.ShapeClip(0, 1_000_000, transform: ExportTestDocs.Transform(scale: 0.002))])]);
+        Assert.Single(ExportCompiler.Validate(fits).RasterClips);
+    }
+
+    // ── Ölçek animasyonu: TAVAN en büyük keyframe'den, TABAN en küçüğünden (5. tur, BLOCKER 1) ──
+    //
+    // ADLANDIRMA (6. tur düzeltmesi): buradaki "taban" KEYFRAME MİNİMUMUDUR, örneklenen eğrinin
+    // minimumu değil — kapı AnimationTrack.MinValue okur (bkz. ExportCompiler.MinScaleOf'un
+    // KAPSAM NOTU: undershoot'lu serbest bir cubicBezier ara değerleri bu tabanın altına
+    // indirebilir; editör böyle bir eğri yazamaz, ham API'den yazılan belgede kapı Compile'da
+    // gerçek boyutla yeniden koşar).
+    //
+    // ÖLÇÜLEN HATA: yerleşim (dolayısıyla tavan) PlacementTransform ile ölçeğin MAKSİMUMUNDAN
+    // kuruluyordu; kutu ≥ 2 kuralı da o yerleşimden soruluyordu. Yani en küçük keyframe hiçbir
+    // kapıya görünmüyordu ve raster klibinde ValidateGeometry zaten erken dönüyordu. Canlı
+    // ölçüm (gerçek fare): metin ekle → ölçek keyframe'i → tabanı 0.010 yap → POST /exports
+    // 202, iş worker'da 'degenerate-layer' ile öldü. İkinci varyant daha kötüydü: bbox 6x20 →
+    // kutu 0x0 → filtergraph'a alt-piksel hedef yazıldı ve ffmpeg 99 kare yazdıktan SONRA
+    // 'Picture size 0x4 is invalid' ile öldü (exit -12).
+
+    /// <summary>Ölçek kanalı animasyonlu bir metin klibi (taban = son keyframe).</summary>
+    private static TextClip AnimatedScaleTextClip(
+        double staticScale, double floorScale, string content = "MERHABA")
+    {
+        var clip = ExportTestDocs.TextClip(0, 1_000_000, content: content,
+            transform: ExportTestDocs.Transform(scale: staticScale));
+        clip.Keyframes = new KeyframeTracks
+        {
+            Scale = [ExportTestDocs.Kf(0, staticScale), ExportTestDocs.Kf(1_000_000, floorScale)],
+        };
+        return clip;
+    }
+
+    [Fact]
+    public void Validate_TextLayerWhoseSmallestScaleKeyframeCollapsesTheBox_IsRejectedSynchronously()
+    {
+        // Canlı ölçümdeki VARYANT 1: ölçülen bbox 223x104 (PNG @2x = 446x208), taban 0.010 →
+        // kutu 2x1. Statik ölçek 1.0 olduğu için TAVAN kuralı hiçbir şey görmez.
+        var clip = AnimatedScaleTextClip(1.0, 0.010);
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(TextDoc(clip), new StubMeasurer(223, 104)));
+
+        Assert.Equal("degenerate-layer", ex.Feature);
+        Assert.Contains("2x1", ex.Message);                       // hangi kutuya iniyor
+        Assert.Contains("en küçük keyframe değeri 0.01", ex.Message); // NEREYE bakacağı
+        Assert.Contains("en az 0.02", ex.Message);                // EYLEM: 2/104 = 0.01923 → 0.020
+    }
+
+    [Fact]
+    public void Validate_TextLayerWhoseSmallestScaleKeyframeCollapsesTheBoxToZero_IsRejectedSynchronously()
+    {
+        // VARYANT 2 (daha kötü): bbox 6x20, taban 0.010 → kutu 0x0. Eski kapı burada
+        // "bilinmiyor" diyip GEÇİRİYORDU (IsDegenerate kutu ≤ 0'da false dönüyordu) ve
+        // filtergraph'a scale=w='...*0.06':h='...*0.2' yazılıyordu.
+        var clip = AnimatedScaleTextClip(1.0, 0.010, content: ".");
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(TextDoc(clip), new StubMeasurer(6, 20)));
+
+        Assert.Equal("degenerate-layer", ex.Feature);
+        Assert.Contains("0x0", ex.Message);
+        Assert.Contains("en az 0.334", ex.Message);  // 2/6 = 0.3333 → 0.334 — genişlik bağlıyor
+    }
+
+    [Fact]
+    public void Validate_TextLayerCeilingIsAskedAtTheLargestScaleKeyframe_NotTheSmallest()
+    {
+        // SİMETRİK YÖN: aynı klipte tavan MAKSİMUMDAN sorulmaya devam etmeli. Taban 0.5
+        // (kutu 2000x100 — sığar), tavan 5.0 (kutu 20000x1000 — 8192'yi aşar).
+        var clip = AnimatedScaleTextClip(0.5, 0.5);
+        clip.Keyframes = new KeyframeTracks
+        {
+            Scale = [ExportTestDocs.Kf(0, 0.5), ExportTestDocs.Kf(1_000_000, 5.0)],
+        };
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(TextDoc(clip), new StubMeasurer(4000, 200)));
+        Assert.Equal("transform-scale", ex.Feature);
+        Assert.Contains("20000x1000", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_ScaleKeyframeFloorAboveTheThreshold_IsAccepted_AndTheSuggestedScaleWorks()
+    {
+        // YANLIŞ RET KONTROLÜ — sınırın İKİ yanı. bbox 223x104, animasyonlu (KIRPILAN) kutu:
+        //   0.019 → floor(4.237)=4, floor(1.976)=1 → REDDEDİLİR,
+        //   0.020 → floor(4.46)=4,  floor(2.08)=2  → KABUL EDİLİR.
+        // Eşik 0.015 DEĞİLDİR: 0.015 statik yolun (roundHalfUp) eşiğidir ve animasyonlu yolda
+        // ffmpeg'i öldürüyordu — gerçek fare E2E'sinin ölçtüğü şey tam olarak budur.
+        Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(
+                TextDoc(AnimatedScaleTextClip(1.0, 0.019)), new StubMeasurer(223, 104)));
+
+        var plan = ExportCompiler.Validate(
+            TextDoc(AnimatedScaleTextClip(1.0, 0.020)), new StubMeasurer(223, 104));
+        Assert.Single(plan.RasterClips);
+
+        // Aynı 0.015 STATİK olarak hâlâ kabul edilir: iki yol iki farklı kutu üretir ve kapı
+        // ikisini KARIŞTIRMAMALIDIR (statikte kutu 3x2, animasyonluda 3x1).
+        var stat = ExportTestDocs.TextClip(0, 1_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.015));
+        Assert.Single(ExportCompiler.Validate(TextDoc(stat), new StubMeasurer(223, 104)).RasterClips);
+
+        // Ve normal bir başlık animasyonu (1.0 → 0.5) hiçbir şekilde reddedilmemeli.
+        Assert.Single(ExportCompiler.Validate(
+            TextDoc(AnimatedScaleTextClip(1.0, 0.5)), new StubMeasurer(223, 104)).RasterClips);
+    }
+
+    [Fact]
+    public void Validate_TextFloorGate_IsSkippedWhenTheBoxIsOnlyALowerBound()
+    {
+        // ÖLÇÜM YOKKEN kutu bir ALT SINIRDIR ve alt sınırdan TABAN sorulamaz: gerçek kutu daha
+        // BÜYÜKTÜR, yani "alt sınır 2'nin altında" hiçbir şey kanıtlamaz. Aynı belge ölçümsüz
+        // kabul edilir (yanlış 422 yok), ölçümle reddedilir — fark YALNIZ ölçerdir.
+        Assert.Single(ExportCompiler.Validate(
+            TextDoc(AnimatedScaleTextClip(1.0, 0.010))).RasterClips);
+        Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(
+                TextDoc(AnimatedScaleTextClip(1.0, 0.010)), new StubMeasurer(223, 104)));
+    }
+
+    [Fact]
+    public void Compile_TextLayerWhoseSmallestScaleKeyframeCollapsesTheBox_NeverReachesFfmpeg()
+    {
+        // KUYRUK SONRASI ÖLÜMÜN İKİNCİ SAVUNMASI: ölçüm hattı kapalı bir kurulumda belge
+        // Validate'i geçer, ama worker Compile'da GERÇEK PNG boyutunu bilir. Orada da tipli
+        // hata çıkmalı — ffmpeg'in -12'si ya da sessiz yanlış geometri DEĞİL.
+        var clip = AnimatedScaleTextClip(1.0, 0.010);
+        var doc = TextDoc(clip);
+        var rasters = new Dictionary<Guid, ExportRasterSource>
+        {
+            [clip.Id] = new("rasters/text.png", 223, 104, 446, 208),
+        };
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Compile(
+            doc, SdrSources(hasAudio: false), ExportProfile.Hd1080p, rasters));
+        Assert.Equal("degenerate-layer", ex.Feature);
+
+        // NEGATİF KONTROL: aynı yolda tabanı eşiğin üstüne çek → derleme TAMAMLANIR ve
+        // üretilen ifadenin TABAN DEĞERİ ffmpeg'in kırpmasından sonra ≥ 2 kalır.
+        var ok = AnimatedScaleTextClip(1.0, 0.020);
+        var script = ExportCompiler.Compile(
+            TextDoc(ok), SdrSources(hasAudio: false), ExportProfile.Hd1080p,
+            new Dictionary<Guid, ExportRasterSource>
+            {
+                [ok.Id] = new("rasters/text.png", 223, 104, 446, 208),
+            }).FilterGraphScript;
+
+        // İfadenin tabanı GERÇEKTEN filtergraph'ta: 223*0.020 = 4.46, 104*0.020 = 2.08.
+        Assert.Contains("scale=w='", script);
+        Assert.Contains("4.46", script);
+        Assert.Contains("2.08", script);
+        Assert.Equal((4L, 2L), LayerGeometry.ScaleBoxTruncated(223, 104, 0.020));
+    }
+
+    [Fact]
+    public void Validate_MediaFloorGate_AsksTheSmallestScaleKeyframeEvenWithoutASourceLedger()
+    {
+        // Medya klibinde kaynak defteri OLMASA da kaynaktan bağımsız yarı sorulabilir:
+        // 1920x1080 tuvalde taban 0.001 → kutu 2x1. Bu belge eskiden 202 alıyordu.
+        var clip = ExportTestDocs.VideoClip(
+            ExportTestDocs.AssetA, 0, 0, 1_000_000,
+            transform: ExportTestDocs.Transform(scale: 1.0));
+        clip.Keyframes = new KeyframeTracks
+        {
+            Scale = [ExportTestDocs.Kf(0, 1.0), ExportTestDocs.Kf(1_000_000, 0.001)],
+        };
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(ExportTestDocs.Doc(clips: clip)));
+        Assert.Equal("degenerate-layer", ex.Feature);
+        Assert.Contains("1x1", ex.Message);   // floor(1.92)=1, floor(1.08)=1
+
+        // NEGATİF KONTROL: editörün yazabildiği en küçük ölçek (0.010 → kutu 19x11) defter
+        // yokken REDDEDİLMEZ — kaynaktan bağımsız yarı normal medyayı hiç kesmemeli.
+        var editable = ExportTestDocs.VideoClip(
+            ExportTestDocs.AssetA, 0, 0, 1_000_000,
+            transform: ExportTestDocs.Transform(scale: 1.0));
+        editable.Keyframes = new KeyframeTracks
+        {
+            Scale = [ExportTestDocs.Kf(0, 1.0), ExportTestDocs.Kf(1_000_000, 0.010)],
+        };
+        Assert.Single(ExportCompiler.Validate(ExportTestDocs.Doc(clips: editable)).Clips);
+    }
+
+    [Fact]
+    public void Validate_EditorReachableScaleKeyframeFloors_OverTheSweptBboxes_AreDecidedByTheGate()
+    {
+        // KAPSAM TARAMASI: editörün yazabildiği HER ölçek tabanı (0.010 … 4.266, 3 ondalık)
+        // × birkaç metin bbox'ı. Her vaka İKİ sonuçtan birine düşmeli: ya kapı reddeder, ya da
+        // yerleşimin tabanı GERÇEKTEN çizilebilir (kutu ≥ 2). "Kabul edildi ama kutu < 2"
+        // bileşimi = kuyruk sonrası ölüm; bu tarama tam olarak onu 0'a sabitler.
+        double[][] boxes = [[223, 104], [6, 20], [640, 160], [1200, 90], [64, 64]];
+        var rejected = 0;
+        var accepted = 0;
+        foreach (var box in boxes)
+        {
+            var measurer = new StubMeasurer(box[0], box[1]);
+            for (var step = 10; step <= 4266; step++)
+            {
+                var floor = step / 1000d;
+                var doc = TextDoc(AnimatedScaleTextClip(Math.Max(1.0, floor), floor));
+                try
+                {
+                    ExportCompiler.Validate(doc, measurer);
+                }
+                catch (UnsupportedFeatureException)
+                {
+                    rejected++;
+                    continue;
+                }
+
+                // KUTU, ANİMASYONLU YOLUN aritmetiğiyle sorulur (ffmpeg ifadeyi KIRPAR):
+                // roundHalfUp ile sormak tam olarak kapının kaçırdığı bandı gizlerdi.
+                var (w, h) = LayerGeometry.ScaleBoxTruncated(box[0], box[1], floor);
+                Assert.False(
+                    LayerGeometry.IsBelowScaleFloor(w, h),
+                    $"bbox {box[0]}x{box[1]}, taban {floor}: kutu {w}x{h} kabul edildi");
+                accepted++;
+            }
+        }
+
+        Assert.True(rejected > 0, "hiçbir vaka reddedilmedi — tarama kapıyı hiç sürmemiş olabilir");
+        Assert.True(accepted > 0, "hiçbir vaka kabul edilmedi — kapı her şeyi kesiyor olabilir");
+    }
+
+    [Fact]
+    public void Validate_AnimatedMediaOnTheSweptNormalAspects_IsNotRejected_AcrossTheEditorScaleGrid()
+    {
+        // YANLIŞ RET TARAMASININ ANİMASYONLU EŞİ: taban kuralı animasyonlu yolda daha SIKI bir
+        // aritmetik kullanır (kırpma), yani normal medyayı kesme riski de orada daha yüksektir.
+        // Editörün yazabildiği her ölçek TABANI × yaygın kaynak oranları; aranan YALNIZ
+        // 'degenerate-layer'dır (tavana çarpanlar 'transform-scale' ile reddedilir).
+        int[][] sources = [[1920, 1080], [1080, 1920], [3840, 2160], [640, 480], [512, 512], [2560, 1080]];
+        foreach (var src in sources)
+        {
+            var sizes = Sizes(src[0], src[1]);
+            for (var step = 10; step <= 4266; step++)
+            {
+                var clip = ExportTestDocs.VideoClip(
+                    ExportTestDocs.AssetA, 0, 0, 1_000_000,
+                    transform: ExportTestDocs.Transform(scale: 1.0));
+                clip.Keyframes = new KeyframeTracks
+                {
+                    Scale = [ExportTestDocs.Kf(0, 1.0), ExportTestDocs.Kf(1_000_000, step / 1000d)],
+                };
+                try
+                {
+                    ExportCompiler.Validate(ExportTestDocs.Doc(clips: clip), null, sizes);
+                }
+                catch (UnsupportedFeatureException ex) when (ex.Feature != "degenerate-layer")
+                {
+                    // tavan (transform-scale) — bu testin konusu değil
+                }
+                catch (UnsupportedFeatureException ex)
+                {
+                    Assert.Fail(
+                        $"yanlış ret: kaynak {src[0]}x{src[1]}, en küçük keyframe {step / 1000d} → {ex.Message}");
+                }
+            }
+        }
     }
 
     [Fact]

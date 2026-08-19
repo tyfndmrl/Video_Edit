@@ -203,7 +203,10 @@ test.describe('409 çakışma diyaloğu açıkken geçmişte gezinme (bulgu 1)',
 
     // BAŞKA bir istemci projeyi kaydeder -> tarayıcının revizyon tabanı bayatlar.
     const detail = await getProject(account.context.request, account.accessToken, seed.projectId);
-    const fresh = buildSeedDoc(seed.projectId);
+    // Rakip kayıt da AYNI asset satırını gösterir: seed'in sözleşmesi gereği
+    // doküman kullanıcının kütüphanesindeki bir varlığa bağlıdır (fixtures/seed.ts).
+    expect(seed.assetId, 'Seed asset satırı kurulmamış (hazır proje modu mu?).').not.toBeNull();
+    const fresh = buildSeedDoc(seed.projectId, seed.assetId!);
     await saveTimeline(
       account.context.request,
       account.accessToken,

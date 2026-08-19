@@ -25,6 +25,42 @@ export const SUPPORTED_EXTENSIONS = [
 /** <input type="file" accept="..."> değeri. */
 export const FILE_ACCEPT = SUPPORTED_EXTENSIONS.join(',');
 
+/**
+ * Uzantı → sunucuya BİLDİRİLECEK contentType. Anahtarlar `SUPPORTED_EXTENSIONS`,
+ * değerler backend'in `UploadRules.ContentTypeKinds` whitelist'idir; ikisinin
+ * eşleştiği `fileTypes.test.ts`'te sabitlenir.
+ *
+ * NEDEN `File.type` KULLANILMIYOR (ÖLÇÜLDÜ — gerçek tarayıcı, gerçek dosya):
+ * Chromium/Windows bir `.m4a` için `audio/x-m4a` bildiriyor; o değer sunucunun
+ * whitelist'inde YOKTUR ve yükleme daha ilk adımda İngilizce bir sunucu hatasıyla
+ * düşüyordu ("contentType is not allowed. Allowed: …"). Yani kullanıcı arayüzün
+ * kendi vaadine (`.m4a` accept listesinde, hata metni "MP3/M4A/WAV
+ * yükleyebilirsiniz" diyor) rağmen MÜZİK EKLEYEMİYORDU — makineye/kayıt defterine
+ * göre değişen, sessiz ve tam olarak reprodüksiyonu zor bir hata. Dosya türü kararı
+ * zaten UZANTIDAN veriliyor (`isSupportedMediaFile`); bildirilen tipin de aynı tek
+ * kaynaktan gelmesi bu ayrışmayı imkânsız kılar.
+ */
+const EXTENSION_CONTENT_TYPES: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.wav': 'audio/wav',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+};
+
+/**
+ * Dosya adının uzantısından sunucunun kabul ettiği contentType; whitelist dışı
+ * uzantıda `null` (o dosya zaten `isSupportedMediaFile` kapısından geçemez).
+ */
+export function contentTypeForFileName(fileName: string): string | null {
+  return EXTENSION_CONTENT_TYPES[fileExtension(fileName)] ?? null;
+}
+
 /** Küçük harfli uzantı ('.mp4'); uzantı yoksa boş string. */
 export function fileExtension(fileName: string): string {
   const i = fileName.lastIndexOf('.');

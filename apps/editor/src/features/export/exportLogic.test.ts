@@ -44,6 +44,48 @@ describe('mapExportError (ExportDialog message)', () => {
     );
   });
 
+  it('422 with an asset-fact code is NOT framed as an unsupported feature', () => {
+    // These codes mean the document conflicts with the user's own library.
+    // "Unsupported feature" would send them looking for a feature to remove instead of
+    // a file to fix. The list is the server's `AssetFactFeatures` mirror; a backend
+    // guard compares both sources so it cannot silently drift.
+    for (const feature of [
+      'asset-missing',
+      'source-out-of-range',
+      'lut-asset-type',
+      'asset-clip-type',
+      'asset-failed',
+    ]) {
+      const err = mapExportError(422, {
+        status: 422,
+        feature,
+        detail: 'Timeline artık var olmayan bir dosyayı kullanıyor',
+      });
+      expect(err.kind).toBe('asset');
+      expect(err.message).toBe(
+        'Bu projedeki bir dosya dışa aktarılamıyor: Timeline artık var olmayan bir dosyayı kullanıyor',
+      );
+    }
+
+    // Negative control: any other feature code keeps the unsupported-feature framing.
+    expect(mapExportError(422, { feature: 'transform-scale', detail: 'x' }).kind).toBe(
+      'unsupported',
+    );
+  });
+
+  it('503: server-side unavailability surfaces the detail (not a bare "try again")', () => {
+    const err = mapExportError(503, {
+      status: 503,
+      feature: 'text-measure-unavailable',
+      detail: 'Metin klibinin çizim kutusu ölçülemiyor (sunucuda font kurulumu eksik)',
+    });
+    expect(err.kind).toBe('unavailable');
+    expect(err.message).toBe(
+      'Sunucu bu dışa aktarmayı şu an yapamıyor: Metin klibinin çizim kutusu ölçülemiyor (sunucuda font kurulumu eksik)',
+    );
+    expect(mapExportError(503, undefined).message).toMatch(/şu an yapamıyor/);
+  });
+
   it('429: concurrent-limit info (not styled as an error)', () => {
     const err = mapExportError(429, { title: 'Too many requests' });
     expect(err.kind).toBe('limit');

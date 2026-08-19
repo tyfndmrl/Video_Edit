@@ -12,6 +12,7 @@ using VideoEdit.Domain;
 using VideoEdit.Domain.Entities;
 using VideoEdit.Infrastructure;
 using VideoEdit.Infrastructure.Storage;
+using VideoEdit.Media.Export;
 using VideoEdit.Media.Text;
 
 namespace VideoEdit.UnitTests;
@@ -49,7 +50,16 @@ public sealed class ExportEndpointsTests : IDisposable
     private static ClaimsPrincipal PrincipalFor(Guid userId) =>
         new(new ClaimsIdentity([new Claim("sub", userId.ToString("D"))], "test"));
 
-    private async Task<Project> SeedProjectAsync(Guid? owner = null, string? timelineJson = null)
+    /// <param name="seedAssets">
+    /// Dokümanın atıfta bulunduğu her asset için kütüphanede bir satır oluşturulsun mu
+    /// (varsayılan: evet). Senkron <c>asset-missing</c> kapısı eklenmeden ÖNCE bu testlerin
+    /// çoğu var OLMAYAN asset'lere atıf yapıyordu ve API onları 202 ile kabul ediyordu; iş
+    /// worker'da <c>asset-missing</c> ile düşerdi. Artık kapı API'de olduğu için "geçerli
+    /// belge" testleri gerçek bir kütüphaneyle koşmak ZORUNDADIR — aksi halde ölçtükleri şey
+    /// kabul değil, kaza eseri geçen bir ret olurdu.
+    /// </param>
+    private async Task<Project> SeedProjectAsync(
+        Guid? owner = null, string? timelineJson = null, bool seedAssets = true)
     {
         var projectId = Guid.CreateVersion7();
         timelineJson ??= ExportTestDocs.ToJson(ExportTestDocs.Doc(
@@ -66,7 +76,45 @@ public sealed class ExportEndpointsTests : IDisposable
         };
         _db.Projects.Add(project);
         await _db.SaveChangesAsync();
+
+        if (seedAssets)
+        {
+            await SeedReferencedAssetsAsync(timelineJson);
+        }
+
         return project;
+    }
+
+    /// <summary>
+    /// Dokümanın atıfta bulunduğu her asset için "sağlıklı" bir kütüphane satırı yazar
+    /// (1920x1080, 1 saat, sesli). Zaten satırı olan id ATLANIR — testler kendi özel
+    /// satırlarını (ör. afiş boyutu) <see cref="SeedAssetAsync"/> ile ÖNCE kurabilir.
+    /// <para>
+    /// Satırın TÜRÜ belgedeki kullanımından gelir (<see cref="ExportTestDocs.AssetKindFor"/>):
+    /// çıkartma/görsel klibi bir GÖRSEL satırını, ses klibi bir SES satırını gösterir. Gerçek
+    /// kütüphanede başka türlüsü kurulamaz ve <c>asset-clip-type</c> kapısı da bunu şart koşar.
+    /// </para>
+    /// </summary>
+    private async Task SeedReferencedAssetsAsync(string timelineJson)
+    {
+        var doc = JsonSerializer.Deserialize<VideoEdit.Contracts.Timeline.TimelineDoc>(
+            timelineJson, VideoEdit.Contracts.TimelineJson.Options)!;
+        foreach (var id in ExportCompiler.ReferencedAssetIds(doc))
+        {
+            if (_db.Assets.Any(a => a.Id == id))
+            {
+                continue;
+            }
+
+            var kind = ExportTestDocs.AssetKindFor(doc, id);
+            await SeedAssetAsync(
+                id, 1920, 1080,
+                // Görselin süresi ve sesi YOKTUR (ProcessAssetJob.GateByKind) — fixture
+                // gerçek kütüphaneden ayrışmamalı.
+                durationMicros: kind == AssetKind.Image ? null : 3_600_000_000,
+                hasAudio: kind != AssetKind.Image,
+                kind: kind);
+        }
     }
 
     /// <summary>
@@ -199,6 +247,371 @@ public sealed class ExportEndpointsTests : IDisposable
         Assert.Equal(0, _jobs.CreateCount); // kuyruğa çöp atılmadı
     }
 
+    /// <summary>
+    /// Senkron kapıların defterini besleyen asset satırı. <paramref name="width"/>/
+    /// <paramref name="height"/> null bırakılırsa "asset hâlâ işleniyor" hali simüle edilir
+    /// (geometri kapısı ATLANMALI, yanlış 422 üretmemeli).
+    /// </summary>
+    private async Task SeedAssetAsync(
+        Guid id, int? width, int? height,
+        long? durationMicros = 3_600_000_000, string fileName = "banner.mp4",
+        bool hasAudio = true, AssetKind kind = AssetKind.Video,
+        AssetStatus status = AssetStatus.Ready)
+    {
+        _db.Assets.Add(new Asset
+        {
+            Id = id,
+            OwnerId = _userId,
+            Status = status,
+            Kind = kind,
+            OriginalFileName = fileName,
+            StorageKey = $"u/{_userId}/a/{id}/original/source.mp4",
+            ContentType = "video/mp4",
+            SizeBytes = 1024,
+            Width = width,
+            Height = height,
+            DurationMicros = durationMicros,
+            HasAudio = hasAudio,
+            CreatedAt = DateTimeOffset.UtcNow,
+            ReadyAt = DateTimeOffset.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>1920x1080 tuvalde tek afiş klibi — <paramref name="scale"/> kapının kolu.</summary>
+    private Task<Project> SeedBannerProjectAsync(double scale) => SeedProjectAsync(
+        timelineJson: ExportTestDocs.ToJson(ExportTestDocs.Doc(clips:
+            ExportTestDocs.VideoClip(
+                ExportTestDocs.AssetA, 0, 0, 1_000_000,
+                transform: ExportTestDocs.Transform(scale: scale)))));
+
+    [Fact]
+    public async Task StartExport_DegenerateLayer_Returns422_BeforeQueueing()
+    {
+        // 4. tur denetiminin ASIL BULGUSU. 1920x100 afiş + ölçek 0.010 → kutu 19x11; ffmpeg'in
+        // sığdırdığı yükseklik 0.99 px'e düşer, filtre o ekseni 0 hesaplar ve katmanı 18x100
+        // çizer. Kapı olmasaydı: PUT 200 → POST 202 → dakikalar sonra kartta "Başarısız"
+        // (ffmpeg -22). Kural artık SENKRON: iş kuyruğa HİÇ girmez.
+        await SeedAssetAsync(ExportTestDocs.AssetA, 1920, 100);
+        var project = await SeedBannerProjectAsync(0.010);
+
+        var result = await CallStartAsync(project.Id);
+
+        var problem = Assert.IsType<ProblemHttpResult>(result);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("degenerate-layer", problem.ProblemDetails.Extensions["feature"]);
+        // Mesaj NEDENİ (kaynağın oranı) ve EYLEMİ (tek ve kesin bir sayı) taşımalı.
+        Assert.Contains("1920x100", problem.ProblemDetails.Detail);
+        Assert.Contains("en az 0.011", problem.ProblemDetails.Detail);
+        Assert.Empty(_db.Jobs.ToList());   // job satırı yazılmadı
+        Assert.Equal(0, _jobs.CreateCount); // kuyruğa çöp atılmadı
+    }
+
+    [Fact]
+    public async Task StartExport_ScaleJustAboveTheDegenerateThreshold_IsAccepted()
+    {
+        // Kapının bir ızgara adımı ÜSTÜ kabul edilmeli — aksi halde 422 mesajının önerdiği sayı
+        // yalan olurdu. Eşik: (ceil(1920/100) - 0.5)/1920 = 0.010156 → 0.011.
+        await SeedAssetAsync(ExportTestDocs.AssetA, 1920, 100);
+        var project = await SeedBannerProjectAsync(0.011);
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+    }
+
+    [Fact]
+    public async Task StartExport_NormalAspectSource_IsUnaffectedAtTheSmallestWritableScale()
+    {
+        // Kapı yalnız AŞIRI oranlı kaynakları görür. 16:9 bir video, editörün yazabildiği EN
+        // KÜÇÜK ölçekte (0.01) bile dejenere olamaz — normal kullanıcı için davranış değişmez.
+        await SeedAssetAsync(ExportTestDocs.AssetA, 1920, 1080);
+        var project = await SeedBannerProjectAsync(0.010);
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+    }
+
+    [Fact]
+    public async Task StartExport_DegenerateLayerButUnknownSourceSize_IsStillAccepted()
+    {
+        // "Ölçüm yokluğu yanlış ret üretmez" presedanı (ExportCompiler.Validate'in
+        // sourceSizes/overlayMeasurer sözleşmesiyle aynı):
+        // asset hâlâ işleniyorsa Width/Height NULL'dur → kapı ATLANIR. Yarışta yanlış 422
+        // vermektense worker'daki ffprobe yarısına bırakılır.
+        await SeedAssetAsync(ExportTestDocs.AssetA, null, null);
+        var project = await SeedBannerProjectAsync(0.010);
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+    }
+
+    [Fact]
+    public async Task StartExport_ForeignAsset_Returns422_AssetMissing()
+    {
+        // Defter SAHİPLİK filtresinden geçer. İki sonucu birden sabitler:
+        //  (a) başkasının satırı GEOMETRİ kapısını besleyemez (aksi halde bir kullanıcı, id
+        //      tahmin ederek başkasının belgesini reddettirebilirdi) — dolayısıyla 1920x100
+        //      afiş boyutu burada HİÇ okunmaz ve ret 'degenerate-layer' DEĞİLDİR;
+        //  (b) sahibi olmadığın bir varlığa atıf artık SENKRON 'asset-missing'tir. Eskiden
+        //      POST 202 dönüyordu ve iş worker'da aynı kodla düşüyordu.
+        _db.Assets.Add(new Asset
+        {
+            Id = ExportTestDocs.AssetA,
+            OwnerId = Guid.CreateVersion7(), // BAŞKASININ
+            Status = AssetStatus.Ready,
+            Kind = AssetKind.Video,
+            OriginalFileName = "banner.mp4",
+            StorageKey = "u/x/a/y/original/source.mp4",
+            ContentType = "video/mp4",
+            SizeBytes = 1024,
+            Width = 1920,
+            Height = 100,
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+        var project = await SeedProjectAsync(
+            timelineJson: ExportTestDocs.ToJson(ExportTestDocs.Doc(clips:
+                ExportTestDocs.VideoClip(
+                    ExportTestDocs.AssetA, 0, 0, 1_000_000,
+                    transform: ExportTestDocs.Transform(scale: 0.010)))),
+            seedAssets: false);
+
+        var problem = Assert.IsType<ProblemHttpResult>(await CallStartAsync(project.Id));
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("asset-missing", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    // ---------- Asset OLGULARINA dayanan senkron kapılar (bu tur) ----------
+
+    [Fact]
+    public async Task StartExport_DeletedAsset_Returns422_BeforeQueueing()
+    {
+        // Soft-delete edilmiş varlık defterde YOKTUR → 'asset-missing'. Eskiden POST 202
+        // dönüyor, iş worker'da aynı kodla düşüyordu.
+        await SeedAssetAsync(ExportTestDocs.AssetA, 1920, 1080);
+        var asset = _db.Assets.Single(a => a.Id == ExportTestDocs.AssetA);
+        asset.DeletedAt = DateTimeOffset.UtcNow;
+        await _db.SaveChangesAsync();
+
+        var project = await SeedProjectAsync(seedAssets: false);
+
+        var problem = Assert.IsType<ProblemHttpResult>(await CallStartAsync(project.Id));
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("asset-missing", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Contains(ExportTestDocs.AssetA.ToString(), problem.ProblemDetails.Detail);
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [Fact]
+    public async Task StartExport_AssetStillProcessing_IsNotMissing()
+    {
+        // YANLIŞ RET KONTROLÜ. Satır VAR ama ölçüleri henüz yok (Width/Height/Duration null,
+        // Status=Processing). 'asset-missing' SATIR YOKLUĞUNA bakar, alan yokluğuna değil;
+        // ayrıca 'asset-not-ready' BİLEREK senkron değildir — iş kuyruktan alınana kadar
+        // asset Ready olabilir.
+        await SeedAssetAsync(ExportTestDocs.AssetA, null, null, durationMicros: null);
+        var asset = _db.Assets.Single(a => a.Id == ExportTestDocs.AssetA);
+        asset.Status = AssetStatus.Processing;
+        await _db.SaveChangesAsync();
+
+        var project = await SeedProjectAsync(seedAssets: false);
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+    }
+
+    [Fact]
+    public async Task StartExport_ClipReadingPastTheSourceEnd_Returns422_BeforeQueueing()
+    {
+        // Kural eskiden YALNIZ worker'daydı (indirme + ffprobe SONRASI). Aynı sayı DB'de
+        // duruyordu: Asset.DurationMicros'u ProcessAssetJob MediaProbe.DurationUs'ten yazar.
+        await SeedAssetAsync(ExportTestDocs.AssetA, 1920, 1080, durationMicros: 10_000_000);
+        var project = await SeedProjectAsync(
+            timelineJson: ExportTestDocs.ToJson(ExportTestDocs.Doc(clips:
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 12_000_000, 20_000_000))),
+            seedAssets: false);
+
+        var problem = Assert.IsType<ProblemHttpResult>(await CallStartAsync(project.Id));
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("source-out-of-range", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Contains("20000000", problem.ProblemDetails.Detail); // istenen
+        Assert.Contains("10000000", problem.ProblemDetails.Detail); // gerçek süre
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [Fact]
+    public async Task StartExport_ClipEndingExactlyAtTheSourceEnd_IsAccepted()
+    {
+        // SINIRIN ÖBÜR YANI: kaynağın tam sonuna kadar okuyan klip REDDEDİLMEZ. (Worker'daki
+        // kapı 1 çıktı frame'i tolerans tanır ve senkron kapı AYNI fonksiyonu çağırır.)
+        await SeedAssetAsync(ExportTestDocs.AssetA, 1920, 1080, durationMicros: 10_000_000);
+        var project = await SeedProjectAsync(
+            timelineJson: ExportTestDocs.ToJson(ExportTestDocs.Doc(clips:
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 10_000_000))),
+            seedAssets: false);
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+    }
+
+    [Fact]
+    public async Task StartExport_SourceRangeGateSkippedWhenDurationUnknown()
+    {
+        // "Ölçüm yokluğu yanlış ret üretmez": süre kolonu boşsa (asset hâlâ işleniyor) kapı
+        // ATLANIR ve worker'ın ffprobe yarısı emniyet kemeri kalır.
+        await SeedAssetAsync(ExportTestDocs.AssetA, 1920, 1080, durationMicros: null);
+        var project = await SeedProjectAsync(
+            timelineJson: ExportTestDocs.ToJson(ExportTestDocs.Doc(clips:
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 12_000_000, 20_000_000))),
+            seedAssets: false);
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+    }
+
+    [Fact]
+    public async Task StartExport_LutEffectPointingAtANonCubeAsset_Returns422_BeforeQueueing()
+    {
+        // ÖLÇÜLEN KUSUR: bu belge TİPLİ HATA BİLE ÜRETMİYORDU — worker .cube sanıp bir .mp4
+        // yolunu lut3d'ye veriyor, ffmpeg 'ffmpeg-failed: exited with code -22' ile ölüyordu.
+        await SeedAssetAsync(ExportTestDocs.AssetA, 1920, 1080);
+        await SeedAssetAsync(ExportTestDocs.AssetC, 1920, 1080, fileName: "holiday-clip.mp4");
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.Effects = [ExportTestDocs.Lut(ExportTestDocs.AssetC)];
+        var project = await SeedProjectAsync(
+            timelineJson: ExportTestDocs.ToJson(ExportTestDocs.Doc(clips: clip)),
+            seedAssets: false);
+
+        var problem = Assert.IsType<ProblemHttpResult>(await CallStartAsync(project.Id));
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("lut-asset-type", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Contains("holiday-clip.mp4", problem.ProblemDetails.Detail);
+        Assert.Contains(".cube", problem.ProblemDetails.Detail);
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [Fact]
+    public async Task StartExport_LutEffectPointingAtACubeAsset_IsAccepted()
+    {
+        // SINIRIN ÖBÜR YANI: gerçek bir .cube reddedilMEZ (kapı "LUT yasak" demiyor).
+        await SeedAssetAsync(ExportTestDocs.AssetA, 1920, 1080);
+        await SeedAssetAsync(ExportTestDocs.AssetC, 1920, 1080, fileName: "Teal-Orange.CUBE");
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.Effects = [ExportTestDocs.Lut(ExportTestDocs.AssetC)];
+        var project = await SeedProjectAsync(
+            timelineJson: ExportTestDocs.ToJson(ExportTestDocs.Doc(clips: clip)),
+            seedAssets: false);
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+    }
+
+    [Fact]
+    public async Task StartExport_TransitionWithDifferentPlacements_Returns422_BeforeQueueing()
+    {
+        // "Kural yalnız Compile'da yaşıyor" sınıfının ölçülen üyelerinden biri: bu belge
+        // POST 202 alıyor, iş worker'da düşüyordu. Kural artık Validate'te.
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.5));
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            transform: ExportTestDocs.Transform(scale: 0.25));
+        ExportTestDocs.Link(a, b, 400_000);
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: [a, b])));
+
+        var problem = Assert.IsType<ProblemHttpResult>(await CallStartAsync(project.Id));
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Contains("yerleşimi", problem.ProblemDetails.Detail);
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [Fact]
+    public async Task StartExport_TransitionWithTheSamePlacement_IsAccepted()
+    {
+        // SINIRIN ÖBÜR YANI: aynı yerleşimli geçiş (editörün ürettiği şekil) kabul edilir.
+        var placement = ExportTestDocs.Transform(scale: 0.5);
+        var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000,
+            transform: placement);
+        var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000,
+            transform: placement);
+        ExportTestDocs.Link(a, b, 400_000);
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: [a, b])));
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+    }
+
+    [Fact]
+    public async Task StartExport_SharedSampleBudget_Returns422_AndTheSuggestedFixIsAccepted()
+    {
+        // İŞ 3'ÜN HTTP KARŞILIĞI. Aynı belge iki kez: eğrili easing → 422 (paylaşımlı bütçe
+        // mesajıyla), YALNIZ easing lineere çevrilmiş hali → 202. Yani 422'nin önerdiği eylem
+        // GERÇEKTEN çalışıyor — mesajın vaadi ölçülüyor, iddia edilmiyor.
+        var curved = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.CurvedScaleDoc(clipCount: 17)));
+
+        var problem = Assert.IsType<ProblemHttpResult>(await CallStartAsync(curved.Id));
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("keyframe-sample-budget", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Contains("ORTAK örnekleme bütçesini aşıyor", problem.ProblemDetails.Detail);
+        Assert.Contains("TÜM kliplere", problem.ProblemDetails.Detail);
+        Assert.Contains("LİNEER yapın", problem.ProblemDetails.Detail);
+        Assert.Empty(_db.Jobs.ToList());
+
+        var linear = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.LinearScaleDoc(clipCount: 17)));
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(linear.Id));
+    }
+
+    [Fact]
+    public async Task StartExport_VolumeKeyframeBudget_IsNotChargedWhenTheSourceHasNoAudio()
+    {
+        // Ses bütçesinin EMNİYETLİ yönü: derleyici ses zincirini yalnız kaynakta stream VARSA
+        // kurar. Defterde HasAudio=false ise kapı o kanalı SAYMAZ — eksik saymak kapıyı
+        // zayıflatır, fazla saymak YANLIŞ RET üretirdi.
+        var doc = VolumeBudgetDoc(clipCount: 40);
+        await SeedAssetAsync(ExportTestDocs.AssetA, 1920, 1080, hasAudio: false);
+        var silent = await SeedProjectAsync(
+            timelineJson: ExportTestDocs.ToJson(doc), seedAssets: false);
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(silent.Id));
+
+        // Aynı belge, sesli kaynak → bütçe aşılır ve mesaj SES kanalının işe yarayan eylemini
+        // söyler (lineer easing ses tarafında bütçeyi düşürmez).
+        _db.Assets.Single(a => a.Id == ExportTestDocs.AssetA).HasAudio = true;
+        await _db.SaveChangesAsync();
+        var audible = await SeedProjectAsync(
+            timelineJson: ExportTestDocs.ToJson(doc), seedAssets: false);
+
+        var problem = Assert.IsType<ProblemHttpResult>(await CallStartAsync(audible.Id));
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("keyframe-sample-budget", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Contains("ses seviyesi (volume) animasyonu", problem.ProblemDetails.Detail);
+        Assert.Contains("daha AZ klipte", problem.ProblemDetails.Detail);
+        Assert.Contains("DÜŞÜRMEZ", problem.ProblemDetails.Detail);
+    }
+
+    /// <summary>
+    /// <paramref name="clipCount"/> adet 60 sn'lik sesli video klip, her birinde volume
+    /// keyframe'i. 60 sn @30fps = 1800 örnek/klip → 40 klip = 72 000 &gt; 60 000.
+    /// </summary>
+    private static VideoEdit.Contracts.Timeline.TimelineDoc VolumeBudgetDoc(int clipCount)
+    {
+        const long durationUs = 60_000_000;
+        var clips = new List<VideoEdit.Contracts.Timeline.Clip>(clipCount);
+        for (var i = 0; i < clipCount; i++)
+        {
+            var clip = ExportTestDocs.VideoClip(
+                ExportTestDocs.AssetA, i * durationUs, 0, durationUs,
+                audio: ExportTestDocs.Audio());
+            clip.Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks
+            {
+                Volume = [ExportTestDocs.Kf(0, 1.0), ExportTestDocs.Kf(durationUs, 0.2)],
+            };
+            clips.Add(clip);
+        }
+
+        return ExportTestDocs.Doc(clips: [.. clips]);
+    }
+
     [Fact]
     public async Task StartExport_UnknownFontId_Returns422_BeforeQueueing()
     {
@@ -219,6 +632,91 @@ public sealed class ExportEndpointsTests : IDisposable
         Assert.Equal("font-missing", problem.ProblemDetails.Extensions["feature"]);
         Assert.Empty(_db.Jobs.ToList());
         Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [FontFact]
+    public async Task StartExport_UnknownFontId_WithALiveMeasurer_StillReturns422_NotA503()
+    {
+        // BU TESTİN VAR OLMA SEBEBİ: yukarıdaki test ölçer VERMEDEN koşar, yani CANLI ölçüm
+        // yolunu hiç sürmez. Canlı ölçerle aynı belge (bilinmeyen fontId) ölçümü PATLATIR;
+        // ölçüm hatası KURULUM arızası sayıldığı sürece kullanıcı 503 "yeniden deneyin" alır
+        // ve o istek asla çalışmaz — kusur belgededir, kurulumda değil.
+        //
+        // Ölçer GERÇEKTİR (SkiaOverlayRasterService): sahte bir ölçer bu kusuru gösteremez,
+        // çünkü kusur tam olarak "gerçek ölçerin fırlattığı FontNotFoundException'ın nasıl
+        // sınıflandırıldığı"dır. 'inter' editörün ESKİ varsayılanıdır — bu belge uydurma
+        // değil, sahadaki eski projelerin taşıdığı belgedir.
+        Assert.NotNull(Fonts.Manifest);
+        Assert.DoesNotContain("inter", Fonts.Manifest!.Fonts.Keys, StringComparer.Ordinal);
+
+        var clip = ExportTestDocs.TextClip(0, 1_000_000);
+        clip.Text!.FontId = "inter";
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        using var measurer = TestFonts.CreateService();
+        var problem = Assert.IsType<ProblemHttpResult>(
+            await CallStartAsync(project.Id, measurer: measurer));
+
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("font-missing", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [Fact]
+    public async Task StartExport_UnknownFontId_IsAnsweredWithoutMeasuringAnything()
+    {
+        // ÖN KONTROLÜN SIRASININ ÖLÇÜLEBİLİR SONUCU. Manifest tek başına KESİN cevabı
+        // veriyorken (id manifestte yok → bu belge hiçbir kurulumda render edilemez) ölçüm
+        // DENENMEZ. Sıra tersine dönerse aynı belge önce ölçümü patlatır; cevabın doğru
+        // kalması o zaman tamamen ikinci mekanizmaya (derleyicinin istisna sınıflandırması)
+        // bağlı olur ve 503'e kayma riski geri gelir.
+        //
+        // NOT: 422'nin kendisi bu sırayı KANITLAMAZ (ölçüm patlasa da tipli hata aynı kodu
+        // verir) — kanıt ölçerin HİÇ ÇAĞRILMAMASIDIR.
+        Assert.NotNull(Fonts.Manifest);
+        var clip = ExportTestDocs.TextClip(0, 1_000_000);
+        clip.Text!.FontId = "inter";
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        var measurer = new CountingTextMeasurer();
+        var problem = Assert.IsType<ProblemHttpResult>(
+            await CallStartAsync(project.Id, measurer: measurer));
+
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("font-missing", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Equal(0, measurer.MeasureCalls);
+    }
+
+    [Fact]
+    public async Task StartExport_KnownFontId_DoesReachTheMeasurer()
+    {
+        // Yukarıdaki "0 çağrı" iddiasının negatif kontrolü: sayaç her belgede 0 kalmıyor.
+        // Bu olmadan MeasureCalls==0, ölçerin hiç bağlanmamış olmasıyla da açıklanabilirdi.
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: ExportTestDocs.TextClip(0, 1_000_000))));
+
+        var measurer = new CountingTextMeasurer();
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(
+            await CallStartAsync(project.Id, measurer: measurer));
+
+        Assert.Equal(1, measurer.MeasureCalls);
+    }
+
+    [FontFact]
+    public async Task StartExport_CuratedFontIdWithALiveMeasurer_IsAccepted()
+    {
+        // Yukarıdaki 422'nin negatif kontrolü: CANLI ölçer her metni reddetmiyor. Ölçüm
+        // gerçekten koşuyor (kurulu bir fontla) ve belge kuyruğa giriyor — yani 422 ölçüm
+        // yolunun kendisinden değil, YALNIZ bilinmeyen fontId'den doğuyor.
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: ExportTestDocs.TextClip(0, 1_000_000))));
+
+        using var measurer = TestFonts.CreateService();
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(
+            await CallStartAsync(project.Id, measurer: measurer));
     }
 
     [Fact]
@@ -403,16 +901,132 @@ public sealed class ExportEndpointsTests : IDisposable
     }
 
     [Fact]
-    public async Task StartExport_MeasurementFailure_DoesNotRejectAValidDocument()
+    public async Task StartExport_SystemFontMeasurement_DoesNotDecideTheCeiling()
     {
-        // Ölçüm bir ALTYAPI işidir (font kökü, manifest, Skia). Patlarsa doğrulama alt sınıra
-        // düşer — kullanıcının belgesi YANLIŞ 422 yemez.
+        // M6 denetimi, N4. Küratörlü TTF kurulu DEĞİLKEN ölçüm bir SİSTEM fontuyla yapılır ve
+        // o kutu, worker'ın çizeceği küratörlü kutunun ne üst ne alt sınırıdır — ÖLÇÜLDÜ
+        // (Windows 11 + SkiaSharp 3.116.1, küratörlü set ↔ Arial/Segoe UI/Times New Roman;
+        // 4 fontId × 3 punto × 2 ağırlık × 5 metin): bbox genişliği -21,1% … +7,9%, yüksekliği
+        // en çok 3,8% ayrışıyor. Kapı ona güvenirse 8192 px'lik üst sınır KURULUM DURUMUNA
+        // bağlanır: aynı belge fontları indirilmiş makinede kabul, indirilmemişte RET alır.
+        //
+        // Kural: pinlenmemiş ölçüm kutuyu KESİNLEŞTİRMEZ; kapı font-bağımsız alt sınıra düşer.
+        // (Gerçek tavan render anında çizilen rasterin GERÇEK kutusuyla sorulmaya devam eder.)
+        var clip = ExportTestDocs.TextClip(0, 1_000_000, content: new string('W', 3000));
+        clip.Text!.FontSizePx = 100; // alt sınır yüksekliği 120 px → alt sınır kapısı tetiklenmez
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        var result = await CallStartAsync(
+            project.Id,
+            measurer: new FakeTextMeasurer(widthPx: 165_000, heightPx: 120, deterministic: false));
+
+        // Aynı sayılar PİNLİ ölçümle 422 üretiyordu
+        // (StartExport_MeasuredTextWiderThanTheCeiling_Returns422_BeforeQueueing) — fark
+        // yalnız ölçümün belirlenimciliğinden geliyor.
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(result);
+        Assert.Single(_db.Jobs.ToList());
+
+        // VE 503 DEĞİL: ölçüm patlamadı, yalnız pinli değil. 503 olsaydı fontları indirilmemiş
+        // her kurulumda metin içeren HER export isteği reddedilirdi.
+        Assert.Equal(1, _jobs.CreateCount);
+    }
+
+    [Fact]
+    public async Task StartExport_SystemFontMeasurement_StillRejectsWhatTheLowerBoundCanSee()
+    {
+        // Kapı KAPANMIYOR, yalnız font-bağımsız yarısına düşüyor: yükseklikten taşan kutu
+        // (fontSizePx × lineHeight × satır) ölçerden BAĞIMSIZ kesindir ve reddedilmeye devam eder.
+        var clip = ExportTestDocs.TextClip(0, 1_000_000, content: "TEK SATIR");
+        clip.Text!.FontSizePx = 9000; // alt sınır yüksekliği 10800 px > 8192
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        var problem = Assert.IsType<ProblemHttpResult>(await CallStartAsync(
+            project.Id,
+            measurer: new FakeTextMeasurer(widthPx: 10, heightPx: 10, deterministic: false)));
+
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("overlay-too-large", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Empty(_db.Jobs.ToList());
+    }
+
+    [Fact]
+    public async Task StartExport_MeasurementFailure_Returns503_NotBlamingTheDocument()
+    {
+        // İŞ 4 KARARI. Ölçüm bir ALTYAPI işidir (font kökü, manifest, Skia) ve patladığında:
+        //  - metin katmanı kapıları alt sınıra düşer (gerçek ihlaller görünmez olur),
+        //  - worker aynı Skia + font köküne muhtaç olduğu için metin export'u ZATEN düşer.
+        // Eski davranış "202 → dakikalar → başarısız"tı. Yeni davranış SENKRON 503:
+        // kullanıcı anında öğrenir, iş kuyruğa girmez, ama belge SUÇLANMAZ (422 değil) —
+        // kusur kurulumdadır ve istek yeniden denenebilir.
+        //
+        // ÖLÇER GERÇEKTEN KURULUM ARIZASI MODELLER (FontNotFoundException.FileMissing: id
+        // manifestte tanımlı, TTF diskte yok). Belge kaynaklı ölçüm hatasının karşılığı artık
+        // 422'dir — bkz. StartExport_MeasurerDoesNotKnowTheFont_Returns422_NotA503.
         var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
             ExportTestDocs.Doc(clips: ExportTestDocs.TextClip(0, 1_000_000))));
 
-        var result = await CallStartAsync(project.Id, measurer: new ThrowingTextMeasurer());
+        var problem = Assert.IsType<ProblemHttpResult>(
+            await CallStartAsync(project.Id, measurer: new ThrowingTextMeasurer()));
 
-        Assert.IsType<Accepted<ExportJobCreatedResponse>>(result);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, problem.StatusCode);
+        Assert.Equal("text-measure-unavailable", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [Fact]
+    public async Task StartExport_MeasurerDoesNotKnowTheFont_Returns422_NotA503()
+    {
+        // 503'ÜN DAR OLDUĞUNUN İKİNCİ YARISI (yukarıdaki testin AYNADAKİ hali): ölçüm YİNE
+        // patlıyor, ama bu kez sebep kurulum değil BELGE — ölçerin manifestinde böyle bir
+        // fontId yok. Belgedeki id API'nin manifestinde VARDIR ('roboto'), yani ön kontrol
+        // bu belgeyi geçirir ve karar derleyicinin sınıflandırmasına kalır.
+        //
+        // İki okuyucunun ayrışması yapay değildir: API sürecinin FontManifestProvider'ı ile
+        // ölçerin kendi manifesti ayrı ayrı yüklenir (biri açılışta, diğeri ilk kullanımda) —
+        // dosya arada değişirse ya da worker/API farklı font köklerine bakarsa ayrışırlar.
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: ExportTestDocs.TextClip(0, 1_000_000))));
+
+        var problem = Assert.IsType<ProblemHttpResult>(
+            await CallStartAsync(project.Id, measurer: new UnknownFontMeasurer()));
+
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("font-missing", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [Fact]
+    public async Task StartExport_MeasurementFailureWithoutTextClips_IsUnaffected()
+    {
+        // İŞ 4 kararının SINIRI (negatif kontrol): 503 yalnız ÖLÇÜM GEREKTİREN klipler için
+        // doğar. Şeklin kutusu sözleşme gereği proje karesidir (ölçüm YOK) ve medya klibi
+        // rastere hiç girmez — patlayan bir ölçer bu belgeleri etkilemez.
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.MultiTrackDoc(
+            [
+                ExportTestDocs.OverlayTrack(clips: [ExportTestDocs.ShapeClip(0, 1_000_000)]),
+                ExportTestDocs.VideoTrack(clips:
+                    [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000)]),
+            ])));
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(
+            await CallStartAsync(project.Id, measurer: new ThrowingTextMeasurer()));
+    }
+
+    [Fact]
+    public async Task StartExport_NoMeasurerRegistered_KeepsTheOldLenientBehaviour()
+    {
+        // 503 kararı "ölçüm DENENDİ ve BAŞARISIZ oldu" olgusuna bağlıdır. Hiç ölçer
+        // kaydedilmemiş bir kurulumda (birim testlerinin varsayılanı) davranış DEĞİŞMEZ:
+        // kapı alt sınırdan sorulur, belge kabul edilir.
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: ExportTestDocs.TextClip(0, 1_000_000))));
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
     }
 
     [Fact]
@@ -423,6 +1037,47 @@ public sealed class ExportEndpointsTests : IDisposable
             transform: ExportTestDocs.Transform(scale: 2));
         var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
             ExportTestDocs.Doc(clips: clip)));
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+    }
+
+    [Fact]
+    public async Task StartExport_InvalidTextFill_Returns422_BeforeQueueing()
+    {
+        // ÖLÇÜLDÜ (ham API, düzeltmeden önce): POST 202 → worker dakikalar sonra
+        // 'overlay-unsupported-clip' ile failed. Renk dilbilgisi SAF DOKÜMAN kuralıdır —
+        // ne dosya, ne asset, ne font gerekir — dolayısıyla senkron kapıda yaşamalıdır.
+        var clip = ExportTestDocs.TextClip(0, 1_000_000);
+        clip.Text!.Fill = "rgb(1,2,3)"; // şema #RGB / #RRGGBB / #RRGGBBAA ister
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        var problem = Assert.IsType<ProblemHttpResult>(await CallStartAsync(project.Id));
+
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        // Kod raster hattının koduyla AYNI: kusur aynı, kapı farklı.
+        Assert.Equal("overlay-unsupported-clip", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Contains("text.fill", problem.ProblemDetails.Detail, StringComparison.Ordinal);
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [Fact]
+    public async Task StartExport_OverlayColorsOnAHiddenTrack_AreNotJudged()
+    {
+        // KAPININ SINIRI (negatif kontrol). Gizli track'in metni HİÇ rasterlenmez
+        // (OverlayRasterPlanner.Collect onu atlar) — dolayısıyla geçersiz rengi de export'u
+        // düşürmez. Kapı burada da reddetseydi, GÖRÜNMEYEN bir klip yüzünden geçerli bir
+        // belge geri çevrilirdi (M4 dalga 1 denetimindeki "atıl klip" hatasının aynısı).
+        var hidden = ExportTestDocs.TextClip(0, 1_000_000);
+        hidden.Text!.Fill = "rgb(1,2,3)";
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.OverlayTrack(hidden: true, clips: [hidden]),
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000)]),
+        ]);
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(doc));
 
         Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
     }
@@ -586,7 +1241,12 @@ public sealed class ExportEndpointsTests : IDisposable
     /// Sabit bbox döndüren ölçer — ön kapının ÖLÇÜMLÜ yolunu kurulu font olmadan sürer.
     /// <c>RenderAsync</c> ÇAĞRILMAMALIDIR (ön kapı yalnız ölçer): çağrılırsa test patlar.
     /// </summary>
-    private sealed class FakeTextMeasurer(double widthPx, double heightPx) : ITextRasterService
+    /// <param name="deterministic">
+    /// Ölçümün KÜRATÖRLÜ (sürüm pinli) bir fontla yapılıp yapılmadığı — gerçek serviste
+    /// <c>FontFile.Deterministic</c>'ten gelir.
+    /// </param>
+    private sealed class FakeTextMeasurer(double widthPx, double heightPx, bool deterministic = true)
+        : ITextRasterService
     {
         public Task<RasterResult> RenderAsync(
             VideoEdit.Contracts.Timeline.Clip clip,
@@ -598,10 +1258,19 @@ public sealed class ExportEndpointsTests : IDisposable
             VideoEdit.Contracts.Timeline.TextClipText text,
             VideoEdit.Contracts.Timeline.ProjectSettings settings) =>
             new([], text.FontSizePx * text.LineHeight, widthPx, heightPx,
-                0, 0, widthPx, heightPx, false);
+                0, 0, widthPx, heightPx, false)
+            {
+                FontIsDeterministic = deterministic,
+            };
     }
 
-    /// <summary>Kurulu font yokmuş gibi davranan ölçer (altyapı hatası → alt sınıra düşülür).</summary>
+    /// <summary>
+    /// KURULUM arızası: küratörlü TTF indirilmemiş. <c>FileMissing</c> fabrikası kullanılır ve
+    /// bu seçim testin ölçtüğü şeyi belirler — <c>UnknownId</c> fabrikası "manifestte böyle bir
+    /// id yok" der, yani BELGE hatasıdır ve 503 değil 422 üretmelidir. Eski hali tam olarak o
+    /// karışıklığı taşıyordu: adı/açıklaması "font kurulu değil" derken fırlattığı istisna
+    /// belge hatasıydı, dolayısıyla 503'ün DARLIĞINI hiç sınamıyordu.
+    /// </summary>
     private sealed class ThrowingTextMeasurer : ITextRasterService
     {
         public Task<RasterResult> RenderAsync(
@@ -613,7 +1282,52 @@ public sealed class ExportEndpointsTests : IDisposable
         public TextLayout Measure(
             VideoEdit.Contracts.Timeline.TextClipText text,
             VideoEdit.Contracts.Timeline.ProjectSettings settings) =>
-            throw FontNotFoundException.UnknownId("roboto", "(test)", []);
+            throw FontNotFoundException.FileMissing(
+                "roboto", "400", "/opt/videoedit/fonts/roboto/Roboto-Regular.ttf");
+    }
+
+    /// <summary>
+    /// Ölçüm DENENDİ Mİ sorusunu yanıtlayan sayaç. Makul bir kutu döndürür (kapıları
+    /// tetiklemez), tek işi çağrı sayısını tutmaktır.
+    /// </summary>
+    private sealed class CountingTextMeasurer : ITextRasterService
+    {
+        public int MeasureCalls { get; private set; }
+
+        public Task<RasterResult> RenderAsync(
+            VideoEdit.Contracts.Timeline.Clip clip,
+            VideoEdit.Contracts.Timeline.ProjectSettings settings,
+            string outputPath, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Ön kapı raster ÜRETMEMELİ, yalnız ölçmeli.");
+
+        public TextLayout Measure(
+            VideoEdit.Contracts.Timeline.TextClipText text,
+            VideoEdit.Contracts.Timeline.ProjectSettings settings)
+        {
+            MeasureCalls++;
+            return new([], text.FontSizePx * text.LineHeight, 200, 80, 0, 0, 200, 80, false);
+        }
+    }
+
+    /// <summary>
+    /// BELGE hatası: ölçerin manifestinde böyle bir fontId YOK. API'nin kendi manifest
+    /// okuyucusuyla ölçerin okuyucusu AYRIŞTIĞINDA (ya da API tarafı manifesti hiç
+    /// okuyamadığında) ulaşılan tek dal budur — kapının cevabı hangi okuyucunun fark ettiğine
+    /// göre değişmemelidir.
+    /// </summary>
+    private sealed class UnknownFontMeasurer : ITextRasterService
+    {
+        public Task<RasterResult> RenderAsync(
+            VideoEdit.Contracts.Timeline.Clip clip,
+            VideoEdit.Contracts.Timeline.ProjectSettings settings,
+            string outputPath, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Ön kapı raster ÜRETMEMELİ, yalnız ölçmeli.");
+
+        public TextLayout Measure(
+            VideoEdit.Contracts.Timeline.TextClipText text,
+            VideoEdit.Contracts.Timeline.ProjectSettings settings) =>
+            throw FontNotFoundException.UnknownId(
+                text.FontId, "(ölçerin manifesti)", ["baska-font"]);
     }
 
     /// <summary>Create + ChangeState çağrılarını kaydeden Hangfire istemcisi.</summary>

@@ -18,6 +18,14 @@
  *   4. "Dışa Aktar" diyaloğundan gerçek istek: POST .../exports 202 olmalı.
  *      Bu uç nokta ExportCompiler.Validate'i SENKRON çağırır (422'yi orada
  *      döner), dolayısıyla 202 = derleyici bu belgeyi kabul etti demektir.
+ *
+ * ÖNCÜLÜN ŞARTI: aynı senkron kapı belgenin gösterdiği asset satırını da arar,
+ * yani "202 = derleyici kabul etti" ancak dokümanın asseti GERÇEKTEN varken
+ * anlamlıdır — yoksa test kare ızgarasını değil fixture'ı ölçer. Seed bu satırı
+ * kurar (fixtures/seed.ts); burada 422 gelirse hata mesajı iki durumu AYIRIR.
+ * Satırın ölçülmüş alanları (süre/boyut) yoktur, dolayısıyla ölçüme dayanan
+ * kapılar bu testin KAPSAMI DIŞINDADIR — onları aşağıdaki ikinci sınıf
+ * (gerçek medya yükleyen) test kapsar.
  */
 import { frameToUs, isOnFrameGrid, usToFrame, type Rational } from '@videoedit/timeline-schema';
 import { test, expect } from './fixtures/test';
@@ -137,17 +145,31 @@ test.describe('Kare ızgarası — bölünen klip dışa aktarılabilir', () => 
     const response = await responsePromise;
     const body = await response.text();
 
-    // Ayakta olan API ESKİ derlemeyse hata mesajı bunu ele verir: "is not
-    // aligned to the project frame grid" metni artık kaynakta YOKTUR (yeni kapı
-    // "edges are not on the project frame grid" der). Teşhisi testin içine
-    // yazıyoruz ki kırmızı bir koşum "kod bozuk" gibi okunmasın.
+    // Kırmızı bir koşumun ANLAMINI testin içine yazıyoruz — üç ayrı sebep var:
+    //  (a) API ESKİ derlemeyi koşuyor: "is not aligned to the project frame
+    //      grid" metni kaynakta artık YOKTUR (yeni kapı "edges are not on the
+    //      project frame grid" der);
+    //  (b) fixture bozuk: senkron kapı asset satırını bulamamış — bu durumda
+    //      test kare ızgarası hakkında HİÇBİR ŞEY söylememiştir;
+    //  (c) gerçek gerileme: derleyici bu bölünmüş belgeyi reddediyor.
+    const feature = ((): string | null => {
+      try {
+        return (JSON.parse(body) as { feature?: string }).feature ?? null;
+      } catch {
+        return null;
+      }
+    })();
     const staleApi = body.includes('is not aligned to the project frame grid');
     expect(
       response.status(),
       staleApi
         ? 'API ESKİ derlemeyi koşuyor (hata metni kaynakta artık yok). ' +
           'ExportCompiler.cs değişti — API yeniden başlatılmalı.'
-        : `Export isteği ${response.status()} döndü: ${body}`,
+        : feature === 'asset-missing'
+          ? 'FIXTURE kusuru: seed dokümanının asset satırı sunucuda yok, istek kare ' +
+            'ızgarasına GELMEDEN reddedildi (bkz. fixtures/seed.ts — createSeedAsset). ' +
+            `Bu koşum kare ızgarası hakkında bir şey söylemez. Gövde: ${body}`
+          : `Export isteği ${response.status()} döndü: ${body}`,
     ).toBe(202);
     // Diyalog kapanır; içeride kırmızı bir 422 mesajı kalmaz.
     await expect(dialog).toBeHidden({ timeout: 30_000 });

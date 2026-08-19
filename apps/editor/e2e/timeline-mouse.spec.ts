@@ -305,4 +305,80 @@ test.describe('Timeline — gerçek fare', () => {
     ).toBeGreaterThan(wrap.width * (1 - tailFraction) - TOLERANCE_PX);
     expect(contentEndX).toBeLessThan(wrap.width * (1 - tailFraction) + TOLERANCE_PX);
   });
+  /**
+   * Cetvel scrub'ı ZOOM UÇLARINDA da tıklanan piksele oturur.
+   *
+   * İddia edilmişti: "çok uzaklaşılmış timeline'da cetvel scrub'ı ıskalıyor."
+   * Bu test o iddiayı ölçen kalıcı kayıttır. Ölçülen: en uzak zoom seviyesinde
+   * (pxPerUs alt sınırı MIN_PX_PER_US = 1 px/sn) tıklanan zaman ile playhead
+   * arasında SIFIR sapma vardı; en yakın zoom'da (MAX_PX_PER_US) tek sapma
+   * kaynağı `scrubTo`'nun kasıtlı frame ızgarası oturtmasıdır (yarım kareyi
+   * aşmaz). Yani "ıskalama" ÜRETİLEMEDİ; bu test onu böyle sabitler.
+   *
+   * Neden sadece tek tık değil SÜRÜKLEME de: cetvelde basılı tutup gezinmek
+   * pointer capture'a bağlıdır ve imleç canvas'ın dışına çıktığında da
+   * sürmelidir — "ıskalama" en çok orada beklenirdi.
+   */
+  test("cetvel scrub'ı zoom uçlarında da tıklanan piksele oturur", async ({ editor }) => {
+    const page = editor.page;
+    const fps = (await readProjectSettings(page)).fps;
+
+    for (const direction of ['out', 'in'] as const) {
+      await page.keyboard.press('Shift+Z'); // görünümü projeye sığdır
+      await page.waitForTimeout(200);
+      // Zoom'u kendi sınırına DAYA (clampPxPerUs): 40 adım her iki uç için de fazlasıyla yeter.
+      for (let i = 0; i < 40; i++) {
+        await editor.timeline.ctrlWheel(direction === 'out' ? 120 : -120, await editor.timeline.centerOfBody());
+      }
+      const wrap = await editor.timeline.wrapBox();
+      const y = wrap.y + 14; // cetvel şeridi (RULER_H = 28)
+
+      for (const fraction of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+        const x = wrap.x + wrap.width * fraction;
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.mouse.up();
+        await page.waitForTimeout(140);
+        const state = await editor.state();
+        // Beklenen değer uygulamanın TEK KAYNAK dönüşümünden türetilir
+        // (geometry.xToTime + scrubTo'nun ızgara oturtması).
+        const expected = snapUsToFrameGrid(
+          Math.max(0, Math.round(state.scrollUs + (x - wrap.x) / state.pxPerUs)),
+          fps as Rational,
+        );
+        expect(
+          Math.abs(state.playheadUs - expected),
+          `zoom=${direction} pxPerUs=${state.pxPerUs} x=${Math.round(x)}: cetvel tıklaması ` +
+            `${expected} µs beklenirken ${state.playheadUs} µs verdi`,
+        ).toBeLessThanOrEqual(tolUs(state.pxPerUs));
+      }
+
+      // Basılı tutup gezinme: canvas'ın SAĞINA taşsa bile playhead takip eder.
+      const startX = wrap.x + 60;
+      const endX = wrap.x + wrap.width - 60;
+      await page.mouse.move(startX, y);
+      await page.mouse.down();
+      await page.mouse.move(endX, y, { steps: 12 });
+      await page.waitForTimeout(140);
+      const dragged = await editor.state();
+      const draggedExpected = snapUsToFrameGrid(
+        Math.max(0, Math.round(dragged.scrollUs + (endX - wrap.x) / dragged.pxPerUs)),
+        fps as Rational,
+      );
+      expect(
+        Math.abs(dragged.playheadUs - draggedExpected),
+        `zoom=${direction}: cetvelde sürükleme imleci takip etmedi`,
+      ).toBeLessThanOrEqual(tolUs(dragged.pxPerUs));
+
+      const outsideX = wrap.x + wrap.width + 120;
+      await page.mouse.move(outsideX, y, { steps: 6 });
+      await page.waitForTimeout(140);
+      const outside = await editor.state();
+      await page.mouse.up();
+      expect(
+        outside.playheadUs,
+        `zoom=${direction}: imleç canvas'ın dışına çıkınca scrub durdu (pointer capture kopmuş)`,
+      ).toBeGreaterThan(dragged.playheadUs);
+    }
+  });
 });

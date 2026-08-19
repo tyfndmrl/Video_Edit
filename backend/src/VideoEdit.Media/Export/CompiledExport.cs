@@ -7,11 +7,24 @@ namespace VideoEdit.Media.Export;
 /// cache'indeki yerel orijinal dosyadır; renk alanları indirilen dosyanın ffprobe'undan gelir
 /// (HDR tespiti + ColorChain.ForSource için — rendering-semantics §6.2).
 /// </summary>
+/// <param name="Path">Worker'ın LRU cache'indeki YEREL dosya yolu (indirilmiş orijinal).</param>
+/// <param name="HasAudio">Kaynakta ses akışı var mı — ses zincirinin kurulup kurulmayacağını belirler.</param>
+/// <param name="ColorTransfer">ffprobe <c>color_trc</c>; HDR tespiti ve <c>ColorChain.ForSource</c> girdisi.</param>
+/// <param name="ColorPrimaries">ffprobe <c>color_primaries</c>; aynı iki kararın ikinci girdisi.</param>
+/// <param name="SourceWidth">
+/// Kaynağın ROTATION UYGULANMIŞ genişliği (ffprobe; <c>MediaProbe.Width</c>). OPSİYONELDİR:
+/// yalnız DEJENERELİK kapısını (<see cref="LayerGeometry.IsDegenerate"/>) besler, üretilen
+/// filtergraph'ı HİÇBİR biçimde etkilemez — geometri kaynaktan bağımsız kalır (§2.5). Bilinmiyorsa
+/// (null/0) kapı ATLANIR; "ölçüm yokluğu yanlış ret üretmez" presedanı metin ölçümündekiyle aynıdır.
+/// </param>
+/// <param name="SourceHeight"><inheritdoc cref="SourceWidth" path="/node()"/></param>
 public sealed record ExportAssetSource(
     string Path,
     bool HasAudio,
     string? ColorTransfer,
-    string? ColorPrimaries)
+    string? ColorPrimaries,
+    int? SourceWidth = null,
+    int? SourceHeight = null)
 {
     public bool IsHdr => ColorChain.IsHdr(ColorTransfer, ColorPrimaries);
 }
@@ -36,7 +49,24 @@ public sealed record ExportAssetSource(
 /// yuvarlamada üretilir (önce bbox'ı yuvarlamak raster hattının DrawBox'ıyla 1 px ayrışırdı).
 /// </para>
 /// </summary>
-public sealed record ExportRasterSource(string Path, double NaturalWidthPx, double NaturalHeightPx);
+/// <param name="Path">Sunucuda üretilmiş overlay PNG'sinin yerel dosya yolu.</param>
+/// <param name="NaturalWidthPx">
+/// Rasterin PROJE ÇIKTI PİKSELİNDEKİ genişliği (bbox), yani <c>scale = 1</c> iken kapladığı yer.
+/// Ölçek kutusunun tabanıdır; PNG dosyasının kendi piksel genişliği DEĞİLDİR.
+/// </param>
+/// <param name="NaturalHeightPx"><inheritdoc cref="NaturalWidthPx" path="/node()"/></param>
+/// <param name="SourceWidth">
+/// PNG DOSYASININ gerçek piksel genişliği (<c>RasterResult.Width</c> = bbox × rasterScale) —
+/// <paramref name="NaturalWidthPx"/> ile karıştırılmamalıdır, o PROJE pikselindeki bbox'tır.
+/// Yalnız dejenerelik kapısını besler; bilinmiyorsa kapı atlanır (bkz. <see cref="ExportAssetSource"/>).
+/// </param>
+/// <param name="SourceHeight"><inheritdoc cref="SourceWidth" path="/node()"/></param>
+public sealed record ExportRasterSource(
+    string Path,
+    double NaturalWidthPx,
+    double NaturalHeightPx,
+    int? SourceWidth = null,
+    int? SourceHeight = null);
 
 /// <summary>
 /// Tek ffmpeg girişi: input-level trim (tasarım 04 §2.1 — daima -ss + -t, ASLA -to;

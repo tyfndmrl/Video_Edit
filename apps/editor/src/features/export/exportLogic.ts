@@ -109,10 +109,49 @@ export function autosaveSummary(status: AutosaveStatus | null): string {
 export type ExportStartErrorKind =
   /** 422 — the document uses a feature the render pipeline does not support yet. */
   | 'unsupported'
+  /**
+   * 422 with an asset-fact code (see `ASSET_FACT_CODES`). NOT an unsupported
+   * feature: the document conflicts with the user's own library, and saying
+   * "unsupported feature" would send them looking in the wrong place.
+   */
+  | 'asset'
+  /**
+   * 503 — the server cannot serve this request right now (today: text layers cannot
+   * be measured because the font install / text engine is missing). The document is
+   * NOT at fault and the request is retryable once the server is fixed.
+   */
+  | 'unavailable'
   /** 429 — concurrent export limit reached (informational, not a failure). */
   | 'limit'
   /** anything else — generic failure. */
   | 'generic';
+
+/**
+ * Backend feature codes that mean "an asset is wrong", not "a feature is missing".
+ *
+ * This list MIRRORS `ExportEndpoints.AssetFactFeatures` on the server. The two are
+ * kept in step by a guard that reads BOTH sources and compares them
+ * (`ExportGateInventoryTests.TheClientAndServerAgreeOnWhichCodesMeanAnAssetProblem`),
+ * because a code that drifts out of this set is not a crash — it is a wrong
+ * sentence: the user is told to look for an unsupported feature when the real
+ * problem is a file in their own library.
+ */
+const ASSET_FACT_CODES = new Set([
+  'asset-missing',
+  'source-out-of-range',
+  'lut-asset-type',
+  'asset-clip-type',
+  'asset-failed',
+]);
+
+/** Extract the machine-readable `feature` extension from a ProblemDetails body. */
+function problemFeature(body: unknown): string | null {
+  if (typeof body === 'object' && body !== null && 'feature' in body) {
+    const feature = (body as { feature?: unknown }).feature;
+    if (typeof feature === 'string' && feature.trim() !== '') return feature;
+  }
+  return null;
+}
 
 export interface ExportStartError {
   kind: ExportStartErrorKind;
@@ -135,11 +174,32 @@ function problemDetail(body: unknown): string | null {
 export function mapExportError(status: number, body: unknown): ExportStartError {
   if (status === 422) {
     const detail = problemDetail(body);
+    const feature = problemFeature(body);
+    if (feature !== null && ASSET_FACT_CODES.has(feature)) {
+      return {
+        kind: 'asset',
+        message: detail
+          ? `Bu projedeki bir dosya dışa aktarılamıyor: ${detail}`
+          : 'Bu projedeki bir dosya dışa aktarılamıyor.',
+      };
+    }
     return {
       kind: 'unsupported',
       message: detail
         ? `Bu proje henüz desteklenmeyen özellik içeriyor: ${detail}`
         : 'Bu proje henüz desteklenmeyen özellik içeriyor.',
+    };
+  }
+  if (status === 503) {
+    // The backend only answers 503 here when it can name the reason; surfacing the
+    // detail verbatim is the whole point (a bare "try again" would hide a server
+    // setup fault that retrying cannot fix).
+    const detail = problemDetail(body);
+    return {
+      kind: 'unavailable',
+      message: detail
+        ? `Sunucu bu dışa aktarmayı şu an yapamıyor: ${detail}`
+        : 'Sunucu bu dışa aktarmayı şu an yapamıyor. Bir süre sonra tekrar deneyin.',
     };
   }
   if (status === 429) {

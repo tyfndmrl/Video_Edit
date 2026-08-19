@@ -2,14 +2,45 @@
  * E2E veri hazırlığı — API üzerinden (UI'dan DEĞİL, hız için).
  *
  * Neden medya yüklemiyoruz: gerçek bir asset yükleyip worker'ın işlemesini
- * beklemek her test için on saniyeler demek. Sunucunun timeline doğrulaması
- * YÜZEYSEL'dir (schemaVersion / projectId / tracks + boyut sınırları —
- * TimelineRequestValidation), asset varlığını kontrol etmez. İstemci tarafında
- * da asset süresi BİLİNMEYEN klipler için kaynak-sınır invariant'ları atlanır
- * (packages/timeline-schema/src/invariants.ts, kural 2/5). Dolayısıyla şema
- * olarak TAM GEÇERLİ bir doküman, var olmayan bir assetId ile saniyeler
- * içinde kurulabilir; timeline canvas'ı klipleri (filmstrip yerine düz blok
- * olarak) çizer ve tüm kırpma/taşıma/bölme etkileşimleri gerçek yolda çalışır.
+ * beklemek her test için on saniyeler demek. İstemci tarafında asset süresi
+ * BİLİNMEYEN klipler için kaynak-sınır invariant'ları atlanır
+ * (packages/timeline-schema/src/invariants.ts, kural 2/5); timeline canvas'ı
+ * klipleri (filmstrip yerine düz blok olarak) çizer ve tüm kırpma/taşıma/bölme
+ * etkileşimleri gerçek yolda çalışır.
+ *
+ * SUNUCU ÖNERMESİ — DEĞİŞTİ. Bu dosya eskiden "sunucunun timeline doğrulaması
+ * YÜZEYSEL'dir, asset varlığını kontrol etmez" diyor ve dokümanı UYDURMA bir
+ * assetId ile kuruyordu. O önerme artık YANLIŞ: export isteği SENKRON bir asset
+ * kapısından geçiyor. Kapı, belgenin gösterdiği her assetId'yi kullanıcının
+ * kütüphanesinde arar ve satır yoksa POST /exports 202 değil 422 'asset-missing'
+ * döner (ham API ile ölçüldü). Satır VARKEN aynı kapı ölçülmüş alanları da
+ * sorar: kaynak aralığını süreyle ('source-out-of-range'), LUT gösteren efekti
+ * dosya adıyla ('lut-asset-type') karşılaştırır. Timeline'ı KAYDETMEK hâlâ
+ * yüzeysel doğrulamadır (PUT 200) — kapı yalnız export yolundadır.
+ *
+ * Bu yüzden seed artık GERÇEK bir asset satırı kurar (createSeedAsset).
+ *
+ * PLACEHOLDER ASSET — ne olduğu ve ne OLMADIĞI:
+ *  - GERÇEK satır, gerçek uçtan (POST /api/projects/{id}/assets): kapının
+ *    aradığı sahiplik + silinmemişlik koşulları gerçek yoldan sağlanır;
+ *  - BAYT YOK: yükleme tamamlanmaz, worker hiç koşmaz, ffprobe alanları
+ *    (süre / boyut / ses) NULL kalır. Sunucunun yazılı sözleşmesi bunu emniyetli
+ *    yönde yorumlar — "ölçüm yokluğu yanlış ret üretmez": bir alan null'sa
+ *    yalnız O alanın kapısı atlanır (backend ExportAssetFacts).
+ *  - KAPSAM DIŞI: ölçülmüş olgu isteyen kapılar (kaynak aralığı, dejenere
+ *    boyut, LUT dosya türü) bu seed ile SINANMAZ; onları sınayan testler gerçek
+ *    medya yükler (support/media.ts + LibraryPanelHarness). Bu seed'in tek
+ *    iddiası "belge, kullanıcının kütüphanesindeki bir varlığı gösteriyor"dur.
+ *
+ * NEDEN WORKER BAŞINA TEK SATIR: yükleme tamamlanmadığı için satır 'Uploading'
+ * durumunda kalır ve sunucu eşzamanlı 'Uploading' sayısını sınırlar (ölçüldü:
+ * aynı hesapta altıncı init HTTP 429 — "Too many concurrent uploads (max 5)").
+ * Test başına bir satır açılsaydı altıncı testte seed'in KENDİSİ 429 alırdı.
+ *
+ * NEDEN AYRI BİR "depo" PROJESİ: satır seed projesine bağlansaydı kitaplık
+ * panelinde yüklenmeyi bekleyen bir kart olarak görünürdü ve panele bakan
+ * testler bundan etkilenirdi. Kapı proje bağını değil SAHİPLİĞİ sorduğu için
+ * satırın ayrı bir projede durması yeterlidir (aynı hesap).
  *
  * Gerçek medyalı bir senaryo isteniyorsa E2E_PROJECT_ID ortam değişkeni ile
  * hazır bir proje verilebilir (bkz. fixtures/test.ts).
@@ -44,6 +75,12 @@ export interface SeededProject {
   trackBottomId: string;
   clipAId: string;
   clipBId: string;
+  /**
+   * Her iki seed klibinin gösterdiği asset satırının id'si — kullanıcının
+   * kütüphanesinde GERÇEKTEN vardır (bkz. dosya başlığı). Hazır proje modunda
+   * dokümanı sunucu verdiği için okunamıyorsa null olur.
+   */
+  assetId: string | null;
   /** Hazır (E2E_PROJECT_ID) bir projeyle mi çalışıyoruz? */
   external: boolean;
 }
@@ -91,13 +128,18 @@ export interface SeedDocResult {
 /**
  * İki video track: üstte iki klip (aralarında boşluk), altta boş track
  * (katman değiştirme / çakışma testleri için).
+ *
+ * `assetId` ZORUNLU bir parametredir ve GERÇEK bir asset satırını göstermelidir
+ * (createSeedAsset). Eskiden burada uydurma bir id üretiliyordu; sunucunun
+ * senkron asset kapısı eklendikten sonra öyle bir doküman export yolunda 422
+ * 'asset-missing' alıyor — yani seed'in kurduğu belge, kullanıcının GERÇEKTEN
+ * kaydedip dışa aktarabileceği bir belge olmuyordu.
  */
-export function buildSeedDoc(projectId: string): SeedDocResult {
+export function buildSeedDoc(projectId: string, assetId: string): SeedDocResult {
   const trackTopId = uuid();
   const trackBottomId = uuid();
   const clipAId = uuid();
   const clipBId = uuid();
-  const assetId = uuid();
 
   const timeline = {
     schemaVersion: 1,
@@ -182,6 +224,49 @@ export async function createProject(
     throw new Error(`Proje oluşturulamadı (HTTP ${res.status()}): ${await res.text()}`);
   }
   return (await res.json()) as ProjectDetail;
+}
+
+/**
+ * Seed kliplerinin gösterdiği asset satırının beyanı. Boyut, doğrulamanın
+ * kabul ettiği EN KÜÇÜK değerdir (bayt zaten hiç yüklenmez): hesabın kotasından
+ * tek bayt düşer, kota göstergesini karşılaştıran testlerin ölçtüğü FARKLARA
+ * dokunmaz.
+ */
+export const SEED_ASSET = {
+  fileName: 'e2e-seed-placeholder.mp4',
+  contentType: 'video/mp4',
+  sizeBytes: 1,
+} as const;
+
+/**
+ * Gerçek asset satırı kurar (yalnız yükleme BAŞLATILIR — bayt gönderilmez,
+ * complete çağrılmaz). Dönen id seed dokümanlarına yazılır.
+ *
+ * Sözleşme ve sınırları için dosya başlığına bakın: satır 'Uploading' durumunda
+ * kalır, ffprobe alanları null'dır ve ölçülmüş olgu isteyen kapılar bu satırla
+ * SINANMAZ.
+ */
+export async function createSeedAsset(
+  request: APIRequestContext,
+  accessToken: string,
+  projectId: string,
+): Promise<string> {
+  const res = await request.post(`/api/projects/${projectId}/assets`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    data: {
+      fileName: SEED_ASSET.fileName,
+      contentType: SEED_ASSET.contentType,
+      sizeBytes: SEED_ASSET.sizeBytes,
+    },
+  });
+  if (!res.ok()) {
+    throw new Error(
+      `Seed asset satırı kurulamadı (HTTP ${res.status()}): ${await res.text()}\n` +
+        'Seed dokümanları GERÇEK bir asset satırı gösterir; bu satır olmadan ' +
+        'export yolundaki senkron kapı belgeyi 422 asset-missing ile reddeder.',
+    );
+  }
+  return ((await res.json()) as { assetId: string }).assetId;
 }
 
 export async function saveTimeline(

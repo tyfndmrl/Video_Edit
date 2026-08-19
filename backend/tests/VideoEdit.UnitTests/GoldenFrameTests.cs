@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using VideoEdit.Contracts.Timeline;
 using VideoEdit.Media;
 using VideoEdit.Media.Export;
 using VideoEdit.Media.Probing;
@@ -206,9 +208,10 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         Assert.Equal(2_000_000, compiled.ExpectedDurationUs);
 
         // Overlay zinciri taban tuvalden başlayıp sondan başa ilerler; ÜST katman EN SON biner.
-        Assert.Contains("[base][v0]overlay=x=160-0.5*w:y=120-0.5*h", compiled.FilterGraphScript);
-        Assert.Contains("[c0][v1]overlay=x=80-0.5*w:y=180-0.5*h", compiled.FilterGraphScript);
-        Assert.Contains("[c1][v2]overlay=x=240-0.5*w:y=60-0.5*h", compiled.FilterGraphScript);
+        Assert.Contains(
+            "[base][v0]overlay=x=floor(160-0.5*w):y=floor(120-0.5*h)", compiled.FilterGraphScript);
+        Assert.Contains("[c0][v1]overlay=x=floor(80-0.5*w):y=floor(180-0.5*h)", compiled.FilterGraphScript);
+        Assert.Contains("[c1][v2]overlay=x=floor(240-0.5*w):y=floor(60-0.5*h)", compiled.FilterGraphScript);
         Assert.Contains("[c2]setparams=", compiled.FilterGraphScript);
 
         // ── 2) GERÇEK render (worker ile aynı yol).
@@ -308,7 +311,9 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
         // Çapa merkezdeyse pad NO-OP'tur ve üretilmez; çapa köşedeyse simetrik pad üretilir.
         Assert.Contains("pad=w=iw*2:h=ih*2:x=iw*1:y=ih*1:color=#00000000", compiled.FilterGraphScript);
-        Assert.Contains("rotate=a=1.570796:c=none:ow=hypot(iw\\,ih):oh=ow", compiled.FilterGraphScript);
+        Assert.Contains(
+            "rotate=a=1.570796:c=none:ow=2*ceil(hypot(iw\\,ih)/2):oh=ow",
+            compiled.FilterGraphScript);
 
         var outputPath = await RenderAsync(compiled, "rotated-anchor");
         var frame = DecodeFrameRgb24(outputPath, 30, "rotated-anchor-f30");
@@ -454,8 +459,8 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
 
         var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
         // İki katmanın overlay ifadesi BİREBİR aynı x'i verir (y farkı kasıtlı).
-        Assert.Contains("overlay=x=241-0.5*w:y=180-0.5*h", compiled.FilterGraphScript);
-        Assert.Contains("overlay=x=241-0.5*w:y=60-0.5*h", compiled.FilterGraphScript);
+        Assert.Contains("overlay=x=floor(241-0.5*w):y=floor(180-0.5*h)", compiled.FilterGraphScript);
+        Assert.Contains("overlay=x=floor(241-0.5*w):y=floor(60-0.5*h)", compiled.FilterGraphScript);
 
         var frame = DecodeFrameRgb24(await RenderAsync(compiled, "odd-offset"), 30, "odd-offset-f30");
 
@@ -662,8 +667,11 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             "tuval merkezinde alt katman görünmeliydi");
     }
 
-    [FfmpegFact]
-    public async Task ContiguousLayerClips_ConcatIntoOneOverlay_WithoutMovingASinglePixel()
+    [FfmpegTheory]
+    [InlineData(0.5, 160, 120)]      // ÇİFT kutu — tarihsel koşum (bu testin ilk hali)
+    [InlineData(0.503, 161, 121)]    // TEK kutu — 320*0.503=160.96→161, 240*0.503=120.72→121
+    public async Task ContiguousLayerClips_ConcatIntoOneOverlay_WithoutMovingASinglePixel(
+        double scale, int expectedBoxW, int expectedBoxH)
     {
         // Denetim #1 (HIGH) düzeltmesinin GERÇEK RENDER kanıtı. Run'daki segmentler tek concat'e
         // girer; concat girişlerinin AYNI BOYUTTA olması şarttır, oysa scale
@@ -673,6 +681,11 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         //   (a) FARKLI aspect'li iki kaynak aynı run'da concat edilebiliyor (ffmpeg patlamıyor);
         //   (b) pad geometriyi KAYDIRMIYOR: aynı klip tek başınayken (pad'siz yol) ve run
         //       içindeyken (pad'li yol) katmanın kenarları AYNI piksele oturuyor.
+        //
+        // TEK KUTU KOŞUMU (0.503) bu testin kaybolan güvencesidir: tek boyutlu kutu eskiden
+        // run'ı BÖLDÜRÜYORDU, yani pad yolu hiç sınanmıyordu. Pad hedefi artık kutunun çifte
+        // indirilmiş halidir; hedefi ham (TEK) kutuya geri almak (b) iddiasını 1 px kaydırıp
+        // KIRAR — negatif kontrol tam olarak burada koşar.
         var widePath = media.Video1280x720NoAudio();          // 16:9 → 4:3 kutuda letterbox
         var solidPath = media.VideoSolid320x240NoAudio();     // 4:3 → kutuyu tam doldurur
         var sources = new Dictionary<Guid, ExportAssetSource>
@@ -681,9 +694,9 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             [ExportTestDocs.AssetC] = new(solidPath, false, "bt709", "bt709"),
         };
 
-        // PiP yerleşimi (her iki dokümanda AYNI): scale 0.5 → kutu 160x120, merkezde. Taban
-        // katman YOK — kenar ölçümü siyah tuvale karşı yapılır (FirstLitColumn/Row).
-        var pip = ExportTestDocs.Transform(scale: 0.5);
+        // PiP yerleşimi (her iki dokümanda AYNI), merkezde. Taban katman YOK — kenar ölçümü
+        // siyah tuvale karşı yapılır (FirstLitColumn/Row).
+        var pip = ExportTestDocs.Transform(scale: scale);
         var alone = ExportTestDocs.MultiTrackDoc(
         [
             ExportTestDocs.VideoTrack(clips:
@@ -707,10 +720,11 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         // İki klip TEK overlay'e düşer (klip başına overlay olsaydı iki tane olurdu).
         Assert.Equal(1, runCompiled.FilterGraphScript.Split(";\n").Count(l => l.Contains("]overlay=")));
 
+        var tag = scale.ToString("0.000", CultureInfo.InvariantCulture);
         var aloneFrame = DecodeFrameRgb24(
-            await RenderAsync(aloneCompiled, "run-alone"), 15, "run-alone-f15");
-        var runOutput = await RenderAsync(runCompiled, "run-concat");
-        var runFrame = DecodeFrameRgb24(runOutput, 15, "run-concat-f15");
+            await RenderAsync(aloneCompiled, $"run-alone-{tag}"), 15, $"run-alone-{tag}-f15");
+        var runOutput = await RenderAsync(runCompiled, $"run-concat-{tag}");
+        var runFrame = DecodeFrameRgb24(runOutput, 15, $"run-concat-{tag}-f15");
 
         // (b) Katmanın sınır kutusu BİREBİR aynı olmalı: pad'li ve pad'siz yol aynı pikselleri
         //     boyar. 16:9 kaynak 160x120 kutuda 160x90'a düşer (letterbox) → pad ofseti yanlış
@@ -732,9 +746,841 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         AssertBackground(runFrame, 160, 168, "letterbox alt kenarının 3 px altı");
 
         // (a) Run'ın İKİNCİ segmenti de doğru pencerede görünür (concat sırası korunmuş).
-        var second = DecodeFrameRgb24(runOutput, 45, "run-concat-f45");
+        var second = DecodeFrameRgb24(runOutput, 45, $"run-concat-{tag}-f45");
         AssertSolidLayer(second, 160, 120, "run'ın ikinci segmenti (düz renk) 1-2 sn arasında");
         AssertBackground(second, 5, 5, "ikinci segment kenar dışında tuval");
+
+        // Dize iddiaları EN SONDA: yukarıdaki piksel iddiası kendi başına ayakta durmalı, yoksa
+        // düzeltmeyi geri aldığımızda test dizede patlar ve "1 px kaydı" savı KANITLANMAMIŞ olur.
+        // Ölçek hedefi HAM kutu, pad hedefi ÇİFTE İNDİRİLMİŞ kutu (tek kutuda ikisi ayrışır).
+        Assert.Contains($"scale={expectedBoxW}:{expectedBoxH}:", runCompiled.FilterGraphScript);
+        Assert.Contains(
+            $"pad={expectedBoxW & ~1}:{expectedBoxH & ~1}:(ow-iw)/2:(oh-ih)/2:",
+            runCompiled.FilterGraphScript);
+    }
+
+    [FfmpegTheory]
+    // aspect, ölçek, x, dönme — TEK KUTU rejimi (ölçek 0.503, x=0): kutu 161x121, P tamsayı.
+    [InlineData("16:9", 0.503, 0, 0)]
+    [InlineData("4:3", 0.503, 0, 0)]
+    [InlineData("kare", 0.503, 0, 0)]
+    [InlineData("9:16", 0.503, 0, 0)]
+    // KIRPMA rejimi (ölçek > 1 + KESİRLİ x): pad'li yolda overlay hedefi NEGATİFE düşer.
+    // Ayrışmanın ULAŞILABİLİR olduğu tek pencere budur; yukarıdaki dört satır onu hiç açmaz.
+    [InlineData("16:9", 1.005, 0.0025, 0)]
+    [InlineData("4:3", 1.005, 0.0025, 0)]
+    [InlineData("kare", 1.005, 0.0025, 0)]
+    [InlineData("9:16", 1.005, 0.0025, 0)]
+    // DÖNEN YARI — üç turdur HİÇ KOŞMAMIŞTI (satırların hiçbiri rotationDeg yazmıyordu) ve
+    // ayrışma tam oradaydı: dönmeyen yolda rotate GİRİŞİ gerçek scale çıktısıdır, pad'li yolda
+    // ise kutuya normalize edilmiş halidir; iki farklı giriş iki farklı kare tuval verir
+    // (2*ceil(hypot(iw,ih)/2)) ve içerik farklı ızgaraya oturur. Ölçüldü (16:9, s=0.503, a=90):
+    // pad'siz (114,39,205,200), pad'li (115,39,204,200).
+    // 90/180 interpolasyon ÜRETMEZ (kenarlar kesindir); 30 ise üretir — kural yalnız dik
+    // açılarda tutuyorsa yeterli değildir, o yüzden eğik açı da koşar.
+    [InlineData("16:9", 0.503, 0, 90)]
+    [InlineData("4:3", 0.503, 0, 90)]
+    [InlineData("kare", 0.503, 0, 90)]
+    [InlineData("9:16", 0.503, 0, 90)]
+    [InlineData("16:9", 0.503, 0, 30)]
+    [InlineData("9:16", 0.503, 0, 30)]
+    [InlineData("16:9", 1.005, 0.0025, 90)]
+    [InlineData("9:16", 1.005, 0.0025, 90)]
+    public async Task AddingATransition_DoesNotMoveTheLayerByASinglePixel(
+        string aspect, double scale, double x, double rotationDeg)
+    {
+        // BU DÜZELTMENİN ASIL DEĞİŞMEZİ (rendering-semantics §5): bir katmanın geometrisi,
+        // kesiminde geçiş olup olmamasından BAĞIMSIZDIR. Geçiş run'ı BÖLDÜRMEZ → kutuya
+        // normalize pad ZORUNLU olur; geçişsiz tek klip ise pad'siz yoldan geçer. İki yolun
+        // aynı pikselleri boyaması gerekir.
+        //
+        // İKİ REJİM koşar ve ikisi de gereklidir:
+        //  (a) ölçek 0.503, x=0 → kutu 161x121 TEK. Pad hedefi HAM kutu olsaydı katman 1 TAM
+        //      piksel yukarı kayardı — pad ofsetinin ((121-ih)/2) ve overlay ifadesinin
+        //      (120-0.5*121) tamsayı kırpmaları AYNI YÖNE toplanır. Bu rejimde P tamsayıdır ve
+        //      overlay hedefi pozitiftir, yani overlay'in KENDİ kırpması hiç tetiklenmez.
+        //  (b) ölçek 1.005, x=0.0025 → P.x = 160.8 ve pad'li yolda hedef 160.8 - 161 = -0.2'ye,
+        //      yani NEGATİFE düşer. overlay (int) ile SIFIRA DOĞRU kırptığı için pad'li yol
+        //      pad'siz yoldan 1 px ayrışırdı; ifadedeki floor bunu kapatır. Ölçüldü (gerçek
+        //      ffmpeg 8.0, bu tuvalde): kare ve 9:16 kaynakta trunc ile dx=1, floor ile dx=0.
+        //
+        // Dört aspect: 16:9 kaynakta pad yatayda no-op, 4:3 kaynakta tamamen no-op, KARE kaynakta
+        // iki eksende birden çalışır, DİKEY kaynakta yatay pay kutunun yarısından büyüktür —
+        // (b) rejiminin ayrışması ancak son iki aspect'te GÖRÜNÜR olur (ilk ikisinde katman
+        // yatayda tuvali taşar ve iki yol da aynı kenarları verir).
+        var (path, assetId) = aspect switch
+        {
+            "16:9" => (media.Video1280x720NoAudio(), ExportTestDocs.AssetB),
+            "4:3" => (media.VideoSolid320x240NoAudio(), ExportTestDocs.AssetC),
+            "9:16" => (media.VideoSolid180x320NoAudio(), ExportTestDocs.AssetA),
+            _ => (media.VideoSolid240x240NoAudio(), ExportTestDocs.AssetA),
+        };
+        var sources = new Dictionary<Guid, ExportAssetSource>
+        {
+            [assetId] = new(path, false, "bt709", "bt709"),
+        };
+        var pip = ExportTestDocs.Transform(x: x, scale: scale, rotationDeg: rotationDeg);
+        var tag = $"{aspect}-{scale.ToString(CultureInfo.InvariantCulture)}"
+                  + $"-r{rotationDeg.ToString(CultureInfo.InvariantCulture)}";
+
+        // Referans: TEK klip, geçiş yok → tek segmentli run → pad ÜRETİLMEZ.
+        var alone = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+                [ExportTestDocs.VideoClip(assetId, 0, 200_000, 1_200_000, transform: pip)]),
+        ], width: CanvasWidth, height: CanvasHeight);
+
+        // Aynı klip + bitişik komşu + kesimde geçiş → xfade yolu, pad ZORUNLU.
+        var first = ExportTestDocs.VideoClip(assetId, 0, 200_000, 1_200_000, transform: pip);
+        var next = ExportTestDocs.VideoClip(assetId, 1_000_000, 200_000, 1_200_000, transform: pip);
+        ExportTestDocs.Link(first, next, 200_000);
+        var joined = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips: [first, next]),
+        ], width: CanvasWidth, height: CanvasHeight);
+
+        var aloneCompiled = ExportCompiler.Compile(alone, sources, ExportProfile.Hd1080p);
+        var joinedCompiled = ExportCompiler.Compile(joined, sources, ExportProfile.Hd1080p);
+        Assert.Contains("xfade=transition=fade:", joinedCompiled.FilterGraphScript);
+
+        // Frame 15 (t=0.5 sn) geçiş penceresinin (0.9-1.1 sn) DIŞINDADIR → saf ilk klip.
+        var aloneFrame = DecodeFrameRgb24(
+            await RenderAsync(aloneCompiled, $"tr-alone-{tag}"), 15, $"tr-alone-{tag}-f15");
+        var joinedFrame = DecodeFrameRgb24(
+            await RenderAsync(joinedCompiled, $"tr-joined-{tag}"), 15, $"tr-joined-{tag}-f15");
+
+        var (ax0, ay0, ax1, ay1) = LitBoundingBox(aloneFrame);
+        var (jx0, jy0, jx1, jy1) = LitBoundingBox(joinedFrame);
+        Assert.True(
+            (ax0, ay0, ax1, ay1) == (jx0, jy0, jx1, jy1),
+            $"Geçiş katmanı KAYDIRDI ({tag}): geçişsiz x[{ax0}..{ax1}] y[{ay0}..{ay1}], "
+            + $"geçişli x[{jx0}..{jx1}] y[{jy0}..{jy1}]. Fark dy={jy0 - ay0}, dx={jx0 - ax0}.");
+
+        // Dize iddiaları EN SONDA (piksel iddiası kendi başına ayakta dursun): pad hedefi
+        // kutunun çifte indirilmiş halidir — ham kutu 161x121 iken hedef 160x120.
+        var box = LayerGeometry.ScaleBox(CanvasWidth, CanvasHeight, scale);
+        Assert.Contains(
+            $"pad={box.Width & ~1L}:{box.Height & ~1L}:(ow-iw)/2:(oh-ih)/2:",
+            joinedCompiled.FilterGraphScript);
+
+        // Tek klipte kutuya normalize pad YALNIZ dönen katmanda üretilir: rotate'in kare
+        // tuvali GİRİŞİNİN boyutundan doğar, dolayısıyla girişin iki yolda da aynı olması
+        // gerekir. Dönmeyen katmanda pad'in geometrik bir işlevi yoktur ve üretilmez —
+        // tek katmanlı belgelerin snapshot'ları böylece bayt bayt korunur.
+        Assert.Equal(
+            (tag, rotationDeg != 0),
+            (tag, aloneCompiled.FilterGraphScript.Contains("pad=", StringComparison.Ordinal)));
+    }
+
+    [FfmpegFact]
+    public void OverlayExpression_TruncatesTowardZero_AndAcceptsFloor()
+    {
+        // FLOOR'UN DAYANDIĞI DIŞ SÖZLEŞME — kaynak koddan değil GERÇEK ffmpeg'den ölçülür.
+        // İki ayrı iddia; ffmpeg sürümü ikisinden birini değiştirirse burası kırmızıya düşer:
+        //   (1) overlay'in KENDİ tamsayı çevrimi SIFIRA DOĞRUDUR (floor DEĞİL) — bu yüzden
+        //       ifadeye açık floor GEREKİR;
+        //   (2) ifade değerlendiricisinde floor VARDIR ve overlay onu kabul eder.
+        // 64 px tuval + 20 px katman; katman sola taştığında sol kenar tuvalde görünmez, o yüzden
+        // konum SAĞ kenardan türetilir (x = sağ - 20 + 1).
+        foreach (var (expression, expected, why) in new (string, int, string)[]
+                 {
+                     ("-10.1", -10, "kesir 0.1 → sıfıra doğru"),
+                     ("-10.5", -10, "yarım → yuvarlama OLSAYDI -11 olurdu"),
+                     ("-10.9", -10, "kesir 0.9 → hâlâ -10"),
+                     ("-10.999", -10, "sınıra kadar -10"),
+                     ("-11", -11, "tam sayıda kırpma yok"),
+                     ("10.9", 10, "pozitif tarafta trunc = floor"),
+                     ("11", 11, "pozitif tam sayı"),
+                 })
+        {
+            Assert.Equal((expected, $"trunc({expression}) — {why}"),
+                (OverlayLeftEdge(expression), $"trunc({expression}) — {why}"));
+        }
+
+        foreach (var (expression, expected) in new (string, int)[]
+                 {
+                     ("floor(-10.1)", -11), ("floor(-10.5)", -11), ("floor(-10.9)", -11),
+                     ("floor(-0.2)", -1), ("floor(-11)", -11),
+                     ("floor(10.9)", 10), ("floor(11.2)", 11),
+                 })
+        {
+            Assert.Equal((expected, expression), (OverlayLeftEdge(expression), expression));
+        }
+
+        // NEGATİF KONTROL: 'floor' gerçekten ÇÖZÜLÜYOR mu, yoksa bilinmeyen bir ad sessizce
+        // yutuluyor mu? Uydurma bir fonksiyon adı ffmpeg'i HATAYLA düşürmeli — düşmüyorsa
+        // yukarıdaki floor ölçümleri hiçbir şey kanıtlamazdı.
+        var failure = Record.Exception(() => OverlayLeftEdge("zzz_not_a_function(1)"));
+        Assert.NotNull(failure);
+        Assert.Contains("Unknown function", failure.Message, StringComparison.Ordinal);
+    }
+
+    [FfmpegFact]
+    public void CompositingInRgb_IsWhatKeepsOddOverlayPositionsFromSnapping()
+    {
+        // §6.3'ün "kompozisyon GRAFİK BAŞINA RGB'de yapılır" kuralının KONUM yarısının dış
+        // sözleşmesi — gerçek ffmpeg'den ölçülür. Doküman bugüne kadar bu yarıyı gerekçe
+        // olarak SAYIYORDU ama koşan bir ölçümü yoktu.
+        //
+        // İDDİA: alt örneklemeli tuvalde overlay konumu TEK piksel taşıyamaz; ':format=rgb'
+        // bunu kaldırır. Ölçüm zinciri ürünün kendi zinciridir (taban ve katman format=rgba,
+        // overlay ':eval=frame' + CompositeFormat) ve iki kol YALNIZ o son parçada ayrışır.
+        //
+        // BAĞLAYICILIK: 'rgb' kolu ExportCompiler.CompositeFormat'ın KENDİSİYLE kurulur.
+        // Sabit boşaltılırsa (kompozisyon RGB'den çıkarılırsa) iki kol AYNILAŞIR ve aşağıdaki
+        // ayrışma iddiaları kırmızıya düşer — negatif kontrolün yükü budur.
+        //
+        // KAPSAM: yalnız KONUM nicelemesi. §6.3'ün RENK yarısı (zincir ortasında renk uzayı
+        // değişiminin alt katmanları kaydırması) burada ÖLÇÜLMEZ.
+        const string auto = ""; // overlay'in kendi 'format=auto' varsayılanı
+        var rgb = ExportCompiler.CompositeFormat;
+        Assert.NotEqual(auto, rgb);
+
+        // ÖNCE: format=auto GERÇEKTEN alt örneklemeli bir tuval seçiyor mu? Seçmeseydi
+        // aşağıdaki "auto snap'liyor" ölçümü bir şey kanıtlamazdı. Ürünün zincirinde her iki
+        // giriş de rgba OLMASINA RAĞMEN pazarlık yuva420p'ye iniyor (ölçüldü) — yani
+        // 'format=rgba' tek başına YETMEZ, yükü taşıyan parça overlay'in kendi seçeneğidir.
+        Assert.Contains("yuva420p", CompositeNegotiatedFormats(auto), StringComparison.Ordinal);
+        Assert.DoesNotContain("yuv", CompositeNegotiatedFormats(rgb), StringComparison.Ordinal);
+
+        // TEK konumlar: auto kolu onları ÇİFTE indiriyor (11→10, −11→−12), rgb kolu indirmiyor.
+        // Yön FLOOR'dur, sıfıra doğru DEĞİL: −11 sıfırdan UZAĞA, −12'ye düşüyor.
+        Assert.Equal(CompositeLayerBox(auto, 10, 10), CompositeLayerBox(auto, 11, 11));
+        Assert.Equal(CompositeLayerBox(auto, -12, -12), CompositeLayerBox(auto, -11, -11));
+
+        // Aynı konumlar rgb kolunda AYRIŞIYOR ve katman TAM istenen sütuna/satıra oturuyor.
+        Assert.Equal((11, 11, 11 + LayerWidth - 1, 11 + LayerHeight - 1), CompositeLayerBox(rgb, 11, 11));
+        Assert.Equal((10, 10, 10 + LayerWidth - 1, 10 + LayerHeight - 1), CompositeLayerBox(rgb, 10, 10));
+
+        // Negatif tarafta sol/üst kenar tuval dışında kalır → iddia SAĞ/ALT kenardan kurulur.
+        Assert.Equal((0, 0, -11 + LayerWidth - 1, -11 + LayerHeight - 1), CompositeLayerBox(rgb, -11, -11));
+        Assert.Equal((0, 0, -12 + LayerWidth - 1, -12 + LayerHeight - 1), CompositeLayerBox(rgb, -12, -12));
+
+        // KONTROL GRUBU: ÇİFT konumlarda iki kol AYNI kutuyu veriyor. Bu olmasaydı fark
+        // "niceleme" değil genel bir geometri/format farkı olurdu ve iddia çürük kalırdı.
+        Assert.Equal(CompositeLayerBox(auto, 10, 10), CompositeLayerBox(rgb, 10, 10));
+        Assert.Equal(CompositeLayerBox(auto, -12, -12), CompositeLayerBox(rgb, -12, -12));
+    }
+
+    [FfmpegTheory]
+    // rotate girişinin boyutu (scale çıkışı DAİMA çifttir, o yüzden her ikisi de çift).
+    [InlineData(960, 540)]      // hypot 1101.45 → ham kural 1101 (TEK)
+    [InlineData(480, 270)]      // hypot  550.73 → 551 (TEK)
+    [InlineData(768, 432)]      // hypot  881.16 → 881 (TEK)
+    [InlineData(640, 360)]      // hypot  734.30 → 734 (ÇİFT — kontrol grubu)
+    [InlineData(1928, 1084)]    // hypot 2211.84 → 2212 (ÇİFT — kontrol grubu)
+    public void RotateCanvas_CentersTheContent_OnlyWhenTheCanvasIsEven(int width, int height)
+    {
+        // ÇİFT TUVAL KURALININ DAYANDIĞI DIŞ SÖZLEŞME — gerçek ffmpeg'den ölçülür, kaynak koddan
+        // değil. `a=0` seçildi: interpolasyon YOK, dolayısıyla içeriğin tuval içindeki yeri
+        // KESİN okunur ve ölçüm rotate'in yalnızca TUVAL ARİTMETİĞİNİ sınar.
+        var (rawDg, rawBox) = RotateCanvasPlacement(width, height, "hypot(iw\\,ih)");
+        var (evenDg, evenBox) = RotateCanvasPlacement(width, height, "2*ceil(hypot(iw\\,ih)/2)");
+
+        // Yeni kural: tuval DAİMA çift ve köşegeni kapsıyor.
+        Assert.Equal(0, evenDg % 2);
+        Assert.True(evenDg >= Math.Sqrt((double)(width * width) + (height * height)),
+            $"çift tuval köşegeni kapsamıyor: {evenDg} < hypot({width},{height})");
+
+        // Ve içerik tuvalin TAM ORTASINDA (süreklilik koordinatında: içerik merkezi = Dg/2).
+        Assert.Equal((evenDg / 2d, evenDg / 2d),
+            ((evenBox.X0 + evenBox.X1 + 1) / 2d, (evenBox.Y0 + evenBox.Y1 + 1) / 2d));
+
+        // Ham kural TEK tuval ürettiğinde içerik ortaya oturamaz — sapma tam 0.5 px'tir.
+        var rawOffset = ((rawBox.X0 + rawBox.X1 + 1) / 2d) - (rawDg / 2d);
+        Assert.Equal(rawDg % 2 == 0 ? 0d : 0.5d, Math.Abs(rawOffset));
+    }
+
+    [FfmpegTheory]
+    // ölçek, x — katman tuvali TAŞIYOR (ölçek > 1) → overlay hedefi NEGATİF; ve kontrol grubu.
+    [InlineData(1.1, -0.3996, true)]    // hedef -143.872 → floor -144, trunc -143: AYRIŞIR
+    [InlineData(1.1, -0.4004, true)]    // hedef -144.128 → floor -145, trunc -144: AYRIŞIR
+    [InlineData(0.5, 0.0026, false)]    // hedef +80.832: iki kural AYNI sonucu verir (kontrol)
+    public async Task ZoomedLayer_LandsOnTheFlooredTarget_EvenWhenItIsNegative(
+        double scale, double x, bool discriminates)
+    {
+        // §2.5(b) modeli: "export merkezi = trunc(P), sapma daima orijine doğru". Bu ancak
+        // overlay HEDEFİ ≥ 0 iken doğruydu. Katman tuvali taştığı an (her yakınlaştırma) hedef
+        // negatifleşir ve (int)'in sıfıra doğru kırpması sapmayı TERS ÇEVİRİRDİ. İfadedeki floor
+        // modeli her iki işarette de geçerli kılar; bu test onu GERÇEK piksellerde sabitler.
+        //
+        // İki negatif satır BİLEREK -144'ün iki yakasındadır: trunc ikisini de bir piksel
+        // ORİJİNE DOĞRU (-143 ve -144) yollar, floor ise -144 ve -145 verir — yani negatif
+        // tarafta sapmanın İŞARETİ terstir. Farkın gerçekten doğduğunu testin kendi hesabı
+        // (flooredRight != truncatedRight) doğrular; üçüncü satır aynı hesapla farkın
+        // pozitif tarafta DOĞMADIĞINI sabitler.
+        //
+        // Katman yatayda tuvali taştığı için SOL kenar görünmez → SAĞ kenar ölçülür. Kaynak DÜZ
+        // RENKTİR ve kenar TEK BİR SATIRDA, katman renginin yarısı eşiğiyle aranır: encode
+        // (4:2:0 + DCT) sınırın 1 px ötesine zayıf bir sızıntı bırakır (ölçüldü: dış komşu
+        // (30,0,0), iç komşu (106,71,54)); tüm karenin sınır kutusu bu sızıntıyı katmanın
+        // kendisi sanardı.
+        var assetId = ExportTestDocs.AssetC;
+        var sources = new Dictionary<Guid, ExportAssetSource>
+        {
+            [assetId] = new(media.VideoSolid320x240NoAudio(), false, "bt709", "bt709"),
+        };
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(assetId, 0, 0, 1_000_000,
+                    transform: ExportTestDocs.Transform(x: x, scale: scale)),
+            ]),
+        ], width: CanvasWidth, height: CanvasHeight);
+
+        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var box = LayerGeometry.ScaleBox(CanvasWidth, CanvasHeight, scale);
+        var (outW, _) = ScaleOutputSize(320, 240, (int)box.Width, (int)box.Height);
+
+        // İki kuralın ÖNGÖRÜSÜ (fixture'ın gerçekten ayrım yaptığını testin kendisi doğrular).
+        var target = (CanvasWidth / 2d) + (x * CanvasWidth) - (outW / 2d);
+        var flooredRight = (int)Math.Floor(target) + outW - 1;
+        var truncatedRight = (int)Math.Truncate(target) + outW - 1;
+        Assert.Equal(discriminates, flooredRight != truncatedRight);
+
+        var tag = $"zoom-{scale.ToString(CultureInfo.InvariantCulture)}"
+                  + $"-{x.ToString(CultureInfo.InvariantCulture)}";
+        var frame = DecodeFrameRgb24(await RenderAsync(compiled, tag), 15, tag + "-f15");
+        var right = LastSolidColumn(frame, CanvasHeight / 2);
+
+        Assert.True(right < CanvasWidth - 1,
+            $"fixture bozuk: sağ kenar da tuvali taşıyor (x1={right}), ölçüm anlamsız");
+        Assert.Equal(flooredRight, right);
+    }
+
+    [FfmpegFact]
+    public async Task RotatedLayer_LandsOnTheSameCenterAsTheUnrotatedOne()
+    {
+        // G3: dönen katmanın ara tuvali TEK olduğunda katman merkezi dönmeyen halinden 1 px
+        // ayrılıyordu — "dönme yalnız görüntüyü çevirir, çapayı KAYDIRMAZ" sözleşmesinin ihlali.
+        // Kök neden rotate'in ow=hypot(iw,ih) ifadesini round ile tamsayılaması ve sonucun
+        // sıklıkla TEK çıkmasıydı; TEK tuvalde içerik tuvalin ortasına oturamaz ve overlay
+        // telafisi 0.5*w yarım tamsayı olur. Tuval artık ÇİFTE sabitlenir (2*ceil(hypot/2)).
+        //
+        // Fixture ölçek 0.657 seçildi ÇÜNKÜ ayrım TAM ORADA doğar: 4:3 kaynak → scale çıkışı
+        // 210x158, hypot 262.80 → eski kural 263 (TEK), yeni kural 264 (ÇİFT). x=y=0.0025 ile
+        // P her iki eksende de kesirlidir, yani eski kural katmanı kaydırırdı.
+        //
+        // 90° seçildi: dönme interpolasyon bulanıklığı ÜRETMEZ (kenar yumuşaması simetriktir),
+        // dolayısıyla sınır kutusunun MERKEZİ kesindir. Kenarlar ±1 px yumuşayabilir — iddia
+        // bu yüzden kenarlar üstünde değil MERKEZ üstünde kurulur.
+        const double x = 0.0025;
+        const double y = 0.0025;
+        var assetId = ExportTestDocs.AssetC;
+        var sources = new Dictionary<Guid, ExportAssetSource>
+        {
+            [assetId] = new(media.VideoSolid320x240NoAudio(), false, "bt709", "bt709"),
+        };
+
+        TimelineDoc Doc(double rotationDeg) => ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(assetId, 0, 0, 1_000_000,
+                    transform: ExportTestDocs.Transform(
+                        x: x, y: y, scale: 0.657, rotationDeg: rotationDeg)),
+            ]),
+        ], width: CanvasWidth, height: CanvasHeight);
+
+        var straightCompiled = ExportCompiler.Compile(Doc(0), sources, ExportProfile.Hd1080p);
+        var rotatedCompiled = ExportCompiler.Compile(Doc(90), sources, ExportProfile.Hd1080p);
+        Assert.DoesNotContain("rotate=", straightCompiled.FilterGraphScript);
+
+        var straight = DecodeFrameRgb24(
+            await RenderAsync(straightCompiled, "rot-parity-straight"), 15, "rot-parity-straight-f15");
+        var rotated = DecodeFrameRgb24(
+            await RenderAsync(rotatedCompiled, "rot-parity-rotated"), 15, "rot-parity-rotated-f15");
+
+        var (sx0, sy0, sx1, sy1) = LitBoundingBox(straight);
+        var (rx0, ry0, rx1, ry1) = LitBoundingBox(rotated);
+        var straightCenter = ((sx0 + sx1 + 1) / 2d, (sy0 + sy1 + 1) / 2d);
+        var rotatedCenter = ((rx0 + rx1 + 1) / 2d, (ry0 + ry1 + 1) / 2d);
+
+        // Modelin kendisi: merkez = floor(P), her iki eksende ve dönmeden BAĞIMSIZ.
+        var expected = (
+            Math.Floor((CanvasWidth / 2d) + (x * CanvasWidth)),
+            Math.Floor((CanvasHeight / 2d) + (y * CanvasHeight)));
+
+        Assert.Equal(expected, straightCenter);
+        Assert.Equal(expected, rotatedCenter);
+
+        // Dönmüş kutu gerçekten 90° dönmüş olmalı (aksi halde "merkez aynı" iddiası boş olurdu:
+        // hiç dönmemiş bir katman da testi geçerdi).
+        Assert.True(rx1 - rx0 < sx1 - sx0 && ry1 - ry0 > sy1 - sy0,
+            $"katman dönmemiş görünüyor: dönmesiz {sx1 - sx0 + 1}x{sy1 - sy0 + 1}, "
+            + $"dönmüş {rx1 - rx0 + 1}x{ry1 - ry0 + 1}");
+
+        // Dize iddiası EN SONDA: tuval ifadesi ÇİFTE zorlanıyor.
+        Assert.Contains("ow=2*ceil(hypot(iw\\,ih)/2):oh=ow", rotatedCompiled.FilterGraphScript);
+    }
+
+    [FfmpegTheory]
+    // (kaynak, kutu) — 16:9 / 4:3 / kare kaynak, TEK ve ÇİFT kutular, dejenere olmayan aralık.
+    [InlineData(1280, 720, 962, 541)]
+    [InlineData(640, 480, 962, 541)]
+    [InlineData(512, 512, 962, 541)]
+    [InlineData(1280, 720, 963, 541)]
+    [InlineData(333, 777, 121, 55)]
+    [InlineData(1920, 1080, 3, 3)]
+    [InlineData(16, 9, 1919, 1079)]
+    public void ScaleOutput_IsAlwaysEven_AndFitsTheEvenBox(int srcW, int srcH, int boxW, int boxH)
+    {
+        // Düzeltmenin dayandığı DIŞ SÖZLEŞME: pad hedefini kutunun çifte indirilmiş haline
+        // çekmek ancak scale çıktısı DAİMA çift ve o hedeften küçük/eşitse güvenlidir.
+        // ffmpeg sürümü bu davranışı değiştirirse burası kırmızıya düşmelidir — kaynak koddan
+        // değil, GERÇEK koşumdan ölçülür.
+        //
+        // ÖNKOŞUL (ölçüldü): sözleşme, sığdırılan boyut ≥ 1 px olduğu sürece geçerlidir. Alt-piksele
+        // düşen eksende scale 0 üretir ve 0'ı "girdi boyutu" diye yorumlar (ölç.: src 100x8,
+        // kutu 6x6 → 6x8). O rejim artık derlemeye HİÇ GİRMEZ: dejenerelik kapısı onu
+        // 'degenerate-layer' ile reddeder (bkz. DegenerateLayer_*). Aşağıdaki InlineData'ların
+        // hiçbiri dejenere değildir — sözleşme yalnız o kümede iddia edilir.
+        Assert.False(LayerGeometry.IsDegenerate(boxW, boxH, srcW, srcH),
+            "fixture dejenere: bu vaka kapıdan geçemez, sözleşme onda iddia edilemez");
+
+        var (outW, outH) = ScaleOutputSize(srcW, srcH, boxW, boxH);
+
+        Assert.True(outW % 2 == 0 && outH % 2 == 0,
+            $"scale çıktısı TEK boyutlu: {srcW}x{srcH} → kutu {boxW}x{boxH} → {outW}x{outH}");
+        Assert.True(outW <= (boxW & ~1) && outH <= (boxH & ~1),
+            $"scale çıktısı çifte indirilmiş kutuyu AŞTI: {srcW}x{srcH} → kutu {boxW}x{boxH} → "
+            + $"{outW}x{outH} > {boxW & ~1}x{boxH & ~1} — pad kırpardı");
+    }
+
+    [FfmpegTheory]
+    [MemberData(nameof(LayerGeometryTests.MeasuredScaleOutputs), MemberType = typeof(LayerGeometryTests))]
+    public void ScaleOutput_MatchesRealFfmpeg(
+        int srcW, int srcH, int boxW, int boxH, int outW, int outH, bool degenerate)
+    {
+        // LayerGeometry.ScaleOutput ffmpeg'in ff_scale_adjust_dimensions davranışının TAMSAYI
+        // MODELİDİR ve dejenerelik kapısı ona dayanır. Model bir REPLİKADIR: ffmpeg sürümü
+        // yuvarlamayı değiştirirse kapı sessizce yanlış yere kayar. Bu yüzden model, CANLI
+        // ffmpeg'e karşı koşulur — tablodaki beklenen değer değil, GERÇEK ölçüm hakemdir.
+        var measured = ScaleOutputSize(srcW, srcH, boxW, boxH);
+
+        Assert.Equal((outW, outH), measured);
+        Assert.Equal(measured, LayerGeometry.ScaleOutput(boxW, boxH, srcW, srcH));
+        Assert.Equal(degenerate, LayerGeometry.IsDegenerate(boxW, boxH, srcW, srcH));
+
+        // Dejenere vakada ffmpeg o ekseni 0 hesaplar ve KAYNAĞIN boyutunu korur — "çıktı kutuyu
+        // aşar" ile aynı şey değildir (sessiz sınıf kutuya sığar; bkz. LayerGeometryTests).
+        Assert.Equal(
+            degenerate, measured.Width == srcW || measured.Height == srcH);
+    }
+
+    /// <summary>
+    /// ANİMASYONLU ölçek yolunun kutu aritmetiği: kesirli ifade → tamsayı kutu.
+    /// fitW, fitH (kaynak), ifade w, ifade h, beklenen ÇIKIŞ (showinfo).
+    /// </summary>
+    public static TheoryData<int, int, string, string, int, int> MeasuredTruncatedBoxes() => new()
+    {
+        // 5. tur E2E'sinin ÖLDÜĞÜ vaka: bbox 223x104, taban 0.015 → 3.345 / 1.56.
+        // Kırpma → kutu 3x1 → yükseklik çöker, çıkış KAYNAĞIN yüksekliği (104).
+        { 223, 104, "3.345", "1.56", 2, 104 },
+        // KIRPMA/YUVARLAMA AYRIMININ TANIK VAKASI: 3.9/2.9 yuvarlansaydı kutu 4x3 → çıkış 4x2.
+        { 223, 104, "3.9", "2.9", 2, 2 },
+        { 223, 104, "3.0", "2.0", 2, 2 },
+        { 223, 104, "4.0", "3.0", 4, 2 },
+        // Kapının önerdiği taban (0.020): 4.46 / 2.08 → kutu 4x2 → temiz.
+        { 223, 104, "4.46", "2.08", 4, 2 },
+        // Varyant 2 (bbox 6x20): 0.25 (eski, statik eşik) → 1.5/5 → kutu 1x5, GENİŞLİK çöker
+        // ve çıkış genişliği KAYNAĞIN kendi genişliğine sıçrar (6). Ölçüm: 6x4.
+        { 6, 20, "1.5", "5.0", 6, 4 },
+        // 0.334 (yeni taban) → 2.004 / 6.68 → kutu 2x6 → temiz.
+        { 6, 20, "2.004", "6.68", 2, 6 },
+    };
+
+    [FfmpegTheory]
+    [MemberData(nameof(MeasuredTruncatedBoxes))]
+    public void ScaleBoxTruncated_MatchesRealFfmpeg(
+        int fitW, int fitH, string exprW, string exprH, int outW, int outH)
+    {
+        // ANİMASYONLU ölçekte kutuyu compiler DEĞİL ffmpeg üretir: filtergraph'a ham çarpım
+        // ifadesi gider (scale=w='...':eval=frame) ve tamsayıya çeviren ffmpeg'dir. Kapının
+        // hangi aritmetiği varsaydığı BELİRLEYİCİDİR — ilk sürümü roundHalfUp varsayıyordu ve
+        // kabul ettiği belge ffmpeg'de ölüyordu. Hakem burada da CANLI ölçümdür.
+        var w = double.Parse(exprW, CultureInfo.InvariantCulture);
+        var h = double.Parse(exprH, CultureInfo.InvariantCulture);
+        var box = LayerGeometry.ScaleBoxTruncated(w, h, 1d);
+
+        var measured = ScaleOutputSizeFromExpression(fitW, fitH, exprW, exprH);
+        Assert.Equal((outW, outH), measured);
+
+        // Modelin kutusu ffmpeg'in kutusuyla aynı mı: çıkışı kendi kutumuzdan yeniden üret.
+        Assert.Equal(measured, ToInt(LayerGeometry.ScaleOutput(box.Width, box.Height, fitW, fitH)));
+
+        // Ve kapının yüklemi ölçülen sonuçla aynı şeyi söylemeli: dejenere ⟺ bir eksen kaynağın.
+        var degenerate = measured.Width == fitW || measured.Height == fitH;
+        Assert.Equal(degenerate, LayerGeometry.IsDegenerate(box.Width, box.Height, fitW, fitH));
+
+        // KIRPMA vs YUVARLAMA: yuvarlayan bir model bu tabloyu yeniden üretemez.
+        Assert.Equal(box, LayerGeometry.ScaleBoxTruncated(w, h, 1d));
+    }
+
+    private static (int Width, int Height) ToInt((long Width, long Height) value) =>
+        ((int)value.Width, (int)value.Height);
+
+    [FfmpegFact]
+    public async Task DegenerateLayer_IsRejectedTyped_WhileTheScaleJustAboveItRendersCorrectly()
+    {
+        // KAPININ İKİ YARISI TEK TESTTE, GERÇEK RENDER'LA.
+        //
+        // Kaynak 320x16 (afiş, 20:1), tuval 320x240. Eşik: (ceil(320/16) - 0.5)/320 = 19.5/320
+        // = 0.060937 → editör ızgarasında 0.061.
+        //   * ölçek 0.060 → kutu 19x14, sığdırılan yükseklik 0.95 px → DEJENERE. Gerçek ffmpeg
+        //     bu kutuda 18x16 çizerdi (16.7 KAT yüksek, önizleme 19.2x0.96 çizerken) — kapı
+        //     olmasaydı bu ya pad'de -22 ile ölürdü ya da SESSİZCE yanlış çizerdi.
+        //   * ölçek 0.061 → kutu 20x15 → çıktı 20x2, temiz ve MERKEZLİ.
+        var bannerPath = media.VideoBanner320x16NoAudio();
+        var sources = new Dictionary<Guid, ExportAssetSource>
+        {
+            // Boyutlar worker'da ffprobe'tan gelir; kapı yalnız bu defterden beslenir.
+            [ExportTestDocs.AssetB] = new(bannerPath, false, "bt709", "bt709", 320, 16),
+        };
+
+        static TimelineDoc DocAt(double scale) => ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(
+                    ExportTestDocs.AssetB, 0, 0, 1_000_000,
+                    transform: ExportTestDocs.Transform(scale: scale)),
+            ]),
+        ], width: CanvasWidth, height: CanvasHeight);
+
+        // ── (1) Eşiğin ALTI: TİPLİ hata, ffmpeg hiç çağrılmaz.
+        var rejected = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Compile(DocAt(0.060), sources, ExportProfile.Hd1080p));
+        Assert.Equal("degenerate-layer", rejected.Feature);
+        Assert.Contains("320x16", rejected.Message);          // NEDEN: kaynağın oranı
+        Assert.Contains("19x14", rejected.Message);           // hangi kutuda
+        Assert.Contains("en az 0.061", rejected.Message);     // EYLEM: tek ve kesin bir sayı
+
+        // Reddin gerekçesi GERÇEK: aynı kutu canlı ffmpeg'de kaynağın kendi yüksekliğini korur.
+        Assert.Equal((18, 16), ScaleOutputSize(320, 16, 19, 14));
+
+        // ── (2) Eşiğin HEMEN ÜSTÜ: derlenir VE doğru geometriyle render edilir.
+        var compiled = ExportCompiler.Compile(DocAt(0.061), sources, ExportProfile.Hd1080p);
+        Assert.Contains("scale=20:15:", compiled.FilterGraphScript);
+
+        var frame = DecodeFrameRgb24(await RenderAsync(compiled, "degen-edge"), 15, "degen-edge-f15");
+        var (x0, y0, x1, y1) = LitBoundingBox(frame);
+
+        // Beklenen: 20x2 katman, merkezi (160,120) → overlay x = 160-0.5*20 = 150,
+        // y = 120-0.5*2 = 119. Önizlemenin çizdiği kutu 19.52x0.976 merkezli; export her kenarda
+        // en fazla 1 px farkla ama MERKEZİ BOZMADAN nicelenir (§2.5'in beyan edilen toleransı).
+        Assert.Equal((150, 119, 169, 120), (x0, y0, x1, y1));
+        Assert.Equal(160d, (x0 + x1 + 1) / 2d);
+        Assert.Equal(120d, (y0 + y1 + 1) / 2d);
+    }
+
+    /// <summary>
+    /// Derleyicinin ölçek filtresinin GERÇEK ffmpeg çıktısı (showinfo'dan okunur). Kutu bir ÜST
+    /// SINIRDIR; gerçek boyut kaynağın aspect'inden ve force_divisible_by=2'den doğar.
+    /// </summary>
+    /// <summary>
+    /// <see cref="ScaleOutputSize"/>'ın İFADELİ hali: kutu sabit sayı değil, <c>eval=frame</c>
+    /// ile değerlendirilen kesirli bir ifadedir (animasyonlu ölçek yolunun birebir biçimi).
+    /// </summary>
+    private static (int Width, int Height) ScaleOutputSizeFromExpression(
+        int srcW, int srcH, string exprW, string exprH)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in new[]
+                 {
+                     "-hide_banner", "-loglevel", "info", "-y",
+                     "-f", "lavfi", "-i",
+                     $"color=c=white:s={srcW.ToString(CultureInfo.InvariantCulture)}x"
+                     + $"{srcH.ToString(CultureInfo.InvariantCulture)}:d=0.1",
+                     "-vf",
+                     $"scale=w='{exprW}':h='{exprH}'"
+                     + ":force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic"
+                     + ":eval=frame,showinfo",
+                     "-frames:v", "1", "-f", "null", "-",
+                 })
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi)!;
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit(30_000);
+
+        var match = System.Text.RegularExpressions.Regex.Match(stderr, @"\ss:(\d+)x(\d+)\s");
+        Assert.True(match.Success, $"showinfo çıktısı okunamadı:\n{stderr}");
+        return (
+            int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
+            int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// <c>overlay=x='&lt;expression&gt;'</c>'in GERÇEK ffmpeg'de oturduğu sütun. 64x64 siyah tuval +
+    /// 20x20 beyaz katman; konum SAĞ kenardan türetilir (sola taşan katmanın sol kenarı tuvalde
+    /// görünmez, sağ kenarı görünür). Ölçüm rgb24 ham kareden yapılır — encode/decode yolu yok.
+    /// ffmpeg hata verirse <see cref="InvalidOperationException"/> fırlar (negatif kontrol bunu
+    /// kullanır: bilinmeyen fonksiyon adı sessizce yutulmamalıdır).
+    /// </summary>
+    private static int OverlayLeftEdge(string expression)
+    {
+        const int canvas = 64;
+        const int layer = 20;
+        var psi = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in new[]
+                 {
+                     "-hide_banner", "-loglevel", "error", "-y",
+                     "-filter_complex",
+                     $"color=c=black:s={canvas}x{canvas}:d=1[bg];"
+                     + $"color=c=white:s={layer}x{layer}:d=1[fg];"
+                     + $"[bg][fg]overlay=x='{expression}':y=0:format=rgb[out]",
+                     "-map", "[out]", "-frames:v", "1",
+                     "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+                 })
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi)!;
+        using var stdout = new MemoryStream();
+        process.StandardOutput.BaseStream.CopyTo(stdout);
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit(30_000);
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"ffmpeg overlay x='{expression}' ile başarısız oldu: {stderr}");
+        }
+
+        var rgb = stdout.ToArray();
+        Assert.Equal(canvas * canvas * 3, rgb.Length);
+        for (var column = canvas - 1; column >= 0; column--)
+        {
+            if (rgb[column * 3] > 32)
+            {
+                return column - layer + 1;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"overlay x='{expression}': katman tuvalde hiç görünmedi");
+    }
+
+    /// <summary>Kompozisyon ölçümünün katman boyutu (tuvalin içine sığar, kenarları kesin).</summary>
+    private const int LayerWidth = 64;
+
+    /// <inheritdoc cref="LayerWidth"/>
+    private const int LayerHeight = 48;
+
+    /// <summary>
+    /// ÜRÜNÜN kompozisyon zinciri, tek karelik küçük ölçeği: taban ve katman <c>format=rgba</c>
+    /// ile girer, <c>overlay</c> <paramref name="compositeFormat"/> ile blend eder. Yalnız o son
+    /// parça değişkendir — iki kolun farkı başka hiçbir şeyden doğamaz.
+    /// </summary>
+    private static string CompositeGraph(string compositeFormat, string x, string y) =>
+        $"color=c=black:s={CanvasWidth.ToString(CultureInfo.InvariantCulture)}x"
+        + $"{CanvasHeight.ToString(CultureInfo.InvariantCulture)}:d=1,"
+        + "format=rgba,setsar=1,settb=AVTB[base];"
+        + $"color=c=0x{SolidLayerRgb[0]:X2}{SolidLayerRgb[1]:X2}{SolidLayerRgb[2]:X2}"
+        + $":s={LayerWidth.ToString(CultureInfo.InvariantCulture)}x"
+        + $"{LayerHeight.ToString(CultureInfo.InvariantCulture)}:d=1,"
+        + "setsar=1,format=rgba,settb=AVTB[l];"
+        + $"[base][l]overlay=x={x}:y={y}:eval=frame{compositeFormat}[out]";
+
+    /// <summary>
+    /// <see cref="CompositeGraph"/>'ın verdiği kompozit karede katmanın sınır kutusu (ham rgb24,
+    /// encode YOK). Konum tamsayı verilir: ürün overlay hedefini ifadenin içinde zaten
+    /// <c>floor</c>'lar, yani bu hatta kesirli bir hedef ULAŞMAZ.
+    /// </summary>
+    private static (int X0, int Y0, int X1, int Y1) CompositeLayerBox(
+        string compositeFormat, int x, int y)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in new[]
+                 {
+                     "-hide_banner", "-loglevel", "error", "-y",
+                     "-filter_complex",
+                     CompositeGraph(
+                         compositeFormat,
+                         x.ToString(CultureInfo.InvariantCulture),
+                         y.ToString(CultureInfo.InvariantCulture)),
+                     "-map", "[out]", "-frames:v", "1",
+                     "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+                 })
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi)!;
+        using var buffer = new MemoryStream();
+        process.StandardOutput.BaseStream.CopyTo(buffer);
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit(30_000);
+        Assert.True(process.ExitCode == 0,
+            $"kompozisyon ölçümü başarısız (format='{compositeFormat}', x={x}, y={y}): {stderr}");
+
+        var rgb = buffer.ToArray();
+        Assert.Equal(CanvasWidth * CanvasHeight * 3, rgb.Length);
+        return LitBoundingBox(rgb);
+    }
+
+    /// <summary>
+    /// <c>overlay</c>'in pazarlık SONUCUNDA seçtiği piksel formatlarını (ffmpeg'in kendi verbose
+    /// satırı) döndürür. "auto gerçekten alt örneklemeli mi" sorusunu ölçümle yanıtlar —
+    /// varsayımla değil.
+    /// </summary>
+    private static string CompositeNegotiatedFormats(string compositeFormat)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in new[]
+                 {
+                     "-hide_banner", "-loglevel", "verbose", "-y",
+                     "-filter_complex", CompositeGraph(compositeFormat, "11", "11"),
+                     "-map", "[out]", "-frames:v", "1", "-f", "null", "-",
+                 })
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi)!;
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit(30_000);
+        Assert.True(process.ExitCode == 0, $"format pazarlığı okunamadı: {stderr}");
+
+        var line = stderr.Split('\n')
+            .FirstOrDefault(l => l.Contains("Parsed_overlay", StringComparison.Ordinal)
+                                 && l.Contains("fmt:", StringComparison.Ordinal));
+        Assert.False(string.IsNullOrEmpty(line),
+            $"overlay'in seçtiği format satırı bulunamadı:\n{stderr}");
+        return line!;
+    }
+
+    /// <summary>
+    /// <c>rotate=a=0:c=none:ow=&lt;expression&gt;:oh=ow</c>'un ÜRETTİĞİ kare tuvalin kenarı ve
+    /// içeriğin o tuvaldeki sınır kutusu. Tuval boyutu ffmpeg'in kendi hesabıdır — ham bayt
+    /// sayısından türetilir, biz varsaymayız. <c>a=0</c> olduğu için interpolasyon yoktur ve
+    /// sınır kutusu KESİNDİR.
+    /// </summary>
+    private static (int Dg, (int X0, int Y0, int X1, int Y1) Box) RotateCanvasPlacement(
+        int width, int height, string canvasExpression)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in new[]
+                 {
+                     "-hide_banner", "-loglevel", "error", "-y",
+                     "-filter_complex",
+                     $"color=c=white:s={width.ToString(CultureInfo.InvariantCulture)}x"
+                     + $"{height.ToString(CultureInfo.InvariantCulture)}:d=1,format=rgba,"
+                     + $"rotate=a=0:c=none:ow={canvasExpression}:oh=ow[out]",
+                     "-map", "[out]", "-frames:v", "1",
+                     "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+                 })
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi)!;
+        using var buffer = new MemoryStream();
+        process.StandardOutput.BaseStream.CopyTo(buffer);
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit(30_000);
+        Assert.True(process.ExitCode == 0, $"rotate ow={canvasExpression} başarısız: {stderr}");
+
+        var rgb = buffer.ToArray();
+        var dg = (int)Math.Round(Math.Sqrt(rgb.Length / 3d));
+        Assert.Equal(dg * dg * 3, rgb.Length); // kare tuval (oh=ow)
+
+        int x0 = dg, y0 = dg, x1 = -1, y1 = -1;
+        for (var y = 0; y < dg; y++)
+        {
+            for (var x = 0; x < dg; x++)
+            {
+                var offset = ((y * dg) + x) * 3;
+                if (Math.Max(rgb[offset], Math.Max(rgb[offset + 1], rgb[offset + 2])) <= 32)
+                {
+                    continue;
+                }
+
+                x0 = Math.Min(x0, x);
+                y0 = Math.Min(y0, y);
+                x1 = Math.Max(x1, x);
+                y1 = Math.Max(y1, y);
+            }
+        }
+
+        Assert.True(x1 >= 0, $"rotate ow={canvasExpression}: tuvalde içerik yok");
+        return (dg, (x0, y0, x1, y1));
+    }
+
+    private static (int Width, int Height) ScaleOutputSize(int srcW, int srcH, int boxW, int boxH)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in new[]
+                 {
+                     "-hide_banner", "-loglevel", "info", "-y",
+                     "-f", "lavfi", "-i",
+                     $"color=c=white:s={srcW.ToString(CultureInfo.InvariantCulture)}x"
+                     + $"{srcH.ToString(CultureInfo.InvariantCulture)}:d=0.1",
+                     "-vf",
+                     $"scale={boxW.ToString(CultureInfo.InvariantCulture)}:"
+                     + $"{boxH.ToString(CultureInfo.InvariantCulture)}"
+                     + ":force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,showinfo",
+                     "-frames:v", "1", "-f", "null", "-",
+                 })
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi)!;
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit(30_000);
+
+        var match = System.Text.RegularExpressions.Regex.Match(stderr, @"\ss:(\d+)x(\d+)\s");
+        Assert.True(match.Success, $"showinfo çıktısı okunamadı:\n{stderr}");
+        return (
+            int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
+            int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture));
     }
 
     // ───────────────────────── Piksel / render yardımcıları ─────────────────────────
@@ -862,6 +1708,27 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         }
 
         return (x0, y0, x1, y1);
+    }
+
+    /// <summary>
+    /// Verilen SATIRDA düz renk katmanın SON sütunu. Eşik, katman renginin (yaklaşık) YARISIDIR:
+    /// encode'un (4:2:0 + DCT) sınırın bir piksel ötesine bıraktığı zayıf sızıntı bu eşiğin
+    /// altında kalır, sınırın içindeki (kısmen bulanıklaşmış) gerçek kenar üstünde. Kenarın
+    /// MUTLAK piksel konumu iddia edilecekse bu ölçüm kullanılmalıdır — <see cref="LitBoundingBox"/>
+    /// tüm kareyi taradığı için herhangi bir satırdaki sızıntıyı kenar sanar.
+    /// </summary>
+    private static int LastSolidColumn(byte[] rgb, int row)
+    {
+        var threshold = SolidLayerRgb[0] / 2;
+        for (var x = CanvasWidth - 1; x >= 0; x--)
+        {
+            if (rgb[((row * CanvasWidth) + x) * 3] > threshold)
+            {
+                return x;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>Sütundaki ilk aydınlık satır (üst kenarın piksel konumu).</summary>

@@ -91,6 +91,40 @@ public static class ColorPipeline
         ["brightness", "contrast", "saturation", "temperature", "tint", "exposure"];
 
     /// <summary>
+    /// HAM tarama: efekt listesindeki LUT varlık id'leri, DOĞRULAMADAN ÖNCE. API asset
+    /// defterini tek sorguda doldurabilsin diye vardır (<see cref="ExportCompiler.ReferencedAssetIds"/>).
+    /// <para>
+    /// BİLEREK TOLERANSLIDIR: kapalı efekt, eksik/bozuk <c>assetId</c>, tanınmayan efekt tipi —
+    /// hiçbiri burada hata üretmez, çünkü bu tarama bir KAPI DEĞİLDİR. Aynı ihlalleri
+    /// <see cref="Parse"/> kendi tipli Türkçe mesajıyla raporlar; tarama yalnız "hangi satırları
+    /// sorayım" sorusunu yanıtlar ve fazladan/eksik bir id yalnız kapının gördüğü kümeyi
+    /// etkiler. Kapalı efekt de DAHİLDİR: liste ÜST KÜME olmalıdır, aksi halde kullanıcı
+    /// efekti açtığında defterde satır bulunmaz ve kapı yanlışlıkla "asset yok" derdi.
+    /// </para>
+    /// </summary>
+    public static IEnumerable<Guid> RawLutAssetIds(IReadOnlyList<Effect>? effects)
+    {
+        if (effects is not { Count: > 0 })
+        {
+            yield break;
+        }
+
+        foreach (var effect in effects)
+        {
+            if (effect.Type != EffectType.Lut || effect.Params is not { } p
+                || !p.TryGetValue("assetId", out var raw)
+                || AsString(raw) is not { } text
+                || !Guid.TryParse(text, out var assetId)
+                || assetId == Guid.Empty)
+            {
+                continue;
+            }
+
+            yield return assetId;
+        }
+    }
+
+    /// <summary>
     /// Klibin ETKİN efektlerini doğrulayıp tipli görünüme çevirir. Kapalı (enabled=false)
     /// efekt YOK sayılır. İhlaller tipli Türkçe hatadır — sessiz düzeltme yok.
     /// </summary>

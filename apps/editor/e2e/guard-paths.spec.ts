@@ -508,8 +508,25 @@ function clipsInOrder(state: { tracks: { type: string; clips: { id: string; time
   return [...track!.clips].sort((a, b) => a.timelineStartUs - b.timelineStartUs);
 }
 
-test.describe('(c2) böl -> ölçekle -> geçiş ekle: iş kuyrukta ölmez', () => {
-  test('gerçek fareyle kurulan sıra dışa aktarımda RENDER edilir', async ({ page, account }) => {
+/**
+ * Ölçek SABİTLENİR, gizmoya bırakılmaz. Gerekçe: gizmo köşe sürüklemesi 3 ondalıklı KEYFİ
+ * bir değer yazar; bu testin daha önceki hali sürüklemenin deterministik olarak "güvenli"
+ * kümeye düşmesi sayesinde üç tur yeşil kalmıştı ve korumaya çalıştığı kuralı GERÇEKTE hiç
+ * koşmuyordu. İki koşum, 1920x1080 tuvalde ölçek kutusunun paritesinden başka hiçbir şeyde
+ * farklı değildir:
+ *   0.501 -> 1920*0.501=962, 1080*0.501=541 → kutu TEK yükseklikte,
+ *   0.502 -> 1920*0.502=964, 1080*0.502=542 → kutu ÇİFT (bugün de geçen küme).
+ * Düzeltmeden önce birincisi POST /exports'ta 202 alıp worker'da "Başarısız" oluyordu.
+ */
+const ODD_BOX_SCALE = '0.501';
+const EVEN_BOX_SCALE = '0.502';
+
+for (const run of [
+  { scale: ODD_BOX_SCALE, box: '962x541', parity: 'TEK' },
+  { scale: EVEN_BOX_SCALE, box: '964x542', parity: 'ÇİFT (negatif kontrol)' },
+]) {
+  test(`(c2) böl -> ölçekle -> geçiş ekle: kutu ${run.parity} — ölçek ${run.scale} `
+    + `(kutu ${run.box}) gerçek girdiyle kurulur ve RENDER edilir`, async ({ page, account }) => {
     test.skip(ffmpegVersion() === null, FFMPEG_SKIP_REASON);
     // Yükleme + worker işleme + ffmpeg render.
     test.setTimeout(480_000);
@@ -520,7 +537,7 @@ test.describe('(c2) böl -> ölçekle -> geçiş ekle: iş kuyrukta ölmez', () 
     const project = await createEmptyProject(
       account.context.request,
       account.accessToken,
-      'E2E gecis yerlesim',
+      `E2E gecis yerlesim ${run.scale}`,
     );
 
     const app = new EditorApp(page);
@@ -570,16 +587,32 @@ test.describe('(c2) böl -> ölçekle -> geçiş ekle: iş kuyrukta ölmez', () 
       y: geo.cornerSe.y - (geo.cornerSe.y - geo.centre.y) * 0.4,
     });
 
-    const scaledA = await readClip(page, first.id);
+    const dragged = await readClip(page, first.id);
     const untouchedB = await readClip(page, second.id);
     expect(
-      scaledA.transform.scale,
+      dragged.transform.scale,
       'Gizmo sürüklemesi ilk yarının ölçeğini DEĞİŞTİRMELİYDİ (ön koşul).',
     ).toBeLessThan(1);
+    // ÖN KOŞULUN ASIL İDDİASI: gizmo 3 ondalıklı KEYFİ bir değer yazar — kutunun paritesini
+    // seçemez. Bu yüzden aşağıdaki kapı iddiası sürüklemeye DEĞİL, klavyeyle sabitlenen
+    // değere dayanır (eski hali sürüklemenin rastgele "güvenli" kümeye düşmesiyle yalancı
+    // yeşildi).
+    expect(
+      Math.round(dragged.transform.scale * 1000),
+      'Ölçek 3 ondalığa nicelenir (TRANSFORM_SCALE_DECIMALS).',
+    ).toBeCloseTo(dragged.transform.scale * 1000, 6);
     expect(
       untouchedB.transform.scale,
       'ÖN KOŞUL: geçiş yokken komşuya dokunulmaz — ayrışma tam olarak burada doğuyor.',
     ).toBe(1);
+
+    // --- 2b. Ölçeği GERÇEK KLAVYEYLE sabitle (gizmo kesin değer tutturamaz) ---
+    await typeNumber(page, 'clip-scale', run.scale);
+    const scaledA = await readClip(page, first.id);
+    expect(
+      scaledA.transform.scale,
+      `Klavyeyle yazılan ölçek dokümana AYNEN geçmeliydi (kutu ${run.box}).`,
+    ).toBe(Number(run.scale));
 
     // --- 3. Kesim rozetinden GERÇEK fareyle geçiş ekle ---
     await addTransitionByMouse(app, first.id);
@@ -600,8 +633,9 @@ test.describe('(c2) böl -> ölçekle -> geçiş ekle: iş kuyrukta ölmez', () 
     ).toEqual(a.transform);
     expect(
       a.transform.scale,
-      'Eşitlenen değer VARSAYILAN olmamalı, yoksa test ölçeklemenin korunduğunu kanıtlamaz.',
-    ).toBeLessThan(1);
+      'Eşitlenen değer YAZDIĞIMIZ değer olmalı: kutu paritesi iddiası buna dayanıyor. '
+        + 'Editör ölçeği sessizce "güvenli" bir ızgaraya çekseydi test yanlış şeyi ölçerdi.',
+    ).toBe(Number(run.scale));
 
     // --- 5. GERÇEK dışa aktarım: 202 + worker'da render ---
     const exportPost = page.waitForResponse(
@@ -638,9 +672,14 @@ test.describe('(c2) böl -> ölçekle -> geçiş ekle: iş kuyrukta ölmez', () 
       savedClips[1].transform,
       'Kaydedilen belgede de iki klibin yerleşimi aynı olmalı.',
     ).toEqual(savedClips[0].transform);
-    expect(savedClips[0].transform.scale).toBeLessThan(1);
+    expect(
+      savedClips[0].transform.scale,
+      'Sunucudaki belge de tam olarak bu ölçeği taşımalı — kutu paritesi iddiasının taşıyıcısı.',
+    ).toBe(Number(run.scale));
 
     // --- 6. İş DERLEME aşamasını geçti mi? Tek dürüst kanıt: render bitti. ---
+    // POST 202 YETMEZ: 0.501 koşumu düzeltmeden önce de 202 dönüyor, iş kuyruğa giriyor ve
+    // worker'da derleme kapısında "Başarısız" oluyordu. Kapanma kriteri iş DURUMUDUR.
     const exportsSection = page
       .locator('section')
       .filter({ has: page.getByRole('heading', { name: 'Dışa Aktarmalar' }) })
@@ -649,12 +688,12 @@ test.describe('(c2) böl -> ölçekle -> geçiş ekle: iş kuyrukta ölmez', () 
     await expect(jobRow).toBeVisible({ timeout: 20_000 });
     await expect(
       jobRow.getByText('Tamamlandı', { exact: true }),
-      'Geçişli kesimde yerleşim eşitlenmediyse iş worker\'da "geçişli kliplerin yerleşimi aynı '
-        + 'olmalıdır" ile düşer. Kart burada "Tamamlandı" göstermelidir.',
+      `Ölçek ${run.scale} → katman kutusu ${run.box}. Geçişli kesimde bu belge worker'da `
+        + 'derleme kapısını geçmeli ve render edilmelidir; kart "Tamamlandı" göstermelidir.',
     ).toBeVisible({ timeout: 300_000 });
     await expect(
       jobRow.locator('p.text-danger'),
       'Başarısız bir iş sessizce geçmemeli.',
     ).toHaveCount(0);
   });
-});
+}

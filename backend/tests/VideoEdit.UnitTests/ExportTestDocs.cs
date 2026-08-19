@@ -1,6 +1,7 @@
 using System.Text.Json;
 using VideoEdit.Contracts;
 using VideoEdit.Contracts.Timeline;
+using VideoEdit.Domain;
 
 namespace VideoEdit.UnitTests;
 
@@ -223,6 +224,51 @@ internal static class ExportTestDocs
         b.TransitionIn = new Transition { Type = type, DurationUs = durationUs };
     }
 
+    /// <summary>
+    /// Bir varlığın GERÇEKÇİ kütüphane türü: belgede o varlığı hangi klip kullanıyorsa odur.
+    /// <para>
+    /// NEDEN VAR: fixture'lar bugüne kadar HER varlığı <c>AssetKind.Video</c> olarak
+    /// seed'liyordu — çıkartma klibi de, görsel klibi de, ses klibi de bir "video" satırını
+    /// gösteriyordu. Gerçek kütüphanede bu MÜMKÜN DEĞİLDİR (editör klip türünü varlığın
+    /// türünden üretir: <c>timelineOps.buildClipFromAsset</c>, <c>addStickerClip</c>) ve
+    /// <c>asset-clip-type</c> kapısı tam olarak bu uyuşmazlığı reddeder. Fixture'ın gerçekçi
+    /// olması ZORUNLUDUR: aksi halde testler kapının reddettiği belgelerle "kabul" ölçerdi.
+    /// </para>
+    /// <para>
+    /// Kural üretimden BAĞIMSIZ yazılmıştır (şema DTO'ları doğrudan okunur), yani kapı ile
+    /// fixture aynı koddan beslenmiyor: gate kendi kendini onaylayamaz. Aynı varlık birden çok
+    /// rolde kullanılıyorsa VİDEO kazanır (sesli video hem video hem ses klibine kaynak olabilir).
+    /// LUT varlığı hiçbir klibin kaynağı değildir → varsayılan (Video) kalır; onun kapısı
+    /// dosya ADINA bakar (<c>lut-asset-type</c>).
+    /// </para>
+    /// </summary>
+    public static AssetKind AssetKindFor(TimelineDoc doc, Guid assetId)
+    {
+        var kinds = (doc.Tracks ?? [])
+            .SelectMany(t => t.Clips ?? [])
+            .Select(clip => clip switch
+            {
+                MediaClip media when media.AssetId == assetId => media.Kind switch
+                {
+                    MediaClipKind.Video => AssetKind.Video,
+                    MediaClipKind.Audio => AssetKind.Audio,
+                    _ => AssetKind.Image,
+                },
+                StickerClip sticker when sticker.AssetId == assetId => AssetKind.Image,
+                _ => (AssetKind?)null,
+            })
+            .Where(k => k is not null)
+            .Select(k => k!.Value)
+            .ToList();
+
+        if (kinds.Contains(AssetKind.Video))
+        {
+            return AssetKind.Video;
+        }
+
+        return kinds.Count > 0 ? kinds[0] : AssetKind.Video;
+    }
+
     public static ClipAudio Audio(
         double volume = 1, long fadeInUs = 0, long fadeOutUs = 0, bool muted = false) => new()
     {
@@ -298,6 +344,55 @@ internal static class ExportTestDocs
         Value = value,
         Easing = easing ?? new EasingLinear { Type = "linear" },
     };
+
+    /// <summary>
+    /// PAYLAŞILAN ÖRNEKLEME BÜTÇESİ fixture'ı: tek video track'te <paramref name="clipCount"/>
+    /// adet 60 sn'lik, ölçek animasyonlu görsel klip. <paramref name="easing"/> null ise
+    /// animasyon TAMAMEN LİNEERDİR ve bütçeden HİÇ harcamaz (kapalı forma derlenir) —
+    /// "önerilen eylem gerçekten işe yarıyor mu" sorusunun kontrol grubudur.
+    /// <para>
+    /// Aritmetik: 60 sn @30fps = 1800 kare; <c>scale</c> kanalı ScaleWidth + ScaleHeight
+    /// olarak İKİ KEZ örneklenir → klip başına ~3600 örnek. 17 klip ≈ 61 200 &gt; 60 000.
+    /// </para>
+    /// </summary>
+    public static TimelineDoc CurvedScaleDoc(int clipCount, Easing? easing = null)
+    {
+        const long durationUs = 60_000_000;
+        easing ??= EaseInOut();
+        var clips = new List<Clip>(clipCount);
+        for (var i = 0; i < clipCount; i++)
+        {
+            var clip = ImageClip(AssetA, i * durationUs, durationUs);
+            clip.Keyframes = new KeyframeTracks
+            {
+                Scale = [Kf(0, 1.0, easing), Kf(durationUs, 0.5)],
+            };
+            clips.Add(clip);
+        }
+
+        return Doc(clips: [.. clips]);
+    }
+
+    /// <summary>
+    /// <see cref="CurvedScaleDoc"/>'un LİNEER easing'li eşi — aynı klip sayısı, aynı süre,
+    /// aynı keyframe sayısı; tek fark easing tipi.
+    /// </summary>
+    public static TimelineDoc LinearScaleDoc(int clipCount)
+    {
+        const long durationUs = 60_000_000;
+        var clips = new List<Clip>(clipCount);
+        for (var i = 0; i < clipCount; i++)
+        {
+            var clip = ImageClip(AssetA, i * durationUs, durationUs);
+            clip.Keyframes = new KeyframeTracks
+            {
+                Scale = [Kf(0, 1.0), Kf(durationUs, 0.5)],
+            };
+            clips.Add(clip);
+        }
+
+        return Doc(clips: [.. clips]);
+    }
 
     public static Easing EaseInOut() => new EasingEaseInOut { Type = "easeInOut" };
 

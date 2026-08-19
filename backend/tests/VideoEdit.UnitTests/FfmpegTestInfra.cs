@@ -52,6 +52,18 @@ public sealed class FfmpegFactAttribute : FactAttribute
     }
 }
 
+/// <summary><see cref="FfmpegFactAttribute"/>'ın Theory karşılığı (aynı Skip kuralı).</summary>
+public sealed class FfmpegTheoryAttribute : TheoryAttribute
+{
+    public FfmpegTheoryAttribute()
+    {
+        if (!FfmpegFactAttribute.Available)
+        {
+            Skip = "ffmpeg/ffprobe not found on PATH — install ffmpeg to run.";
+        }
+    }
+}
+
 /// <summary>Uçtan uca pipeline testi: hem MinIO hem ffmpeg gerekir.</summary>
 public sealed class MinioAndFfmpegFactAttribute : FactAttribute
 {
@@ -133,6 +145,51 @@ public sealed class FfmpegTestMediaFixture : IDisposable
     ]);
 
     /// <summary>
+    /// 2 sn, 240×240 @30fps DÜZ RENK (0x804020), SESSİZ — KARE kaynak. Kutuya normalize eden
+    /// pad'in İKİ EKSENDE birden çalıştığı tek aspect budur: 16:9 kaynak 16:9 kutuda yatayda
+    /// no-op, 4:3 kaynak 4:3 kutuda tamamen no-op'tur; kare kaynak dikdörtgen kutuda hem sol/sağ
+    /// hem üst/alt payı üretir. Pad ofsetinin tam bölünüp bölünmediği ancak burada görünür.
+    /// </summary>
+    public string VideoSolid240x240NoAudio() => GetOrCreate("solid-square.mp4",
+    [
+        "-y",
+        "-f", "lavfi", "-i", "color=c=0x804020:size=240x240:rate=30:duration=2",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+    ]);
+
+    /// <summary>
+    /// 2 sn, 180×320 @30fps DÜZ RENK (0x804020), SESSİZ — DİKEY (9:16) kaynak.
+    /// <para>
+    /// Kutuya normalize eden pad'in YATAY payı ancak burada BÜYÜKTÜR: 4:3 tuvalde 16:9 ve 4:3
+    /// kaynak kutuyu yatayda doldurur (pay 0), kare kaynak dar bir pay bırakır, dikey kaynak ise
+    /// kutunun yarısından fazlasını paya çevirir. Pad'li ve pad'siz yolun AYNI pikselleri boyayıp
+    /// boyamadığı (rendering-semantics §5.2) bu yüzden dikey kaynakta en geniş pencerede sınanır —
+    /// mevcut üç aspect ölçek > 1'de bu pencereyi hiç açmıyordu.
+    /// </para>
+    /// </summary>
+    public string VideoSolid180x320NoAudio() => GetOrCreate("solid-vertical.mp4",
+    [
+        "-y",
+        "-f", "lavfi", "-i", "color=c=0x804020:size=180x320:rate=30:duration=2",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+    ]);
+
+    /// <summary>
+    /// 2 sn, 320×16 @30fps DÜZ RENK (0x804020), SESSİZ — AFİŞ/PANORAMA kaynağı (en-boy 20:1).
+    /// DEJENERELİK rejiminin tek gerçek tetikleyicisi budur: 320×240 tuvalde ölçek 0.060 iken
+    /// kutu 19×14 olur ve sığdırılan yükseklik 0.95 px'e düşer → ffmpeg o ekseni 0 hesaplar,
+    /// 0'ı "girdi boyutunu koru" diye yorumlar ve katmanı 18×16 çizer (gerçek ffmpeg 8.0 ile
+    /// ölçüldü: 16.7 KAT yüksek). Normal oranlı medya (16:9, 4:3, kare) hiçbir ölçekte bu
+    /// rejime giremez — bu yüzden dejenerelik testleri AYRI bir kaynak ister.
+    /// </summary>
+    public string VideoBanner320x16NoAudio() => GetOrCreate("banner-320x16.mp4",
+    [
+        "-y",
+        "-f", "lavfi", "-i", "color=c=0x804020:size=320x16:rate=30:duration=2",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+    ]);
+
+    /// <summary>
     /// 2 sn, 320×240 @30fps SMPTE renk çubukları, SESSİZ. DOYGUN renkler + SERT dikey kenarlar
     /// taşır: kompozisyon zincirinde RGB↔YUV gidiş-dönüşü olursa (M4 denetim #1) hata burada
     /// en büyük genliğe ulaşır — düz renk kaynak bu sınıf hatayı zayıf gösterir.
@@ -163,6 +220,20 @@ public sealed class FfmpegTestMediaFixture : IDisposable
         "-y",
         "-f", "lavfi", "-i", "sine=frequency=440:duration=3:sample_rate=44100",
         "-c:a", "pcm_s16le",
+    ]);
+
+    /// <summary>
+    /// 3 sn 440 Hz sinüs AAC/M4A — KULLANICININ "müzik ekle" yolunun birebir dosyası
+    /// (yükleme whitelist'inde <c>audio/mp4</c>). Genlik bilerek yükseltilir (volume=5): çıktıda
+    /// "ses var mı" sorusu ancak ÖLÇÜLEBİLİR bir seviyeyle yanıtlanır — dijital sessizlik de bir
+    /// ses stream'idir ve stream sayısına bakan bir test onu YEŞİL geçirirdi.
+    /// </summary>
+    public string AudioM4a() => GetOrCreate("music.m4a",
+    [
+        "-y",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+        "-af", "volume=5",
+        "-c:a", "aac", "-ar", "48000",
     ]);
 
     private string GetOrCreate(string fileName, string[] argsWithoutOutput)

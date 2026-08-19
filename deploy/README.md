@@ -117,8 +117,10 @@ Cloudflare dashboard > R2:
 > **COEP uyarisi (dogrulanmadi).** Caddyfile ve Vite dev sunucusu
 > `Cross-Origin-Embedder-Policy: require-corp` gonderir. Bu politika altinda capraz kaynakli
 > medya, CORS ile yuklenmek zorundadir — editor `<video>`/`<img>` uzerinde
-> `crossOrigin = 'anonymous'` kullanir (`videoPool.ts:53`, `engineV1.ts:1100`,
-> `mediaCache.ts:160`) ve MinIO ile bu **calisiyor**. R2'de dogrulayin: onizleme siyah
+> `crossOrigin = 'anonymous'` kullanir — uc yerde: `player/engine-video/videoPool.ts`
+> (`<video>` havuzu), `player/engine-video/engineV1.ts` (gorsel/sticker `<img>`) ve
+> `timeline/render/mediaCache.ts` (serit kucuk resimleri) — ve MinIO ile bu **calisiyor**.
+> R2'de dogrulayin: onizleme siyah
 > kaliyor / konsolda `ERR_BLOCKED_BY_RESPONSE` goruyorsaniz once R2 CORS'unu, sonra
 > `Cross-Origin-Embedder-Policy`'yi `credentialless`a dusurmeyi deneyin — **ve dev/prod'u
 > BIRLIKTE degistirin** (`deploy/Caddyfile` + `apps/editor/vite.config.ts`).
