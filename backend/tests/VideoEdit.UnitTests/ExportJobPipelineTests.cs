@@ -114,7 +114,8 @@ public sealed class ExportJobPipelineTests : IDisposable
         cache,
         new NoOpJobClient(),
         NullLogger<ExportJob>.Instance,
-        TimeProvider.System);
+        TimeProvider.System,
+        new RunningRenderRegistry());
 
     private OriginalCache CreateCache() => new(_storage, new ProcessingOptions
     {

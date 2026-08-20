@@ -48,6 +48,7 @@ public sealed class ExportJob(
     IBackgroundJobClient backgroundJobs,
     ILogger<ExportJob> logger,
     TimeProvider clock,
+    RunningRenderRegistry renders,
     ITextRasterService? textRaster = null) : IExportJob
 {
     /// <summary>Disk yetersizse en fazla bu kadar denemede Failed('disk-full').</summary>
@@ -186,6 +187,11 @@ public sealed class ExportJob(
 
             var progress = new JobProgressWriter(db, job, clock);
             using var cancelCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+            // Reaper'ın ULAŞABİLECEĞİ iptal kancası. Kayıt indirmeden ÖNCE açılır (render'ın
+            // hemen öncesinden değil): asılma yalnız ffmpeg'de olmaz, uzun bir indirme de
+            // iş satırını 'stalled' eşiğine taşıyabilir ve o hâlde de süreci bırakmamalıyız.
+            using var renderRegistration = renders.Register(job.Id, cancelCts);
 
             // ── 4) Orijinalleri LRU cache'e indir + indirilen dosyayı probe et — %0-15.
             await progress.ReportAsync(0, "download", ct);
@@ -391,17 +397,33 @@ public sealed class ExportJob(
                         }
                     }
                 },
+                // İKİNCİ TAVAN (ilerleme tabanlı). Sessizlik bekçisi KAÇAK grafiği göremez:
+                // kaçak süreç durmadan -progress bastığı için "sessiz" olmaz ve 120 sn hiç
+                // dolmaz. Kuyruk WorkerCount = 1 olduğu için böyle TEK bir belge HERKESİN
+                // export'unu süresiz kilitler; tavan o kilidi saniyeler içinde açar.
+                outputTimeCeilingUs: FfmpegRunner.OutputTimeCeilingUs(compiled.ExpectedDurationUs),
                 ct: cancelCts.Token);
 
             if (!result.Success)
             {
                 // Deterministik ffmpeg hatası (bozuk kaynak/graph): retry aynı hatayı üretir.
-                await FailAsync(job,
-                    result.TimedOut ? "ffmpeg-timeout" : "ffmpeg-failed",
-                    result.TimedOut
-                        ? "render: ffmpeg made no progress within the watchdog timeout."
-                        : $"render: ffmpeg exited with code {result.ExitCode}.",
-                    result.StderrTail);
+                //
+                // ÜÇ HAL ÜÇ AYRI CÜMLE KURAR. 'render-overrun' bir "çıkış kodu -1" DEĞİLDİR:
+                // süreç kendi kendine ölmedi, BİZ öldürdük çünkü çıktı saati beklenen süreyi
+                // aştı — yani grafik sonsuza kadar üretiyordu. Tek bir 'ffmpeg-failed' cümlesi
+                // bu teşhisi kullanıcıdan da destek kaydından da saklardı.
+                var (code, message) = result switch
+                {
+                    { Overran: true } => ("render-overrun",
+                        "render: ffmpeg kept writing past the expected output duration "
+                        + $"({compiled.ExpectedDurationUs} us; ceiling "
+                        + $"{FfmpegRunner.OutputTimeCeilingUs(compiled.ExpectedDurationUs)} us) "
+                        + "and was stopped."),
+                    { TimedOut: true } => ("ffmpeg-timeout",
+                        "render: ffmpeg made no progress within the watchdog timeout."),
+                    _ => ("ffmpeg-failed", $"render: ffmpeg exited with code {result.ExitCode}."),
+                };
+                await FailAsync(job, code, message, result.StderrTail);
                 return;
             }
 

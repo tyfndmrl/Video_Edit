@@ -10,9 +10,11 @@ M4 dalga 1 denetimi, seçilen MVP özelliklerinden altısının "eksik **ve kay�
 tespit etti. Aşağıdaki tablo bundan sonra her teslim notunun kaynağıdır; buraya yazılmadan
 hiçbir özellik ertelenmiş sayılmaz.
 
-**Son doğrulama: 2026-08-13, `d9f045f` + 8. tur düzeltmeleri. (5. turda her satır KODDA
+**Son doğrulama: 2026-08-20, `a1b3a73` + 12. tur düzeltmeleri. (5. turda her satır KODDA
 denetlendi ve satır numarası atıfları ÜYE/TEST adlarıyla değiştirildi; 8. turda "Ses
-katmanları" satırı ölçümle yanlışlanıp düzeltildi — aşağıdaki nota bakın.)** "✅ tam"
+katmanları" satırı ölçümle yanlışlanıp düzeltildi — aşağıdaki nota bakın; 12. turda
+kullanıcının ilk mesajındaki İKİ gereksinim tabloya EKLENDİ — daha önce hiç satırları
+yoktu, bkz. aşağıdaki "12. tur" notu.)** "✅ tam"
 yalnızca özelliğin uçtan uca (editör + şema + export) erişilebilir olduğu anlamına gelir;
 bilinen sınırlar `⚠︎` dipnotlarıyla ve
 [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) ile birlikte okunmalıdır.
@@ -34,6 +36,8 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 | **Filtreler — LUT (.cube)** | ⚠️ yalnız export + şema hazır; **editör UI'ı VE önizleme shader'ı YOK** (dört bacağın ikisi) — **M6'da yapılmadı** | **sonraki dilim** |
 | **Hız değiştirme** (slow-mo/timelapse) | ✅ tam (M5) ⚠︎ hız rampası yok | sonraki dilim |
 | **Keyframe animasyonları** | ✅ tam (M5, sınırlarıyla — aşağıya bakınız) ⚠︎ `fx.*` kanalı yok | sonraki dilim |
+| **1-2 GB'lık dosyalarda performans** ("dosya boyutları ortalama 1-2 gb aralıklarında oluyor… performanslı ve hızlı olmalı") | ⚠️ **bir kez uçtan uca ÖLÇÜLDÜ** (12. tur; 1,51 GiB / 10:40 kaynak: seçiciden "Hazır"a **75,6 sn**, 60 sn'lik kesimin export'u **19,5 sn**, tam 10:40'ın export'u **184 sn**) — ama **TEK koşum, TEK makine, LOKAL nesne deposu**; gerçek ağ/R2, eşzamanlı kullanıcı, >2 GB ve LRU süpürmesi **ölçülmedi** | ölçüm: [`poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §0.1 · açık borçlar: aşağıdaki "12. tur" |
+| **R2'de saklayıp SONRADAN tekrar düzenleme** | ⚠️ İKİ YARI AYRI: "sonradan tekrar düzenleme" ✅ gerçek fare/klavyeyle ölçüldü (düzenle → "Kaydedildi" → çıkış → yenile → yeniden giriş → seçici → aynı belge + aynı medya); "**R2'de saklayıp**" ❌ **gerçek Cloudflare R2 HİÇ denenmedi** — dev de CI da MinIO | R2 doğrulaması: **ilk gerçek dağıtım** ([`poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §4.2 + [`deploy/README.md`](../deploy/README.md) §4) |
 
 > **M6 KAPSAM KAYDI (review-gate kural 4, 2026-08-12).** M6 planı bu dosyada altı madde
 > listeliyordu; teslim edilen M6 **iki** maddedir: **sürüm geçmişi UI'ı** (`features/versions`,
@@ -689,6 +693,148 @@ Kapatılanlar (kullanıcı anlatımı `poc-bilinen-sinirlar.md` §1.8, §3 tablo
 - **[AÇIK] Ses/müzik yolu demo senaryosunun ölçülmüş 41 adımına dâhil değildir.** Kalıcı
   testleri var, ama `demo-senaryosu.md` §7'nin koşumu bu adımı içermez ve demo medyası bir
   müzik dosyası üretmez (senaryoya not olarak yazıldı).
+
+## 11. tur denetiminden (2026-08-20 — miks asılması, bekçi, cümle sınıfı)
+
+Kapatılanlar:
+
+- **[KRİTİK — B1] Miks kuyruğundaki `apad` export'u SONSUZA KADAR asıyordu.** Kuyruk
+  `…,alimiter=limit=0.98,apad,atrim=end=<toplam>` idi; argümansız `apad` SINIRSIZ üreteçtir ve
+  bu rejimde `atrim` onu durdurmuyordu. Yeni biçim
+  `…,alimiter=limit=0.98,atrim=end=<toplam>,apad=whole_dur=<toplam>` — önce fazlalık kırpılır,
+  sonra dolgu KENDİ durma noktasını taşıyarak eksiği tamamlar. Ürün düzeyinde ölçüldü (ham API,
+  iki 10 sn'lik sesli kaynak, ikincisi baştan kırpılmış, toplam 19 sn): düzeltmeden önce 0/3
+  tamamlandı (üçü de %90/render'da asıldı, her biri ~135 sn CPU yakan kaçak ffmpeg bıraktı),
+  düzeltmeden sonra 6/6 tamamlandı ve çıktının SES AKIŞI tam 19,000000 sn ölçüldü.
+- **[YÜKSEK — B2] Kusurun rejimini hiçbir test koşmuyordu.** Deponun miks uzunluk testi
+  kendini `amix=inputs=1:` ile TEK girişe sabitliyordu; çok girişli rejimin uçtan uca karşılığı
+  eklendi (`ExportRenderGoldenTests.AudioMix_WithTwoAudibleGroups_FinishesAndSpansTheWholeTimeline`):
+  gerçek ffmpeg, tam A/V grafiği, iki ayrı 10 sn'lik sesli kaynak, ikinci klip baştan kırpılmış,
+  toplam 19 sn, üç koşum, SÜRE TAVANI ile (tavana çarpınca KIRMIZI, "yavaş test" değil).
+- **[YÜKSEK — B3] Bekçi kaçak süreci göremiyordu.** Sessizlik bekçisi (120 sn) çıktı
+  sessizliğini ölçer; kaçak grafik durmadan `-progress` bastığı için asla tetiklenmiyordu.
+  İkinci tavan eklendi (`FfmpegRunner.OutputTimeCeilingUs`): çıktı saati beklenen sürenin
+  %10 + 5 sn üstüne çıkarsa süreç ağacı öldürülür ve iş TİPLİ `render-overrun` ile düşer.
+  Reaper de artık iş satırını `stalled` yaparken koşan render'ı iptal eder
+  (`RunningRenderRegistry`).
+- **[DÜŞÜK — B6/2] `project-background-color` ve `lut-asset` YANLIŞ CÜMLE kuruyordu**
+  ("desteklenmeyen özellik"). Üçüncü 422 cümle sınıfı eklendi — "belge geçerli, özellik
+  destekli, proje pencerede; DEĞER hatalı" (`DocumentValueFeatures` ↔ `VALUE_CODES`), üç kümenin
+  ayrıklığı ayna testinde ölçülüyor.
+
+**AÇIK kalanlar (bu turda BİLEREK yapılmadı):**
+
+- **[AÇIK — B6/1, YÜKSEK sayılmalı] Modal odak yönetimi ürün tarafında YOK ve 143'lük E2E
+  sayısı bunu gizliyor.** `apps/editor/e2e/a11y-smoke.spec.ts` içinde **7 test**
+  `test.fail(true, FIXME_FOCUS)` taşıyor; Playwright bunları "passed" sayar, yani paket
+  sayısı 143 olsa da o 7'si GEÇEN test DEĞİLDİR — "bugün başarısız olması beklenen"
+  testlerdir. Kapsanan üç overlay (`ExportDialog.tsx`, `ShortcutsHelpOverlay.tsx`,
+  `ConflictDialog.tsx`) `aria-modal="true"` yazar ama odak yönetimi uygulamaz: açılışta odağı
+  içeri alma, odak tuzağı ve kapanışta odağı tetikleyiciye döndürme yoktur; `ExportDialog`
+  Escape ile de kapanmaz. Sonuç: ekran okuyucuya "burası modal" denir, klavye kullanıcısı
+  Tab'la diyaloğun ARKASINDAKİ düğmelere düşer.
+  - *Yapılacak:* üç overlay'e odak yönetimi (açılışta ilk odaklanabilir öğeye odak, Tab/Shift+Tab
+    tuzağı, kapanışta tetikleyiciye dönüş) + `ExportDialog` için Escape. Sonra
+    `a11y-smoke.spec.ts`'teki 7 `test.fail(...)` satırı SİLİNMELİDİR (silinmezse Playwright
+    "Expected to fail, but passed" ile kırmızı verir — bulgu kaybolamaz).
+  - *Neden bu turda yapılmadı:* bu tur render hattının asılmasını kapattı; düzeltme `src/`
+    yüzeyindedir ve kendi gerçek-girdi denetimini ister. **Kayıt burada olduğu için artık
+    "sessizce ertelenmiş" değildir** (review-gate kural 4).
+- **[AÇIK] Çıktı saati tavanı YALNIZ export reçetesinde açık.** Pay (%10 + 5 sn) export
+  grafiğinin `out_time` davranışı ÖLÇÜLEREK seçildi (normal render'ın en büyük `out_time`'ı
+  beklenen sürenin 66,7 ms ALTINDA). Varlık işleme reçeteleri (proxy/filmstrip/poster) farklı
+  çıktı zaman tabanları kullanır ve o rejim ÖLÇÜLMEDİ; tavan oraya sessizce sızmasın diye
+  `RunAsync`'te AÇIK parametredir. O reçeteler bugün yalnız sessizlik bekçisiyle korunuyor.
+  - *Yapılacak:* her reçetenin `out_time` davranışını ölçüp kendi payını seçmek.
+- **[AÇIK] Reaper'ın süreç iptali TEK SÜREÇ kapsamındadır.** `RunningRenderRegistry` süreç içi
+  bir sözlüktür; başka bir makinedeki worker'ın ffmpeg'i bu yoldan öldürülemez. Bugünkü kurulum
+  tek worker olduğu için kapsam yeterli.
+  - *Yapılacak (çok makineli kurulumda):* süreçler-arası bir iptal kanalı (ör. Hangfire iş
+    iptali ya da DB bayrağının worker tarafında yoklanması).
+
+## 12. tur denetiminden (2026-08-20 — kullanıcının İLK mesajındaki iki gereksinim kayda geçti)
+
+Baş mimar **review-gate kural 4 ihlali** saptadı: kullanıcının ilk mesajındaki iki gereksinimin
+yukarıdaki kapsam tablosunda **satırı yoktu** — biri hiç ölçülmemişti, diğeri yalnız
+`poc-bilinen-sinirlar.md` §4.2'nin içinde gömülü duruyordu. İkisi de bu turda tabloya eklendi;
+ölçülebilen ölçüldü.
+
+**(1) "1-2 GB dosyalarda performans" — artık ÖLÇÜLDÜ (daha önce hiç ölçülmemişti).**
+Dokümandaki en büyük ölçüm 122 MB / 120 sn idi; 4 GiB yalnız bir doğrulama SABİTİ olarak vardı.
+Bu turda ffmpeg ile **1,51 GiB / 10:40 / 1080p30 / 20 Mbps** gerçek bir kaynak üretildi (grenli
+içerik — kodlayıcı gerçekten yoruluyor) ve ürünün KENDİ yolundan geçirildi: tarayıcıda gerçek
+fareyle dosya seçici → 25 parçalı yükleme → worker işleme → timeline → gerçek fareyle kesme →
+export. Bütün sayılar `poc-bilinen-sinirlar.md` **§0.1**'de. Özet: yükleme 5,0 sn (lokal),
+işleme 68,9 sn (proxy 38,7 + filmstrip 24,7), "Hazır"a toplam 75,6 sn, 60 sn'lik kesimin
+export'u 16,6 sn iş / 19,5 sn duvar saati, tam 10:40'lık çizelgenin export'u 181,3 sn iş /
+184,2 sn duvar saati.
+
+**(2) "R2'de saklayıp sonradan tekrar düzenleme" — düzenleme yarısı ölçüldü, R2 yarısı AÇIK.**
+Gerçek medyalı proje üzerinde gerçek fare/klavyeyle: böl → "Kaydedildi" → Çıkış → yenile (hâlâ
+dışarıda) → temiz adresten yeniden giriş → proje seçici → proje satırına tıkla → **belge birebir
+geri geldi** ve medya gerçekten servis edildi (filmstrip tuvalinde 3120 farklı renk okundu,
+`media-urls` 200, presigned proxy `Range` GET'i 206). **Gerçek Cloudflare R2 hâlâ hiç
+denenmedi**; MinIO'nun neyi kanıtladığı / neyi kanıtlamadığı §4.2'de kalem kalem yazıldı.
+
+**Bu ölçümün ortaya çıkardığı AÇIK borçlar:**
+
+- **[AÇIK — ORTA] Export'un disk rezervasyonu tahmini yüksek bit hızlı kaynakta KISA KALIYOR.**
+  `ExportJob.EstimateRequiredDiskBytes` çıktıyı `ExportProfiles.EstimatedBitsPerSecond` =
+  **10 Mbps** varsayımıyla hesaplıyor. Ölçüldü: 10:40'lık iş için "gerekli" 2 902 480 768 B
+  dedi, ölçülen tepe kullanım **3 926 837 249 B** oldu (**1,35 kat**) — çünkü CRF18 `veryfast`
+  grenli 1080p kaynakta **28,85 Mbps** üretti. Bu makinede ~390 GB boş alan vardı, kapı hiç
+  ısırmadı; dar diskli bir kurulumda kapı "yeter" deyip render ORTASINDA disk bitebilir.
+  - *Yapılacak:* tahmini ya kaynağın ölçülmüş bit hızına bağlamak (probe zaten elde) ya da
+    profil varsayımını gerçek ölçüme çekip payı büyütmek. Ürün kodu bu turda **değiştirilmedi**
+    (tur yalnız ölçüm + dokümandı).
+- **[AÇIK — DÜŞÜK] Kota yalnız ORİJİNALLERİ sayıyor.** `UploadQuota.Evaluate` `Assets.SizeBytes`
+  toplamını okur; türevler (proxy + filmstrip + waveform + poster) sayılmaz. Ölçüldü: türevler
+  orijinalin **%7,7**'si (1,51 GiB kaynak → 119 MiB türev). Yani "20 GiB kota" gerçekte
+  ~21,5 GiB'lik nesne deposu demektir ve fatura oradan gelir.
+  - *Yapılacak:* ya türev boyutlarını da deftere yazıp kotaya katmak, ya da kotanın "yalnız
+    orijinal" olduğunu ürün yüzeyinde (kitaplık göstergesinin başlığında) söylemek.
+- **[AÇIK — DÜŞÜK] LRU cache SÜPÜRMESİ ölçülmedi.** Cache **orijinali** tutar; 20 GiB tavan
+  bu boyutta ~13 kaynak alır. Ölçülen tek şey tavanın %7,5'inin bir dosyayla dolduğudur;
+  14. dosyada devreye girecek süpürme (ve süpürülen kaynağın bir sonraki export'ta yeniden
+  indirilmesi) **hiç koşulmadı** — bugüne kadar da koşulmamıştı.
+  - *Yapılacak:* cache'i tavana kadar doldurup süpürmenin EN ESKİ girdiyi seçtiğini ve pinli
+    (o an koşan export'un) kaynağını KORUDUĞUNU ürün düzeyinde ölçmek.
+- **[AÇIK — DÜŞÜK] Ölçüm n=1.** §0.1'in tamamı **tek** koşumdur (yalnız 60 sn'lik export üç
+  kez tekrarlandı ve üçünde de bayt sayısı aynı çıktı). Varyans, ısınma etkisi ve eşzamanlı
+  kullanıcı yükü **ölçülmedi**; §4.1'in "tek eşzamanlı export" sınırı bu rejimde de geçerlidir.
+- **[AÇIK — DÜŞÜK] >2 GB ve 4 GiB tek dosya tavanı denenmedi.** Kullanıcının aralığının üst ucu
+  (2 GB) ölçüldü sayılmaz: ölçülen dosya 1,51 GiB'dir. `QuotasOptions.MaxFileSizeBytes` = 4 GiB
+  ve `UploadRules.PartCount` o boyutta 64 parça üretir — ölçülmedi.
+- **[AÇIK — ORTA] Birim testi MAKİNE GENELİNDEKİ gerçek export cache'ini SİLİYOR (ölçüldü).**
+  `ExportJobTests.CreateJobRunner` `new OriginalCache(storage, new ProcessingOptions())` kuruyor;
+  `CacheDirectory` boş olduğu için `OriginalCache.Root` `%TEMP%\videoedit-cache`'e — yani
+  **çalışan worker'ın kullandığı AYNI dizine** — düşüyor. `Run_GenuinelyFullDisk_OnFinalAttempt_StillFailsWithDiskFull`
+  `FreeSpaceProbe = _ => 1` ile disk-darlığı dalını zorluyor ve o dal `cache.TrimAsync(0)`
+  çağırıyor → dizindeki **pinsiz her gerçek girdi siliniyor**. Bu turda ölçülerek bulundu:
+  1,51 GiB'lık gerçek cache girdisi backend paketi koştuktan sonra yok olmuştu; negatif kontrol
+  olarak dizine 1 MiB'lik sahte bir girdi konup **yalnız o tek test** koşuldu — girdi silindi
+  (öncesi 1 dizin, sonrası 0). Diğer iki dosya (`ExportJobPipelineTests`, `ExportJobTests`'in
+  iki testi) `CacheDirectory`'yi AÇIKÇA veriyor; kusur yalnız varsayılana düşen yolda.
+  CI konteynerinde zararsız (her sürecin kendi `TMPDIR`'i), geliştirici makinesinde **gerçek
+  veri siliyor** ve ölçümleri sessizce bozuyor.
+  - *Yapılacak:* `CreateJobRunner`'a da test-yerel bir `CacheDirectory` vermek (diğer testlerin
+    zaten yaptığı gibi). Ürün kodu bu turda değiştirilmediği için test de değiştirilmedi.
+- **[AÇIK — ORTA] Bu turun İKİ ölçümü de KOŞULDU ama KORUNMUYOR.** İkisi de
+  `e2e/.artifacts/` altında koşan, repoya girmeyen betiklerdi (`poc-bilinen-sinirlar.md` §5.1):
+  otomatik pakette karşılıkları YOK, yani bir regresyon ikisini de sessizce kırar ve
+  bir sonraki turda kimse fark etmez. Gerekçesi bilinçli (1,5 GiB'lık kaynak + 5+ dakikalık
+  koşum her CI turuna sığmaz), ama borç borçtur.
+  - *Yapılacak:* (a) "sonradan tekrar düzenleme" senaryosunun **gerçek medyalı** yarısı
+    pakete alınabilir — mevcut `e2e/support/media.ts` fixture'ı (4 sn / ~2 MB) yeter, dosya
+    boyutuyla ilgisi yok; (b) 1-2 GB rejimi için ayrı, ELLE tetiklenen bir "perf" projesi
+    (Playwright `project`/tag) tanımlanıp CI'da nightly koşturulabilir.
+- **[KAYIT] `EditorApp.fitButton` locator'ı BAYAT (test altyapısı, ürün değil).**
+  `e2e/support/editor.ts` "Sığdır" adlı bir düğme arıyor; üründe düğmenin adı **"Fit"**
+  (`TimelinePanel`). Bugüne kadar yakalanmadı çünkü `ensureContentVisible` yalnız klip ekranda
+  DEĞİLSE tıklıyor ve mevcut spec'lerin kısa fixture'larında auto-fit zaten yetiyordu; 640 sn'lik
+  klip ilk kez bu dalı zorladı ve locator 15 sn timeout ile düştü. Ölçüm betiği bu turda
+  locator'ı baypas etti (`/^(Fit|Sığdır)$/`), **repo dosyası değiştirilmedi**.
+  - *Yapılacak:* ya `fitButton`'ı ürünün adıyla hizalamak ya da düğmeye `data-testid` vermek.
 
 ## Kayda geçen doğrulamalar (aksiyon gerekmez)
 - Restore'da "PreRestore satırı görünmüyor" davranışı veri kaybı DEĞİL — aynı revision'da zaten snapshot varsa terfi ediliyor; invaryant korunuyor (denetim #32).

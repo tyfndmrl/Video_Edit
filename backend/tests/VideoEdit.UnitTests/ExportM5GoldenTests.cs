@@ -184,6 +184,60 @@ public sealed class ExportM5GoldenTests : IDisposable
         }
     }
 
+    [FfmpegFact]
+    public async Task AudioMix_SpansTheWholeTimeline_WhenTheLastAudibleClipEndsEarly()
+    {
+        // GERÇEK ÖLÇÜM: son SESLİ klip timeline'dan önce bitiyorsa ses AKIŞI ne kadar sürüyor?
+        // 'amix ... duration=longest' EN UZUN GİRİŞ kadardır, TOPLAM SÜRE kadar DEĞİL — miks
+        // seviyesinde uzunluk kilidi yokken çıktının ses akışı erken bitiyordu (HEAD'te
+        // ölçüldü: video 8,000 sn / 240 kare, ses 3,000 sn / 142 kare).
+        //
+        // KAPSAYICI SÜRESİ BU KUSURU GİZLER: format süresi VİDEODAN gelir ve tam çıkar; kusuru
+        // görmenin tek yolu akışın kendisini sormaktır (AudioStreamDurationSec).
+        //
+        // Belge: üstte 1,5 sn'lik SESLİ klip, altta 4 sn'lik SUSTURULMUŞ track (görüntü üretir,
+        // ses üretmez) → toplam 4 sn, tek sesli grup 1,5 sn.
+        var source = ToneSource();
+        var sources = new Dictionary<Guid, ExportAssetSource>
+        {
+            [ExportTestDocs.AssetA] = new(source, true, "bt709", "bt709"),
+        };
+
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(
+                    ExportTestDocs.AssetA, 0, 0, 1_500_000, ExportTestDocs.Audio()),
+            ]),
+            ExportTestDocs.VideoTrack(muted: true, clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 4_000_000),
+            ]),
+        ], width: CanvasWidth, height: CanvasHeight);
+
+        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        Assert.Equal(4_000_000, compiled.ExpectedDurationUs);
+
+        // Kurulumun kendisi ölçülür: sesli giriş GERÇEKTEN tek ve toplam süreden KISA olmalı,
+        // yoksa test kusuru tetikleyemeden yeşil kalırdı.
+        //
+        // BU SABİTLEME KAPSAMINI SÖYLER: yalnız TEK GİRİŞLİ miks rejimi ölçülür. Çok girişli
+        // rejim (amix=inputs>=2) BURADA KAPSAM DIŞIDIR ve ayrı bir uçtan uca testte koşar —
+        // ExportRenderGoldenTests.AudioMix_WithTwoAudibleGroups_FinishesAndSpansTheWholeTimeline.
+        // Ayrım gereklidir: miks kuyruğunu ffmpeg'de ASAN kusur YALNIZ çok girişli rejimde
+        // doğuyordu (ölçüldü) ve bu test tek girişe sabitlendiği için onu göremezdi.
+        Assert.Contains("amix=inputs=1:", compiled.FilterGraphScript);
+        Assert.Contains("atrim=end=1.500000", compiled.FilterGraphScript);
+
+        var output = await RenderAsync(compiled, "mix-tail");
+        var audioSec = AudioStreamDurationSec(output);
+        Assert.True(Math.Abs(audioSec - 4d) <= 1 / 30d,
+            "ses AKIŞI toplam süreyi kapsamalı: sözleşme 4 sn, ölçülen "
+            + $"{audioSec.ToString("0.####", CultureInfo.InvariantCulture)} sn "
+            + "(fark bir çıkış karesini aşıyor)");
+    }
+
     // ───────────────────── SES SEVİYESİ KEYFRAME'İ (§8.1 + §3.4) ─────────────────────
 
     [FfmpegFact]

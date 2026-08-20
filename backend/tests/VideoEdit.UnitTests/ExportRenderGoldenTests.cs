@@ -19,7 +19,7 @@ namespace VideoEdit.UnitTests;
 /// Kaynaklar DÜZ RENKtir: karışım oranı piksel değerinden ARİTMETİK olarak doğrulanabilsin.
 /// </summary>
 [Collection("ffmpeg-media")]
-public sealed class ExportRenderGoldenTests : IDisposable
+public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDisposable
 {
     private const int CanvasWidth = 320;
     private const int CanvasHeight = 240;
@@ -282,6 +282,108 @@ public sealed class ExportRenderGoldenTests : IDisposable
             "geçiş ortasında ses çukura düştü — acrossfade penceresi yanlış hizalanmış olabilir");
         Assert.True(MaxVolumeDb(output, 0.2, 0.2) > -25d, "geçiş öncesi ses duyulmalı");
         Assert.True(MaxVolumeDb(output, 2.6, 0.2) > -25d, "geçiş sonrası ses duyulmalı");
+    }
+
+    // ───────── ÇOK GİRİŞLİ MİKS: kuyruğun ffmpeg'i asmadığı ve tam boyda bittiği ─────────
+
+    /// <summary>
+    /// Bu testin kolladığı kusurun temiz koşumda ölçülen süresi ~1 sn'dir (320×240, 19 sn'lik
+    /// çizelge, üç koşum). Tavan onun ~20 katıdır: yavaş bir makinede bile yanlış KIRMIZI
+    /// üretmez, ama KUSURLU şekil SONSUZA KADAR koştuğu için tavana MUTLAKA çarpar.
+    /// </summary>
+    private static readonly TimeSpan MixRenderCeiling = TimeSpan.FromSeconds(20);
+
+    [FfmpegFact]
+    public async Task AudioMix_WithTwoAudibleGroups_FinishesAndSpansTheWholeTimeline()
+    {
+        // ASILAN ŞEKLİN KOŞAN KARŞILIĞI. Miks kuyruğu bir dönem
+        // '…,alimiter=limit=0.98,apad,atrim=end=T' idi; 'apad' argümansız SINIRSIZ üreteçtir ve
+        // atrim onu bu rejimde durdurmuyordu. ÖLÇÜLDÜ (ffmpeg 8.0): aynı belge 8/10 asıldı,
+        // ürün düzeyinde iş %90/render'da kalıp tek export kanalını kilitledi.
+        //
+        // REJİM ÜÇ KOŞULUN KESİŞİMİDİR — biri düşerse test kusuru GÖREMEZ, o yüzden üçü de
+        // aşağıda AYRICA ölçülür:
+        //   (1) ÇOK GİRİŞLİ miks (amix=inputs>=2). Tek girişli miks aynı kuyrukla 5/5 temiz
+        //       bitiyor; deponun miks uzunluk testi kendini 'amix=inputs=1:' ile sabitlediği
+        //       için kusuru göremiyordu — bu test o sabitlemenin ÇOK GİRİŞLİ eşidir.
+        //   (2) TAM A/V GRAFİĞİ. Aynı ses zinciri tek başına ([aout] tek çıkış) 'apad,atrim'
+        //       ile de bitiyor; kusur ancak [vout] da haritalandığında doğuyor.
+        //   (3) KLİP ARALIĞI KAYNAK DOSYASININ SONUNA DAYANIYOR. Pencere dosyanın İÇİNDE
+        //       bitince (12 sn'lik kaynağın ilk 10 sn'si) aynı graf 5/5 temiz bitiyor.
+        // Belge: A kaynak[0,10) → çizelge [0,10); B kaynak[1,10) (BAŞTAN KIRPILMIŞ) → çizelge
+        // [10,19). Ardışık, geçişsiz → iki AYRI ses grubu → amix=inputs=2, toplam 19 sn.
+        var a = media.Video320x240Tone330_10sWithAudio();
+        var b = media.Video320x240Tone660_10sWithAudio();
+        var doc = ExportTestDocs.Doc(width: CanvasWidth, height: CanvasHeight, clips:
+        [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 10_000_000,
+                ExportTestDocs.Audio()),
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 10_000_000, 1_000_000, 10_000_000,
+                ExportTestDocs.Audio()),
+        ]);
+
+        var compiled = ExportCompiler.Compile(doc, new Dictionary<Guid, ExportAssetSource>
+        {
+            [ExportTestDocs.AssetA] = new(a, true, "bt709", "bt709"),
+            [ExportTestDocs.AssetB] = new(b, true, "bt709", "bt709"),
+        }, ExportProfile.Hd1080p);
+
+        // (1) Kurulumun kendisi ölçülür — rejim gerçekten kurulmuş mu?
+        Assert.Equal(19_000_000, compiled.ExpectedDurationUs);
+        Assert.Contains("amix=inputs=2:", compiled.FilterGraphScript);
+        Assert.Contains("adelay=10000|10000", compiled.FilterGraphScript);   // ikinci grup gecikmeli
+        // (2) Tam A/V grafiği: iki çıkış da haritalanıyor.
+        Assert.Contains("[vout]", compiled.OutputArgs);
+        Assert.Contains("[aout]", compiled.OutputArgs);
+        // (3) İkinci klip BAŞTAN KIRPILMIŞ ve iki giriş de dosya SONUNA dayanıyor.
+        Assert.Equal(["-ss", "1.000000", "-t", "9.000000", "-i", b], compiled.Inputs[1].ToArgs());
+
+        // KUSUR YARIŞSALDIR: tek koşum yeşil kalabilir (ölçülen asılma oranı 8/10). Üç koşumun
+        // hepsinin kaçırma olasılığı bu orana göre ~%0,8'dir.
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var name = $"mix-tail-{attempt.ToString(CultureInfo.InvariantCulture)}";
+            string output;
+            try
+            {
+                output = await RenderAsync(compiled, name, MixRenderCeiling);
+            }
+            catch (OperationCanceledException)
+            {
+                // TAVANA ÇARPMAK YAVAŞLIK DEĞİL BAŞARISIZLIKTIR. Tavan olmasaydı asılma "yavaş
+                // test" gibi görünür, koşum süresiz uzar ve arkada CPU yakan kaçak bir ffmpeg
+                // kalırdı; bu yol süreç ağacını da öldürür.
+                Assert.Fail(
+                    $"{name}: render {MixRenderCeiling.TotalSeconds.ToString(CultureInfo.InvariantCulture)}"
+                    + " sn TAVANINA çarptı — miks kuyruğu ASILIYOR (temiz koşum ~1 sn sürer). "
+                    + "Bu bir yavaşlık değil, sonsuz döngüdür: kuyruktaki dolgu filtresi kendi "
+                    + "durma noktasını taşımıyor.");
+                throw; // erişilmez — Assert.Fail fırlatır; derleyicinin kesin atama analizi için
+            }
+
+            // ÇIKTI SÜRESİ AKIŞTAN OKUNUR: kapsayıcı süresi VİDEODAN gelir ve ses akışının
+            // kısalığını GİZLER (S2'nin kazanımı budur, düzeltme onu bozmamalı).
+            var audioSec = AudioStreamDurationSec(output);
+            Assert.True(Math.Abs(audioSec - 19d) <= 1 / 30d,
+                $"{name}: ses AKIŞI 19 sn olmalı, "
+                + $"{audioSec.ToString("0.####", CultureInfo.InvariantCulture)} sn ölçüldü "
+                + "(fark bir çıkış karesini aşıyor)");
+
+            var probe = await new FfprobeService(_options).ProbeAsync(output);
+            Assert.True(probe.HasVideo && probe.HasAudio);
+            Assert.InRange(probe.DurationUs!.Value, 18_900_000, 19_100_000);
+        }
+    }
+
+    /// <summary>Çıktının SES AKIŞI süresi (kapsayıcı/format süresi DEĞİL — o videodan gelir).</summary>
+    private static double AudioStreamDurationSec(string mediaPath)
+    {
+        using var json = FfprobeJson.Run(
+            "-select_streams", "a:0", "-show_entries", "stream=duration", mediaPath);
+        var streams = json.RootElement.GetProperty("streams");
+        Assert.True(streams.GetArrayLength() > 0, $"{mediaPath}: ses akışı yok");
+        return double.Parse(
+            streams[0].GetProperty("duration").GetString()!, CultureInfo.InvariantCulture);
     }
 
     // ─────────────── Overlay varlıkları: metin/şekil rasteri + çıkartma ───────────────
@@ -550,13 +652,22 @@ public sealed class ExportRenderGoldenTests : IDisposable
         return path;
     }
 
-    private async Task<string> RenderAsync(CompiledExport compiled, string name)
+    /// <param name="ceiling">
+    /// Verilirse render bu SÜRE TAVANIYLA koşar: tavana çarpınca ffmpeg SÜREÇ AĞACI öldürülür
+    /// (FfmpegRunner iptalde <c>Kill(entireProcessTree)</c> yapar) ve
+    /// <see cref="OperationCanceledException"/> fırlar. Tavansız bir "asılabilir" testin iki
+    /// ayrı zararı vardır: koşum süresiz uzar ve arkada CPU yakan KAÇAK bir ffmpeg kalır.
+    /// </param>
+    private async Task<string> RenderAsync(
+        CompiledExport compiled, string name, TimeSpan? ceiling = null)
     {
         var scriptPath = Path.Combine(_dir, name + "-graph.txt");
         await File.WriteAllTextAsync(scriptPath, compiled.FilterGraphScript);
         var outputPath = Path.Combine(_dir, name + ".mp4");
+        using var cts = ceiling is { } limit ? new CancellationTokenSource(limit) : new CancellationTokenSource();
         var result = await new FfmpegRunner(_options).RunAsync(
-            compiled.ToFfmpegArgs(scriptPath, outputPath), compiled.ExpectedDurationUs);
+            compiled.ToFfmpegArgs(scriptPath, outputPath), compiled.ExpectedDurationUs,
+            ct: cts.Token);
         Assert.True(result.Success, $"{name} render failed: {result.StderrTail}");
         return outputPath;
     }

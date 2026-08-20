@@ -171,6 +171,56 @@ public static class ExportCompiler
     /// <summary>§8.4: sert kesim sınırındaki micro-fade süresi — 5 ms (= 240 sample @48 kHz).</summary>
     public const long MicroFadeUs = 5_000;
 
+    /// <summary>
+    /// Proje kare hızı aralığının ALT ucu (fps) — <see cref="MaxProjectFps"/> ile birlikte
+    /// <c>settings.fps</c>'in kabul penceresini kurar. 1 fps'in altında TEK çıktı karesi bir
+    /// saniyeden uzun sürer ve her klip kenarı o kaba ızgaraya oturmak zorunda kalır
+    /// (frame-grid kapısı, §1.4); editörün kurabildiği hiçbir proje ve makul hiçbir video
+    /// belgesi oraya düşmez.
+    /// </summary>
+    public const long MinProjectFps = 1;
+
+    /// <summary>
+    /// Proje kare hızı aralığının ÜST ucu (fps). Pencere YAYIN VE TÜKETİCİ hızlarının tamamını
+    /// kapsar — 23.976 (24000/1001), 24, 25, 29.97 (30000/1001), 30, 50, 59.94 (60000/1001),
+    /// 60 — ve üstüne tüketici yüksek-kare-hızı çekimlerini (120, 240) alır.
+    /// <para>
+    /// NEDEN TAVAN GEREKİR: render maliyeti KARE SAYISIYLA doğrusaldır ve kare sayısı
+    /// <c>süre × fps</c>'tir. Tavan yokken <c>fps = {num:100000, den:1}</c> + tek 0,5 saniyelik
+    /// klip belgesi 50.000 kare üretiyor, POST 202 alıyor ve tek worker'ı dakikalarca meşgul
+    /// ediyordu (ham API ile ölçüldü). Kural SAF DOKÜMAN ARİTMETİĞİDİR — ne dosya ne asset ne
+    /// font gerekir — bu yüzden senkron kapıda yaşar.
+    /// </para>
+    /// </summary>
+    public const long MaxProjectFps = 240;
+
+    /// <summary>
+    /// Toplam zaman çizelgesi süresi tavanı: 4 saat (<see cref="ExportPlan.TotalDurationUs"/>).
+    /// <para>
+    /// NEDEN TAVAN GEREKİR: worker'ın disk rezervasyonu
+    /// (<c>ExportJob.EstimateRequiredDiskBytes</c>) SÜREYLE doğrusaldır ve baskın terim odur.
+    /// Tavan yokken çizelgesi ~3,17 yıl olan bir belge POST 202 alıyor, worker 150 TB
+    /// rezervasyon isteyip <c>disk-wait</c> ile üç kez kuyruğa dönüyor ve dakikalar sonra
+    /// <c>disk-full</c> ile düşüyordu — yani BELGE kusuru kullanıcıya SUNUCUNUN DİSKİ bitmiş
+    /// gibi gösteriliyordu (ham API ile ölçüldü).
+    /// </para>
+    /// <para>
+    /// TAVANIN GEREKÇESİ (keyfi değildir, dört ölçüt birden):
+    /// (0) DEPONUN KENDİ SAYISI — <c>ProcessingOptions.MaxDurationUs</c> TEK KAYNAK için zaten
+    /// 4 saatlik bir tavan taşır (aşan dosya işlemede <c>too-long</c> ile düşer); çizelge
+    /// tavanının AYNI sayı olması sistemi tek cümleye indirger — "yükleyebileceğin en uzun
+    /// dosya" = "dışa aktarabileceğin en uzun çizelge". İki varsayılanın birlikte kalması
+    /// <c>ExportJobTests.TimelineCeiling_MatchesTheIngestDurationCeiling</c> ile korunur.
+    /// (1) DİSK — 4 saatte profil bitrate'inden doğan rezervasyon 21,6 GB'dir
+    /// (<c>ExportJobTests.EstimateRequiredDiskBytes_AtTimelineCeiling_StaysWithinReservationBudget</c>
+    /// bu sayıyı koşarak sabitler), kullanıcı başına eşzamanlı export tavanı 2 olduğu için
+    /// en kötü hâlde 43,2 GB; (2) RENDER SÜRESİ — tek worker, tek Hangfire iş kanalı;
+    /// (3) KAPSAM — kurgu projelerinin tamamı bu pencerenin çok altındadır (demo saniyeler,
+    /// uzun metraj bir film ~2-3 saat), yani tavan hiçbir makul belgeyi reddetmez.
+    /// </para>
+    /// </summary>
+    public const long MaxTimelineDurationUs = 4L * 60 * 60 * 1_000_000;
+
     /// <summary>Çıktı frame'lerine damgalanan renk parametreleri (rendering-semantics §6.1).</summary>
     public const string OutputColorParams =
         "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv";
@@ -298,6 +348,28 @@ public static class ExportCompiler
             throw new InvalidTimelineException("settings.fps must be a positive rational.");
         }
 
+        // PROJE KARE HIZI PENCERESİ. Eski kapı yalnız "pozitif rasyonel" istiyordu; bir üst
+        // sınır YOKTU. Karşılaştırma ölçüldü (ham API): settings.width = 100000 etkin biçimde
+        // zaten kapalıydı — katman tavanı (8192) 'transform-scale' koduyla 422 veriyordu —
+        // ama fps'in eşdeğeri yoktu.
+        //
+        // Kural SAF DOKÜMAN ARİTMETİĞİDİR (yalnız iki tam sayıya bakar), bu yüzden senkron
+        // kapıda yaşar. Karşılaştırma tam sayı çarpımıyla yapılır: num/den ikisi de pozitif ve
+        // <= int.MaxValue olduğu (bir üstteki kapı) için num ile MaxProjectFps*den long'da
+        // taşmaz, ve rasyonel fps (24000/1001) yuvarlama hatası olmadan sınanır.
+        if (settings.Fps.Num < MinProjectFps * settings.Fps.Den
+            || settings.Fps.Num > MaxProjectFps * settings.Fps.Den)
+        {
+            throw new UnsupportedFeatureException("project-fps-out-of-range",
+                $"Proje kare hızı ({settings.Fps.Num.ToString(CultureInfo.InvariantCulture)}/"
+                + $"{settings.Fps.Den.ToString(CultureInfo.InvariantCulture)} fps) dışa aktarıcının "
+                + $"kabul ettiği aralığın dışında: {MinProjectFps.ToString(CultureInfo.InvariantCulture)}"
+                + $"–{MaxProjectFps.ToString(CultureInfo.InvariantCulture)} fps. Aralık yayın "
+                + "hızlarının tamamını (23.976, 24, 25, 29.97, 30, 50, 59.94, 60) ve tüketici "
+                + "yüksek-kare-hızı çekimlerini (120, 240) kapsar. Proje ayarlarından kare hızını "
+                + "düşürün.");
+        }
+
         if (settings.Width <= 0 || settings.Height <= 0
             || settings.Width > int.MaxValue || settings.Height > int.MaxValue)
         {
@@ -309,6 +381,34 @@ public static class ExportCompiler
             // yuv420p/libx264 çift boyut ister — tek kaynak kural: proje çözünürlüğü çift olmalı.
             throw new InvalidTimelineException(
                 $"output resolution {settings.Width}x{settings.Height} must have even dimensions.");
+        }
+
+        // Proje arkaplan rengi = TABAN TUVALİN kendisi; değeri ffmpeg grafiğine doğrudan gömülür
+        // (color=c=…, pad=…:color=…). Kural SAF DOKÜMAN aritmetiğidir — ne dosya ne asset ne font
+        // gerekir — bu yüzden burada, senkron kapıda yaşar.
+        //
+        // DİLBİLGİSİ KLİP RENKLERİYLE AYNI KAYNAKTAN (HexColor.TryParse) SORULUR. Kapı yokken
+        // FfmpegColor kendi uzunluk anahtarını taşıyordu, yani belgede İKİ ayrıştırıcı vardı:
+        // klip renkleri EnsureColor'dan geçiyor, proje rengi geçmiyordu. Ölçülen sonuç (ham API):
+        // '#GGGGGG' 202 alıp render'da 'ffmpeg exited with code -22' ile düşüyordu; '#12345',
+        // 'mavi', '' ise 202 alıp BAŞARIYLA bitiyor ama arkaplan SESSİZCE SİYAH oluyordu.
+        // Sessiz yanlış çıktı, gürültülü hatadan kötüdür.
+        //
+        // KOD KLİP KAPSAMLI 'overlay-unsupported-clip' DEĞİLDİR: bu bir klip kusuru değil PROJE
+        // AYARIDIR; kullanıcıya hangi klibi düzelteceğini söyleyen bir kod yanlış yere baktırırdı.
+        if (!HexColor.TryParse(settings.BackgroundColor, out _))
+        {
+            // EKSİK ALAN ile GEÇERSİZ DEĞER ayrı cümlelerdir. Ölçüldü: alan hiç yokken DTO
+            // null taşır ve tek cümleli sürüm "geçersiz: ''" diyordu — kullanıcıyı belgede
+            // OLMAYAN bir boş dizeyi aramaya gönderirdi. (Depoda bu şekilden iki belge var:
+            // settings'i 'background'/'sampleRateHz' yazan eski bir denetim betiğinden.)
+            throw new UnsupportedFeatureException("project-background-color",
+                settings.BackgroundColor is null
+                    ? "Belgede 'settings.backgroundColor' alanı yok. "
+                      + "Beklenen biçim: #RGB, #RRGGBB ya da #RRGGBBAA."
+                    : $"'settings.backgroundColor' geçersiz renk değeri taşıyor: "
+                      + $"'{settings.BackgroundColor}'. "
+                      + "Beklenen biçim: #RGB, #RRGGBB ya da #RRGGBBAA.");
         }
 
         var tracks = doc.Tracks ?? [];
@@ -457,6 +557,26 @@ public static class ExportCompiler
         if (totalDurationUs <= 0)
         {
             throw new InvalidTimelineException("timeline duration is shorter than one output frame.");
+        }
+
+        // TOPLAM SÜRE TAVANI. Worker'ın disk rezervasyonunu (Σkaynak + süre×profil-bitrate,
+        // +%20) SÜRE domine eder; tavan yokken belge kusuru worker'da 'disk-full' olarak
+        // görünüyor, kullanıcıya SUNUCUNUN boş alanı gösteriliyordu. Deponun 503-vs-422
+        // doktrini (ExportEndpoints.StartExport) "kusur KURULUMDA ise altyapı kodu" der;
+        // burada kusur BELGEDEDİR, dolayısıyla cevap da belge hatası olmalıdır.
+        //
+        // GERÇEK disk darlığı bu kapıyla KARIŞTIRILMAZ: worker'ın 'disk-full' yolu yerinde
+        // durur ve tavanın ALTINDAKİ bir belge için de tetiklenebilir (o hâlde kusur gerçekten
+        // kurulumdadır). İkisinin ayrıldığı ExportJobTests'te koşturularak kanıtlanır.
+        if (totalDurationUs > MaxTimelineDurationUs)
+        {
+            throw new UnsupportedFeatureException("timeline-too-long",
+                "Zaman çizelgesinin toplam süresi dışa aktarma tavanını aşıyor: "
+                + $"{TimeFormat.Sec(totalDurationUs)} sn "
+                + $"(tavan {TimeFormat.Sec(MaxTimelineDurationUs)} sn "
+                + "= 4 saat). Tavan, tek render işinin isteyeceği geçici disk alanını ve render "
+                + "süresini sınırlar. Çizelgeyi kısaltın ya da projeyi parçalara bölüp ayrı ayrı "
+                + "dışa aktarın.");
         }
 
         var plan = new ExportPlan(
@@ -795,10 +915,48 @@ public static class ExportCompiler
         // toplam süre kadar sessizlik (anullsrc sonsuzdur — atrim şart).
         if (audioLines.Count > 0)
         {
+            // MİKS UZUNLUK KİLİDİ — klip zincirindeki kilidin TOPLAM eksenindeki karşılığı
+            // (aynı AMAÇ, ayrı BİÇİM: gerekçesi aşağıdaki "SIRA VE BİÇİM" paragrafında).
+            // 'duration=longest' EN UZUN GİRİŞ kadardır, TOPLAM SÜRE kadar DEĞİL: son ses
+            // klibi timeline'dan önce bitiyorsa ses akışı da erken bitiyordu (ölçüldü: video
+            // 8,000 sn / 240 kare, ses 3,000 sn / 142 kare, son ses paketi PTS 2,987).
+            // Kapsayıcı süresi VİDEODAN geldiği için bu kısalık ffprobe'un format süresinde
+            // GÖRÜNMEZ — akışın kendisi sorulmalıdır.
+            //
+            // İki taraflı kilit: atrim=end fazlalığı kırpar (grup ofseti adelay'de ms'e
+            // YUVARLANDIĞI için miks toplam süreyi yarım ms aşabiliyordu — ölçüldü: 19,000500
+            // sn'lik miks atrim'siz aynen çıkıyor, atrim'le tam 19,000000 sn oluyor), ardından
+            // apad eksik kuyruğu sessizlikle doldurur. Sessiz-belge dalı (anullsrc + atrim)
+            // zaten bu sözleşmedeydi; iki dal artık AYNI uzunluğu üretir.
+            //
+            // SIRA VE BİÇİM PAZARLIK KONUSU DEĞİLDİR — 'apad,atrim=end=T' SONSUZA KADAR ASAR.
+            // ÖLÇÜLDÜ (ffmpeg 8.0, iki ~10 sn'lik sesli kaynak, ikincisi baştan kırpılmış,
+            // toplam 19 sn): o biçimle ffmpeg 3/3 asıldı (60 sn tavanında öldürüldü), çıktıda
+            // moov atomu YOK ve dosya doğru boyutun (10,93 MB) üstüne 15,7-16,0 MB'a büyümeye
+            // devam etti; üründe iş 3/3 %90/render'da kaldı. Aşağıdaki biçimle aynı belge
+            // 3/3 ~2,9 sn'de bitti ve ses akışı TAM 19,000000 sn ölçüldü.
+            //
+            // REJİM (ölçüldü, üç koşul birden gerekir ve kusur ayrıca YARIŞSALDIR):
+            //  (1) TAM A/V GRAFİĞİ — aynı ses zinciri tek başına ([aout] tek çıkış, pcm ya da
+            //      aac/mp4) 'apad,atrim' ile de 0,1-0,6 sn'de bitip 19,000000 sn üretiyor;
+            //      yani [vout] haritalanmadan kusur GÖRÜNMEZ;
+            //  (2) ÇOK GİRİŞLİ MİKS — tek girişli miks aynı kuyrukla temiz bitiyor;
+            //  (3) KLİP ARALIĞI KAYNAK DOSYASININ SONUNA DAYANIYOR — pencere dosyanın İÇİNDE
+            //      bitince (12 sn'lik kaynağın ilk 10 sn'si) aynı graf 5/5 temiz bitiyor.
+            // Depodaki ses-yalnız ve tek-girişli testlerin kusuru kaçırmasının nedeni budur;
+            // koşan karşılığı ExportRenderGoldenTests'teki tam grafik testidir (üç koşumlu,
+            // süre tavanlı — yarışsallık orada da yazılıdır).
+            //
+            // NEDEN 'apad=whole_dur' DAHA GÜVENLİ: 'apad' argümansız SINIRSIZ üreteçtir ve
+            // hedef uzunluğu bilmez; 'whole_dur' apad'e AKIŞIN TOPLAM uzunluğunu söyler, yani
+            // dolgu kendi durma noktasını taşır ve üstündeki filtrenin onu kesmesine
+            // muhtaç kalmaz.
+            var mixDurationSec = TimeFormat.Sec(plan.TotalDurationUs);
             lines.Add(
                 string.Concat(Enumerable.Range(0, audioLines.Count).Select(i => $"[a{i}]"))
                 + $"amix=inputs={audioLines.Count.ToString(CultureInfo.InvariantCulture)}"
-                + ":duration=longest:normalize=0,alimiter=limit=0.98[aout]");
+                + ":duration=longest:normalize=0,alimiter=limit=0.98,"
+                + $"atrim=end={mixDurationSec},apad=whole_dur={mixDurationSec}[aout]");
         }
         else
         {
@@ -3562,17 +3720,26 @@ public static class ExportCompiler
     /// <summary>
     /// Şema hex rengi (#RGB | #RRGGBB | #RRGGBBAA) → ffmpeg renk literal'i (0xRRGGBB).
     /// Alpha bileşeni kullanılmaz (taban tuval opak).
+    /// <para>
+    /// SÖZLEŞME: buraya DOĞRULANMAMIŞ değer gelemez — <see cref="Validate"/> proje arkaplan
+    /// rengini aynı dilbilgisinden (<see cref="HexColor.TryParse"/>) geçirir ve
+    /// <see cref="Compile"/> ilk iş olarak Validate'i çağırır. Yine de burada bir SESSİZ
+    /// VARSAYILAN yoktur: eski <c>_ =&gt; "000000"</c> dalı ayrıştırılamayan her değeri siyaha
+    /// düşürüyor, kullanıcı da mavi istediği projeyi siyah arkaplanla ve HATASIZ teslim
+    /// alıyordu. Kapı bir gün gevşerse bu satır GÜRÜLTÜ çıkarsın — sessiz yanlış çıktı,
+    /// gürültülü hatadan kötüdür. Kod Validate'inkiyle AYNIDIR: aynı kusur, hangi kapının
+    /// yakaladığından bağımsız olarak kullanıcıya aynı makine kodunu göstermelidir.
+    /// </para>
     /// </summary>
     private static string FfmpegColor(string? hex)
     {
-        var value = (hex ?? "").TrimStart('#');
-        var rgb = value.Length switch
+        if (!HexColor.TryParse(hex, out var color))
         {
-            3 => string.Concat(value.Select(c => new string(c, 2))),
-            6 => value,
-            8 => value[..6],
-            _ => "000000",
-        };
-        return "0x" + rgb.ToUpperInvariant();
+            throw new UnsupportedFeatureException("project-background-color",
+                $"'settings.backgroundColor' geçersiz renk değeri taşıyor: '{hex}'. "
+                + "Beklenen biçim: #RGB, #RRGGBB ya da #RRGGBBAA.");
+        }
+
+        return $"0x{color.Red:X2}{color.Green:X2}{color.Blue:X2}";
     }
 }

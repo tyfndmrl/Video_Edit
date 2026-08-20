@@ -214,6 +214,50 @@ public sealed class FfmpegTestMediaFixture : IDisposable
         "-frames:v", "1",
     ]);
 
+    /// <summary>
+    /// 10 sn, 320×240 @30fps testsrc2 + 330 Hz sinüs AAC — MİKS ASILMASI rejiminin A kaynağı.
+    /// <para>
+    /// ÜÇ ÖZELLİĞİ BİRDEN ŞARTTIR ve her biri ÖLÇÜLEREK seçildi (ffmpeg 8.0):
+    /// (1) SESLİDİR — sessiz kaynak ses grubu üretmez, miks hiç kurulmaz;
+    /// (2) KLİP ARALIĞI DOSYANIN SONUNA DAYANIR — girdi penceresi (<c>-t</c>) dosya sonuyla
+    ///     ÇAKIŞTIĞINDA demux doğal EOF'a ulaşır; pencere dosyanın İÇİNDE bitiyorsa (ör. 12
+    ///     sn'lik kaynağın ilk 10 sn'si) aynı graf 5/5 temiz bitiyor, yani kusur GÖRÜNMEZ;
+    /// (3) UZUNDUR — 19 sn'lik çizelgede asılma 8/10, 2 sn'lik çizelgede 0/10 ölçüldü.
+    /// </para>
+    /// <para>
+    /// TUVAL KÜÇÜKTÜR ÇÜNKÜ TUVAL BELİRLEYİCİ DEĞİLDİR: aynı belge 320×240'ta 8/10,
+    /// 640×360'ta 9/10, 1280×720'de 8/10 asıldı — oran boyuta duyarlı değil, temiz koşum
+    /// süresi ise 0,95 / 1,85 / 3,67 sn. En ucuz boyut seçildi.
+    /// </para>
+    /// </summary>
+    public string Video320x240Tone330_10sWithAudio() => GetOrCreate("mixhang-a.mp4",
+    [
+        "-y",
+        "-f", "lavfi", "-i", "testsrc2=s=320x240:rate=30:duration=10",
+        "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=48000:duration=10",
+        "-t", "10",
+        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k",
+        "-shortest",
+    ]);
+
+    /// <summary>
+    /// <inheritdoc cref="Video320x240Tone330_10sWithAudio" path="/summary/node()[1]"/>
+    /// Miks asılması rejiminin B kaynağı: AYRI bir dosya ve AYRI bir ton (660 Hz).
+    /// İki klip aynı dosyadan gelseydi bile derleyici iki ayrı giriş açardı, ama kusurun
+    /// ölçüldüğü ürün vakası iki AYRI varlıktı — rejim birebir kurulur.
+    /// </summary>
+    public string Video320x240Tone660_10sWithAudio() => GetOrCreate("mixhang-b.mp4",
+    [
+        "-y",
+        "-f", "lavfi", "-i", "testsrc2=s=320x240:rate=30:duration=10",
+        "-f", "lavfi", "-i", "sine=frequency=660:sample_rate=48000:duration=10",
+        "-t", "10",
+        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k",
+        "-shortest",
+    ]);
+
     /// <summary>3 sn 440 Hz sinüs WAV (audio-only asset senaryosu).</summary>
     public string AudioWav() => GetOrCreate("tone.wav",
     [

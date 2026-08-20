@@ -73,6 +73,60 @@ describe('mapExportError (ExportDialog message)', () => {
     );
   });
 
+  it('422 with a resource-ceiling code is NOT framed as an unsupported feature', () => {
+    // These codes mean the document is valid and the feature IS supported — the project is
+    // simply outside the exporter's resource window. "Unsupported feature" would send the
+    // user hunting for a feature to remove instead of shortening the timeline / lowering fps.
+    // Mirrors the server's `CeilingFeatures`; a backend guard compares both sources.
+    for (const [feature, detail] of [
+      ['timeline-too-long', 'Zaman çizelgesinin toplam süresi dışa aktarma tavanını aşıyor'],
+      ['project-fps-out-of-range', 'Proje kare hızı kabul edilen aralığın dışında'],
+    ] as const) {
+      const err = mapExportError(422, { status: 422, feature, detail });
+      expect(err.kind).toBe('ceiling');
+      expect(err.message).toBe(`Bu proje dışa aktarma sınırlarının dışında: ${detail}`);
+    }
+
+    // Ceiling codes without a detail still keep their own framing.
+    expect(mapExportError(422, { feature: 'timeline-too-long' }).message).toBe(
+      'Bu proje dışa aktarma sınırlarının dışında.',
+    );
+
+    // Negative control: a neighbouring compiler code keeps the unsupported-feature framing.
+    expect(mapExportError(422, { feature: 'transform-scale', detail: 'x' }).kind).toBe(
+      'unsupported',
+    );
+  });
+
+  it('422 with a bad-VALUE code is neither "unsupported" nor "ceiling"', () => {
+    // Third sentence class. Both features ARE supported and the project is inside every
+    // resource window — one field carries a value the exporter cannot use. Framing that as
+    // "unsupported feature" hid a one-field fix behind a search for a missing feature.
+    // Mirrors the server's `DocumentValueFeatures`; a backend guard compares both sources.
+    for (const [feature, detail] of [
+      ['project-background-color', "'settings.backgroundColor' geçersiz renk değeri taşıyor"],
+      ['lut-asset', 'LUT efektinin assetId’si yok'],
+    ] as const) {
+      const err = mapExportError(422, { status: 422, feature, detail });
+      expect(err.kind).toBe('value');
+      expect(err.message).toBe(`Bu projedeki bir ayar geçersiz bir değer taşıyor: ${detail}`);
+    }
+
+    // Without a detail the framing survives.
+    expect(mapExportError(422, { feature: 'project-background-color' }).message).toBe(
+      'Bu projedeki bir ayar geçersiz bir değer taşıyor.',
+    );
+
+    // The three 422 classes stay distinct: neither of the other two sets answers 'value'.
+    expect(mapExportError(422, { feature: 'asset-missing', detail: 'x' }).kind).toBe('asset');
+    expect(mapExportError(422, { feature: 'timeline-too-long', detail: 'x' }).kind).toBe(
+      'ceiling',
+    );
+    expect(mapExportError(422, { feature: 'transform-scale', detail: 'x' }).kind).toBe(
+      'unsupported',
+    );
+  });
+
   it('503: server-side unavailability surfaces the detail (not a bare "try again")', () => {
     const err = mapExportError(503, {
       status: 503,

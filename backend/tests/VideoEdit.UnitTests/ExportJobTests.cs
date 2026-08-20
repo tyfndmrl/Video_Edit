@@ -9,6 +9,7 @@ using VideoEdit.Domain.Entities;
 using VideoEdit.Infrastructure;
 using VideoEdit.Infrastructure.Storage;
 using VideoEdit.Media;
+using VideoEdit.Media.Export;
 using VideoEdit.Media.Probing;
 using VideoEdit.Worker.Jobs;
 
@@ -25,6 +26,12 @@ public sealed class ExportJobTests : IDisposable
     private readonly AppDbContext _db;
     private readonly Guid _userId = Guid.CreateVersion7();
 
+    /// <summary>
+    /// Koşan render defteri. Bu sınıfın testleri ffmpeg BAŞLATMAZ, yani defter hep boş kalır;
+    /// gerçek kayıt/iptal davranışı <see cref="WorkerReliabilityTests"/>'te koşturulur.
+    /// </summary>
+    private readonly RunningRenderRegistry Renders = new();
+
     public ExportJobTests()
     {
         _connection = new SqliteConnection("DataSource=:memory:");
@@ -39,7 +46,7 @@ public sealed class ExportJobTests : IDisposable
         _connection.Dispose();
     }
 
-    private ExportJob CreateJobRunner()
+    private ExportJob CreateJobRunner(IBackgroundJobClient? jobClient = null)
     {
         var ffmpegOptions = new FfmpegOptions();
         var storage = new StubStorage();
@@ -49,9 +56,10 @@ public sealed class ExportJobTests : IDisposable
             new FfprobeService(ffmpegOptions),
             new FfmpegRunner(ffmpegOptions),
             new OriginalCache(storage, new ProcessingOptions()),
-            new NoOpJobClient(),
+            jobClient ?? new NoOpJobClient(),
             NullLogger<ExportJob>.Instance,
-            TimeProvider.System);
+            TimeProvider.System,
+            Renders);
     }
 
     private async Task<Job> SeedExportJobAsync(string timelineJson, JobStatus status = JobStatus.Queued)
@@ -223,6 +231,67 @@ public sealed class ExportJobTests : IDisposable
         Assert.Equal((100_000_000L + 75_000_000L) * 12 / 10, estimate);
     }
 
+    [Fact]
+    public void EstimateRequiredDiskBytes_AtTimelineCeiling_StaysWithinReservationBudget()
+    {
+        // TAVANIN GEREKÇESİNİN BİRİNCİ AYAĞI (10. tur, F1). ExportCompiler.MaxTimelineDurationUs
+        // keyfi bir sayı değildir: worker'ın rezervasyonu SÜREYLE doğrusaldır ve tavandaki değeri
+        // BURADA KOŞARAK sabitlenir. Sayı değişirse bu test kırmızı olur ve tavanın gerekçesi
+        // (docs/poc-bilinen-sinirlar.md) güncellenmeye zorlanır.
+        var atCeiling = ExportJob.EstimateRequiredDiskBytes(
+            totalSourceBytes: 0,
+            ExportCompiler.MaxTimelineDurationUs,
+            ExportProfiles.EstimatedBitsPerSecond(ExportProfile.Hd1080p));
+
+        Assert.Equal(21_600_000_000L, atCeiling);
+    }
+
+    [Fact]
+    public void TimelineCeiling_MatchesTheIngestDurationCeiling()
+    {
+        // TAVANIN GEREKÇESİNİN İKİNCİ AYAĞI (10. tur, F1) — ve aynı zamanda SÜRÜKLENME
+        // MUHAFIZI. Depo zaten TEK KAYNAK için 4 saatlik bir tavan taşıyor
+        // (ProcessingOptions.MaxDurationUs: aşan kaynak probe sonrası Failed('too-long')).
+        // Çizelge tavanının AYNI sayı olması sistemi tutarlı kılar: "yükleyebileceğin en uzun
+        // dosya" ile "dışa aktarabileceğin en uzun çizelge" aynı cümledir.
+        //
+        // İki sayı AYRI yerlerde yaşar ve öyle kalmalıdır: biri worker'ın YAPILANDIRILABİLİR
+        // ayarı (operatör değiştirebilir), diğeri derleyicinin sabiti (API sürecinde de koşar,
+        // VideoEdit.Media worker'a referans VEREMEZ — katman kuralı). Bu test yalnız
+        // VARSAYILANLARI karşılaştırır: biri değişirse kırmızı olur ve diğerinin de
+        // değişip değişmeyeceği BİLİNÇLİ bir karar hâline gelir.
+        Assert.Equal(ExportCompiler.MaxTimelineDurationUs, new ProcessingOptions().MaxDurationUs);
+    }
+
+    /// <summary>
+    /// F1'İN İKİNCİ YARISI: belge kusuru ile GERÇEK disk darlığı ayrı şeylerdir ve ayrı kalmalıdır.
+    /// <para>
+    /// Senkron süre tavanı (<c>timeline-too-long</c>) eklendikten sonra "belge yüzünden
+    /// disk-full" hali kalmamıştır; ama tavanın ALTINDAKİ tamamen makul bir belge, worker'ın
+    /// diski gerçekten doluysa HÂLÂ <c>disk-full</c> almalıdır — orada kusur KURULUMDADIR.
+    /// Bu test o yolu koşarak korur: tavanın çok altında 1 sn'lik bir belge + hep dolu disk +
+    /// üçüncü deneme → Failed('disk-full').
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Run_GenuinelyFullDisk_OnFinalAttempt_StillFailsWithDiskFull()
+    {
+        var job = await SeedReadyAssetAndJobAsync();   // 1 sn'lik belge — tavanın çok altında
+        job.AttemptCount = ExportJob.MaxDiskFullAttempts - 1; // Run bir artıracak → son deneme
+        await _db.SaveChangesAsync();
+
+        var jobs = new RecordingJobClient();
+        var runner = CreateJobRunner(jobs);
+        runner.FreeSpaceProbe = _ => 1; // trim'den sonra da yetersiz — GERÇEK darlık
+
+        await runner.Run(job.Id, CancellationToken.None);
+
+        var reloaded = Reload(job.Id);
+        Assert.Equal(JobStatus.Failed, reloaded.Status);
+        Assert.StartsWith("disk-full: ", reloaded.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(0, jobs.ScheduleCount); // son denemede erteleme YOK
+    }
+
     private async Task<Job> SeedReadyAssetAndJobAsync()
     {
         var now = DateTimeOffset.UtcNow;
@@ -259,7 +328,7 @@ public sealed class ExportJobTests : IDisposable
             _db, storage,
             new FfprobeService(ffmpegOptions), new FfmpegRunner(ffmpegOptions),
             new OriginalCache(storage, new ProcessingOptions { CacheDirectory = cacheRoot }),
-            jobs, NullLogger<ExportJob>.Instance, TimeProvider.System)
+            jobs, NullLogger<ExportJob>.Instance, TimeProvider.System, Renders)
         {
             FreeSpaceProbe = _ => 1, // trim'den sonra da yetersiz
         };
@@ -306,7 +375,7 @@ public sealed class ExportJobTests : IDisposable
             _db, storage,
             new FfprobeService(ffmpegOptions), new FfmpegRunner(ffmpegOptions),
             new OriginalCache(storage, new ProcessingOptions { CacheDirectory = cacheRoot }),
-            jobs, NullLogger<ExportJob>.Instance, TimeProvider.System);
+            jobs, NullLogger<ExportJob>.Instance, TimeProvider.System, Renders);
         // Trim junk'ı silene KADAR disk "dolu": trim sonrası ikinci ölçüm bol alan görür.
         runner.FreeSpaceProbe = _ => Directory.Exists(junkDir) ? 1 : long.MaxValue;
 

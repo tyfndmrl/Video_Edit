@@ -43,6 +43,56 @@ public static class ExportEndpoints
         "asset-missing", "source-out-of-range", "lut-asset-type", "asset-clip-type", "asset-failed",
     };
 
+    /// <summary>
+    /// KAYNAK TAVANI kodları: belge geçerlidir ve özellik DESTEKLENİR — proje yalnızca dışa
+    /// aktarıcının kaynak penceresinin dışındadır (10. tur, F1/F2).
+    /// <para>
+    /// NEDEN AYRI BAŞLIK: bu iki kod "henüz desteklenmeyen özellik" DEĞİLDİR. Kullanıcı 4
+    /// saatten uzun bir çizelge kurduğunda ya da 240 fps üstü bir proje açtığında ona
+    /// "desteklenmeyen özellik" demek, <c>AssetFactFeatures</c>'ın kapattığı hatanın aynısıdır:
+    /// yanlış cümle, kullanıcıyı olmayan bir özelliği aramaya gönderir. Doğru cümle sınırın
+    /// KENDİSİNİ söyler; eylem de bellidir (çizelgeyi kısalt / kare hızını düşür).
+    /// </para>
+    /// <para>
+    /// İstemcideki aynası <c>exportLogic.ts</c> → <c>CEILING_CODES</c>; ikisi
+    /// <c>ExportGateInventoryTests.TheClientAndServerAgreeOnWhichCodesMeanAResourceCeiling</c>
+    /// ile karşılaştırılır.
+    /// </para>
+    /// </summary>
+    private static readonly HashSet<string> CeilingFeatures = new(StringComparer.Ordinal)
+    {
+        "timeline-too-long", "project-fps-out-of-range",
+    };
+
+    /// <summary>
+    /// GEÇERSİZ DEĞER kodları — ÜÇÜNCÜ cümle sınıfı. Belge geçerlidir, özellik DESTEKLENİR ve
+    /// proje kaynak penceresinin İÇİNDEDİR; kusur bir ALANIN DEĞERİNDEDİR.
+    /// <para>
+    /// NEDEN AYRI BAŞLIK: bu kodlar da "henüz desteklenmeyen özellik" DEĞİLDİR. Proje arkaplan
+    /// rengi yıllardır destekleniyor; <c>settings.backgroundColor = "#GGGGGG"</c> yazan bir
+    /// belgeye "dışa aktarıcı bu özelliği henüz desteklemiyor" demek kullanıcıyı OLMAYAN bir
+    /// özelliği aramaya gönderir — oysa yapması gereken tek şey o alandaki değeri düzeltmektir.
+    /// Aynısı LUT efektinin <c>assetId</c>'si için geçerlidir: LUT destekleniyor, alan boş.
+    /// </para>
+    /// <para>
+    /// KAPSAM — BU KÜME YALNIZ SENKRON KAPININ ÜRETTİĞİ CÜMLEYİ SINIFLANDIRIR. İki kodun da
+    /// derleyicide İKİŞER fırlatma noktası vardır; ikinci noktalar (<c>FfmpegColor</c> sözleşme
+    /// muhafızı ve <c>Compile</c>'ın LUT yolu defteri) yalnız <c>Compile</c>'da yaşar ve
+    /// <c>Compile</c>'ı YALNIZ worker çağırır — API <c>Validate</c>'te durur. Yani bu başlığın
+    /// gördüğü tek şey Validate'in fırlattığı DEĞER hatasıdır; worker'ın yolu başlık değil
+    /// <c>unsupported-feature:&lt;kod&gt;</c> gerekçesi yazar.
+    /// </para>
+    /// <para>
+    /// İstemcideki aynası <c>exportLogic.ts</c> → <c>VALUE_CODES</c>; ikisi
+    /// <c>ExportGateInventoryTests.TheClientAndServerAgreeOnWhichCodesMeanABadValue</c>
+    /// ile karşılaştırılır ve üç kümenin AYRIK olduğu aynı testte ölçülür.
+    /// </para>
+    /// </summary>
+    private static readonly HashSet<string> DocumentValueFeatures = new(StringComparer.Ordinal)
+    {
+        "project-background-color", "lut-asset",
+    };
+
     public static IEndpointRouteBuilder MapExportEndpoints(this IEndpointRouteBuilder app)
     {
         var projects = app.MapGroup("/api/projects").WithTags("Exports").RequireAuthorization();
@@ -210,7 +260,13 @@ public static class ExportEndpoints
                     // Bu üç kod bir "henüz desteklenmeyen özellik" DEĞİL, kullanıcının kendi
                     // kütüphanesiyle belge arasındaki uyuşmazlıktır — başlık da öyle demeli.
                     ? "Timeline references an asset that cannot be exported."
-                    : "Timeline uses a feature the exporter does not support yet.",
+                    // Kaynak tavanları da öyle: özellik DESTEKLENİYOR, proje pencerenin dışında.
+                    : CeilingFeatures.Contains(ex.Feature)
+                        ? "Timeline exceeds an export resource limit."
+                        // Üçüncü sınıf: özellik destekli, proje pencerede — DEĞER hatalı.
+                        : DocumentValueFeatures.Contains(ex.Feature)
+                            ? "Timeline contains a value the exporter cannot use."
+                            : "Timeline uses a feature the exporter does not support yet.",
                 detail: ex.Message,
                 extensions: new Dictionary<string, object?> { ["feature"] = ex.Feature });
         }

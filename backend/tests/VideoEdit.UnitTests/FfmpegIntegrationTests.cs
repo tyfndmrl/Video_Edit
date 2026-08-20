@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Text.Json;
 using VideoEdit.Media;
 using VideoEdit.Media.Probing;
 using VideoEdit.Media.Recipes;
 using VideoEdit.Media.Waveform;
+using VideoEdit.Worker.Jobs;
 
 namespace VideoEdit.UnitTests;
 
@@ -234,5 +236,92 @@ public sealed class FfmpegIntegrationTests(FfmpegTestMediaFixture media) : IDisp
         Assert.Equal("aac", probe.AudioCodec);
         Assert.Equal(48000, probe.AudioSampleRate);
         Assert.Equal(2, probe.AudioChannels);
+    }
+
+    // ───────── ÇIKTI SAATİ TAVANI (kaçak süreç: durmadan üretir, asla bitmez) ─────────
+
+    [FfmpegFact]
+    public async Task OutputTimeCeiling_KillsAProcessThatKeepsWritingPastTheExpectedDuration()
+    {
+        // SESSİZLİK BEKÇİSİNİN KÖR NOKTASI. Bekçi ÇIKTI SESSİZLİĞİNİ ölçer; kaçak bir grafik
+        // durmadan -progress bastığı için asla sessiz kalmaz ve 120 sn HİÇ dolmaz. Burada o
+        // hal birebir kurulur: SINIRSIZ bir üreteç (anullsrc) sonu olmayan bir çıktı yazar.
+        // Bekçi 120 sn'de kalsaydı bu test tavana çarpardı; tavan çalışıyorsa saniyeler sürer.
+        var outputPath = Path.Combine(_outDir, "runaway.m4a");
+        const long ExpectedUs = 2_000_000;
+
+        // TESTİN KENDİ EMNİYETİ: tavan bir gün geri giderse bu koşum ASILIRDI (kaçak süreç
+        // sessiz kalmadığı için sessizlik bekçisi de onu kurtarmaz). İptal, süreç ağacını
+        // öldürür ve testi ASILMA yerine KIRMIZI yapar.
+        using var safety = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var watch = Stopwatch.StartNew();
+        FfmpegRunResult result;
+        try
+        {
+            result = await Runner.RunAsync(
+                ["-y", "-nostdin", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+                 "-c:a", "aac", outputPath],
+                ExpectedUs,
+                outputTimeCeilingUs: FfmpegRunner.OutputTimeCeilingUs(ExpectedUs),
+                ct: safety.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            Assert.Fail("çıktı saati tavanı TETİKLENMEDİ: kaçak süreç 30 sn boyunca yaşadı "
+                + "ve ancak testin emniyet iptaliyle öldü.");
+            throw; // erişilmez
+        }
+
+        watch.Stop();
+
+        Assert.True(result.Overran, "kaçak süreç tavana takılmalıydı");
+        Assert.False(result.Success);
+        // AYRI HALLER AYRI KALMALI: bu bir "hiç çıktı üretmedi" (TimedOut) vakası DEĞİLDİR.
+        Assert.False(result.TimedOut);
+        Assert.True(watch.Elapsed < FfmpegRunner.DefaultWatchdogTimeout,
+            $"tavan sessizlik bekçisinden ÖNCE tetiklenmeliydi ({watch.Elapsed})");
+    }
+
+    [FfmpegFact]
+    public async Task OutputTimeCeiling_DoesNotKillANormalTranscode()
+    {
+        // YANLIŞ ÖLDÜRME ÜRETMEME KANITI. Normal bir render'ın bildirdiği EN BÜYÜK out_time
+        // beklenen sürenin ALTINDADIR (son karenin damgası); tavan onun çok üstündedir.
+        // Bu test tavanı GERÇEK bir transcode'a takar ve süreci bitirir.
+        var source = media.Video320x240WithAudio();
+        var probe = await Ffprobe.ProbeAsync(source);
+        var proxyPath = Path.Combine(_outDir, "ceiling-proxy.mp4");
+
+        var maxFraction = 0d;
+        var result = await Runner.RunAsync(
+            ProxyRecipe.BuildVideoArgs(probe, source, proxyPath),
+            probe.DurationUs,
+            (fraction, _) =>
+            {
+                maxFraction = Math.Max(maxFraction, fraction);
+                return Task.CompletedTask;
+            },
+            outputTimeCeilingUs: FfmpegRunner.OutputTimeCeilingUs(probe.DurationUs!.Value));
+
+        Assert.True(result.Success, $"normal transcode tavana takıldı: {result.StderrTail}");
+        Assert.False(result.Overran);
+        // Kurulum ölçülür: iş GERÇEKTEN sonuna kadar koştu (aksi hâlde "takılmadı" boş bir iddia).
+        Assert.True(maxFraction > 0.9,
+            $"transcode sonuna kadar ilerlemeliydi (en büyük oran {maxFraction})");
+    }
+
+    [Fact]
+    public void OutputTimeCeiling_IsWiderThanTheDurationDeviationTheExportJobAccepts()
+    {
+        // İKİ EŞİK BİRBİRİYLE TUTARLI OLMAK ZORUNDA: worker çıktı süresini beklenen ±1 sn ile
+        // KABUL ediyor. Tavan o payın altına inseydi runner, işin kabul edeceği bir render'ı
+        // öldürürdü — kural iki dosyada yaşadığı için bağ ölçülerek sabitlenir.
+        foreach (var expectedUs in (long[])[1_000_000, 19_000_000, 4L * 60 * 60 * 1_000_000])
+        {
+            Assert.True(
+                FfmpegRunner.OutputTimeCeilingUs(expectedUs)
+                    > expectedUs + ExportJob.OutputDurationToleranceUs,
+                $"{expectedUs} us için tavan, işin kabul ettiği sapmadan geniş olmalı");
+        }
     }
 }

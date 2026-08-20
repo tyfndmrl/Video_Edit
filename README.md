@@ -204,20 +204,21 @@ klipleri **sistem fontuyla** çizilir; o zaman render **belirlenimci değildir**
 
 ## Testler
 
-Aşağıdaki sayılar **2026-08-13**, `d9f045f` + 4.–8. tur düzeltmeleri üzerinde bizzat
-koşuldu (E2E satırı hariç — nedeni satırın yanında yazılı):
+Aşağıdaki sayılar **2026-08-20**, `a1b3a73` + 10. tur (S1/S2 + F1/F2/F3) + **11. tur**
+düzeltmeleri (B1 miks asılması, B2 rejim testi, B3 çıktı saati bekçisi, B6 cümle sınıfı)
+üzerinde bizzat koşuldu — **E2E dahil**.
 
 ```bash
 # Derleme
 dotnet build backend/VideoEdit.sln                           # 0 uyarı, 0 hata ✓
 
-# Backend — 1198 test.  MinIO ayaktaysa env değişkenini VERİN, yoksa 17 test Skip olur
+# Backend — 1240 test.  MinIO ayaktaysa env değişkenini VERİN, yoksa 17 test Skip olur
 #   (ProcessAssetPipelineTests 7, MinioStorageSmokeTests 2, ExportJobPipelineTests 8).
-MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 1198/1198 ✓ (0 atlandı)
-dotnet test backend/VideoEdit.sln                            # 1181 ✓ + 17 atlandı
+MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 1240/1240 ✓ (0 atlandı)
+dotnet test backend/VideoEdit.sln                            # 1223 ✓ + 17 atlandı
 
 # Editör + şema paketi birlikte
-pnpm -r test                                                 # editor 1196 ✓ · schema 191 ✓
+pnpm -r test                                                 # editor 1198 ✓ · schema 191 ✓
 
 # Tip denetimi
 pnpm --filter @videoedit/editor exec tsc -b                  # temiz ✓
@@ -229,11 +230,16 @@ pnpm --filter @videoedit/editor build                        # ✓
 # E2E — GERÇEK tarayıcıda GERÇEK fare/klavye ile (page.mouse / page.keyboard).
 # API (5000), worker ve Vite (5173) AYAKTA olmalı; Playwright hiçbir süreci
 # başlatmaz/öldürmez, ayakta olanlara bağlanır.
-pnpm --filter @videoedit/editor test:e2e                     # BU TURDA KOŞULMADI
-#   ^ Bu doküman turu servis başlatmaz ve Playwright koşmaz. Paketin BÜYÜKLÜĞÜ
-#     ölçüldü (`playwright test --list`, hiçbir test çalıştırmadan): 33 dosyada
-#     143 test. Bu bir GEÇME sayısı DEĞİLDİR — geçme oranı ancak suite gerçekten
-#     koşturulunca yazılabilir; nedeni: docs/poc-bilinen-sinirlar.md §5.
+pnpm --filter @videoedit/editor test:e2e                     # 143/143 ✓ (7,8 dk)
+#   ^ Bu KOŞULMUŞ bir sayıdır: API/Worker ikilisi ölçümden önce yeniden
+#     yayımlandı, koşan sürecin YÜKLEDİĞİ modül hash'i + dize taramasıyla
+#     tazeliği doğrulandı ve ortamın tek sahibi bu koşumdu.
+#     143'ün 136'sı GERÇEK geçiştir; 7'si `test.fail` ile BEKLENEN
+#     başarısızlıktır (a11y-smoke.spec.ts modal odak sözleşmesi — ürün henüz
+#     odak tuzağı/geri verme uygulamıyor). Playwright bunları da "passed"
+#     sayar; sayıyı okurken bu ayrım gözetilmelidir. O 7 test artık
+#     docs/backlog.md'de AÇIK bir madde olarak kayıtlıdır (11. tur, B6/1) —
+#     eskiden hiçbir yerde yazılı DEĞİLDİ (review-gate kural 4 ihlali).
 ```
 
 > **Neden gerçek fare?** Teslim edilen ilk sürümde "E2E" testleri store'u doğrudan
@@ -275,7 +281,7 @@ backend/
   src/VideoEdit.Infrastructure/  EF Core, R2/S3 istemcisi, JWT
   src/VideoEdit.Media/           ffmpeg reçeteleri, probe, Export/ (FilterGraph compiler), Text/ (SkiaSharp)
   src/VideoEdit.Worker/          Hangfire: ProcessAssetJob, ExportJob, AssetReaperJob
-  tests/VideoEdit.UnitTests/     1198 test + ExportSnapshots/ (filtre grafiği metin snapshot'ları)
+  tests/VideoEdit.UnitTests/     1232 test + ExportSnapshots/ (filtre grafiği metin snapshot'ları)
   tests/GoldenFrames/            export karesi piksel golden'ları (11 PNG)
   tests/RasterGoldens/           SkiaSharp şekil rasteri golden'ları (4 PNG)
   tools/SchemaGen/               JSON Schema → C# DTO üretici

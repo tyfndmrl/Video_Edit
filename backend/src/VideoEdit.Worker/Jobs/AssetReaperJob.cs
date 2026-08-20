@@ -20,7 +20,8 @@ public sealed class AssetReaperJob(
     AppDbContext db,
     IStorageService storage,
     ILogger<AssetReaperJob> logger,
-    TimeProvider clock)
+    TimeProvider clock,
+    RunningRenderRegistry? renders = null)
 {
     public static readonly TimeSpan StalledProcessingAge = TimeSpan.FromMinutes(30);
 
@@ -96,9 +97,16 @@ public sealed class AssetReaperJob(
             job.ErrorMessage = $"stalled: no progress since {lastSeen:O} (reaped at {now:O}).";
             job.CompletedAt = now;
             changed = true;
+
+            // SATIRI DÜZELTMEK YETMEZ, SÜRECİ DE BIRAKMA. Satır 'failed' derken ffmpeg hâlâ
+            // koşuyor olabilir; export kuyruğu WorkerCount = 1 olduğu için o süreç herkesin
+            // export'unu tutmaya devam eder — yani "ölü" ilan edilen iş makineyi meşgul
+            // tutar. Kayıt yalnız BU süreçteki render'ları görür (kapsam: RunningRenderRegistry).
+            var aborted = renders?.Abort(job.Id) ?? false;
             logger.LogWarning(
-                "Reaper: job {JobId} ({Type}) had no progress since {LastSeen}; marked failed(stalled).",
-                job.Id, job.Type, lastSeen);
+                "Reaper: job {JobId} ({Type}) had no progress since {LastSeen}; marked "
+                + "failed(stalled). Running render aborted: {Aborted}.",
+                job.Id, job.Type, lastSeen, aborted);
         }
 
         // 3) Expired: 7 günden eski yarım upload'lar (R2 lifecycle zaten abort etmiştir;

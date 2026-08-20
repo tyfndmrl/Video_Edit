@@ -73,6 +73,34 @@ snapUs(us)      = usFromFrame(frameFromUs(us))
 - Keyframe `timeUs` değerleri clip başlangıcına görelidir; kompozit eksene çeviri tek noktada:
   `t_composite = timelineStartUs + kf.timeUs`.
 
+#### 1.4.1 Kaynak tavanları: fps penceresi ve toplam süre (NORMATİF, senkron kapı)
+
+Grid'in iki ucu **sınırlıdır** ve sınırlar dışa aktarma isteğinde (`ExportCompiler.Validate`)
+sorulur — kuyruğa girmeden, tipli 422 ile:
+
+| Sınır | Değer | Kod |
+|---|---|---|
+| `settings.fps` | `1 ≤ num/den ≤ 240` | `project-fps-out-of-range` |
+| toplam süre (`plan.TotalDurationUs`) | `≤ 4 saat` (14.400.000.000 µs) | `timeline-too-long` |
+
+- **İkisi de SAF DOKÜMAN ARİTMETİĞİDİR** — karar için ne dosya ne asset ne font gerekir —
+  bu yüzden senkron kapıda yaşarlar. Kuralın kendisi bir render sözleşmesi değil bir
+  **kaynak sözleşmesidir**: render maliyeti `süre × fps` ile (kare sayısı) doğrusaldır,
+  worker'ın disk rezervasyonu ise **süreyle** doğrusaldır
+  (`ExportJob.EstimateRequiredDiskBytes`).
+- **fps karşılaştırması TAM SAYI ÇARPIMIYLADIR** (`num < min·den`, `num > max·den`): rasyonel
+  hızlar (`24000/1001`, `30000/1001`, `60000/1001`) yuvarlama hatası olmadan sınanır.
+- Pencere yayın hızlarının tamamını (23.976, 24, 25, 29.97, 30, 50, 59.94, 60) ve tüketici
+  yüksek-kare-hızı çekimlerini (120, 240) kapsar. Tavanların gerekçesi ve ölçümleri:
+  `docs/poc-bilinen-sinirlar.md` §3 tablosu.
+- **Belge kusuru ile altyapı kusuru AYRIDIR:** tavanın ALTINDAKİ bir belge, worker'ın diski
+  gerçekten doluysa hâlâ `disk-full` alır — orada kusur kurulumdadır ve kod da öyle demelidir.
+- **Bu iki kod bir "desteklenmeyen özellik" DEĞİLDİR** ve kullanıcıya öyle denmez: belge
+  geçerli, özellik destekli, proje yalnız pencerenin dışındadır
+  (`ExportEndpoints.CeilingFeatures` ↔ `exportLogic.ts` `CEILING_CODES`).
+- Toplam süre tavanı, deponun TEK KAYNAK için taşıdığı süre tavanıyla (`ProcessingOptions.MaxDurationUs`,
+  varsayılan 4 saat) BİLEREK aynı sayıdır.
+
 ### 1.5 Non-drop timecode
 
 Timecode daima **non-drop** `HH:MM:SS:FF` (iki nokta ayraçlı, noktalı virgül yok):
@@ -673,6 +701,17 @@ for n in [firstFrame .. lastFrame]:           // clip'in kompozit eksendeki fram
 MVP efekt seti: **`colorAdjust`** ve **`lut`**. `blur` ve `chromaKey` MVP dışıdır ve şemada
 yoktur (baş mimar kararı). Efektler klip pikseline **transform/overlay'den ÖNCE** uygulanır
 (kaynak zincirinde), sıra: `colorAdjust` → `lut`.
+
+> **`Effect.params` şemadaki TEK YAPISIZ yüzeydir** (`Dictionary<string, object>`) ve
+> değerleri bu bölümün ffmpeg sütununa girer — **Skia raster hattı bu torbayı HİÇ okumaz**.
+> Dilbilgisi bu yüzden senkron kapıdadır (`ClipEffects.ParseColorAdjust` / `ParseLut`,
+> `ExportCompiler.Validate` üzerinden): tanınmayan anahtar, sayı olmayan değer, aralık dışı
+> değer, eksik/bozuk `assetId` ve aralık dışı `intensity` istek anında **422**'dir; iş
+> kuyruğa girmez. **Torbadan grafiğe ham doküman DİZESİ geçmez**: `colorAdjust` değerleri
+> `double`'a, `lut.assetId` `Guid`'e çevrilir ve `lut3d=file=…`'a yazılan `.cube` yolu
+> **worker cache'inin kendi yerel yoludur**, belge dizesi değil. Sonlu olmayan sayı (NaN/±∞)
+> JSON'da ifade bile edilemez. Defter ve ölçümler: `ExportGateInventoryTests` →
+> `DocumentStrings` (satır `EffectParams`, `Sink = FfmpegGraph`) + `EffectParamViolations`.
 
 ### 4.1 `colorAdjust` — parametre başına üçlü eşleme
 
@@ -1292,6 +1331,32 @@ out.a   = src.a + dst.a * (1 - src.a)
   ffmpeg davranışı değişirse sabit sessizce bayatlamaz, test kırmızıya döner.
 - **`amix=inputs=N:duration=longest:normalize=0`** — `normalize=0` zorunludur (default her
   girişi 1/N zayıflatır: "müzik ekleyince konuşma kısıldı" bug'ı).
+- **Mikste de uzunluk kilidi ZORUNLUDUR ve BİÇİMİ NORMATİFTİR:**
+  **`amix … , alimiter … , atrim=end=<toplam süre>, apad=whole_dur=<toplam süre>`.**
+  `duration=longest` EN UZUN GİRİŞ kadardır, TOPLAM SÜRE kadar değil — son sesli klip
+  timeline'dan önce bitiyorsa ses akışı da erken biter. Ölçüldü (1080p, gerçek render):
+  video **8,000 sn / 240 kare**, ses **3,000 sn / 142 kare**, son ses paketi PTS **2,987**.
+  Kapsayıcı süresi bu kısalığı GİZLER (video akışından gelir); ölçüm için akışın kendisi
+  sorulmalıdır. Kilit iki taraflıdır: `atrim=end` grup ofsetinin ms yuvarlamasından doğan
+  yarım ms taşmayı kırpar (ölçüldü: 19,000500 sn'lik miks `atrim`'siz aynen çıkıyor,
+  `atrim`'le tam 19,000000 sn oluyor), ardından `apad=whole_dur` eksik kuyruğu doldurur.
+  Hiç sesli klip yokken kullanılan `anullsrc` dalı zaten bu sözleşmedeydi; iki dal AYNI
+  uzunluğu üretir.
+  - **ARGÜMANSIZ `apad` KULLANILMAZ — ffmpeg'i SONSUZA KADAR ASAR.** Eski biçim
+    (`…,alimiter…,apad,atrim=end=T`) SINIRSIZ bir üreteci kuyruğa koyuyordu ve `atrim` onu bu
+    rejimde durdurmuyordu. Ölçüldü (ffmpeg 8.0, iki 10 sn'lik sesli kaynak, ikincisi baştan
+    kırpılmış, toplam 19 sn): **8/10 asıldı**; ürün düzeyinde iş **%90/render**'da kalıyor,
+    kaçak ffmpeg CPU yakmaya ve çıktıyı doğru boyutun (10,93 MB) üstüne şişirmeye devam
+    ediyordu (15,7–16,0 MB, moov atomu YOK). `apad=whole_dur=T` dolgunun kendi durma noktasını
+    taşımasını sağlar; aynı belge o biçimle 6/6 tamamlanıyor.
+  - **REJİM: kusur YALNIZ tam A/V grafiğinde ve kaynak penceresi dosya SONUNA dayandığında
+    doğar.** Aynı ses zinciri tek başına (`[aout]` tek çıkış) eski biçimle de bitiyor; pencere
+    dosyanın İÇİNDE bitince (12 sn'lik kaynağın ilk 10 sn'si) 5/5 temiz bitiyor. Tuval boyutu
+    belirleyici DEĞİL (320×240 8/10, 640×360 9/10, 1280×720 8/10).
+  - Ölçüm testleri: tek girişli rejim
+    `ExportM5GoldenTests.AudioMix_SpansTheWholeTimeline_WhenTheLastAudibleClipEndsEarly`,
+    ÇOK girişli rejim (asılan şeklin birebir karşılığı, süre tavanlı)
+    `ExportRenderGoldenTests.AudioMix_WithTwoAudibleGroups_FinishesAndSpansTheWholeTimeline`.
 - Çıkışta `alimiter=limit=0.98`. Preview'de Web Audio zinciri sonuna `DynamicsCompressorNode`
   KONMAZ — limiter yalnız export'ta clipping sigortasıdır; preview'de clipping duyulması
   kullanıcıya doğru sinyaldir (kabul edilmiş asimetri, tek istisna).

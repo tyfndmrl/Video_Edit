@@ -815,8 +815,22 @@ public sealed class ExportCompilerSnapshotTests
     public void Compile_AudioMix_UsesNormalizeZeroAndLimiter()
     {
         var compiled = ExportCompiler.Compile(AudioFades(), SdrSources(), ExportProfile.Hd1080p);
-        Assert.Contains("amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.98[aout]",
+
+        // MİKS UZUNLUK KİLİDİ: 'duration=longest' EN UZUN GİRİŞ kadardır, TOPLAM SÜRE kadar
+        // değil — dolgu olmadan son ses klibi timeline'dan önce bitince ses akışı da erken
+        // bitiyordu. Eşik TOPLAM SÜREDİR ve bu fixture'da o süre en uzun ses girişinden
+        // (5 sn > 3 sn) UZUNDUR; sabiti buradan okumak iddiayı tautoloji yapardı.
+        //
+        // BİÇİM DE SABİTLENİR, sırasıyla: önce atrim=end fazlalığı kırpar, SONRA
+        // apad=whole_dur eksiği doldurur. Argümansız 'apad' (SINIRSIZ üreteç) burada
+        // ffmpeg'i asıyordu; asılan şeklin koşan karşılığı
+        // ExportRenderGoldenTests.AudioMix_WithTwoAudibleGroups_... testidir.
+        Assert.Equal(5_000_000, compiled.ExpectedDurationUs);
+        Assert.Contains(
+            "amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.98,"
+            + "atrim=end=5.000000,apad=whole_dur=5.000000[aout]",
             compiled.FilterGraphScript);
+        Assert.DoesNotContain("alimiter=limit=0.98,apad,", compiled.FilterGraphScript);
         Assert.Contains("volume=0.5", compiled.FilterGraphScript);
         Assert.Contains("afade=t=in:st=0:d=0.500000:curve=tri", compiled.FilterGraphScript);
         Assert.Contains("afade=t=out:st=2.000000:d=1.000000:curve=tri", compiled.FilterGraphScript);
@@ -1324,6 +1338,68 @@ public sealed class ExportCompilerSnapshotTests
         var doc = ExportTestDocs.Doc(clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000));
         doc.Tracks[0].Clips.Clear();
         Assert.Throws<InvalidTimelineException>(() => ExportCompiler.Validate(doc));
+    }
+
+    [Theory]
+    [InlineData("#000")]
+    [InlineData("#fff")]
+    [InlineData("#FFF")]
+    [InlineData("#abc")]
+    [InlineData("#000000")]
+    [InlineData("#AbCdEf")]
+    [InlineData("#aabbcc")]
+    [InlineData("#11223344")]
+    [InlineData("#AABBCCDD")]
+    public void Validate_ProjectBackgroundColor_AcceptsEveryShapeTheSchemaAllows(string color)
+    {
+        // YANLIŞ RET YOK: kapı klip renkleriyle AYNI dilbilgisini kullanır (3/6/8 hane,
+        // büyük-küçük harf serbest). Bu satırlar kapının GENİŞ tarafını sabitler; dar tarafı
+        // aşağıdaki testtedir.
+        var doc = ExportTestDocs.Doc(
+            backgroundColor: color,
+            clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000));
+        Assert.NotNull(ExportCompiler.Validate(doc));
+    }
+
+    [Theory]
+    [InlineData("#GGGGGG")]
+    [InlineData("#zzz")]
+    [InlineData("#12345")]
+    [InlineData("#0000000")]
+    [InlineData("#f")]
+    [InlineData("#00000000ff")]
+    [InlineData("mavi")]
+    [InlineData("000000")]
+    [InlineData("")]
+    public void Validate_ProjectBackgroundColor_RejectsAnythingElse_WithATypedCode(string color)
+    {
+        // Kapı YOKKEN ölçülen davranış (ham API): '#GGGGGG' 202 alıp render'da
+        // 'ffmpeg exited with code -22' ile düşüyordu; kalanlar 202 alıp BAŞARIYLA bitiyor
+        // ama arkaplan SESSİZCE SİYAH oluyordu.
+        var doc = ExportTestDocs.Doc(
+            backgroundColor: color,
+            clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000));
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
+        Assert.Equal("project-background-color", ex.Feature);
+        Assert.Contains("settings.backgroundColor", ex.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{color}'", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_ProjectBackgroundColor_Missing_SaysMissing_NotEmptyString()
+    {
+        // EKSİK ALAN ≠ GEÇERSİZ DEĞER. Depoda bu şekilde iki belge ölçüldü: settings'i
+        // 'background'/'sampleRateHz' yazan eski bir denetim betiğinden geliyorlar, yani
+        // 'backgroundColor' HİÇ YOK. Tek cümleli sürüm "geçersiz: ''" diyor ve kullanıcıyı
+        // belgede olmayan bir boş dizeyi aramaya gönderiyordu.
+        var doc = ExportTestDocs.Doc(
+            clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000));
+        doc.Settings.BackgroundColor = null!;
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => ExportCompiler.Validate(doc));
+        Assert.Equal("project-background-color", ex.Feature);
+        Assert.Contains("alanı yok", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("''", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

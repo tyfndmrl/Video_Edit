@@ -77,6 +77,10 @@ builder.Services.AddScoped<AssetReaperJob>();
 // Export orijinal LRU cache'i (tasarım 04 §4.2) — süreç başına tek instance.
 builder.Services.AddSingleton<OriginalCache>();
 
+// Koşan render'ların iptal kancaları — SÜREÇ BAŞINA tek sözlük olmalı: reaper (scoped) ile
+// ExportJob (scoped) AYNI defteri görmezse reaper öldürecek süreci bulamaz.
+builder.Services.AddSingleton<RunningRenderRegistry>();
+
 // Hangfire SERVER (mimar kararı 1.d: tek kuyruk mekanizması Hangfire; api yalnız client).
 // InvisibilityTimeout 2 saat: uzun transcode'lar "kayboldu" sanılıp ikinci worker'a verilmez;
 // gerçek çökmede iş en geç 2 saat sonra yeniden koşar. İş aslında bittiyse ikinci teslim

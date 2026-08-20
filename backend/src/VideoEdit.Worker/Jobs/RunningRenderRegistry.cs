@@ -1,0 +1,67 @@
+using System.Collections.Concurrent;
+
+namespace VideoEdit.Worker.Jobs;
+
+/// <summary>
+/// BU SÜREÇTE koşan render'ların iptal kancaları (jobId → <see cref="CancellationTokenSource"/>).
+/// <para>
+/// NEDEN VAR: reaper (<see cref="AssetReaperJob"/>) ölü sayıp <c>stalled</c> yazdığı bir iş
+/// satırının ffmpeg süreci HÂLÂ KOŞUYOR olabilir. Kayıt olmadan reaper yalnız DB'yi düzeltir;
+/// CPU'yu yakan ve tek export kanalını tutan süreç ayakta kalır — yani satır "başarısız" der,
+/// makine "meşgul" kalır. Kayıt, o iki gerçeği tekrar aynı hizaya getirir.
+/// </para>
+/// <para>
+/// KAPSAM AÇIKÇA DARDIR: sözlük süreç içidir, dolayısıyla yalnız AYNI worker sürecinde koşan
+/// render öldürülebilir. Başka bir makinedeki worker'ın süreci bu yoldan öldürülemez ve bu
+/// KAPSAM DIŞIDIR (bugünkü kurulum tek worker'dır; çok makineli kurulumda gereken şey
+/// süreçler-arası bir iptal kanalıdır — docs/backlog.md). Kayıt YOKSA reaper eskisi gibi
+/// yalnız satırı düzeltir; hiçbir şey kötüleşmez.
+/// </para>
+/// </summary>
+public sealed class RunningRenderRegistry
+{
+    private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _running = new();
+
+    /// <summary>Kaç render kayıtlı (teşhis/test).</summary>
+    public int Count => _running.Count;
+
+    /// <summary>
+    /// İşi kaydeder; dönen nesne <c>Dispose</c> edildiğinde kayıt DÜŞER. Kaydı düşürmek
+    /// ŞARTTIR: bitmiş bir işin CancellationTokenSource'u sözlükte kalırsa reaper onu iptal
+    /// etmeye çalışır ve <see cref="ObjectDisposedException"/> ile karşılaşırdı.
+    /// </summary>
+    public IDisposable Register(Guid jobId, CancellationTokenSource cancellation)
+    {
+        _running[jobId] = cancellation;
+        return new Registration(this, jobId);
+    }
+
+    /// <summary>
+    /// İşin render'ını iptal eder (FfmpegRunner'ın iptal kaydı süreç AĞACINI öldürür).
+    /// Dönen değer: gerçekten koşan bir render bulundu mu — çağıran bunu LOGLAMALIDIR,
+    /// "öldürdüm" ile "zaten yoktu" ayrı gerçeklerdir.
+    /// </summary>
+    public bool Abort(Guid jobId)
+    {
+        if (!_running.TryGetValue(jobId, out var cancellation))
+        {
+            return false;
+        }
+
+        try
+        {
+            cancellation.Cancel();
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            // İş, biz iptal etmeye çalışırken bitmiş olabilir (kayıt düşme yarışı) — yut.
+            return false;
+        }
+    }
+
+    private sealed class Registration(RunningRenderRegistry owner, Guid jobId) : IDisposable
+    {
+        public void Dispose() => owner._running.TryRemove(jobId, out _);
+    }
+}

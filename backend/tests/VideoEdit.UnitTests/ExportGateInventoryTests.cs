@@ -285,6 +285,39 @@ public sealed class ExportGateInventoryTests : IDisposable
                 return t.SeedAsync(ExportTestDocs.Doc(clips: clip));
             }),
 
+        new("project-background-color", GateOwner.SyncGate,
+            "Saf doküman aritmetiği: proje arkaplan rengi ffmpeg grafiğine DOĞRUDAN gömülen tek "
+            + "doküman dizesidir (color=c=…, pad=…:color=…). İki fırlatma noktası aynı kodu "
+            + "taşır — Validate'teki kapı (aşağıda kanıtlanır) ve FfmpegColor'ın sözleşme "
+            + "muhafızı. Klip kapsamlı 'overlay-unsupported-clip' DEĞİLDİR: bu bir proje "
+            + "ayarıdır, kullanıcı düzeltmek için klip aramamalıdır.",
+            t => t.SeedAsync(ExportTestDocs.Doc(
+                backgroundColor: "#GGGGGG",
+                clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000)))),
+
+        new("project-fps-out-of-range", GateOwner.SyncGate,
+            "Saf doküman aritmetiği: settings.fps YALNIZ iki tam sayıdır — ne dosya ne asset ne "
+            + "font gerekir. Eski kapı 'pozitif rasyonel' istiyordu ve ÜST SINIR YOKTU: ham API "
+            + "ile ölçüldü, fps=100000/1 + tek 0,5 sn'lik klip POST 202 alıp dakikalarca render "
+            + "ediliyordu. Kabul penceresi (1–240 fps) yayın hızlarının tamamını ve tüketici "
+            + "yüksek-kare-hızı çekimlerini kapsar; pencerenin İÇİ FpsWindowBoundaries "
+            + "defterinde hız hız koşturulur, yani kapı yanlış RET üretmiyor da ölçülür.",
+            t => t.SeedAsync(ExportTestDocs.Doc(
+                fpsNum: 100_000, fpsDen: 1,
+                clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000)))),
+
+        new("timeline-too-long", GateOwner.SyncGate,
+            "Saf doküman aritmetiği: toplam süre klip kenarlarından çıkar. Worker'ın disk "
+            + "rezervasyonunu (EstimateRequiredDiskBytes) SÜRE domine eder; tavan yokken ~3,17 "
+            + "yıllık bir çizelge POST 202 alıyor, 150 TB isteyip 'disk-full' ile düşüyordu — "
+            + "yani BELGE kusuru kullanıcıya SUNUCUNUN DİSKİ bitmiş gibi gösteriliyordu. "
+            + "GERÇEK disk darlığı bu kapıya KARIŞMAZ: 'disk-full' yolu yerinde durur ve tavanın "
+            + "ALTINDAKİ bir belge için tetiklenebilir (ExportJobTests'te ikisi ayrı ayrı koşar).",
+            t => t.SeedAsync(ExportTestDocs.Doc(clips: ExportTestDocs.VideoClip(
+                ExportTestDocs.AssetA,
+                // Tavanın 1 saniye ÖTESİ: kenar ızgarada (30 fps), kaynak aralığı geçerli.
+                ExportCompiler.MaxTimelineDurationUs, 0, 1_000_000)))),
+
         new("font-missing", GateOwner.SyncGate,
             "Saf manifest aritmetiği: 'bu fontId hiçbir manifestte yok' kurulumdan BAĞIMSIZ ve "
             + "KALICI bir olgudur (font kökü düzeltilse bile aynı belge aynı hatayı verir). "
@@ -365,8 +398,15 @@ public sealed class ExportGateInventoryTests : IDisposable
         ("output-invalid", GateOwner.WorkerOnly,
             "Render SONRASI çıktı doğrulaması (dosya boyu, süre, stream'ler)."),
         ("ffmpeg-timeout", GateOwner.WorkerOnly,
-            "Çalışma zamanı: render süre tavanını aştı. İstek anında bilinemez — süre kaynak "
-            + "karmaşıklığına ve makine yüküne bağlıdır."),
+            "Çalışma zamanı: ffmpeg SESSİZ kaldı (120 sn hiç progress/stderr yok) ve bekçi "
+            + "süreci öldürdü. İstek anında bilinemez — süre kaynak karmaşıklığına ve makine "
+            + "yüküne bağlıdır."),
+        ("render-overrun", GateOwner.WorkerOnly,
+            "Çalışma zamanı: ffmpeg ÇIKTI SAATİ beklenen süreyi tavanı aşacak kadar geçti ve "
+            + "süreç öldürüldü. 'ffmpeg-timeout'tan AYRI bir haldir ve ayrı kalmalıdır: o "
+            + "'hiç çıktı üretmiyor', bu 'durmadan üretiyor ama asla bitmeyecek' demektir — "
+            + "kaçak grafik sessiz kalmadığı için sessizlik bekçisini HİÇ tetiklemiyordu. "
+            + "İstek anında bilinemez: çıktı saatinin nasıl ilerlediği ancak koşarken görülür."),
         ("ffmpeg-failed", GateOwner.WorkerOnly,
             "Çalışma zamanı: ffmpeg sıfırdan farklı çıkış kodu. Grafiğin ÇALIŞMA anındaki "
             + "davranışıdır; belgeden türetilebilen dalları bu turda senkron kapıya taşındı "
@@ -514,9 +554,16 @@ public sealed class ExportGateInventoryTests : IDisposable
     /// NEDEN EKLENDİ: eski muhafız yalnız <c>VideoEdit.Media/Export</c> altını tarıyordu ve
     /// raster hattını HİÇ görmüyordu. <c>text.fill</c> kaçağı tam olarak oradaydı — saf
     /// doküman kuralı (geçersiz renk), ama kural yalnız çizim anında yaşadığı için belge 202
-    /// alıyor, iş dakikalar sonra <c>overlay-unsupported-clip</c> ile düşüyordu. Bu defter o
-    /// SINIFI kapatır: raster hattına eklenen her "bu klibi çizemem" gerekçesi, senkron kapıda
-    /// karşılığı olduğunu KANITLAMAK ya da neden olamayacağını YAZMAK zorundadır.
+    /// alıyor, iş dakikalar sonra <c>overlay-unsupported-clip</c> ile düşüyordu.
+    /// </para>
+    /// <para>
+    /// KAPSAM (dar okuyun): bu defter <b>RASTER HATTINDA FIRLATILAN</b> reddi kapsar — yani
+    /// "kural yalnız çizim anında yaşıyor" sınıfını. Raster hattına eklenen her "bu klibi
+    /// çizemem" gerekçesi, senkron kapıda karşılığı olduğunu KANITLAMAK ya da neden
+    /// olamayacağını YAZMAK zorundadır. <b>Kapsamadığı sınıf:</b> hiç fırlatmayan, doküman
+    /// değerini sessizce düzelten/gömen yollar — <c>ExportCompiler.FfmpegColor</c>'ın eski
+    /// <c>_ =&gt; "000000"</c> dalı tam olarak öyleydi ve fırlatma sayan hiçbir muhafız onu
+    /// göremezdi. O sınıfın defteri ayrıdır: <see cref="DocumentStrings"/>.
     /// </para>
     /// </summary>
     private static readonly RasterRefusal[] RasterRefusals =
@@ -586,6 +633,366 @@ public sealed class ExportGateInventoryTests : IDisposable
             + "JsonException'a düşer, belge derleyiciye de raster hattına da HİÇ ULAŞMAZ."),
     ];
 
+    // ───────── DOKÜMAN DİZELERİ DEFTERİ (yeni: FfmpegColor kaçağının SINIFI) ─────────
+
+    /// <summary>Bir doküman dizesinin nereye aktığı.</summary>
+    private enum DocStringSink
+    {
+        /// <summary>
+        /// Bu yüzeyden OKUNAN değer ffmpeg komut satırına / filtergraph'ına GÖMÜLÜR — dizenin
+        /// kendisi aynen gömülsün (<c>settings.backgroundColor</c> → <c>color=c=…</c>) ya da
+        /// önce tipli bir değere çevrilsin (<c>fx.*</c> → sayı → <c>exposure=…</c>). Ayrım
+        /// KAÇIŞ riskini değiştirir ama KAPI sorusunu değiştirmez: iki hâlde de Skia bu değeri
+        /// HİÇ görmez, grafiğe giden şey buradan gelir, dolayısıyla "sessiz varsayılan"
+        /// yasaktır ve dilbilgisi + senkron ret KANITLANIR.
+        /// </summary>
+        FfmpegGraph,
+
+        /// <summary>Değer yalnız Skia raster hattına (PNG üretimi) gider.</summary>
+        Raster,
+
+        /// <summary>
+        /// Union ayırt edicisi: tanınmayan değer JSON ayrıştırmada ölür, hiçbir render
+        /// hattına ULAŞMAZ.
+        /// </summary>
+        Discriminator,
+
+        /// <summary>Ne derleyici ne raster hattı bu alanı OKUR (editör metadatası).</summary>
+        NotRendered,
+    }
+
+    /// <param name="Grammar">
+    /// Dizenin dilbilgisini soran doğrulayıcı. <c>null</c> = dilbilgisi TAM: her dize
+    /// geçerlidir, dolayısıyla reddedilecek bir değer YOKTUR (kanıt istenmez).
+    /// </param>
+    /// <param name="Feature">
+    /// <paramref name="Grammar"/> varsa ihlalin beklenen 422 kodu; <c>null</c> ise ret
+    /// KODSUZ (<c>InvalidTimelineException</c>) demektir.
+    /// </param>
+    private sealed record DocString(
+        Type Owner,
+        string Property,
+        DocStringSink Sink,
+        string Note,
+        string? Grammar = null,
+        string? Feature = null,
+        Func<ExportGateInventoryTests, Task<Guid>>? Arrange = null);
+
+    /// <summary>
+    /// Şemadaki HER doküman dizesinin nereye aktığı ve onu neyin kapıya tuttuğu.
+    /// <para>
+    /// NEDEN EKLENDİ — <c>ExportGateInventoryTests</c>'in eski muhafızlarının tamamı
+    /// FIRLATILAN istisnaları sayıyordu. <c>ExportCompiler.FfmpegColor</c> hiç fırlatmıyordu:
+    /// ayrıştıramadığı her değeri sessizce <c>000000</c>'a düşürüyor, geçersiz değeri ise
+    /// grafiğe aynen yazıyordu. Dolayısıyla "istisna sayan" hiçbir defter bu sınıfı
+    /// GÖREMEZDİ. Ham API ile ölçülen sonuç: <c>settings.backgroundColor</c> = '#12345' /
+    /// 'mavi' / '' → POST 202, iş BAŞARILI, arkaplan SESSİZCE SİYAH; '#GGGGGG' → POST 202,
+    /// iş dakikalar sonra <c>ffmpeg exited with code -22</c>.
+    /// </para>
+    /// <para>
+    /// TAMLIK REFLEKSİYONLADIR, kaçak yolu yoktur: <c>VideoEdit.Contracts.Timeline</c>
+    /// altındaki her <c>string</c> özelliği (ve her serbest biçimli
+    /// <c>Dictionary&lt;string, object&gt;</c> torbası) burada BİR satıra sahip olmalıdır.
+    /// Şemaya yeni bir dize alanı eklenirse bu test KIRMIZI olur ve soru cevapsız kalamaz:
+    /// bu değer ffmpeg dizesine mi gidiyor, ve onu ne kapıya tutuyor?
+    /// </para>
+    /// </summary>
+    private static readonly DocString[] DocumentStrings =
+    [
+        new(typeof(ProjectSettings), nameof(ProjectSettings.BackgroundColor),
+            DocStringSink.FfmpegGraph,
+            "Taban tuvalin rengi: 'color=c=…' ve 'pad=…:color=…' argümanlarına GÖMÜLÜR. "
+            + "Dilbilgisi klip renkleriyle AYNI kaynaktan sorulur; FfmpegColor'ın eski sessiz "
+            + "varsayılanı kaldırıldı, artık aynı kodla fırlatıyor.",
+            Grammar: "HexColor.TryParse", Feature: "project-background-color",
+            Arrange: t => t.SeedAsync(ExportTestDocs.Doc(
+                backgroundColor: "#GGGGGG",
+                clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000)))),
+
+        new(typeof(TextClipText), nameof(TextClipText.Fill), DocStringSink.Raster,
+            "Metin dolgusu Skia'ya gider, ffmpeg'e DEĞİL — raster PNG'si üzerinden çizilir. "
+            + "Senkron kapısı EnsureRasterContract'tadır.",
+            Grammar: "HexColor.TryParse", Feature: "overlay-unsupported-clip",
+            Arrange: t =>
+            {
+                var clip = ExportTestDocs.TextClip(0, 1_000_000);
+                clip.Text!.Fill = "rgb(1,2,3)";
+                return t.SeedAsync(ExportTestDocs.Doc(clips: clip));
+            }),
+
+        new(typeof(Stroke), nameof(Stroke.Color), DocStringSink.Raster,
+            "Metin konturu rengi — yalnız widthPx > 0 iken OKUNUR (kapı raster hattının "
+            + "koşulunun aynadaki eşidir; daha genişi yanlış 422 üretirdi).",
+            Grammar: "HexColor.TryParse", Feature: "overlay-unsupported-clip",
+            Arrange: t =>
+            {
+                var clip = ExportTestDocs.TextClip(0, 1_000_000);
+                clip.Text!.Stroke = new Stroke { Color = "beyaz", WidthPx = 2 };
+                return t.SeedAsync(ExportTestDocs.Doc(clips: clip));
+            }),
+
+        new(typeof(Background), nameof(Background.Color), DocStringSink.Raster,
+            "Metin klibinin KENDİ arka planı (proje arkaplanı DEĞİL — ayrı alan). Raster "
+            + "hattında çizilir; kapısı EnsureRasterContract'tadır.",
+            Grammar: "HexColor.TryParse", Feature: "overlay-unsupported-clip",
+            Arrange: t =>
+            {
+                var clip = ExportTestDocs.TextClip(0, 1_000_000);
+                clip.Text!.Background = new Background
+                {
+                    Color = "#GGG", PaddingPx = 4, RadiusPx = 0,
+                };
+                return t.SeedAsync(ExportTestDocs.Doc(clips: clip));
+            }),
+
+        new(typeof(ShapeClipShape), nameof(ShapeClipShape.Fill), DocStringSink.Raster,
+            "Şekil dolgusu Skia'ya gider, ffmpeg'e DEĞİL. Senkron kapısı "
+            + "EnsureRasterContract'tadır.",
+            Grammar: "HexColor.TryParse", Feature: "overlay-unsupported-clip",
+            Arrange: t =>
+            {
+                var clip = ExportTestDocs.ShapeClip(0, 1_000_000);
+                clip.Shape!.Fill = "#00000000ff";
+                return t.SeedAsync(ExportTestDocs.Doc(clips: clip));
+            }),
+
+        new(typeof(Stroke2), nameof(Stroke2.Color), DocStringSink.Raster,
+            "Şekil konturu rengi — metin konturuyla aynı kural, yalnız widthPx > 0 iken "
+            + "OKUNUR. (Stroke2 adı NJsonSchema'nın ürettiği ikinci Stroke tipidir.)",
+            Grammar: "HexColor.TryParse", Feature: "overlay-unsupported-clip",
+            Arrange: t =>
+            {
+                var clip = ExportTestDocs.ShapeClip(0, 1_000_000);
+                clip.Shape!.Stroke = new Stroke2 { Color = "", WidthPx = 3 };
+                return t.SeedAsync(ExportTestDocs.Doc(clips: clip));
+            }),
+
+        new(typeof(TextClipText), nameof(TextClipText.FontId), DocStringSink.Raster,
+            "Font kimliği ffmpeg'e GİRMEZ: manifestten bir TTF yoluna çevrilir ve Skia'ya "
+            + "verilir. Manifestte olmayan kimlik senkron 422'dir; kapı API'nin manifest ön "
+            + "kontrolüdür (derleyicideki ikizi 503'e kaymayı engeller).",
+            Grammar: "FontCatalogue.UnknownFontIds", Feature: "font-missing",
+            Arrange: t =>
+            {
+                var clip = ExportTestDocs.TextClip(0, 1_000_000);
+                clip.Text!.FontId = "boyle-bir-font-yok";
+                return t.SeedAsync(ExportTestDocs.Doc(clips: clip));
+            }),
+
+        new(typeof(TextClipText), nameof(TextClipText.Content), DocStringSink.Raster,
+            "Kullanıcının yazdığı metnin KENDİSİ. Dilbilgisi TAMDIR: her dize geçerli bir "
+            + "içeriktir, reddedilecek değer yoktur. ffmpeg'e girmez — Skia PNG'sine çizilir, "
+            + "dolayısıyla filtergraph kaçışı sorunu da doğmaz (şema uzunluğu sınırlar)."),
+
+        new(typeof(Marker), nameof(Marker.Color), DocStringSink.NotRendered,
+            "İşaretçiler EDİTÖR metadatasıdır: ne ExportCompiler ne raster hattı doc.Markers'ı "
+            + "OKUR (kaynak taramasıyla doğrulanır). Bu yüzden geçersiz bir işaretçi rengi "
+            + "export'u ne bozar ne de reddettirir — kapı EKLEMEK yanlış 422 olurdu."),
+
+        new(typeof(Marker), nameof(Marker.Label), DocStringSink.NotRendered,
+            "İşaretçi etiketi — yine yalnız editör metadatası; render hattına hiç ulaşmaz. "
+            + "Dilbilgisi de TAMDIR (şema uzunluk dışında kısıt koymaz)."),
+
+        new(typeof(Track), nameof(Track.Name), DocStringSink.NotRendered,
+            "Track adı yalnız editör listesinde görünür; derleyici track'ten yalnız "
+            + "type/muted/hidden/clips okur. Render çıktısına HİÇ girmez."),
+
+        new(typeof(TextClip), nameof(TextClip.Kind), DocStringSink.Discriminator,
+            "Klip union'ının ayırt edicisi. Tanınmayan bir 'kind' TimelineJson'ın union "
+            + "okuyucusunda JsonException'a düşer — belge derleyiciye HİÇ ulaşmaz "
+            + "(CompilerGates'teki 'unknown-clip' satırı bunu koşturarak kanıtlar)."),
+
+        new(typeof(ShapeClip), nameof(ShapeClip.Kind), DocStringSink.Discriminator,
+            "Klip union'ının ayırt edicisi — TextClip.Kind ile aynı gerekçe: tanınmayan değer "
+            + "JSON ayrıştırmada ölür, hiçbir render hattına ulaşmaz."),
+
+        new(typeof(StickerClip), nameof(StickerClip.Kind), DocStringSink.Discriminator,
+            "Klip union'ının ayırt edicisi — TextClip.Kind ile aynı gerekçe: tanınmayan değer "
+            + "JSON ayrıştırmada ölür, hiçbir render hattına ulaşmaz."),
+
+        new(typeof(EasingLinear), nameof(EasingLinear.Type), DocStringSink.Discriminator,
+            "Easing union'ının ayırt edicisi. Tanınmayan 'type' JSON okuyucusunda ölür; "
+            + "tanınan ama derleyicide karşılığı olmayan bir dal 'easing-type' koduyla "
+            + "reddedilir (CompilerGates'te satırı vardır)."),
+
+        new(typeof(EasingEaseIn), nameof(EasingEaseIn.Type), DocStringSink.Discriminator,
+            "Easing union'ının ayırt edicisi — EasingLinear.Type ile aynı gerekçe."),
+
+        new(typeof(EasingEaseOut), nameof(EasingEaseOut.Type), DocStringSink.Discriminator,
+            "Easing union'ının ayırt edicisi — EasingLinear.Type ile aynı gerekçe."),
+
+        new(typeof(EasingEaseInOut), nameof(EasingEaseInOut.Type), DocStringSink.Discriminator,
+            "Easing union'ının ayırt edicisi — EasingLinear.Type ile aynı gerekçe."),
+
+        new(typeof(EasingCubicBezier), nameof(EasingCubicBezier.Type), DocStringSink.Discriminator,
+            "Easing union'ının ayırt edicisi — EasingLinear.Type ile aynı gerekçe."),
+
+        new(typeof(EffectParams), DictionaryBagProperty, DocStringSink.FfmpegGraph,
+            "SERBEST BİÇİMLİ TORBA (Dictionary<string, object>) — şemadaki tek yapısız doküman "
+            + "yüzeyi, o yüzden defterde ayrı bir satırı var. ETİKET DÜZELTİLDİ (10. tur, F3): "
+            + "satır eskiden Raster yazıyordu, oysa Skia bu torbayı HİÇ görmez — okunan değerler "
+            + "FİLTERGRAPH'a girer (ColorPipeline.ColorAdjustFilters → exposure=/lutrgb=/"
+            + "colorchannelmixer=, Lut3dFilter/LutBlendFilter → lut3d=file=…/blend=all_expr=…). "
+            + "Yanlış etiket satırı EveryStringThatReachesTheFfmpegGraphIsGatedAndProven'in "
+            + "dışında bırakıyordu, yani muhafız kapattığını iddia ettiği sınıfın bir üyesini "
+            + "atlıyordu. "
+            + "DİZE GÖMÜLMEZ, DEĞER GÖMÜLÜR: colorAdjust parametreleri RequireNumber ile "
+            + "double'a, lut'un assetId'si Guid'e çevrilir; grafiğe giren sayılar Num() ile "
+            + "InvariantCulture yazılır. lut3d'ye giren .cube YOLU da doküman dizesi DEĞİLDİR: "
+            + "worker LRU cache'inin indirdiği yerel yoldur (ExportJob → cache.GetOrDownloadAsync "
+            + "→ sources[assetId].Path → LayerSegment.LutPath), belge yalnız Guid'i taşır. "
+            + "Torbadan grafiğe uzanan yolda ham doküman dizesi YOKTUR. "
+            + "KAPI: torbanın TÜM ihlal yüzeyi (tanınmayan anahtar, sayı olmayan değer, aralık "
+            + "dışı değer, bozuk/eksik assetId, aralık dışı intensity) EffectParamViolations "
+            + "defterinde tek tek KOŞTURULARAK senkron 422 + iş satırı oluşmaması ile kanıtlanır; "
+            + "aşağıdaki Arrange onlardan biridir.",
+            Grammar: "ClipEffects.ParseColorAdjust/ParseLut",
+            Arrange: t =>
+            {
+                var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+                var effect = ExportTestDocs.ColorAdjust();
+                effect.Params["parlaklik"] = 0.5;   // şemada olmayan anahtar
+                clip.Effects = [effect];
+                return t.SeedAsync(ExportTestDocs.Doc(clips: clip));
+            }),
+    ];
+
+    /// <summary>Serbest biçimli sözlük torbasının defterdeki özellik adı.</summary>
+    private const string DictionaryBagProperty = "*";
+
+    // ───────── EFEKT PARAMETRE TORBASININ İHLAL YÜZEYİ (10. tur, F3) ─────────
+
+    /// <summary>
+    /// <c>Effect.params</c> torbasının kapıya takılan TÜM ihlal biçimleri.
+    /// <para>
+    /// NEDEN AYRI DEFTER: <see cref="DocumentStrings"/> alan başına TEK kanıt taşır, ama
+    /// <c>EffectParams</c> bir ALAN değil YAPISIZ BİR TORBADIR — "bir anahtar reddediliyor"
+    /// ölçümü torbanın kapalı olduğunu göstermez. Bu defter torbanın yüzeyini biçim biçim
+    /// koşturur: tanınmayan anahtar, sayı olmayan değer, aralık dışı değer, eksik/bozuk/boş
+    /// <c>assetId</c>, aralık dışı <c>intensity</c>.
+    /// </para>
+    /// <para>
+    /// KAPSAM DIŞI: torbanın kendi ANAHTARLARININ ffmpeg'e kaçması. Kaçamazlar — <c>lut3d</c>
+    /// ve renk filtreleri anahtar adını grafiğe HİÇ yazmaz, yalnız tanınan anahtarların
+    /// DEĞERLERİ sayıya çevrilip yazılır; tanınmayan anahtar ise zaten burada reddedilir.
+    /// </para>
+    /// <para>
+    /// KAPSAM DIŞI (2): SONLU OLMAYAN sayı (NaN / ±∞). Defterde satırı YOKTUR çünkü BELGEYLE
+    /// İFADE EDİLEMEZ — JSON'da böyle bir literal yoktur; ölçümü
+    /// <see cref="NonFiniteEffectParamCannotBeExpressedInJson"/>'dedir. <c>RequireNumber</c>'daki
+    /// <c>double.IsFinite</c> dalı süreç-içi çağrılara karşı savunma dalıdır.
+    /// </para>
+    /// </summary>
+    /// <param name="Label">Ölçüm çıktısında ihlali adlandıran etiket.</param>
+    /// <param name="Feature">Beklenen 422 kodu; <c>null</c> ise ret KODSUZ.</param>
+    /// <param name="Arrange">İhlali taşıyan belgeyi kuran tohumlayıcı.</param>
+    private sealed record EffectParamViolation(
+        string Label, string? Feature, Func<ExportGateInventoryTests, Task<Guid>> Arrange);
+
+    private static readonly EffectParamViolation[] EffectParamViolations =
+    [
+        new("colorAdjust: tanınmayan anahtar", null,
+            t => t.SeedEffectAsync(Bag(EffectType.ColorAdjust, ("parlaklik", 0.5)))),
+
+        new("colorAdjust: değer sayı değil", null,
+            t => t.SeedEffectAsync(Bag(EffectType.ColorAdjust, ("exposure", "cok")))),
+
+        new("colorAdjust: sayı gibi görünen DİZE", null,
+            t => t.SeedEffectAsync(Bag(EffectType.ColorAdjust, ("contrast", "0.5")))),
+
+        new("colorAdjust: aralık dışı ([-1..1])", null,
+            t => t.SeedEffectAsync(Bag(EffectType.ColorAdjust, ("exposure", 5d)))),
+
+        new("lut: assetId yok", "lut-asset",
+            t => t.SeedEffectAsync(Bag(EffectType.Lut, ("intensity", 1d)))),
+
+        new("lut: assetId Guid değil", null,
+            t => t.SeedEffectAsync(Bag(EffectType.Lut, ("assetId", "bu-guid-degil"), ("intensity", 1d)))),
+
+        new("lut: assetId boş Guid", null,
+            t => t.SeedEffectAsync(Bag(
+                EffectType.Lut, ("assetId", Guid.Empty.ToString()), ("intensity", 1d)))),
+
+        new("lut: intensity sayı değil", null,
+            t => t.SeedEffectAsync(Bag(
+                EffectType.Lut, ("assetId", ExportTestDocs.AssetC.ToString()), ("intensity", "yarim")))),
+
+        new("lut: intensity aralık dışı ([0..1])", null,
+            t => t.SeedEffectAsync(Bag(
+                EffectType.Lut, ("assetId", ExportTestDocs.AssetC.ToString()), ("intensity", 5d)))),
+    ];
+
+    /// <summary>Serbest torbayı ham anahtar/değer çiftlerinden kurar (şema kısıtı YOK).</summary>
+    private static Effect Bag(EffectType type, params (string Key, object Value)[] entries)
+    {
+        var effect = new Effect { Id = Guid.CreateVersion7(), Type = type, Enabled = true };
+        foreach (var (key, value) in entries)
+        {
+            effect.Params[key] = value;
+        }
+
+        return effect;
+    }
+
+    /// <summary>Verilen efektleri TEK bir video klibine takıp belgeyi tohumlar.</summary>
+    private Task<Guid> SeedEffectAsync(params Effect[] effects)
+    {
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.Effects = [.. effects];
+        return SeedAsync(ExportTestDocs.Doc(clips: clip));
+    }
+
+    // ───────── KAYNAK TAVANLARININ İKİ YANI (10. tur, F1 ve F2) ─────────
+
+    /// <summary>
+    /// <c>settings.fps</c> kabul penceresinin iki yanı.
+    /// <para>
+    /// NEDEN İKİ YAN: bir tavan yalnız "kötü belgeyi kesiyor mu" ile ölçülemez — asıl risk
+    /// YANLIŞ RET'tir. Bu defter pencerenin İÇİNİ hız hız koşturur (yayın hızlarının tamamı +
+    /// tüketici yüksek-kare-hızı) ve her birinin GERÇEKTEN kuyruğa girdiğini ölçer; dışını da
+    /// aynı koşuda 422 + iş satırı oluşmaması ile ölçer.
+    /// </para>
+    /// <para>
+    /// <c>ClipDurationUs</c> keyfi değildir: klip kenarları PROJE FRAME IZGARASINA oturmak
+    /// zorundadır (§1.4), o yüzden NTSC hızlarında (n/1001) 1.001.000 µs, tam sayı hızlarında
+    /// 1.000.000 µs kullanılır — ikisi de tam kare sayısı verir.
+    /// </para>
+    /// </summary>
+    private sealed record FpsCase(long Num, long Den, long ClipDurationUs, bool Accepted, string Label);
+
+    private static readonly FpsCase[] FpsWindowBoundaries =
+    [
+        // ── PENCERENİN İÇİ: yayın hızlarının tamamı + tüketici yüksek-kare-hızı ──
+        new(24000, 1001, 1_001_000, true, "23.976 (24000/1001)"),
+        new(24, 1, 1_000_000, true, "24"),
+        new(25, 1, 1_000_000, true, "25 (PAL)"),
+        new(30000, 1001, 1_001_000, true, "29.97 (30000/1001)"),
+        new(30, 1, 1_000_000, true, "30 (editörün sabitlediği hız)"),
+        new(50, 1, 1_000_000, true, "50"),
+        new(60000, 1001, 1_001_000, true, "59.94 (60000/1001)"),
+        new(60, 1, 1_000_000, true, "60"),
+        new(120, 1, 1_000_000, true, "120 (yüksek kare hızı)"),
+        new(240, 1, 1_000_000, true, "240 — TAM TAVAN"),
+        new(1, 1, 1_000_000, true, "1 — TAM TABAN"),
+
+        // ── PENCERENİN DIŞI ──
+        new(241, 1, 1_000_000, false, "241 — tavanın 1 fps ötesi"),
+        new(100_000, 1, 1_000_000, false, "100000 — ölçülen kaçak"),
+        new(1, 2, 2_000_000, false, "0.5 (1/2) — tabanın altı"),
+        new(999, 1000, 1_000_000, false, "0.999 (999/1000) — tabanın hemen altı"),
+    ];
+
+    /// <summary>
+    /// Toplam süre tavanının iki yanı: tavanın TAM üstünde bir belge kuyruğa girer, bir kare
+    /// ötesi 422 olur. Kenar tam sayı olduğu için ölçüm keskin — "yaklaşık" bir sınır değil.
+    /// </summary>
+    private static readonly (long TotalDurationUs, bool Accepted, string Label)[] DurationCeilingBoundaries =
+    [
+        (ExportCompiler.MaxTimelineDurationUs, true, "tam TAVAN (4 saat)"),
+        (ExportCompiler.MaxTimelineDurationUs + 33_333, false, "tavanın 1 karesi ötesi"),
+        (100_000_000_000_000L, false, "~3,17 yıl — ölçülen kaçak"),
+    ];
+
     /// <summary>
     /// Fırlatma SAYILARI. Kodsuz <c>InvalidTimelineException</c>'ın kimliği yoktur; sayı
     /// sabitlemek "yeni fırlatma eklendi ama defter güncellenmedi" halini kırmızıya çevirir.
@@ -595,7 +1002,11 @@ public sealed class ExportGateInventoryTests : IDisposable
         // 20 → 22: 'asset-failed' ve 'asset-clip-type' (M6 denetimi, N1-N3). İkisi de SAF DB
         // aritmetiğidir (Asset.Status / Asset.Kind), ikisi de Validate'te yaşar ve ikisinin de
         // CompilerGates defterinde SyncGate satırı vardır.
-        ("backend/src/VideoEdit.Media/Export/ExportCompiler.cs", 22, 33),
+        // 22 → 24: 'project-background-color' İKİ noktadan fırlar — Validate'teki kapı ve
+        // FfmpegColor'ın sözleşme muhafızı (eskiden sessizce '000000'a düşen dal).
+        // 24 → 26: 'project-fps-out-of-range' ve 'timeline-too-long' (10. tur, F2 ve F1). İkisi
+        // de SAF DOKÜMAN aritmetiğidir ve ikisinin de CompilerGates'te SyncGate satırı vardır.
+        ("backend/src/VideoEdit.Media/Export/ExportCompiler.cs", 26, 33),
         ("backend/src/VideoEdit.Media/Export/ClipAnimation.cs", 1, 7),
         ("backend/src/VideoEdit.Media/Export/ClipEffects.cs", 2, 7),
     ];
@@ -640,6 +1051,13 @@ public sealed class ExportGateInventoryTests : IDisposable
         var literal = Regex.Matches(source, @"FailAsync\(job,\s*""([^""]+)""")
             .Select(m => m.Groups[1].Value)
             .ToHashSet(StringComparer.Ordinal);
+
+        // RENDER DALI LİTERAL DEĞİLDİR: üç gerekçesi tek bir switch ifadesinden çıkıp
+        // FailAsync'e DEĞİŞKEN olarak geçer, yani yukarıdaki literal taraması onları GÖREMEZ.
+        // Blok ayrıca taranır; sınır deseni bayatlarsa Between KIRMIZI verir, yani muhafız
+        // sessizce kapsam kaybedemez.
+        literal.UnionWith(QuotedStrings(Between(source, "var (code, message) = result switch", "};")));
+
         var missing = literal.Except(declared).Order(StringComparer.Ordinal).ToList();
         Assert.True(missing.Count == 0,
             "Worker'da DEFTERDE OLMAYAN başarısızlık gerekçesi var: " + string.Join(", ", missing));
@@ -908,6 +1326,71 @@ public sealed class ExportGateInventoryTests : IDisposable
         Assert.Empty(server.Except(declared));
     }
 
+    [Fact]
+    public void TheClientAndServerAgreeOnWhichCodesMeanAResourceCeiling()
+    {
+        // AYNI DOKTRİN, İKİNCİ SINIF (10. tur, F1/F2): kaynak tavanı bir "desteklenmeyen
+        // özellik" DEĞİLDİR. Belge geçerli, özellik destekli — proje yalnız pencerenin
+        // dışında. Ayrışma çökme değil YANLIŞ CÜMLE üretir, o yüzden iki kaynak TARANIR.
+        var server = QuotedStrings(Between(
+            File.ReadAllText(TestVectorFiles.Resolve(
+                "backend/src/VideoEdit.Api/Endpoints/ExportEndpoints.cs")),
+            "CeilingFeatures = new(StringComparer.Ordinal)", "};"));
+        var client = QuotedStrings(Between(
+            File.ReadAllText(TestVectorFiles.Resolve(
+                "apps/editor/src/features/export/exportLogic.ts")),
+            "const CEILING_CODES = new Set([", "]);"));
+
+        Assert.NotEmpty(server);
+        Assert.Equal(server, client);
+
+        // Kodların HEPSİ derleyicide gerçekten VAR ve İKİ KÜME AYRIKTIR — bir kod aynı anda
+        // "dosyan bozuk" ve "proje pencerenin dışında" diyemez.
+        var declared = CompilerGates.Select(g => g.Code).ToHashSet(StringComparer.Ordinal);
+        Assert.Empty(server.Except(declared));
+
+        var assetFacts = QuotedStrings(Between(
+            File.ReadAllText(TestVectorFiles.Resolve(
+                "backend/src/VideoEdit.Api/Endpoints/ExportEndpoints.cs")),
+            "AssetFactFeatures = new(StringComparer.Ordinal)", "};"));
+        Assert.Empty(server.Intersect(assetFacts));
+    }
+
+    [Fact]
+    public void TheClientAndServerAgreeOnWhichCodesMeanABadValue()
+    {
+        // AYNI DOKTRİN, ÜÇÜNCÜ SINIF (B6): belge geçerli, özellik DESTEKLİ ve proje kaynak
+        // penceresinin İÇİNDE — kusur bir ALANIN DEĞERİNDE. Bu iki kod bir dönem "henüz
+        // desteklenmeyen özellik" cümlesini kuruyordu; kullanıcı, tek bir alanı düzelterek
+        // çözülecek bir sorunda OLMAYAN bir özelliği aramaya gönderiliyordu.
+        var server = QuotedStrings(Between(
+            File.ReadAllText(TestVectorFiles.Resolve(
+                "backend/src/VideoEdit.Api/Endpoints/ExportEndpoints.cs")),
+            "DocumentValueFeatures = new(StringComparer.Ordinal)", "};"));
+        var client = QuotedStrings(Between(
+            File.ReadAllText(TestVectorFiles.Resolve(
+                "apps/editor/src/features/export/exportLogic.ts")),
+            "const VALUE_CODES = new Set([", "]);"));
+
+        Assert.NotEmpty(server);
+        Assert.Equal(server, client);
+
+        // Kodların hepsi derleyicide gerçekten VAR.
+        var declared = CompilerGates.Select(g => g.Code).ToHashSet(StringComparer.Ordinal);
+        Assert.Empty(server.Except(declared));
+
+        // ÜÇ KÜME BİRBİRİNDEN AYRIK: bir kod aynı anda "dosyan bozuk", "proje pencerenin
+        // dışında" ve "değer hatalı" diyemez — üçü ayrı CÜMLE kurar, ayrı EYLEM ister.
+        var endpoints = File.ReadAllText(TestVectorFiles.Resolve(
+            "backend/src/VideoEdit.Api/Endpoints/ExportEndpoints.cs"));
+        var assetFacts = QuotedStrings(Between(
+            endpoints, "AssetFactFeatures = new(StringComparer.Ordinal)", "};"));
+        var ceilings = QuotedStrings(Between(
+            endpoints, "CeilingFeatures = new(StringComparer.Ordinal)", "};"));
+        Assert.Empty(server.Intersect(assetFacts));
+        Assert.Empty(server.Intersect(ceilings));
+    }
+
     private static string Between(string source, string start, string end)
     {
         var from = source.IndexOf(start, StringComparison.Ordinal);
@@ -991,6 +1474,268 @@ public sealed class ExportGateInventoryTests : IDisposable
             Assert.True(refusal.Note.Length >= 40, $"{refusal.Fragment}: gerekçe yazılmamış.");
             Assert.Null(refusal.Arrange);
         }
+    }
+
+    [Fact]
+    public void EveryDocumentStringFieldHasAnInventoryRow()
+    {
+        // TAMLIK REFLEKSİYONLADIR: şemadan üretilen DTO'ların her string özelliği (+ her
+        // serbest biçimli sözlük torbası) defterde BİR satıra sahip olmalıdır.
+        var declared = DocumentStrings.Select(d => (d.Owner, d.Property)).ToHashSet();
+        Assert.Equal(DocumentStrings.Length, declared.Count); // defterde tekrar yok
+
+        var found = ContractStringSurface();
+        Assert.NotEmpty(found);
+
+        var missing = found.Except(declared).Select(Describe).Order(StringComparer.Ordinal).ToList();
+        Assert.True(missing.Count == 0,
+            "Şemada DEFTERDE OLMAYAN doküman dizesi var: " + string.Join(", ", missing)
+            + ". DocumentStrings'e satır ekleyin ve şu soruyu yanıtlayın: bu değer ffmpeg "
+            + "dizesine mi giriyor (FfmpegGraph — dilbilgisi + senkron ret KANITI zorunlu), "
+            + "raster hattına mı, yoksa hiç okunmuyor mu (yazılı gerekçe)?");
+
+        var stale = declared.Except(found).Select(Describe).Order(StringComparer.Ordinal).ToList();
+        Assert.True(stale.Count == 0,
+            "Defterde artık şemada OLMAYAN dize alanı var: " + string.Join(", ", stale));
+
+        static string Describe((Type Owner, string Property) f) => $"{f.Owner.Name}.{f.Property}";
+    }
+
+    [Fact]
+    public void EveryStringThatReachesTheFfmpegGraphIsGatedAndProven()
+    {
+        // BU KURAL, FfmpegColor SINIFININ KENDİSİDİR: doküman dizesi ffmpeg argümanına
+        // giriyorsa dilbilgisi TAM olamaz (aksi halde "her dize geçerli" demek, geçersiz
+        // değeri grafiğe yazmak demektir) ve reddin senkron kapıda GERÇEKTEN koştuğu
+        // kanıtlanmalıdır. Sessiz varsayılan (eski '_ => "000000"') bu iki şarttan da kaçardı.
+        var graph = DocumentStrings.Where(d => d.Sink == DocStringSink.FfmpegGraph).ToList();
+        Assert.NotEmpty(graph);
+
+        foreach (var row in graph)
+        {
+            Assert.True(row.Grammar is not null,
+                $"{row.Owner.Name}.{row.Property}: ffmpeg dizesine giren bir doküman değerinin "
+                + "dilbilgisi TAM olamaz — onu hangi doğrulayıcının kapıya tuttuğunu yazın.");
+            Assert.True(row.Arrange is not null,
+                $"{row.Owner.Name}.{row.Property}: ffmpeg dizesine giren bir değerin reddi "
+                + "İDDİA değil ÖLÇÜM olmalıdır — belge kurucusu ekleyin.");
+        }
+    }
+
+    [Fact]
+    public async Task EveryGatedDocumentStringIsRefusedSynchronously()
+    {
+        // KAÇAK YOLU YOK: dilbilgisi olan her satır GERÇEKTEN koşar — belge kurulur, uç nokta
+        // çağrılır, 422 + (beyan edilmişse) kod + İŞ SATIRI OLUŞMAMASI ölçülür.
+        foreach (var row in DocumentStrings.Where(d => d.Grammar is not null))
+        {
+            var label = $"{row.Owner.Name}.{row.Property}";
+            Assert.True(row.Arrange is not null, $"{label}: dilbilgisi olan satır kanıt ister.");
+            using var scope = new ExportGateInventoryTests();
+            var projectId = await row.Arrange!(scope);
+
+            var problem = Assert.IsType<ProblemHttpResult>(await scope.CallStartAsync(projectId));
+            Assert.Equal(
+                (label, StatusCodes.Status422UnprocessableEntity), (label, problem.StatusCode));
+            problem.ProblemDetails.Extensions.TryGetValue("feature", out var feature);
+            Assert.Equal((label, row.Feature), (label, feature as string));
+            Assert.Empty(scope._db.Jobs.ToList());
+            Assert.Equal(0, scope._jobs.CreateCount);
+        }
+    }
+
+    [Fact]
+    public async Task EveryEffectParamViolationIsRefusedSynchronously()
+    {
+        // F3'ÜN ÖLÇÜMÜ: EffectParams satırı artık FfmpegGraph etiketli, yani bu torbadan okunan
+        // değerler filtergraph'a giriyor. Bir etiket iddia değil ölçüm olmalı — torbanın ihlal
+        // yüzeyinin TAMAMI burada koşar: 422 + (beyan edilmişse) kod + İŞ SATIRI OLUŞMAMASI.
+        Assert.NotEmpty(EffectParamViolations);
+        foreach (var violation in EffectParamViolations)
+        {
+            using var scope = new ExportGateInventoryTests();
+            var projectId = await violation.Arrange(scope);
+
+            var problem = Assert.IsType<ProblemHttpResult>(await scope.CallStartAsync(projectId));
+            Assert.Equal(
+                (violation.Label, StatusCodes.Status422UnprocessableEntity),
+                (violation.Label, problem.StatusCode));
+            problem.ProblemDetails.Extensions.TryGetValue("feature", out var feature);
+            Assert.Equal((violation.Label, violation.Feature), (violation.Label, feature as string));
+            Assert.Empty(scope._db.Jobs.ToList());
+            Assert.Equal(0, scope._jobs.CreateCount);
+        }
+    }
+
+    [Fact]
+    public async Task FpsWindowBothSidesBehaveAsTheLedgerClaims()
+    {
+        // F2'NİN ÖLÇÜMÜ — İKİ YANI BİRDEN. Pencerenin dışı 422 + iş satırı YOK; pencerenin
+        // içindeki HER hız 202 ve iş satırı VAR. İkinci yarı olmadan bir tavan "kesiyor" der
+        // ama neyi kestiğini söylemez.
+        foreach (var (num, den, clipDurationUs, accepted, label) in FpsWindowBoundaries)
+        {
+            using var scope = new ExportGateInventoryTests();
+            var projectId = await scope.SeedAsync(ExportTestDocs.Doc(
+                fpsNum: (int)num, fpsDen: (int)den,
+                clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, clipDurationUs)));
+
+            var result = await scope.CallStartAsync(projectId);
+            if (accepted)
+            {
+                Assert.IsType<Accepted<ExportJobCreatedResponse>>(result);
+                Assert.Single(scope._db.Jobs.ToList());
+                continue;
+            }
+
+            var problem = Assert.IsType<ProblemHttpResult>(result);
+            Assert.Equal((label, StatusCodes.Status422UnprocessableEntity), (label, problem.StatusCode));
+            problem.ProblemDetails.Extensions.TryGetValue("feature", out var feature);
+            Assert.Equal((label, "project-fps-out-of-range"), (label, feature as string));
+            Assert.Empty(scope._db.Jobs.ToList());
+            Assert.Equal(0, scope._jobs.CreateCount);
+        }
+    }
+
+    [Fact]
+    public async Task TimelineDurationCeilingBothSidesBehaveAsTheLedgerClaims()
+    {
+        // F1'İN ÖLÇÜMÜ — İKİ YANI BİRDEN. Kenar TAM SAYIDIR: tavana tam oturan çizelge kuyruğa
+        // girer, bir KARE ötesi 422 olur. (Klip kenarları proje ızgarasına oturur, §1.4.)
+        foreach (var (totalDurationUs, accepted, label) in DurationCeilingBoundaries)
+        {
+            using var scope = new ExportGateInventoryTests();
+            var projectId = await scope.SeedAsync(ExportTestDocs.Doc(
+                clips: ExportTestDocs.VideoClip(
+                    ExportTestDocs.AssetA, totalDurationUs - 1_000_000, 0, 1_000_000)));
+
+            var result = await scope.CallStartAsync(projectId);
+            if (accepted)
+            {
+                Assert.IsType<Accepted<ExportJobCreatedResponse>>(result);
+                Assert.Single(scope._db.Jobs.ToList());
+                continue;
+            }
+
+            var problem = Assert.IsType<ProblemHttpResult>(result);
+            Assert.Equal((label, StatusCodes.Status422UnprocessableEntity), (label, problem.StatusCode));
+            problem.ProblemDetails.Extensions.TryGetValue("feature", out var feature);
+            Assert.Equal((label, "timeline-too-long"), (label, feature as string));
+            Assert.Empty(scope._db.Jobs.ToList());
+            Assert.Equal(0, scope._jobs.CreateCount);
+        }
+    }
+
+    [Fact]
+    public void EffectParamsBagIsLabelledByWhereItsValuesActuallyGo()
+    {
+        // F3'ÜN YAPISAL MUHAFIZI. Bulunan kusur şuydu: EffectParams satırı Raster etiketliydi,
+        // etiket yanlış olduğu için EveryStringThatReachesTheFfmpegGraphIsGatedAndProven onu
+        // ATLIYORDU — yani muhafaza edilmeyen bir üye, "muhafaza edildi" sayılıyordu. Yanlış
+        // ETİKET HİÇBİR TESTİ KIRMIYORDU; aslİ kusur budur. Bu test etiketi ÖLÇÜME bağlar:
+        // satırın Sink'i artık serbestçe değiştirilemez, kaynak taramasıyla çelişirse KIRMIZI olur.
+        var row = Assert.Single(DocumentStrings, d => d.Owner == typeof(EffectParams));
+
+        // (1) SKIA BU TORBAYI HİÇ OKUMAZ — raster hattının hiçbir dosyası efekt yüzeyine değmez.
+        var rasterReaders = Directory
+            .EnumerateFiles(TestVectorFiles.Resolve("backend/src/VideoEdit.Media/Text"), "*.cs")
+            .Where(f => Regex.IsMatch(
+                File.ReadAllText(f), @"\.Effects\b|\.Params\b|EffectParams|ColorAdjustParams|LutParams"))
+            .Select(Path.GetFileName)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        Assert.True(rasterReaders.Count == 0,
+            "Raster hattı artık efekt yüzeyini okuyor: " + string.Join(", ", rasterReaders)
+            + ". Defterdeki EffectParams satırının Sink'i yeniden düşünülmelidir.");
+
+        // (2) TORBADAN OKUNAN DEĞERLER FFİLTREGRAPH'A GİRER — filtre üreten metotların hepsi
+        // ClipEffects.cs'te ve hepsi bu torbadan gelen değerlerle beslenir.
+        var effectSource = File.ReadAllText(
+            TestVectorFiles.Resolve("backend/src/VideoEdit.Media/Export/ClipEffects.cs"));
+        foreach (var token in new[]
+                 { "exposure=", "lutrgb=", "colorchannelmixer=", "lut3d=file=", "blend=all_expr=" })
+        {
+            Assert.True(effectSource.Contains(token, StringComparison.Ordinal),
+                $"ClipEffects.cs artık '{token}' üretmiyor — efekt yüzeyinin ffmpeg yolu değişmiş "
+                + "olabilir; defterdeki EffectParams satırı yeniden ölçülmelidir.");
+        }
+
+        // (3) İki ölçümün ZORUNLU sonucu: etiket FfmpegGraph'tir.
+        Assert.Equal(DocStringSink.FfmpegGraph, row.Sink);
+    }
+
+    [Fact]
+    public void NonFiniteEffectParamCannotBeExpressedInJson()
+    {
+        // ÖLÇÜM, İDDİA DEĞİL: "NaN buraya hiç gelemez" cümlesini yazmak yetmez — iki yönü de
+        // koşarak gösteririz. (1) YAZMA yönü: belge serileştirilemez; (2) OKUMA yönü: JSON
+        // dilbilgisinde böyle bir literal yoktur, ayrıştırıcı reddeder. Dolayısıyla
+        // ClipEffects.RequireNumber'daki double.IsFinite dalı BELGEYLE tetiklenemez.
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
+        clip.Effects = [Bag(EffectType.ColorAdjust, ("tint", double.NaN))];
+        Assert.Throws<ArgumentException>(() => JsonSerializer.Serialize(
+            new TimelineDoc { SchemaVersion = 1, Tracks = [ExportTestDocs.VideoTrack(clips: clip)] },
+            TimelineJson.Options));
+
+        Assert.ThrowsAny<JsonException>(() => JsonDocument.Parse("""{"params":{"tint":NaN}}"""));
+    }
+
+    [Fact]
+    public async Task ValidEffectParamsStillReachTheQueue()
+    {
+        // YANLIŞ RET KONTROLÜ: kapı yalnız ihlalleri kesmeli. Geçerli bir colorAdjust torbası
+        // (grafiğe exposure=/lutrgb=/colorchannelmixer= olarak giren değerler) 202 almalı.
+        using var scope = new ExportGateInventoryTests();
+        var projectId = await scope.SeedEffectAsync(
+            Bag(EffectType.ColorAdjust, ("exposure", 0.25), ("saturation", -0.5), ("contrast", 1d)));
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await scope.CallStartAsync(projectId));
+        Assert.Single(scope._db.Jobs.ToList());
+    }
+
+    [Fact]
+    public void EveryUngatedDocumentStringRowCarriesAWrittenReason()
+    {
+        foreach (var row in DocumentStrings.Where(d => d.Grammar is null))
+        {
+            var label = $"{row.Owner.Name}.{row.Property}";
+            Assert.True(row.Note.Length >= 40, $"{label}: gerekçe yazılmamış.");
+
+            // Dilbilgisi TAMSA reddedilecek değer yoktur — kanıt istemek de anlamsızdır.
+            Assert.True(row.Arrange is null,
+                $"{label}: dilbilgisi TAM ilan edilmiş ama belge kurucusu verilmiş — ikisi çelişir.");
+            Assert.True(row.Feature is null,
+                $"{label}: dilbilgisi TAM ilan edilmiş ama 422 kodu beyan edilmiş — ikisi çelişir.");
+        }
+    }
+
+    /// <summary>
+    /// Şemadan üretilen sözleşme tiplerinin DİZE YÜZEYİ: her <c>string</c> özelliği, artı her
+    /// serbest biçimli <c>Dictionary&lt;string, object&gt;</c> torbası (<c>"*"</c> adıyla).
+    /// </summary>
+    private static HashSet<(Type Owner, string Property)> ContractStringSurface()
+    {
+        var surface = new HashSet<(Type, string)>();
+        foreach (var type in typeof(TimelineDoc).Assembly.GetTypes()
+                     .Where(t => t is { IsClass: true, IsAbstract: false }
+                                 && t.Namespace == typeof(TimelineDoc).Namespace))
+        {
+            if (typeof(IDictionary<string, object>).IsAssignableFrom(type))
+            {
+                surface.Add((type, DictionaryBagProperty));
+                continue;
+            }
+
+            foreach (var property in type.GetProperties())
+            {
+                if (property.PropertyType == typeof(string) && property.DeclaringType == type)
+                {
+                    surface.Add((type, property.Name));
+                }
+            }
+        }
+
+        return surface;
     }
 
     [Fact]

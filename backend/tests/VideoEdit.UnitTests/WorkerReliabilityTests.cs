@@ -50,8 +50,10 @@ public sealed class WorkerReliabilityTests : IDisposable
         _connection.Dispose();
     }
 
+    private readonly RunningRenderRegistry _renders = new();
+
     private AssetReaperJob CreateReaper() => new(
-        _db, _storage, NullLogger<AssetReaperJob>.Instance, new FixedTimeProvider(Now));
+        _db, _storage, NullLogger<AssetReaperJob>.Instance, new FixedTimeProvider(Now), _renders);
 
     private async Task<(Asset Asset, Job Job)> SeedProcessingAssetAsync(
         TimeSpan processingAge, TimeSpan? lastProgressAge)
@@ -143,6 +145,70 @@ public sealed class WorkerReliabilityTests : IDisposable
         Assert.Contains("stalled", job.ErrorMessage!, StringComparison.Ordinal);
         Assert.NotNull(job.CompletedAt);
         Assert.Equal(JobStatus.Queued, freshQueued.Status); // taze Queued'a dokunulmaz
+    }
+
+    [Fact]
+    public async Task Reaper_StalledJob_AlsoAbortsItsRunningRender()
+    {
+        // SATIRI DÜZELTMEK YETMEZ. Reaper işi 'stalled' yazarken ffmpeg süreci hâlâ koşuyor
+        // olabilirdi; export kuyruğu tek kanal olduğu için o süreç HERKESİN export'unu
+        // tutmaya devam ederdi — satır "başarısız" derken makine meşgul kalırdı.
+        var job = Job.Create(JobType.Export, Guid.NewGuid(), Now - TimeSpan.FromHours(8));
+        job.Status = JobStatus.Running;
+        job.StartedAt = Now - TimeSpan.FromHours(7); // > 6 saatlik eşik
+        _db.Jobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        // Koşan render'ın iptal kancası — ExportJob'ın kaydettiğinin aynısı.
+        using var cancellation = new CancellationTokenSource();
+        using var registration = _renders.Register(job.Id, cancellation);
+
+        await CreateReaper().Run(CancellationToken.None);
+
+        Assert.Equal(JobStatus.Failed, job.Status);
+        Assert.True(cancellation.IsCancellationRequested,
+            "reaper 'stalled' yazarken koşan render'ı da iptal etmeliydi "
+            + "(FfmpegRunner'ın iptal kaydı süreç ağacını öldürür)");
+    }
+
+    [Fact]
+    public async Task Reaper_LiveJob_DoesNotAbortItsRender()
+    {
+        // YANLIŞ ÖLDÜRME ÜRETME: eşiğin altındaki (canlı) bir işin render'ına DOKUNULMAZ.
+        // Bu iddia olmadan "reaper süreci öldürür" cümlesi tehlikeli bir yarım gerçekti.
+        var job = Job.Create(JobType.Export, Guid.NewGuid(), Now - TimeSpan.FromMinutes(20));
+        job.Status = JobStatus.Running;
+        job.StartedAt = Now - TimeSpan.FromMinutes(20);
+        job.LastProgressAt = Now - TimeSpan.FromMinutes(1);
+        _db.Jobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        using var cancellation = new CancellationTokenSource();
+        using var registration = _renders.Register(job.Id, cancellation);
+
+        await CreateReaper().Run(CancellationToken.None);
+
+        Assert.Equal(JobStatus.Running, job.Status);
+        Assert.False(cancellation.IsCancellationRequested);
+    }
+
+    [Fact]
+    public void RenderRegistry_DropsTheEntryWhenTheRegistrationIsDisposed()
+    {
+        // KAYIT DÜŞMELİ: bitmiş bir işin kancası defterde kalsaydı reaper onu iptal etmeye
+        // çalışır ve (CancellationTokenSource dispose edilmişse) ObjectDisposedException'a
+        // düşerdi — Abort o hâli yutuyor, ama defterin sızması yine de bir kusurdur.
+        var registry = new RunningRenderRegistry();
+        var jobId = Guid.CreateVersion7();
+        using var cancellation = new CancellationTokenSource();
+
+        var registration = registry.Register(jobId, cancellation);
+        Assert.Equal(1, registry.Count);
+        Assert.True(registry.Abort(jobId));
+
+        registration.Dispose();
+        Assert.Equal(0, registry.Count);
+        Assert.False(registry.Abort(jobId)); // artık kayıt yok → "öldürdüm" DEMEZ
     }
 
     [Fact]

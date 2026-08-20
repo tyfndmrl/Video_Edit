@@ -121,6 +121,21 @@ export type ExportStartErrorKind =
    * NOT at fault and the request is retryable once the server is fixed.
    */
   | 'unavailable'
+  /**
+   * 422 with a resource-ceiling code (see `CEILING_CODES`). The document is valid and
+   * the feature IS supported — the project is simply outside the exporter's resource
+   * window (timeline longer than the ceiling, project fps outside the accepted range).
+   * Calling that "an unsupported feature" would send the user hunting for a feature
+   * that is not the problem.
+   */
+  | 'ceiling'
+  /**
+   * 422 with a bad-value code (see `VALUE_CODES`). The document is valid, the feature
+   * IS supported and the project is inside every resource window — one FIELD carries a
+   * value the exporter cannot use (an unparsable colour, a LUT effect with no assetId).
+   * Calling that "an unsupported feature" hides the one-field fix.
+   */
+  | 'value'
   /** 429 — concurrent export limit reached (informational, not a failure). */
   | 'limit'
   /** anything else — generic failure. */
@@ -142,6 +157,37 @@ const ASSET_FACT_CODES = new Set([
   'lut-asset-type',
   'asset-clip-type',
   'asset-failed',
+]);
+
+/**
+ * Backend feature codes that mean "this project is outside a resource ceiling", not
+ * "a feature is missing".
+ *
+ * MIRRORS `ExportEndpoints.CeilingFeatures` on the server; the two are compared by
+ * `ExportGateInventoryTests.TheClientAndServerAgreeOnWhichCodesMeanAResourceCeiling`
+ * for the same reason as `ASSET_FACT_CODES`: drift is not a crash, it is a wrong
+ * sentence.
+ */
+const CEILING_CODES = new Set([
+  'timeline-too-long',
+  'project-fps-out-of-range',
+]);
+
+/**
+ * Backend feature codes that mean "a field carries an invalid value", not
+ * "a feature is missing" and not "the project is too big".
+ *
+ * MIRRORS `ExportEndpoints.DocumentValueFeatures`; compared by
+ * `ExportGateInventoryTests.TheClientAndServerAgreeOnWhichCodesMeanABadValue`.
+ *
+ * The distinction is the whole point: the project background colour and the LUT
+ * effect are both SUPPORTED features. Telling the user "this project uses a
+ * feature the exporter does not support yet" sends them hunting for a feature
+ * that is not the problem, when the fix is a single field they can edit.
+ */
+const VALUE_CODES = new Set([
+  'project-background-color',
+  'lut-asset',
 ]);
 
 /** Extract the machine-readable `feature` extension from a ProblemDetails body. */
@@ -181,6 +227,22 @@ export function mapExportError(status: number, body: unknown): ExportStartError 
         message: detail
           ? `Bu projedeki bir dosya dışa aktarılamıyor: ${detail}`
           : 'Bu projedeki bir dosya dışa aktarılamıyor.',
+      };
+    }
+    if (feature !== null && CEILING_CODES.has(feature)) {
+      return {
+        kind: 'ceiling',
+        message: detail
+          ? `Bu proje dışa aktarma sınırlarının dışında: ${detail}`
+          : 'Bu proje dışa aktarma sınırlarının dışında.',
+      };
+    }
+    if (feature !== null && VALUE_CODES.has(feature)) {
+      return {
+        kind: 'value',
+        message: detail
+          ? `Bu projedeki bir ayar geçersiz bir değer taşıyor: ${detail}`
+          : 'Bu projedeki bir ayar geçersiz bir değer taşıyor.',
       };
     }
     return {
