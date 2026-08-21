@@ -7,11 +7,12 @@
  * upsert from the asset poll would wipe them every 3 s and blank the
  * filmstrip/waveform/player until the next media-urls refresh.
  */
-import type { AssetDto } from '../../entities/assets';
+import { queryClient } from '../../app/queryClient';
+import { quotaQueryKey, type AssetDto } from '../../entities/assets';
 import { useAssetStore, type AssetKind, type AssetSummary } from '../../state/assetStore';
 
 export function toAssetKind(kind: AssetDto['kind']): AssetKind {
-  return kind === 'audio' || kind === 'image' ? kind : 'video';
+  return kind === 'audio' || kind === 'image' || kind === 'lut' ? kind : 'video';
 }
 
 /**
@@ -55,13 +56,26 @@ export function toAssetSummary(dto: AssetDto): AssetSummary {
  *   status, metadata); undefined DTO fields do not clobber known values and the
  *   presigned URL fields are left untouched,
  * - a locally-running upload's progress is fresher than the poll — skipped.
+ *
+ * Quota side effect: the server adds an asset's DERIVED bytes (proxy,
+ * filmstrip, waveform, poster) to the storage quota the moment the asset turns
+ * ready — a moment no user gesture owns. The upload manager invalidates the
+ * quota query on upload complete/fail and the delete dialog on delete, but
+ * processing->ready happens worker-side; without this hook the header
+ * indicator kept showing the pre-derivative figure until the next full reload
+ * (measured live: server 21.7 MB vs UI 21.0 MB). The poll observing the flip
+ * to 'ready' is therefore the ONE place that can refresh the figure.
  */
 export function syncServerAssets(items: readonly AssetDto[]): void {
   const store = useAssetStore.getState();
+  let becameReady = false;
   for (const dto of items) {
     const existing = store.assets.get(dto.id);
     // While a local upload is running, its progress is fresher than the poll.
     if (existing?.status === 'uploading' && dto.status === 'uploading') continue;
+    if (existing !== undefined && existing.status !== 'ready' && dto.status === 'ready') {
+      becameReady = true;
+    }
     const summary = toAssetSummary(dto);
     if (!existing) {
       store.upsertAsset(summary);
@@ -76,5 +90,9 @@ export function syncServerAssets(items: readonly AssetDto[]): void {
       (patch as Record<string, unknown>)[key] = value;
     }
     store.updateAsset(dto.id, patch);
+  }
+  if (becameReady) {
+    // One invalidation per poll batch, not per asset.
+    void queryClient.invalidateQueries({ queryKey: quotaQueryKey });
   }
 }

@@ -2,17 +2,29 @@
  * 409 conflict dialog — the document changed in another tab. The only safe
  * MVP resolution is adopting the server document (local unsaved changes are
  * discarded, undo history cleared).
+ *
+ * Modal focus contract via the shared useModalFocus hook (same pattern as
+ * ExportDialog/ShortcutsHelpOverlay): focus moves onto the resolve button on
+ * open, Tab is trapped inside, focus returns on close. Deliberately NO
+ * onEscape: this alertdialog cannot be dismissed — the only safe exit is the
+ * "Sunucudaki sürümü yükle" button.
  */
+import { useModalFocus } from '../../lib/useModalFocus';
 import { useAutosaveStore } from '../../state/autosave';
 import { resolveConflictFromServer } from '../../state/projectSession';
 
 export function ConflictDialog() {
   const conflict = useAutosaveStore((s) => s.conflict);
+  const { containerRef, onKeyDown } = useModalFocus(conflict !== null);
   if (!conflict) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onKeyDown={onKeyDown}
+    >
       <div
+        ref={containerRef}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="conflict-title"

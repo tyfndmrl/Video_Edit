@@ -13,8 +13,9 @@
  *    [0, timelineDurationUs].
  * 5. Transitions (rendering-semantics §5): clips stay adjacent; for transition
  *    duration D the export compiler extends A.sourceOut by
- *    roundHalfUp((D/2)*A.speed.rate) and pulls B.sourceIn back by
- *    roundHalfUp((D/2)*B.speed.rate) (source-domain handles, §5.2). The source
+ *    roundHalfUp(halfUs*A.speed.rate) and pulls B.sourceIn back by
+ *    roundHalfUp(halfUs*B.speed.rate), where halfUs = frameToUs(dFrames/2) is the
+ *    FRAME-LEDGER half of D (source-domain handles, §5.2). The source
  *    media must have that much slack at the cut edge. Per side: the HEAD handle
  *    (B.sourceIn) is always checked, the TAIL handle (A.sourceOut vs. the asset
  *    duration) only when `assetDurations` is provided; a side whose source has
@@ -100,6 +101,14 @@ export const TRANSFORM_SCALE_MIN = 0.01;
  * box, so max(width, height) * scale <= MAX_LAYER_DIMENSION. At 1080p that is
  * ~4.266, at 4K ~2.133.
  *
+ * UNROTATED layers only. The compiler's gate runs on the INTERMEDIATE canvas
+ * (`LayerPlacement.IntermediateWidth/Height`), which for an unrotated layer IS
+ * the scale box — so this closed form is exact there. A rotated layer opens a
+ * square canvas as large as its diagonal (plus the anchor pad), so its ceiling
+ * is LOWER: use `maxScaleForFit` with the clip's pose instead. This function
+ * stays as the pose-free special case because project-wide ceilings (keyframe
+ * bounds, per-project field maxima) are quoted for the unrotated layer.
+ *
  * Floored — never rounded — to the stored precision: the compiler computes
  * roundHalfUp(dimension * scale), so a value rounded UP at the third decimal
  * (e.g. 4.267 at 1920 px -> 8193) would land one pixel past the bound and be
@@ -113,6 +122,126 @@ export function maxScaleFor(settings: Pick<ProjectSettings, 'width' | 'height'>)
   // A composition larger than 819200 px would drive the ceiling under the
   // floor; keep max >= min so a UI range control never inverts.
   return Math.max(TRANSFORM_SCALE_MIN, floored);
+}
+
+// ---------------------------------------------------------------------------
+// Intermediate-canvas ledger (rendering-semantics §2.5) — the compiler's
+// formula, verbatim, on this side of the boundary
+//
+// MIRRORS backend `LayerGeometry.Compute` (LayerGeometry.cs): the compiler's
+// ceiling gate (`ExportCompiler.EnsureLayerCeiling`, error type
+// "transform-scale") does NOT measure the scale box — it measures the
+// INTERMEDIATE canvas the layer chain opens:
+//
+//   box   = roundHalfUp(fit * scale)                 (per axis)
+//   pad   = rotating && anchor off-center
+//             ? ceil(box * 2 * max(a, 1-a))          (per axis)
+//             : box
+//   inter = rotating ? ceilEven(hypot(padW, padH))   (SQUARE canvas)
+//                    : pad
+//   gate: inter <= MaxLayerDimension (8192)
+//
+// Rotation therefore LOWERS the effective scale ceiling by up to ~1.41x (the
+// diagonal), and an off-center anchor by up to 2x more. An editor ceiling that
+// ignores rotation lets the user write a document the export rejects with
+// HTTP 422 — which is exactly the "steer then reject" hole these helpers close.
+// Every formula line below matches the C# source; the arithmetic twins
+// (`ceilEven` == LayerGeometry.CeilEven with a different overflow guard, the
+// pad/diagonal expressions) must change together with it.
+// ---------------------------------------------------------------------------
+
+/** The rotation/anchor half of a Transform — what the canvas ledger needs. */
+export type LayerPose = Pick<Transform, 'rotationDeg' | 'anchorX' | 'anchorY'>;
+
+/** An unrotated, centered pose (the ledger's identity element). */
+export const UNROTATED_POSE: LayerPose = { rotationDeg: 0, anchorX: 0.5, anchorY: 0.5 };
+
+/** Normalized rotation in [0, 360): the compiler skips rotate for multiples of 360. */
+function normalizedRotationDeg(rotationDeg: number): number {
+  if (!Number.isFinite(rotationDeg)) return 0;
+  const r = rotationDeg % 360;
+  return r < 0 ? r + 360 : r;
+}
+
+/** Smallest EVEN integer >= ceil(x) — twin of `LayerGeometry.CeilEven`. */
+function ceilEven(x: number): number {
+  const raw = Math.ceil(x);
+  return raw % 2 === 0 ? raw : raw + 1;
+}
+
+/**
+ * Long side (px) of the intermediate canvas for a `boxWidthPx x boxHeightPx`
+ * scale box drawn at `pose` — `max(IntermediateWidth, IntermediateHeight)` of
+ * the compiler's ledger. One number suffices for the gate: the ceiling compares
+ * both axes to the same MAX_LAYER_DIMENSION, and the rotated canvas is square.
+ */
+export function intermediateCanvasLongSidePx(
+  boxWidthPx: number,
+  boxHeightPx: number,
+  pose: LayerPose,
+): number {
+  const rotationDeg = normalizedRotationDeg(pose.rotationDeg);
+  if (rotationDeg === 0) return Math.max(boxWidthPx, boxHeightPx);
+  const mx = Math.max(pose.anchorX, 1 - pose.anchorX);
+  const my = Math.max(pose.anchorY, 1 - pose.anchorY);
+  const needsPad = mx !== 0.5 || my !== 0.5;
+  const padW = needsPad ? Math.ceil(boxWidthPx * 2 * mx) : boxWidthPx;
+  const padH = needsPad ? Math.ceil(boxHeightPx * 2 * my) : boxHeightPx;
+  return ceilEven(Math.sqrt(padW * padW + padH * padH));
+}
+
+/**
+ * Largest scale (floored to the stored precision) whose intermediate canvas
+ * stays within MAX_LAYER_DIMENSION for a layer whose `scale = 1` box is
+ * `fitWidthPx x fitHeightPx`, drawn at `pose`.
+ *
+ * The closed form only SEEDS the search; the returned value is always verified
+ * against the ledger's own predicate and walked DOWN one scale-grid step at a
+ * time until it passes (the pad `ceil`, the box `roundHalfUp` and the diagonal
+ * `ceilEven` each add up to a couple of pixels the closed form cannot see —
+ * same guard-loop pattern as the compiler's own `LayerGeometry.MinScaleFor`).
+ * With no rotation this reduces exactly to the `maxScaleFor` closed form.
+ */
+export function maxScaleForFit(
+  fitWidthPx: number,
+  fitHeightPx: number,
+  pose: LayerPose,
+): number {
+  if (!Number.isFinite(fitWidthPx) || !Number.isFinite(fitHeightPx)) {
+    return TRANSFORM_SCALE_MIN;
+  }
+  // ONE zero axis is a legitimate input: the font-independent text lower bound
+  // knows no width (glyph advances are a font-file property), so it reports
+  // (0, height). A zero axis contributes nothing to the box/pad/diagonal —
+  // exactly what the formulas below compute — and the other axis binds alone.
+  const w = Math.max(0, fitWidthPx);
+  const h = Math.max(0, fitHeightPx);
+  if (w === 0 && h === 0) return TRANSFORM_SCALE_MIN;
+  const factor = 10 ** TRANSFORM_SCALE_DECIMALS;
+  const rotationDeg = normalizedRotationDeg(pose.rotationDeg);
+  if (rotationDeg === 0) {
+    const floored = Math.floor((MAX_LAYER_DIMENSION / Math.max(w, h)) * factor) / factor;
+    return Math.max(TRANSFORM_SCALE_MIN, floored);
+  }
+
+  const mx = Math.max(pose.anchorX, 1 - pose.anchorX);
+  const my = Math.max(pose.anchorY, 1 - pose.anchorY);
+  const needsPad = mx !== 0.5 || my !== 0.5;
+  const kx = needsPad ? 2 * mx : 1;
+  const ky = needsPad ? 2 * my : 1;
+  // Seed from the cap itself; the predicate loop below eats the couple of
+  // pixels the roundings (box roundHalfUp, pad ceil, diagonal ceilEven) add.
+  // Seeding below the cap instead was measured to waste a whole scale-grid
+  // step (1080p @ 45deg: 3.717 offered while 3.718 passes the gate).
+  const seed = MAX_LAYER_DIMENSION / Math.hypot(kx * w, ky * h);
+  let candidate = Math.max(TRANSFORM_SCALE_MIN, Math.floor(seed * factor) / factor);
+  for (let guard = 0; guard < 8 && candidate > TRANSFORM_SCALE_MIN; guard++) {
+    const boxW = roundHalfUp(w * candidate);
+    const boxH = roundHalfUp(h * candidate);
+    if (intermediateCanvasLongSidePx(boxW, boxH, pose) <= MAX_LAYER_DIMENSION) return candidate;
+    candidate = Math.max(TRANSFORM_SCALE_MIN, Math.round((candidate - 1 / factor) * factor) / factor);
+  }
+  return candidate;
 }
 
 /** Known asset durations (us), keyed by assetId. */
@@ -134,12 +263,27 @@ function clipEndUs(clip: Clip): MicroSec {
 }
 
 /**
- * Source-domain handle for one side of a cut (rendering-semantics §5.2):
- * roundHalfUp((D/2) * speed.rate). Speed converts the timeline-domain half
- * window back into the clip's source domain.
+ * Source-domain handle for one side of a cut (rendering-semantics §5.2).
+ *
+ * The half window is derived from the FRAME LEDGER, exactly like the compiler
+ * (`ExportCompiler.ResolveTransitions`): halfUs = frameToUs(dFrames / 2), then
+ * scaled into the source domain as roundHalfUp(halfUs * rate). Splitting the
+ * microsecond duration instead (roundHalfUp((D/2) * rate) — what this function
+ * used to do) is NOT the same number whenever frameToUs(dFrames) is odd: at
+ * 30fps a 14-frame transition is 466667us, its naive half 466667/2 = 233333.5
+ * rounds to 233334us while the ledger half is frameToUs(7) = 233333us — so this gate
+ * demanded 1us MORE handle than the renderer and rejected a document the
+ * renderer accepts (measured; pinned by transition-symmetry-vectors.json
+ * 'half-frame-ledger-boundary'). The naive split remains only as the fallback
+ * for durations that are off-grid or an odd frame count: those cases are
+ * already reported invalid by the duration rule above, and frameToUs requires
+ * an integer frame index.
  */
-function transitionHandleUs(durationUs: MicroSec, rate: number): MicroSec {
-  return roundHalfUp((durationUs / 2) * rate);
+function transitionHandleUs(durationUs: MicroSec, rate: number, fps: Rational): MicroSec {
+  const dFrames = usToFrame(durationUs, fps);
+  const onEvenGrid = frameToUs(dFrames, fps) === durationUs && dFrames >= 2 && dFrames % 2 === 0;
+  const halfUs = onEvenGrid ? frameToUs(dFrames / 2, fps) : durationUs / 2;
+  return roundHalfUp(halfUs * rate);
 }
 
 /**
@@ -308,8 +452,10 @@ function checkTransitionEdge(
   }
 
   // Handle rule (rendering-semantics §5.2, source-domain, speed-aware):
-  //   sourceOut + roundHalfUp((D/2)*rateA) <= assetA.durationUs
-  //   sourceIn  - roundHalfUp((D/2)*rateB) >= 0
+  //   sourceOut + roundHalfUp(halfUs*rateA) <= assetA.durationUs
+  //   sourceIn  - roundHalfUp(halfUs*rateB) >= 0
+  //   (halfUs = frameToUs(dFrames/2), the compiler's frame-ledger half — see
+  //   transitionHandleUs above for why it is not roundHalfUp(D/2))
   //
   // The rule is about SOURCE TIME, so it applies per side and only to a side
   // whose source HAS a time axis. A still image is opened with `-loop 1` and
@@ -322,8 +468,8 @@ function checkTransitionEdge(
   const incoming = edge === 'transitionIn' ? clip : neighbor; // clip B (after the cut)
   const outgoingClipIndex = edge === 'transitionIn' ? neighborIndex : clipIndex;
   const incomingClipIndex = edge === 'transitionIn' ? clipIndex : neighborIndex;
-  const halfOut = transitionHandleUs(d, outgoing.speed.rate);
-  const halfIn = transitionHandleUs(d, incoming.speed.rate);
+  const halfOut = transitionHandleUs(d, outgoing.speed.rate, fps);
+  const halfIn = transitionHandleUs(d, incoming.speed.rate, fps);
 
   // Head handle: bounded by sourceInUs alone, so it needs NO asset duration —
   // and the compiler enforces it unconditionally. Skipping it when durations
@@ -332,7 +478,7 @@ function checkTransitionEdge(
   if (hasSourceTimeAxis(incoming) && incoming.sourceInUs < halfIn) {
     ctx.addIssue({
       code: 'custom',
-      message: `transition handle missing: incoming clip needs sourceInUs >= ${halfIn}us (roundHalfUp((D/2)*rate)), got ${incoming.sourceInUs}us`,
+      message: `transition handle missing: incoming clip needs sourceInUs >= ${halfIn}us (roundHalfUp(frameToUs(dFrames/2)*rate)), got ${incoming.sourceInUs}us`,
       path: ['tracks', trackIndex, 'clips', incomingClipIndex, 'sourceInUs'],
     });
   }
@@ -343,7 +489,7 @@ function checkTransitionEdge(
   if (outgoingAssetDuration !== undefined && outgoing.sourceOutUs + halfOut > outgoingAssetDuration) {
     ctx.addIssue({
       code: 'custom',
-      message: `transition handle missing: outgoing clip needs sourceOutUs + ${halfOut}us (roundHalfUp((D/2)*rate)) <= asset duration ${outgoingAssetDuration}us, got sourceOutUs=${outgoing.sourceOutUs}us`,
+      message: `transition handle missing: outgoing clip needs sourceOutUs + ${halfOut}us (roundHalfUp(frameToUs(dFrames/2)*rate)) <= asset duration ${outgoingAssetDuration}us, got sourceOutUs=${outgoing.sourceOutUs}us`,
       path: ['tracks', trackIndex, 'clips', outgoingClipIndex, 'sourceOutUs'],
     });
   }
@@ -643,4 +789,73 @@ export function frameGridIssueSummary(issues: readonly FrameGridIssue[]): string
     `Bu belge dışa aktarımda reddedilir; klibin ${handle} kenarını bir kare içeri çekip ` +
     'bırakın (klibi kaydırmak iki kenarı birden ötelediği için sorunu çözmez).'
   );
+}
+
+// ---------------------------------------------------------------------------
+// Keyframe sample budget (rendering-semantics §3.4) — compile-wide, shared
+// with the export compiler
+// ---------------------------------------------------------------------------
+
+/**
+ * Compile-wide cap on per-frame animation samples.
+ * MIRRORS backend `KeyframeCompiler.MaxSamples` (60_000) — the compiler
+ * rejects a document whose sampled channels exceed it (UnsupportedFeature
+ * "keyframe-sample-budget", pre-gated as HTTP 422). The two values MUST stay
+ * equal.
+ */
+export const MAX_KEYFRAME_SAMPLES = 60_000;
+
+/** Do any of the SEGMENT easings curve? (The last keyframe's easing is inert.) */
+function hasCurvedSegment(kfs: readonly { easing: { type: string } }[]): boolean {
+  for (let i = 0; i < kfs.length - 1; i++) {
+    if (kfs[i].easing.type !== 'linear') return true;
+  }
+  return false;
+}
+
+/**
+ * UPPER BOUND on the samples the export compiler would spend on `doc`
+ * (`ExportCompiler.EnsureSampleBudget`), from document arithmetic alone.
+ *
+ * Deliberately an upper bound, never an underestimate — this feeds a WARNING
+ * ("budget nearly spent"), and a warning that under-counts is one the user
+ * first hears about as an HTTP 422. Where it over-counts, and why that is the
+ * safe side:
+ *  - the compiler dedups consecutive equal sample literals; value-dependent,
+ *    so we count the full frame span,
+ *  - a two-point linear opacity ramp can take the `fade` fast path (0 samples);
+ *    the predicate depends on compile placement, so opacity is always counted,
+ *  - `volume` only charges when the SOURCE file really has an audio stream;
+ *    the document only knows `audio !== null`, so that is what we count.
+ * Per-channel rules otherwise match the compiler exactly: a fully linear
+ * visual channel compiles to a closed form (0 samples), a curved one samples
+ * per frame, `scale` charges TWICE (ScaleWidth + ScaleHeight are sampled
+ * separately), `volume` samples even when linear (the audio chain has no
+ * closed-form path). Audio-kind clips spend no visual samples.
+ */
+export function keyframeSampleUpperBound(doc: TimelineDoc): number {
+  const fps = doc.settings.fps;
+  let total = 0;
+  for (const track of doc.tracks) {
+    for (const clip of track.clips) {
+      const frames = Math.max(
+        0,
+        usToFrame(clip.timelineStartUs + clip.timelineDurationUs, fps) -
+          usToFrame(clip.timelineStartUs, fps),
+      );
+      if (frames === 0) continue;
+      const kf = clip.keyframes;
+      if (isMediaClip(clip) && clip.audio !== null && kf.volume !== undefined && kf.volume.length > 0) {
+        total += frames;
+      }
+      if (clip.kind === 'audio') continue;
+      for (const channel of ['x', 'y', 'rotationDeg'] as const) {
+        const kfs = kf[channel];
+        if (kfs !== undefined && hasCurvedSegment(kfs)) total += frames;
+      }
+      if (kf.scale !== undefined && hasCurvedSegment(kf.scale)) total += 2 * frames;
+      if (kf.opacity !== undefined && kf.opacity.length > 0) total += frames;
+    }
+  }
+  return total;
 }

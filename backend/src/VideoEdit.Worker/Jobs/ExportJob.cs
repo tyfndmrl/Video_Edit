@@ -178,9 +178,11 @@ public sealed class ExportJob(
         {
             Directory.CreateDirectory(tempDir);
 
-            // ── 3) Disk rezervasyonu: Σkaynak + süre×profil-bitrate tahmini + %20 pay.
+            // ── 3) Disk rezervasyonu: Σkaynak + süre×max(profil, ölçülmüş kaynak bitrate)
+            // tahmini + %20 pay (12. tur borcu: sabit 10 Mbps grenli kaynakta kısa kalıyordu).
             var totalSourceBytes = visible.Sum(a => a.SizeBytes);
-            if (!await EnsureDiskSpaceAsync(job, tempDir, totalSourceBytes, plan.TotalDurationUs, profile, ct))
+            if (!await EnsureDiskSpaceAsync(
+                    job, tempDir, totalSourceBytes, plan.TotalDurationUs, profile, visible, ct))
             {
                 return;
             }
@@ -529,8 +531,8 @@ public sealed class ExportJob(
     // ───────────────────────── Yardımcılar ─────────────────────────
 
     /// <summary>
-    /// Gerekli boş alan tahmini (tasarım 04 §4.2): Σkaynak (cache'e inecek) + süre×profil
-    /// bitrate çıktısı, üstüne %20 pay. Public: birim testleri formülü sabitler.
+    /// Gerekli boş alan tahmini (tasarım 04 §4.2): Σkaynak (cache'e inecek) + süre×çıktı
+    /// bitrate tahmini, üstüne %20 pay. Public: birim testleri formülü sabitler.
     /// </summary>
     public static long EstimateRequiredDiskBytes(long totalSourceBytes, long durationUs, long bitsPerSecond)
     {
@@ -538,13 +540,48 @@ public sealed class ExportJob(
         return (totalSourceBytes + outputBytes) * 12 / 10;
     }
 
+    /// <summary>
+    /// Çıktı bit hızı tahmini: profil varsayımı ile kaynakların ÖLÇÜLMÜŞ bit hızının büyüğü.
+    /// <para>
+    /// 12. tur ölçümü: CRF çıktısı içerik bağımlıdır ve grenli bir 1080p kaynakta profilin
+    /// 10 Mbps varsayımının ~3 katını üretir (28,85 Mbps ölçüldü) — sabit varsayım gerçek
+    /// tepe kullanımı %35 KÜÇÜMSÜYORDU ve dar diskte rezervasyon "yeter" deyip render
+    /// ortasında disk bitirebilirdi. Kaynağın bit hızı zaten defterdedir (ffprobe süresi
+    /// DB'ye yazılır: SizeBytes × 8e6 / DurationMicros); CRF çıktısının karmaşıklığı kaynağın
+    /// karmaşıklığıyla sınırlı olduğundan max(profil, kaynak) güvenli üst banttır. Düşük bit
+    /// hızlı kaynakta profil tabanı kazanır — tahmin ESKİSİYLE AYNI kalır (şişme yok).
+    /// </para>
+    /// <para>
+    /// Yalnız Video/Audio türü ve süresi bilinen satırlar sayılır: görsel/LUT varlığının
+    /// "süresi" bir zaman ekseni değildir ve boyut/süre oranı anlamsız (aşırı) bit hızları
+    /// üretirdi.
+    /// </para>
+    /// </summary>
+    public static long EffectiveOutputBitsPerSecond(ExportProfile profile, IEnumerable<Asset> sources)
+    {
+        var bps = ExportProfiles.EstimatedBitsPerSecond(profile);
+        foreach (var asset in sources)
+        {
+            if (asset.Kind is not (AssetKind.Video or AssetKind.Audio)
+                || asset.DurationMicros is not > 0)
+            {
+                continue;
+            }
+
+            var sourceBps = (long)(asset.SizeBytes * 8_000_000m / asset.DurationMicros.Value);
+            bps = Math.Max(bps, sourceBps);
+        }
+
+        return bps;
+    }
+
     private async Task<bool> EnsureDiskSpaceAsync(
         Job job, string tempDir, long totalSourceBytes, long durationUs,
-        ExportProfile profile, CancellationToken ct)
+        ExportProfile profile, IReadOnlyCollection<Asset> sources, CancellationToken ct)
     {
         var freeBytes = MeasureFreeSpace(tempDir);
         var requiredBytes = EstimateRequiredDiskBytes(
-            totalSourceBytes, durationUs, ExportProfiles.EstimatedBitsPerSecond(profile));
+            totalSourceBytes, durationUs, EffectiveOutputBitsPerSecond(profile, sources));
         if (freeBytes < 0 || freeBytes >= requiredBytes)
         {
             return true;

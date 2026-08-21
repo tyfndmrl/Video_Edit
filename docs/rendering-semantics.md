@@ -830,6 +830,39 @@ c.rgb = mix(c.rgb, lutted, uIntensity);
 
 `intensity = 1` ise `split/blend` atlanır, düz `lut3d` uygulanır.
 
+**Kod eşleri (2026-08-21'den beri bu bölüm kodla örtüşür; öncesinde uniform'lar yalnız
+burada yazılıydı).** WebGL yarısı: `apps/editor/src/features/player/compositor/shaders.ts`
+(katman programında 6. aşama; geçiş programında taraf başına `uLut3DA/B` — export efektleri
+her klibin KENDİ kaynak zincirinde uyguladığı için geçişte de taraf başına uygulanır),
+doku `RGBA16F` + `LINEAR` (`compositor.createLutTexture`; 16F: tablo hassasiyeti 8-bit
+çıkışın ±1/255 nicelemesinin çok altında kalır ve LINEAR filtrelenebilir), .cube
+ayrıştırma + CPU trilinear referansı `player/lut/cubeLut.ts` (veri sırası: kırmızı en
+hızlı = texImage3D x ekseni). ffmpeg yarısı: `ClipEffects.Lut3dFilter` / `LutBlendFilter`.
+Yükleme kapısı `CubeLutValidator` (backend) iki tarafın AYNI dosyayı okuyabildiğini
+garanti eder: domain [0,1] dışı ve `LUT_3D_SIZE` ∉ [2,129] dosyalar Ready OLAMAZ —
+domain ölçeklemesi bu shader'da yoktur, kabul edilseydi önizleme/export ayrışırdı.
+Doğrulayıcı ffmpeg `parse_cube` ile BAYT düzeyinde hizalıdır (14. tur triyajı,
+2026-08-21): BOM'lu (UTF-8/16/32), yalnız-CR satır sonlu, anahtar kelimesi bitişik
+(`LUT_3D_SIZE2`, `DOMAIN_MIN0`) ya da kelimesi satır başında olmayan dosyalar RET edilir —
+bunların hepsi gerçek ffmpeg 8.0'da da ölür (`3D LUT is empty` / `Too large or invalid 3D
+LUT size` / `Unexpected EOF`, ölçüldü); kabul kümesi ffmpeg'in ALT KÜMESİDİR ve bu yön
+`CubeLutFfmpegParityTests` ile canlı ffmpeg üzerinde çift yönlü sabitlenmiştir.
+
+**`intensity` aralık dışıysa (yalnız ham API/elle yazılmış belge — editör slider'ı 0..1
+verir):** önizleme `resolve.lutOf` değeri [0,1]'e KELEPÇELER ve çizer; export
+`ClipEffects.ParseLut` senkron **422** ile reddeder; DEV doküman kapısı
+(`validateTimelineDoc`, lut invariant kuralı) aynı belgeyi editörde commit'ten önce
+yakalar. Asimetri bilinçlidir: önizleme "eldeki belgeyi olabildiğince dürüst çiz"
+sözleşmesindedir (bozuk parametrede efekt kelepçeli/atlanmış çizilir), export ise
+"sözleşme dışı belgeyi sessizce düzeltme, reddet" doktrinindedir — sessiz-yanlış-çıktı
+yoktur, ret her zaman senkron 422'dir.
+Regresyon bekçileri: `compositor.uniforms.test.ts` (lut bölümü — uniform adları/değerleri
+ve doku birimleri), `cubeLut.test.ts` (R↔B takas fixture'ı ffmpeg'in ölçülmüş çıktısıyla),
+`lutOps.test.ts`; uçtan uca piksel + §9.3 parite ölçümü `e2e/lut.spec.ts`
+(testin ENFORCE ettiği eşikler: SSIM(gri) ≥ 0,98, kanal |fark| ort ≤ 2,0; "SSIM 0,99424 /
+ort 1,603" o testin Playwright koşusunda ölçülmüş TEKİL değerlerdir — kalıcı sözleşme
+eşiklerdir, tekil sayı değil).
+
 ---
 
 ## 5. Geçiş Semantiği
@@ -1085,10 +1118,54 @@ xfade'in birebir aynısı DEĞİLDİR; hepsi bilinçli ve `docs/backlog.md`'de i
 | Tip | Önizleme | ffmpeg xfade | Fark |
 |---|---|---|---|
 | `crossfade` | `mix(A, B, p)` (straight-alpha, premultiply→mix→unpremultiply) | `fade` | yok (aynı lineer ağırlık) |
-| `dissolve` | piksel başına hash eşiği `hash(uv) < p ? B : A` | `dissolve` | eşik **deseni** farklı (PRNG farkı); istatistiksel davranış aynı |
-| `fadeToBlack` | parça parça lineer: `p<0.5` → `A*(1-2p)`, `p>=0.5` → `B*(2p-1)` | `fadeblack` | ffmpeg kenarlarda `smoothstep` yumuşatması kullanır; önizleme lineerdir |
+| `dissolve` | piksel başına hash eşiği `hash(uv) < p ? B : A` | `dissolve` | eşik **deseni** farklı; kural ve yoğunluk aynı (aşağıdaki ölçüm) |
+| `fadeToBlack` | ffmpeg'in YUV kapalı formu (aşağıda, NORMATİF) | `fadeblack` | tek katmanlı hızlı yolla **piksel-eşit**; kompozisyon yolunda ölçülü dip sapması (aşağıda) |
 | `wipeLeft` / `wipeRight` | kenar `x = 1-p` / `x = p` (sert kenar) | `wipeleft` / `wiperight` | yok (aynı kenar konumu) |
 | `slideUp` | iki görüntü de `p` kadar yukarı kayar, örnekleme noktası ötelenir | `slideup` | yok (aynı öteleme) |
+
+**`fadeToBlack` kapalı formu (NORMATİF — ffmpeg 8.0 `vf_xfade.c` `fadeblack`, phase 0.2;
+gerçek ffmpeg çıktısından ölçülerek doğrulandı, 2026-08-21).** ffmpeg ilerlemesi
+`P = 1 − p` (1→0 akar); `sm` GLSL/ffmpeg smoothstep'idir (`t²(3−2t)`); karışım **düzlem
+başına** yapılır:
+
+```
+out_düzlem = P·(A·smA + bg·(1−smA)) + (1−P)·(bg·smB + B·(1−smB))
+             smA = sm(0.8, 1, P), smB = sm(0.2, 1, P)
+```
+
+`bg` ("siyah") **xfade'in koştuğu piksel ailesine bağlıdır** ve fark tam olarak şudur:
+rgb siyahının (0,0,0) YUV'deki afin görüntüsü (16,128,128)'dir ama `vf_xfade` YUV yolunda
+`bg = (Y=0, U=128, V=128)` — yayın aralığının altında bir **süper-siyah** — kullanır:
+
+- **Tek katmanlı hızlı yol** (yuv420p): YUV düzlemlerinde, `bg = (0,128,128)`. Dip, geri
+  dönüşümde kırpılır (rgb'de erken tam-siyah). **Önizleme shader'ı BU modeli uygular**
+  (`transitionRef.ts` + `shaders.ts` — bt709 sınırlı gidiş-dönüş, kanonik kullanım tek
+  katmanlı düz kesimdir); gerçek ffmpeg YUV vektörleriyle sabitlenir
+  (`transitionRef.test.ts`, düzlem başına ±1 ffmpeg kırpması → rgb'de ±4 bayt) ve üretim
+  hattında `ExportRenderGoldenTests.FadeToBlack_OnTheFastPath_MatchesTheYuvModelThePreviewUses`
+  ile koşarak kanıtlanır.
+- **Kompozisyon yolu** (katmanlar `format=rgba` → xfade format müzakeresi rgb ailesinde
+  kalır): kanal başına, `bg = 0`. Aynı fixture'da ölçülen dip: rgb eğrisi (8,42,67) ↔ yuv
+  eğrisi (0,28,52) — **fark ≤ ~15/255 ve yalnız dip bölgesinde**; uçlar ve A-düşüşü iki
+  modelde ≈ aynıdır. Bu yol da
+  `FadeToBlack_OnTheComposedPath_FollowsTheRgbChannelCurve_Measured` ile ayrı sabitlenir —
+  ffmpeg format müzakeresi bir sürümde değişirse çift test kırmızı yanar. Önizleme↔
+  kompozisyon-yolu sapması bilinen sınırdır (docs/poc-bilinen-sinirlar.md §2.3).
+
+Alpha düzlemi format ailesinden bağımsızdır: `bg_alpha = opak` (max) —
+`alpha: P·(aA·smA + (1−smA)) + (1−P)·(smB + aB·(1−smB))`, yarı saydam girdilerle ölçüldü.
+Eğri **asimetriktir**: A pencerenin ilk %20'sinde söner (`p ≥ 0.2` için katkısı 0), B kalan
+%80 boyunca yükselir; orta kare TAM siyah değildir.
+
+**`dissolve` ölçümü (2026-08-21, ffmpeg 8.0, 1920×1080 beyaz→siyah).** Eşik KURALI iki
+tarafta aynıdır (`gürültü < p → B`) ve toplam yoğunluk ffmpeg'de de p'yi birebir izler
+(ölçülen B oranları: p=0.2333→0.2338, p=0.5→0.5001, p=0.7667→0.7688'in tümleyenleri).
+Piksel DESENİ ise eşitlenemez: ffmpeg `frand(x,y)` **tam sayı piksel koordinatını** libm
+`sinf` ile hash'ler — desen çıktı çözünürlüğüne (proxy 540p ≠ tuval) ve platformun libm
+gerçeklemesine bağlıdır; shader `uv∈[0,1]` hash'i kullanır. Aynı çözünürlükte ölçülen
+desen uyuşması p=0.5'te **%50.01** = istatistiksel bağımsızlık. Bu yüzden dissolve
+önizlemesi *bilinçli yaklaşıklık* olarak kalır (bilinen sınır: `docs/poc-bilinen-sinirlar.md`
+§2.3); golden preview↔export karşılaştırması bu tip için yazılamaz.
 
 Ayrıca: geçiş pass'i tam kare bir dörtgen çizip her iki tarafı KENDİ yerleşim matrisinin
 tersiyle örneklediği için, karenin dışında kalan pikseller keskin kenarlıdır (normal

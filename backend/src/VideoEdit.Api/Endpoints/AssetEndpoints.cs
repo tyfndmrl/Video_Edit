@@ -78,12 +78,15 @@ public static class AssetEndpoints
         // Failed hariç tutulursa objesi R2'de duran başarısız asset'ler kotadan kaçar (bypass).
         // Değişmez (invariant): objesi R2'den silinen her yol asset'i soft-delete eder
         // (abort, size-mismatch) — soft-delete kotadan düşer, obje sayılmaz, tutarlı.
+        // Toplam = orijinal + TÜREVLER (proxy/filmstrip/waveform/poster; 12. tur borcu —
+        // türevler ölçümde orijinalin %7,7'siydi ve sayılmıyordu). DerivedBytes NULL olan
+        // geriye dönük satır 0 sayılır (Asset.DerivedBytes sözleşmesi).
         var stats = await db.Assets.AsNoTracking()
             .Where(a => a.OwnerId == userId && a.DeletedAt == null)
             .GroupBy(_ => 1)
             .Select(g => new
             {
-                UsedBytes = g.Sum(a => (long?)a.SizeBytes) ?? 0L,
+                UsedBytes = g.Sum(a => (long?)(a.SizeBytes + (a.DerivedBytes ?? 0))) ?? 0L,
                 ActiveUploads = g.Count(a => a.Status == AssetStatus.Uploading),
             })
             .FirstOrDefaultAsync(ct);
@@ -414,13 +417,34 @@ public static class AssetEndpoints
             .ToListAsync(ct);
 
         var expiresAt = clock.GetUtcNow().Add(R2StorageService.GetUrlLifetime);
-        var map = new Dictionary<string, AssetMediaUrlsDto>(assets.Count);
-        foreach (var asset in assets)
+
+        // BuildAsync filmstrip'li asset başına tek küçük GetObject yapar (manifest.json,
+        // <2 KB) — manifest okunamazsa sprites null döner. Asset'ler birbirinden bağımsız;
+        // sıralı koşturmak yanıtı asset sayısıyla doğrusal uzatıyordu (perf raporu: 12 asset
+        // p50 ~24 ms, ~1.6-1.9 ms/asset → 100+ asset'te ~200 ms). Sınırlı eşzamanlılıkla
+        // paralel: 8'lik kapak, storage'a istek fırtınası açmadan proje açılışı + 12 saatlik
+        // URL yenileme yolunu asset sayısından koparır. (Döngüde DbContext YOK — paralel
+        // güvenli; S3 istemcisi eşzamanlı kullanım için tasarlanmıştır.)
+        using var gate = new SemaphoreSlim(8);
+        var entries = await Task.WhenAll(assets.Select(async asset =>
         {
-            // BuildAsync filmstrip'li asset başına tek küçük GetObject yapar (manifest.json,
-            // <2 KB) — proje asset sayısıyla sınırlı; manifest okunamazsa sprites null döner.
-            map[asset.Id.ToString("D")] = await AssetMediaUrlBuilder.BuildAsync(
-                asset, storage.PresignGet, (key, token) => ReadObjectOrNullAsync(storage, key, token), ct);
+            await gate.WaitAsync(ct);
+            try
+            {
+                var dto = await AssetMediaUrlBuilder.BuildAsync(
+                    asset, storage.PresignGet, (key, token) => ReadObjectOrNullAsync(storage, key, token), ct);
+                return (Id: asset.Id.ToString("D"), Dto: dto);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }));
+
+        var map = new Dictionary<string, AssetMediaUrlsDto>(assets.Count);
+        foreach (var (id, dto) in entries)
+        {
+            map[id] = dto;
         }
 
         return Results.Ok(new MediaUrlsResponse(expiresAt, map));
@@ -493,12 +517,15 @@ public static class AssetEndpoints
     }
 
     /// <summary>
-    /// tracks[].clips[] içinde assetId'si eşleşen klip sayısı.
+    /// tracks[].clips[] içinde bu varlığı KULLANAN klip sayısı: klibin kendi
+    /// <c>assetId</c>'si (medya + sticker) VEYA bir <c>lut</c> efektinin
+    /// <c>params.assetId</c>'si (LUT bir klip değildir ama silinirse o klibin
+    /// export'u <c>asset-missing</c> ile düşer — "boş liste = silmek güvenli"
+    /// vaadi efekt referanslarını da saymak zorundadır).
     ///
     /// Ham JSON gezintisi (TimelineDoc'a deserialize DEĞİL) bilinçlidir: ileri şema
     /// sürümünden gelen ya da bozuk bir doküman yüzünden silme onayı patlamamalı —
-    /// tanınmayan alanlar sessizce atlanır, sayım yine doğru olur. Medya klipleri ve
-    /// sticker'lar aynı "assetId" alanını taşır, ikisi de sayılır.
+    /// tanınmayan alanlar sessizce atlanır, sayım yine doğru olur.
     /// </summary>
     internal static int CountAssetClips(JsonDocument? timeline, Guid assetId)
     {
@@ -525,14 +552,21 @@ public static class AssetEndpoints
 
             foreach (var clip in clips.EnumerateArray())
             {
-                if (clip.ValueKind != JsonValueKind.Object
-                    || !clip.TryGetProperty("assetId", out var clipAssetId)
-                    || clipAssetId.ValueKind != JsonValueKind.String)
+                if (clip.ValueKind != JsonValueKind.Object)
                 {
                     continue;
                 }
 
-                if (clipAssetId.TryGetGuid(out var parsed) && parsed == assetId)
+                if (clip.TryGetProperty("assetId", out var clipAssetId)
+                    && clipAssetId.ValueKind == JsonValueKind.String
+                    && clipAssetId.TryGetGuid(out var parsed)
+                    && parsed == assetId)
+                {
+                    count++;
+                    continue; // klip zaten sayıldı; efekt referansı aynı klibi iki kez saymasın
+                }
+
+                if (ClipEffectsReferenceAsset(clip, assetId))
                 {
                     count++;
                 }
@@ -540,6 +574,35 @@ public static class AssetEndpoints
         }
 
         return count;
+    }
+
+    /// <summary>Klibin effects[] dizisinde assetId'si eşleşen bir lut efekti var mı?</summary>
+    private static bool ClipEffectsReferenceAsset(JsonElement clip, Guid assetId)
+    {
+        if (!clip.TryGetProperty("effects", out var effects)
+            || effects.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var effect in effects.EnumerateArray())
+        {
+            if (effect.ValueKind != JsonValueKind.Object
+                || !effect.TryGetProperty("params", out var p)
+                || p.ValueKind != JsonValueKind.Object
+                || !p.TryGetProperty("assetId", out var effectAssetId)
+                || effectAssetId.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            if (effectAssetId.TryGetGuid(out var parsed) && parsed == assetId)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -553,12 +616,13 @@ public static class AssetEndpoints
         CancellationToken ct)
     {
         var userId = principal.GetUserId();
+        // InitUpload'daki kota sorgusuyla AYNI tanım: orijinal + türevler (NULL türev = 0).
         var stats = await db.Assets.AsNoTracking()
             .Where(a => a.OwnerId == userId && a.DeletedAt == null)
             .GroupBy(_ => 1)
             .Select(g => new
             {
-                UsedBytes = g.Sum(a => (long?)a.SizeBytes) ?? 0L,
+                UsedBytes = g.Sum(a => (long?)(a.SizeBytes + (a.DerivedBytes ?? 0))) ?? 0L,
                 AssetCount = g.Count(),
             })
             .FirstOrDefaultAsync(ct);
@@ -662,6 +726,7 @@ public static class AssetEndpoints
         AssetKind.Video => "video",
         AssetKind.Audio => "audio",
         AssetKind.Image => "image",
+        AssetKind.Lut => "lut",
         _ => "unknown",
     };
 
@@ -693,7 +758,8 @@ public sealed record AssetUsageProjectDto(Guid Id, string Name, int ClipCount);
 
 /// <summary>
 /// GET /api/quota yanıtı — kitaplık kota göstergesinin sözleşmesi.
-/// usedBytes/assetCount: silinmemiş TÜM asset'ler (Failed dahil, InitUpload ile aynı tanım).
+/// usedBytes/assetCount: silinmemiş TÜM asset'ler (Failed dahil, InitUpload ile aynı tanım);
+/// usedBytes orijinal + türev toplamıdır (SizeBytes + DerivedBytes, NULL türev = 0).
 /// </summary>
 public sealed record QuotaSummaryResponse(
     long UsedBytes,

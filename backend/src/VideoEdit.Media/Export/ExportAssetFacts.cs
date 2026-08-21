@@ -21,6 +21,15 @@ public enum ExportAssetMediaKind
 
     /// <summary>Durağan görsel (Ready ise video stream'i vardır, sesi ve zaman ekseni YOKTUR).</summary>
     Image = 3,
+
+    /// <summary>
+    /// 3D LUT (.cube) — medya DEĞİLDİR: hiçbir klip türünün akış ihtiyacını karşılayamaz
+    /// (görüntü de ses de içermez), yalnız <c>lut</c> efektinin <c>assetId</c>'si olarak
+    /// anlamlıdır. Bir klibin kaynağı olarak gösterilirse <c>asset-clip-type</c> senkron
+    /// reddi üretir; LUT efekti kapısı ise türe değil dosya adına bakar
+    /// (<c>lut-asset-type</c> — .cube olmayan HER dosyayı reddeder, türü ne olursa olsun).
+    /// </summary>
+    Lut = 4,
 }
 
 /// <summary>
@@ -75,8 +84,10 @@ public enum ExportAssetReadiness
 /// </param>
 /// <param name="FileName">
 /// Yüklemedeki özgün dosya adı — LUT efektinin gösterdiği varlığın gerçekten <c>.cube</c> olup
-/// olmadığı tek burada anlaşılır (domain'in <c>AssetKind</c>'ında LUT değeri YOKTUR; yükleme
-/// whitelist'i .cube'ü bir medya tipiyle kabul eder).
+/// olmadığı buradan anlaşılır. Domain'de artık <see cref="ExportAssetMediaKind.Lut"/>'a çevrilen
+/// bir <c>AssetKind.Lut</c> VARDIR (yükleme whitelist'i <c>application/x-cube-lut</c>); kapı yine
+/// de dosya adına bakar çünkü ham API'yle medya türü beyan edilip .cube olmayan bir dosya
+/// gösteren eski sınıf belgeler de aynı retten geçmek zorundadır.
 /// </param>
 /// <param name="HasAudio">
 /// Kaynakta ses stream'i var mı (ffprobe). İki kapı okur:

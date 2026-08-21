@@ -1,0 +1,13 @@
+{
+  "description": "Clip PLACEMENT document-invariant contract (accept/reject parity): within one track, clips must be sorted by timelineStartUs and must never overlap (clip[i].start + clip[i].duration <= clip[i+1].start); gaps are legal. Consumed by packages/timeline-schema/tests/invariants.test.ts (zod validateTimelineDoc) and backend/tests/VideoEdit.UnitTests/ClipPlacementParityTests.cs (ExportCompiler.Validate). Every start and every edge (start + duration) sits on the 30fps project frame grid and every clip satisfies the duration formula by construction (rate 1, sourceIn 0, sourceOut = duration), so ONLY the ordering/overlap rule separates valid from invalid. This closes the 'klip yerlesimi' family of the document-invariant parity gap recorded in docs/backlog.md (14. tur, M3 sinifi).",
+  "cases": [
+    { "name": "single-clip", "clips": [{ "startUs": 0, "durationUs": 1000000 }], "valid": true },
+    { "name": "two-touching-clips", "clips": [{ "startUs": 0, "durationUs": 1000000 }, { "startUs": 1000000, "durationUs": 1000000 }], "valid": true },
+    { "name": "gap-between-clips-is-legal", "clips": [{ "startUs": 0, "durationUs": 1000000 }, { "startUs": 1500000, "durationUs": 1000000 }], "valid": true },
+    { "name": "three-clip-chain", "clips": [{ "startUs": 0, "durationUs": 1000000 }, { "startUs": 1000000, "durationUs": 500000 }, { "startUs": 2000000, "durationUs": 1000000 }], "valid": true },
+    { "name": "overlap-by-half-a-clip", "clips": [{ "startUs": 0, "durationUs": 1000000 }, { "startUs": 500000, "durationUs": 1000000 }], "valid": false },
+    { "name": "overlap-by-one-frame", "clips": [{ "startUs": 0, "durationUs": 1000000 }, { "startUs": 966667, "durationUs": 1000000 }], "valid": false },
+    { "name": "identical-span-twice", "clips": [{ "startUs": 0, "durationUs": 1000000 }, { "startUs": 0, "durationUs": 1000000 }], "valid": false },
+    { "name": "out-of-order-listing", "clips": [{ "startUs": 1000000, "durationUs": 1000000 }, { "startUs": 0, "durationUs": 1000000 }], "valid": false }
+  ]
+}

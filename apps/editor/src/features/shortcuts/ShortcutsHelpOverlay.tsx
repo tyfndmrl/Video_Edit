@@ -2,8 +2,13 @@
  * ShortcutsHelpOverlay — '?' tuşu / TopBar '?' butonuyla açılan kısayol
  * listesi. ConflictDialog/ExportDialog ile aynı hafif fixed-overlay deseni
  * (dialog kütüphanesi yok). Kapatma: buton, arka plana tıklama veya tekrar
- * '?' / Escape (dispatcher).
+ * '?' / Escape. Escape'i odak overlay içindeyken useModalFocus işler
+ * (dispatcher'daki Escape dalı, odak dışarıda kalırsa devreye giren yedek).
+ * Modal odak sözleşmesi (açılışta odak içeri, Tab tuzağı, kapanışta odağın
+ * tetikleyiciye dönmesi) ortak useModalFocus hook'undan gelir ve a11y-smoke
+ * e2e'de gerçek klavyeyle ölçülür.
  */
+import { useModalFocus } from '../../lib/useModalFocus';
 import {
   SHORTCUT_SECTIONS,
   closeShortcutsOverlay,
@@ -12,14 +17,17 @@ import {
 
 export function ShortcutsHelpOverlay() {
   const open = useShortcutsOverlayStore((s) => s.open);
+  const { containerRef, onKeyDown } = useModalFocus(open, closeShortcutsOverlay);
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       onClick={closeShortcutsOverlay}
+      onKeyDown={onKeyDown}
     >
       <div
+        ref={containerRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="shortcuts-title"

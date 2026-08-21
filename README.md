@@ -2,7 +2,8 @@
 
 Tarayıcıda çalışan, çok katmanlı bir video editörü (CapCut / Canva Video benzeri).
 Medyanı yükle, zaman çizgisinde kes, katmanla, metin ve geçiş ekle, renk ve hızı ayarla,
-1080p MP4 olarak dışa aktar. React 19 + .NET 10 + Cloudflare R2 (S3 uyumlu).
+MP4 olarak dışa aktar (1080p / 720p / 4K / dikey). React 19 + .NET 10 + Cloudflare R2
+(S3 uyumlu).
 
 > **Bu bir POC'tur.** Uçtan uca çalışır ve testlidir, ama üretim yükü altında denenmemiştir.
 > Neyin çalışmadığı, neden ve ne zaman geleceği tek tek yazılıdır:
@@ -79,8 +80,10 @@ Medyanı yükle, zaman çizgisinde kes, katmanla, metin ve geçiş ekle, renk ve
   sürüme dönme (geri dönmeden önce mevcut hal otomatik snapshot'lanır)
 
 ### Dışa aktarma
-- **1080p MP4** (H.264 CRF18 `veryfast` + AAC 192k), ilerleme göstergesi, iptal, indirme
-  bağlantısı
+- **MP4 profilleri: 1080p / 720p / 2160p (4K) / dikey 1080×1920** (H.264 `veryfast`
+  CRF18, 4K'da CRF19 + AAC 192k) — profil, tuval kompozisyonunu kendi kutusuna ölçekler;
+  farklı en-boy oranı letterbox'lanmaz, seçicide devre dışıdır (API'de tipli 422).
+  İlerleme göstergesi, iptal, indirme bağlantısı
 - Timeline JSON → **FilterGraph Compiler** → `ffmpeg -filter_complex_script` → MP4
 - Desteklenmeyen bir bileşim varsa export **kuyruğa hiç girmez**: sunucu 422 ile
   **gerekçesini** döner ve dialogda kırmızı olarak gösterilir (dakikalarca render edip
@@ -234,12 +237,14 @@ pnpm --filter @videoedit/editor test:e2e                     # 143/143 ✓ (7,8 
 #   ^ Bu KOŞULMUŞ bir sayıdır: API/Worker ikilisi ölçümden önce yeniden
 #     yayımlandı, koşan sürecin YÜKLEDİĞİ modül hash'i + dize taramasıyla
 #     tazeliği doğrulandı ve ortamın tek sahibi bu koşumdu.
-#     143'ün 136'sı GERÇEK geçiştir; 7'si `test.fail` ile BEKLENEN
-#     başarısızlıktır (a11y-smoke.spec.ts modal odak sözleşmesi — ürün henüz
-#     odak tuzağı/geri verme uygulamıyor). Playwright bunları da "passed"
-#     sayar; sayıyı okurken bu ayrım gözetilmelidir. O 7 test artık
-#     docs/backlog.md'de AÇIK bir madde olarak kayıtlıdır (11. tur, B6/1) —
-#     eskiden hiçbir yerde yazılı DEĞİLDİ (review-gate kural 4 ihlali).
+#     143'ün TAMAMI artık GERÇEK geçiş olmak zorundadır: a11y-smoke.spec.ts
+#     modal odak sözleşmesinin 7 testi önceden `test.fail` ("beklenen
+#     başarısızlık") taşıyordu; 2026-08-21'de üç overlay'e ortak odak
+#     yönetimi eklendi (src/lib/useModalFocus.ts: açılışta odak içeri,
+#     Tab/Shift+Tab tuzağı, kapanışta odağın tetikleyiciye dönüşü,
+#     ExportDialog'a Escape) ve 7 `test.fail` satırı SİLİNDİ — o testler
+#     gerçek klavyeyle geçiyor (a11y-smoke 14/14, negatif kontrollü ölçüm).
+#     Kayıt: docs/backlog.md B6/1 maddesi KAPANDI olarak güncellendi.
 ```
 
 > **Neden gerçek fare?** Teslim edilen ilk sürümde "E2E" testleri store'u doğrudan
@@ -308,8 +313,9 @@ alınması.
 Sıradaki (öncelik sırasıyla, gerekçeleriyle
 [docs/backlog.md](docs/backlog.md) ve [docs/poc-bilinen-sinirlar.md](docs/poc-bilinen-sinirlar.md)):
 
-1. **LUT (.cube) editör yüzeyi + önizleme shader'ı** — export motoru hazır, yükleme yolu, efekt
-   UI'ı ve WebGL2 3D doku örneklemesi yok (iki ayrı iş kalemi — §1.3)
+1. ~~**LUT (.cube) editör yüzeyi + önizleme shader'ı**~~ — **KAPANDI (2026-08-21)**: `.cube`
+   yükleme türü + Inspector LUT bölümü + §4.2 önizleme shader'ı; önizleme↔export paritesi
+   ölçüldü (SSIM 0,994 — `e2e/lut.spec.ts`, kayıt §1.3)
 2. **Pis-dosya korpusu** — iPhone HDR/HLG, VFR, döndürülmüş MOV ile uçtan uca testler
 3. **`fx.*` keyframe'i** — renk/LUT parametrelerinin animasyonu
 4. **Track yeniden sıralama / yeniden adlandırma** — bugün katman sırası ancak track'leri doğru

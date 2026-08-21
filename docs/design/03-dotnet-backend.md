@@ -157,7 +157,7 @@ modelBuilder.Entity<Job>()
 
 - `AddIdentityCore<AppUser>()` (UI'sız çekirdek) + EF store. Şifre politikası default, e-posta doğrulama MVP'de opsiyonel (flag ile).
 - **Access token**: JWT, 15 dk, `sub`, `email` claim'leri. İmza: HS256 + 256-bit secret (env'den). MVP'de tek API olduğu için asimetrik anahtara gerek yok.
-- **Refresh token**: 32 byte random, client'a ham verilir, DB'de SHA-256 hash. **Rotation**: her refresh'te eski token revoke + yenisi verilir; revoke edilmiş token tekrar kullanılırsa zincirdeki tüm token'lar iptal (theft detection).
+- **Refresh token**: 32 byte random, client'a ham verilir, DB'de SHA-256 hash. **Rotation**: her refresh'te eski token revoke + yenisi verilir; ROTASYONLA revoke edilmiş (halefi olan) token tekrar kullanılırsa zincirdeki tüm token'lar iptal (theft detection). Logout'la revoke edilen token halefsizdir — replay'i düz 401 alır, cascade tetiklemez (per-device logout vaadi; 14. tur triyajı 2026-08-21).
 - Teslim: SPA için refresh token **HttpOnly + Secure + SameSite=Strict cookie** (path=`/api/auth/refresh`), access token response body'de — XSS'e karşı en makul MVP dengesi.
 - **SignalR auth**: WebSocket'te header taşınamadığı için `access_token` query string desteği (`OnMessageReceived` event'inde sadece hub path'i için).
 
@@ -165,9 +165,13 @@ modelBuilder.Entity<Job>()
 POST /api/auth/register        { email, password, displayName }
 POST /api/auth/login           -> { accessToken, expiresIn } + refresh cookie
 POST /api/auth/refresh         (cookie) -> yeni access + rotate edilmiş refresh
-POST /api/auth/logout          refresh revoke
+POST /api/auth/refresh/logout  (cookie) -> YALNIZ bu cihazın refresh token'ı revoke
 GET  /api/auth/me
 ```
+
+*(2026-08-21: logout, cookie path'inin altına taşındı — `/api/auth/logout` cookie'yi
+göremediği için per-device iptal yapamıyordu ve tüm cihazları düşürüyordu; ayrıntı
+`poc-bilinen-sinirlar.md` §4.5.)*
 
 .NET 10'un yeni built-in Identity API endpoint'leri (`MapIdentityApi`) refresh rotation ve cookie stratejisinde esneklik vermediği için **kullanılmıyor** — endpoint'ler elle yazılır (~200 satır).
 

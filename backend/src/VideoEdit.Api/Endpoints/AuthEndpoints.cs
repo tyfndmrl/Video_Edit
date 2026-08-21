@@ -19,7 +19,14 @@ public static class AuthEndpoints
         group.MapPost("/register", Register).RequireRateLimiting("auth");
         group.MapPost("/login", Login).RequireRateLimiting("auth");
         group.MapPost("/refresh", Refresh);
-        group.MapPost("/logout", Logout).RequireAuthorization();
+        // PER-DEVICE logout, ROTASI BİLİNÇLİ OLARAK cookie path'inin ALTINDA
+        // (/api/auth/refresh/logout): refresh cookie Path=/api/auth/refresh ile verilir ve
+        // tarayıcı onu yalnız o path'in altına gönderir — eski /api/auth/logout rotası
+        // cookie'yi HİÇ GÖREMEDİĞİ için "bu cihaz hangisi" sorusunu yanıtlayamıyor ve tüm
+        // cihazları düşürüyordu. Kimlik, cookie'deki token'ın KENDİSİDİR (ham token'ı bilmek
+        // = o oturumun sahibi olmak); access token süresi dolmuş olsa da çıkış çalışmalı,
+        // bu yüzden RequireAuthorization YOK (refresh ucuyla aynı model).
+        group.MapPost("/refresh/logout", Logout);
         group.MapGet("/me", Me).RequireAuthorization();
 
         return app;
@@ -157,16 +164,26 @@ public static class AuthEndpoints
         return Results.Ok(new AuthResponse(token, expiresIn));
     }
 
-    private static async Task<IResult> Logout(
+    /// <summary>
+    /// PER-DEVICE logout: yalnız İSTEĞİ YAPAN cihazın refresh token'ı iptal edilir
+    /// (cookie'den okunur); kullanıcının diğer cihazlarındaki oturumlar YAŞAMAYA DEVAM EDER.
+    /// "Tüm cihazlardan çıkış" davranışı <see cref="IRefreshTokenService.RevokeAllForUserAsync"/>'ta
+    /// durur ve şifre değişimi / theft-detection senaryolarına aittir — logout'a değil.
+    /// Cookie yoksa iptal edilecek oturum da yoktur: idempotent 204 (cookie yine temizlenir).
+    /// Internal: birim testleri gerçek cookie başlığıyla doğrudan çağırır.
+    /// </summary>
+    internal static async Task<IResult> Logout(
         IRefreshTokenService refreshTokens,
         TimeProvider clock,
         HttpContext http,
         CancellationToken ct)
     {
-        // Refresh cookie Path=/api/auth/refresh olduğu için buraya gelmez;
-        // access token ile kimliği bilinen kullanıcının TÜM refresh token'ları iptal edilir.
-        var userId = http.User.GetUserId();
-        await refreshTokens.RevokeAllForUserAsync(userId, clock.GetUtcNow(), ct);
+        if (http.Request.Cookies.TryGetValue(RefreshCookieName, out var raw)
+            && !string.IsNullOrEmpty(raw))
+        {
+            await refreshTokens.RevokeAsync(raw, clock.GetUtcNow(), ct);
+        }
+
         DeleteRefreshCookie(http.Response);
         return Results.NoContent();
     }

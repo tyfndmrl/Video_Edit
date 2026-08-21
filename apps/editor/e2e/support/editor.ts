@@ -66,9 +66,15 @@ export class EditorApp {
   // UI sözleşmesi
   // -------------------------------------------------------------------
 
-  /** "Sığdır" düğmesi (mevcut özellik, TimelinePanel başlığında). */
+  /**
+   * "Sığdır" düğmesi (TimelinePanel başlığında). Erişilebilir ADI "Fit"
+   * (görünen metin), başlığı "Sığdır (Shift+Z)" — yalnız /Sığdır/ arayan eski
+   * locator hiçbir düğmeyle eşleşmiyordu ve ensureContentVisible'ın fit dalı
+   * ölüydü. İki isme de bağlan ki metin/başlık hangisi değişirse değişsin
+   * düğme bulunur.
+   */
   get fitButton(): Locator {
-    return this.page.getByRole('button', { name: /Sığdır/i });
+    return this.page.getByRole('button', { name: /^(Fit|Sığdır)/i });
   }
 
   /** Geri al / Yinele (TopBar, mevcut). */

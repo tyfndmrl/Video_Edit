@@ -27,8 +27,10 @@ import {
   deleteTrack,
   detachAudio,
   duplicateClips,
+  moveTrack,
   pasteAtPlayhead,
   removeTransition,
+  renameTrack,
   splitAtPlayhead,
   toggleTrackHidden,
   toggleTrackLocked,
@@ -106,6 +108,20 @@ export function runTimelineMenuAction(
     }
     case 'paste':
       return pasteAtPlayhead(playheadUs);
+    // GERÇEK akışta bu dala hiç inilmez: TimelinePanel 'renameTrack'i erken
+    // yakalayıp başlıktaki satır içi input'u açar (yeni metin bir UI jestidir).
+    // Dal yine de OP'UN KENDİSİNİ koşar — mevcut adla no-op rename — ki
+    // "menü öğesi -> op eşlemesi" sözleşme testi (ok === !disabled) rename
+    // için de gerçek ret kuralını (kilitli track / silinmiş track) doğrulasın.
+    case 'renameTrack': {
+      if (target.kind !== 'track') return fail('no track target');
+      const t = useDocStore.getState().doc.tracks.find((x) => x.id === target.trackId);
+      return renameTrack(target.trackId, t?.name ?? '');
+    }
+    case 'moveTrackUp':
+      return target.kind === 'track' ? moveTrack(target.trackId, 'up') : fail('no track target');
+    case 'moveTrackDown':
+      return target.kind === 'track' ? moveTrack(target.trackId, 'down') : fail('no track target');
     case 'toggleMuted':
       return target.kind === 'track' ? toggleTrackMuted(target.trackId) : fail('no track target');
     case 'toggleHidden':

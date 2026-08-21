@@ -1,0 +1,13 @@
+{
+  "description": "Keyframe ORDERING document-invariant contract (accept/reject parity): within one channel, keyframes must be STRICTLY sorted by timeUs — ascending, no duplicates. Consumed by packages/timeline-schema/tests/invariants.test.ts (zod validateTimelineDoc) and backend/tests/VideoEdit.UnitTests/KeyframeOrderParityTests.cs (ExportCompiler.Validate -> KeyframeCompiler.Parse). Both runners exercise every case on a visual channel (opacity) AND the audio channel (volume), mirroring keyframe-bounds-vectors.json. Every timeUs sits inside [0, timelineDurationUs] and every timelineDurationUs sits on the 30fps project frame grid, so ONLY the ordering rule separates valid from invalid — the bounds rule has its own vector file and must not fire here. This closes the 'keyframe siralamasi' family of the document-invariant parity gap recorded in docs/backlog.md (14. tur, M3 sinifi — same class as C1).",
+  "cases": [
+    { "name": "single-keyframe", "timelineDurationUs": 2000000, "timesUs": [0], "valid": true },
+    { "name": "sorted-pair", "timelineDurationUs": 2000000, "timesUs": [0, 500000], "valid": true },
+    { "name": "sorted-triple-to-the-end", "timelineDurationUs": 2000000, "timesUs": [0, 33333, 2000000], "valid": true },
+    { "name": "adjacent-microseconds", "timelineDurationUs": 2000000, "timesUs": [999999, 1000000], "valid": true },
+    { "name": "unsorted-pair", "timelineDurationUs": 2000000, "timesUs": [500000, 100000], "valid": false },
+    { "name": "duplicate-times", "timelineDurationUs": 2000000, "timesUs": [100000, 100000], "valid": false },
+    { "name": "duplicate-inside-triple", "timelineDurationUs": 2000000, "timesUs": [0, 400000, 400000], "valid": false },
+    { "name": "fully-reversed-triple", "timelineDurationUs": 2000000, "timesUs": [300000, 200000, 100000], "valid": false }
+  ]
+}

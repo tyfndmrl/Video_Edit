@@ -38,11 +38,13 @@ import {
   planMoveClips,
   projectEndUs,
   removeTransition,
+  renameTrack,
   setTransitionDuration,
   setTransitionType,
   toggleTrackHidden,
   toggleTrackLocked,
   toggleTrackMuted,
+  trackRenameBlockReason,
   transitionAt,
   addTransitionBlockReason,
   type OpResult,
@@ -234,6 +236,15 @@ export function TimelinePanel() {
 
   const [transitionEditor, setTransitionEditor] = useState<TransitionEditorState | null>(null);
   const closeTransitionEditor = useCallback(() => setTransitionEditor(null), []);
+
+  // Track başlığında satır içi yeniden adlandırma. Girişi açan iki yol var
+  // (çift tık + sağ tık menüsü) ve İKİSİ DE op'un kendi ret kuralından
+  // (trackRenameBlockReason) geçer — kilitli track'te input hiç açılmaz.
+  const [renamingTrackId, setRenamingTrackId] = useState<string | null>(null);
+  const beginRenameTrack = useCallback((trackId: string) => {
+    if (trackRenameBlockReason(useDocStore.getState().doc, trackId) !== null) return;
+    setRenamingTrackId(trackId);
+  }, []);
 
   // Kısa süreli inline uyarı (çakışan taşıma, reddedilen menü eylemi …).
   // Sessiz ret kullanıcıya "çalışmıyor" hissi veriyordu.
@@ -1044,6 +1055,12 @@ export function TimelinePanel() {
       closeMenu();
       if (open === null) return;
       if (useProjectSession.getState().status !== 'ready') return;
+      // Yeniden adlandırma bir UI jesti: menü öğesi başlıktaki satır içi
+      // input'u açar, op ancak Enter/blur'da (commitRename) çağrılır.
+      if (id === 'renameTrack' && open.target.kind === 'track') {
+        beginRenameTrack(open.target.trackId);
+        return;
+      }
       reportOp(
         runTimelineMenuAction(id, {
           target: open.target,
@@ -1052,7 +1069,7 @@ export function TimelinePanel() {
         }),
       );
     },
-    [closeMenu, menu, reportOp],
+    [beginRenameTrack, closeMenu, menu, reportOp],
   );
 
   // ---------------------------------------------------------------------
@@ -1303,44 +1320,66 @@ export function TimelinePanel() {
           <div style={{ height: RULER_H }} className="border-b border-edge bg-surface-2" />
           <div className="relative overflow-hidden" style={{ height: `calc(100% - ${RULER_H}px)` }}>
             <div style={{ transform: `translateY(${-scrollY}px)` }}>
-              {doc.tracks.map((track, i) => (
-                <div
-                  key={track.id}
-                  className="flex items-center gap-1 px-2"
-                  style={{ height: TRACK_H, marginBottom: TRACK_GAP }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setMenu({
-                      x: e.clientX,
-                      y: e.clientY,
-                      playheadUs: useEditorStore.getState().playheadUs,
-                      target: { kind: 'track', trackId: track.id },
-                    });
-                  }}
-                >
-                  <span className="min-w-0 flex-1 truncate text-[11px] text-fg-muted">
-                    {track.name ?? `${track.type === 'audio' ? 'Ses' : track.type === 'overlay' ? 'Overlay' : 'Video'} ${i + 1}`}
-                  </span>
-                  <TrackToggle
-                    label="M"
-                    title="Sessize al"
-                    active={track.muted}
-                    onClick={() => toggleTrackMuted(track.id)}
-                  />
-                  <TrackToggle
-                    label="H"
-                    title="Gizle"
-                    active={track.hidden}
-                    onClick={() => toggleTrackHidden(track.id)}
-                  />
-                  <TrackToggle
-                    label="L"
-                    title="Kilitle"
-                    active={track.locked}
-                    onClick={() => toggleTrackLocked(track.id)}
-                  />
-                </div>
-              ))}
+              {doc.tracks.map((track, i) => {
+                const derivedLabel = `${track.type === 'audio' ? 'Ses' : track.type === 'overlay' ? 'Overlay' : 'Video'} ${i + 1}`;
+                return (
+                  <div
+                    key={track.id}
+                    data-testid="track-header"
+                    data-track-id={track.id}
+                    className="flex items-center gap-1 px-2"
+                    style={{ height: TRACK_H, marginBottom: TRACK_GAP }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        playheadUs: useEditorStore.getState().playheadUs,
+                        target: { kind: 'track', trackId: track.id },
+                      });
+                    }}
+                  >
+                    {renamingTrackId === track.id ? (
+                      <TrackRenameInput
+                        initial={track.name ?? ''}
+                        placeholder={derivedLabel}
+                        onCommit={(value) => {
+                          setRenamingTrackId(null);
+                          reportOp(renameTrack(track.id, value));
+                        }}
+                        onCancel={() => setRenamingTrackId(null)}
+                      />
+                    ) : (
+                      <span
+                        data-testid="track-name"
+                        title={`${track.name ?? derivedLabel} — yeniden adlandırmak için çift tıklayın`}
+                        className="min-w-0 flex-1 truncate text-[11px] text-fg-muted"
+                        onDoubleClick={() => beginRenameTrack(track.id)}
+                      >
+                        {track.name ?? derivedLabel}
+                      </span>
+                    )}
+                    <TrackToggle
+                      label="M"
+                      title="Sessize al"
+                      active={track.muted}
+                      onClick={() => toggleTrackMuted(track.id)}
+                    />
+                    <TrackToggle
+                      label="H"
+                      title="Gizle"
+                      active={track.hidden}
+                      onClick={() => toggleTrackHidden(track.id)}
+                    />
+                    <TrackToggle
+                      label="L"
+                      title="Kilitle"
+                      active={track.locked}
+                      onClick={() => toggleTrackLocked(track.id)}
+                    />
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1430,6 +1469,56 @@ export function TimelinePanel() {
 
       <ConflictDialog />
     </div>
+  );
+}
+
+/**
+ * Track başlığındaki satır içi yeniden adlandırma girişi.
+ *
+ * Commit: Enter veya blur (ikisi de aynı yol; blur, Enter sonrası unmount'ta
+ * ÇİFT commit üretmesin diye bayrakla susturulur). İptal: Escape — op hiç
+ * çağrılmaz. Klavye olayları timeline'ın global kısayol dispatcher'ına
+ * SIZDIRILMAZ (stopPropagation): 'C' yazmak klip bölmemeli.
+ */
+function TrackRenameInput({
+  initial,
+  placeholder,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  placeholder: string;
+  onCommit: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const doneRef = useRef(false);
+  return (
+    <input
+      data-testid="track-rename-input"
+      className="min-w-0 flex-1 rounded border border-accent/60 bg-surface-2 px-1 py-0.5 text-[11px] text-fg outline-none"
+      defaultValue={initial}
+      placeholder={placeholder}
+      maxLength={200}
+      autoFocus
+      onFocus={(e) => e.currentTarget.select()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+          doneRef.current = true;
+          onCommit(e.currentTarget.value);
+        } else if (e.key === 'Escape') {
+          doneRef.current = true;
+          onCancel();
+        }
+      }}
+      onBlur={(e) => {
+        if (doneRef.current) return;
+        doneRef.current = true;
+        onCommit(e.currentTarget.value);
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+    />
   );
 }
 

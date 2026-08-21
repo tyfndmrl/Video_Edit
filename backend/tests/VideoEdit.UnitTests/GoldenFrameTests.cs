@@ -66,7 +66,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         {
             [ExportTestDocs.AssetA] = new(sourcePath, probe.HasAudio, probe.ColorTransfer, probe.ColorPrimaries),
         };
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
         Assert.Equal(2_500_000, compiled.ExpectedDurationUs);
 
         // ── 2) Gerçek render — worker ile aynı yol (graph.txt + FfmpegRunner).
@@ -154,6 +154,15 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
 
     private const int CanvasHeight = 240;
 
+    /// <summary>
+    /// Fixture tuvali (320x240, 4:3) HIZ icin kucuktur ve hicbir uretim profiline oran-uyumlu
+    /// degildir; kutusu tuvale esit bu spec ile olcek asamasi uretilmez ve script, eski
+    /// Compile(profile) ciktisiyla bayt bayt aynidir (ExportProfileGoldenTests bunu kosarak
+    /// sabitler). Profil-gecisli GERCEK olcek golden kanitlari ExportProfileGoldenTests tedir.
+    /// </summary>
+    private static readonly ExportOutputSpec CanvasSpec =
+        new(ExportProfile.Hd1080p, CanvasWidth, CanvasHeight);
+
     [FfmpegFact]
     public async Task MultiLayerComposition_TopTrackWins_AndPipLandsOnTheNormativePixels()
     {
@@ -204,7 +213,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             [ExportTestDocs.AssetC] = new(solidPath, false, "bt709", "bt709"),
         };
 
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
         Assert.Equal(2_000_000, compiled.ExpectedDurationUs);
 
         // Overlay zinciri taban tuvalden başlayıp sondan başa ilerler; ÜST katman EN SON biner.
@@ -308,7 +317,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             [ExportTestDocs.AssetC] = new(solidPath, false, "bt709", "bt709"),
         };
 
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
         // Çapa merkezdeyse pad NO-OP'tur ve üretilmez; çapa köşedeyse simetrik pad üretilir.
         Assert.Contains("pad=w=iw*2:h=ih*2:x=iw*1:y=ih*1:color=#00000000", compiled.FilterGraphScript);
         Assert.Contains(
@@ -390,8 +399,8 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             TranslucentBars(),
         ], width: CanvasWidth, height: CanvasHeight);
 
-        var aloneCompiled = ExportCompiler.Compile(alone, sources, ExportProfile.Hd1080p);
-        var withTopCompiled = ExportCompiler.Compile(withTop, sources, ExportProfile.Hd1080p);
+        var aloneCompiled = ExportCompiler.Compile(alone, sources, CanvasSpec);
+        var withTopCompiled = ExportCompiler.Compile(withTop, sources, CanvasSpec);
 
         // Opak katmanın overlay'i de RGB'de blend eder — hatanın kaynağı tam olarak buydu.
         Assert.Contains(":format=rgb[c0]", aloneCompiled.FilterGraphScript);
@@ -457,7 +466,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             [ExportTestDocs.AssetC] = new(solidPath, false, "bt709", "bt709"),
         };
 
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
         // İki katmanın overlay ifadesi BİREBİR aynı x'i verir (y farkı kasıtlı).
         Assert.Contains("overlay=x=floor(241-0.5*w):y=floor(180-0.5*h)", compiled.FilterGraphScript);
         Assert.Contains("overlay=x=floor(241-0.5*w):y=floor(60-0.5*h)", compiled.FilterGraphScript);
@@ -502,7 +511,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
                 [ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 0, 0, 2_000_000, ExportTestDocs.Audio())]),
         ], width: CanvasWidth, height: CanvasHeight);
 
-        var audibleCompiled = ExportCompiler.Compile(hiddenPlusMuted, sources, ExportProfile.Hd1080p);
+        var audibleCompiled = ExportCompiler.Compile(hiddenPlusMuted, sources, CanvasSpec);
         // Tek ses girişi: gizli track'inki. Susturulmuş track ses zinciri üretmez.
         Assert.Contains("amix=inputs=1:", audibleCompiled.FilterGraphScript);
         Assert.DoesNotContain("anullsrc", audibleCompiled.FilterGraphScript);
@@ -519,7 +528,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
                 [ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000, ExportTestDocs.Audio())]),
         ], width: CanvasWidth, height: CanvasHeight);
 
-        var silentCompiled = ExportCompiler.Compile(mutedOnly, sources, ExportProfile.Hd1080p);
+        var silentCompiled = ExportCompiler.Compile(mutedOnly, sources, CanvasSpec);
         Assert.Contains("anullsrc=channel_layout=stereo:sample_rate=48000", silentCompiled.FilterGraphScript);
 
         var silentPath = await RenderAsync(silentCompiled, "muted-silence");
@@ -559,7 +568,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             [ExportTestDocs.AssetC] = new(musicPath, true, musicProbe.ColorTransfer, musicProbe.ColorPrimaries),
         };
 
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
         // Girişler RENDER sırasında açılır (sondan başa) → müzik (tracks[1]) giriş 0,
         // video klibi (tracks[0]) giriş 1. Müzik girişine [0:v] referansı ÇIKMAMALI.
         Assert.Equal(musicPath, compiled.Inputs[0].Path);
@@ -597,7 +606,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             [ExportTestDocs.AssetC] = new(photoPath, false, "bt709", "bt709"),
         };
 
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
         var input = Assert.Single(compiled.Inputs);
         Assert.True(input.Loop);
         Assert.Equal(["-loop", "1", "-t", "2.033333", "-i", photoPath], input.ToArgs());
@@ -650,7 +659,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             [ExportTestDocs.AssetC] = new(photoPath, false, "bt709", "bt709"),
         };
 
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
         Assert.True(compiled.Inputs[1].Loop);                 // görsel = üst katman, ikinci giriş
         var frame = DecodeFrameRgb24(await RenderAsync(compiled, "image-layer"), 30, "image-layer-f30");
 
@@ -713,8 +722,8 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             ]),
         ], width: CanvasWidth, height: CanvasHeight);
 
-        var aloneCompiled = ExportCompiler.Compile(alone, sources, ExportProfile.Hd1080p);
-        var runCompiled = ExportCompiler.Compile(inRun, sources, ExportProfile.Hd1080p);
+        var aloneCompiled = ExportCompiler.Compile(alone, sources, CanvasSpec);
+        var runCompiled = ExportCompiler.Compile(inRun, sources, CanvasSpec);
         Assert.DoesNotContain("concat=", aloneCompiled.FilterGraphScript);
         Assert.Contains("concat=n=2:v=1:a=0[v0]", runCompiled.FilterGraphScript);
         // İki klip TEK overlay'e düşer (klip başına overlay olsaydı iki tane olurdu).
@@ -839,8 +848,8 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             ExportTestDocs.VideoTrack(clips: [first, next]),
         ], width: CanvasWidth, height: CanvasHeight);
 
-        var aloneCompiled = ExportCompiler.Compile(alone, sources, ExportProfile.Hd1080p);
-        var joinedCompiled = ExportCompiler.Compile(joined, sources, ExportProfile.Hd1080p);
+        var aloneCompiled = ExportCompiler.Compile(alone, sources, CanvasSpec);
+        var joinedCompiled = ExportCompiler.Compile(joined, sources, CanvasSpec);
         Assert.Contains("xfade=transition=fade:", joinedCompiled.FilterGraphScript);
 
         // Frame 15 (t=0.5 sn) geçiş penceresinin (0.9-1.1 sn) DIŞINDADIR → saf ilk klip.
@@ -1029,7 +1038,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             ]),
         ], width: CanvasWidth, height: CanvasHeight);
 
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
         var box = LayerGeometry.ScaleBox(CanvasWidth, CanvasHeight, scale);
         var (outW, _) = ScaleOutputSize(320, 240, (int)box.Width, (int)box.Height);
 
@@ -1083,8 +1092,8 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
             ]),
         ], width: CanvasWidth, height: CanvasHeight);
 
-        var straightCompiled = ExportCompiler.Compile(Doc(0), sources, ExportProfile.Hd1080p);
-        var rotatedCompiled = ExportCompiler.Compile(Doc(90), sources, ExportProfile.Hd1080p);
+        var straightCompiled = ExportCompiler.Compile(Doc(0), sources, CanvasSpec);
+        var rotatedCompiled = ExportCompiler.Compile(Doc(90), sources, CanvasSpec);
         Assert.DoesNotContain("rotate=", straightCompiled.FilterGraphScript);
 
         var straight = DecodeFrameRgb24(
@@ -1251,7 +1260,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
 
         // ── (1) Eşiğin ALTI: TİPLİ hata, ffmpeg hiç çağrılmaz.
         var rejected = Assert.Throws<UnsupportedFeatureException>(
-            () => ExportCompiler.Compile(DocAt(0.060), sources, ExportProfile.Hd1080p));
+            () => ExportCompiler.Compile(DocAt(0.060), sources, CanvasSpec));
         Assert.Equal("degenerate-layer", rejected.Feature);
         Assert.Contains("320x16", rejected.Message);          // NEDEN: kaynağın oranı
         Assert.Contains("19x14", rejected.Message);           // hangi kutuda
@@ -1261,7 +1270,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         Assert.Equal((18, 16), ScaleOutputSize(320, 16, 19, 14));
 
         // ── (2) Eşiğin HEMEN ÜSTÜ: derlenir VE doğru geometriyle render edilir.
-        var compiled = ExportCompiler.Compile(DocAt(0.061), sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(DocAt(0.061), sources, CanvasSpec);
         Assert.Contains("scale=20:15:", compiled.FilterGraphScript);
 
         var frame = DecodeFrameRgb24(await RenderAsync(compiled, "degen-edge"), 15, "degen-edge-f15");

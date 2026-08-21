@@ -70,6 +70,16 @@ function ExportJobRow({ job, projectId }: { job: ExportJobDto; projectId: string
         >
           {statusLabel(job.status)}
         </span>
+        {job.profile && (
+          // Dört profil varken hangi işin hangi çıktıyı ürettiği satırda görünmeli
+          // (aynı projede 1080p ve dikey işler yan yana ayırt edilemezdi).
+          <span
+            data-testid="export-job-profile"
+            className="rounded border border-edge px-1.5 py-0.5 text-[10px] whitespace-nowrap text-fg-muted"
+          >
+            {job.profile}
+          </span>
+        )}
         <span className="min-w-0 flex-1 truncate text-[10px] text-fg-muted" title={job.id}>
           {job.id}
         </span>

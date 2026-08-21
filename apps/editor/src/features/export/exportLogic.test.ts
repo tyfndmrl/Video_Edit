@@ -11,10 +11,13 @@ import {
   exportBlockReason,
   exportFrameGridBlockReason,
   mapExportError,
+  PROFILE_TARGETS,
+  profileAspectBlockReason,
   stageLabel,
   statusBadgeClass,
   statusLabel,
 } from './exportLogic';
+import type { ExportProfile } from '../../entities/exports';
 import type { TimelineDoc } from '@videoedit/timeline-schema';
 
 describe('mapExportError (ExportDialog message)', () => {
@@ -322,5 +325,77 @@ describe('exportFrameGridBlockReason', () => {
   it('names the START when that is the edge that is off', () => {
     const reason = exportFrameGridBlockReason(docWith(1, 33_332));
     expect(reason).toContain('başlangıcı');
+  });
+});
+
+describe('profileAspectBlockReason (ExportProfiles.SpecFor mirror)', () => {
+  const LANDSCAPE: ExportProfile[] = ['1080p', '720p', '2160p'];
+
+  it('a 16:9 canvas matches every landscape profile — any size, upscale included', () => {
+    for (const profile of LANDSCAPE) {
+      expect(profileAspectBlockReason(1920, 1080, profile)).toBeNull();
+      expect(profileAspectBlockReason(960, 540, profile)).toBeNull();
+    }
+  });
+
+  it('dikey is refused on a 16:9 canvas with the geometry in the sentence', () => {
+    const reason = profileAspectBlockReason(1920, 1080, 'dikey');
+    expect(reason).not.toBeNull();
+    expect(reason).toContain('1080×1920');
+    expect(reason).toContain('1920×1080');
+  });
+
+  it('a 9:16 canvas matches ONLY dikey', () => {
+    expect(profileAspectBlockReason(1080, 1920, 'dikey')).toBeNull();
+    expect(profileAspectBlockReason(540, 960, 'dikey')).toBeNull();
+    for (const profile of LANDSCAPE) {
+      expect(profileAspectBlockReason(1080, 1920, profile)).not.toBeNull();
+    }
+  });
+
+  it('an odd canvas (raw API only) matches nothing — the reason still explains', () => {
+    for (const profile of [...LANDSCAPE, 'dikey' as const]) {
+      expect(profileAspectBlockReason(320, 240, profile)).not.toBeNull();
+    }
+  });
+
+  it('the rule is exact rational equality, not a float tolerance', () => {
+    // 1919x1080 en yakın 16:9'a yüzde 0,05 uzaklıktadır — yine de reddedilir:
+    // sunucudaki kapı (çapraz çarpım) da aynen reddeder; gevşek bir istemci
+    // burada butonu açık bırakıp kullanıcıyı opak 422'ye gönderirdi.
+    expect(profileAspectBlockReason(1919, 1080, '1080p')).not.toBeNull();
+  });
+
+  it('every profile has a target box (the table drives the dialog buttons)', () => {
+    for (const profile of ['1080p', '720p', '2160p', 'dikey'] as const) {
+      const target = PROFILE_TARGETS[profile];
+      expect(target.width).toBeGreaterThan(0);
+      expect(target.height).toBeGreaterThan(0);
+      // yuv420p çift boyut ister — kutular çift olmalı (§2.5 geometri sözleşmesi).
+      expect(target.width % 2).toBe(0);
+      expect(target.height % 2).toBe(0);
+    }
+  });
+});
+
+describe('mapExportError: profile-mismatch code (export-profile-aspect)', () => {
+  it("422 with a profile code is the 'profile' kind and carries the detail", () => {
+    const error = mapExportError(422, {
+      title: 'Export profile does not match the project canvas.',
+      detail: "'dikey' profili 1080x1920 üretir; proje tuvali 1920x1080.",
+      feature: 'export-profile-aspect',
+    });
+    expect(error.kind).toBe('profile');
+    expect(error.message).toContain('Seçilen profil bu projeye uymuyor');
+    expect(error.message).toContain("'dikey' profili");
+    // Öteki üç cümleye SIZMAZ: belgeye baktıran hiçbir kalıp kurulmaz.
+    expect(error.message).not.toContain('desteklenmeyen');
+    expect(error.message).not.toContain('dosya');
+  });
+
+  it('falls back to a self-contained Turkish sentence without a detail', () => {
+    const error = mapExportError(422, { feature: 'export-profile-aspect' });
+    expect(error.kind).toBe('profile');
+    expect(error.message).toContain('en-boy oranına uymuyor');
   });
 });

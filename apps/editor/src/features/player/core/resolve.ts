@@ -383,6 +383,38 @@ const CA_KEYS: (keyof ColorAdjust)[] = [
   'saturation',
 ];
 
+// ---------------------------------------------------------------------------
+// lut extraction (rendering-semantics §4.2)
+// ---------------------------------------------------------------------------
+
+/** The document half of a §4.2 lut effect — the engine maps assetId to a 3D texture. */
+export interface LutSelection {
+  assetId: string;
+  /** mix(original, LUT(original), intensity) — clamped to [0,1]. */
+  intensity: number;
+}
+
+/**
+ * First enabled lut effect of the clip, or null. Mirrors colorAdjustOf's
+ * single-effect contract (one sampler3D pass per layer). A lut whose params
+ * are malformed (no assetId string / non-finite intensity) is skipped rather
+ * than guessed: a wrong LUT is worse than no LUT, and the export compiler
+ * rejects such a document anyway (invariant rule 6).
+ */
+export function lutOf(clip: Clip): LutSelection | null {
+  for (const effect of clip.effects) {
+    if (effect.type !== 'lut' || !effect.enabled) continue;
+    const assetId = effect.params.assetId;
+    const intensity = effect.params.intensity;
+    if (typeof assetId !== 'string' || assetId.length === 0) continue;
+    if (typeof intensity !== 'number' || !Number.isFinite(intensity)) continue;
+    const clamped = Math.min(1, Math.max(0, intensity));
+    if (clamped <= 0) return null; // §4.2/compiler: intensity 0 = efekt yok
+    return { assetId, intensity: clamped };
+  }
+  return null;
+}
+
 /**
  * First enabled colorAdjust effect of the clip as numeric params (defaults 0 =
  * identity), or null when there is none. v1 limitation: multiple colorAdjust

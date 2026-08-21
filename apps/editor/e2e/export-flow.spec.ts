@@ -52,7 +52,9 @@ test.describe('Dışa aktarma — uçtan uca', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByText('1080p · H.264')).toBeVisible();
+    // exact: profil seçici "Dikey 1080p · H.264" de listeler; alt-dize eşleşmesi
+    // strict-mode'da ikili çözünürdü.
+    await expect(dialog.getByText('1080p · H.264', { exact: true })).toBeVisible();
     // Export SON KAYDEDİLEN dokümanı render eder — diyalog bunu açıkça yazar.
     await expect(page.getByTestId('export-autosave-summary')).toBeVisible();
 

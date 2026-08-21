@@ -31,6 +31,15 @@ public sealed class ExportM5GoldenTests : IDisposable
     private const int CanvasWidth = 320;
     private const int CanvasHeight = 240;
 
+    /// <summary>
+    /// Fixture tuvali (320x240, 4:3) HIZ icin kucuktur ve hicbir uretim profiline oran-uyumlu
+    /// degildir; kutusu tuvale esit bu spec ile olcek asamasi uretilmez ve script, eski
+    /// Compile(profile) ciktisiyla bayt bayt aynidir (ExportProfileGoldenTests bunu kosarak
+    /// sabitler). Profil-gecisli GERCEK olcek golden kanitlari ExportProfileGoldenTests tedir.
+    /// </summary>
+    private static readonly ExportOutputSpec CanvasSpec =
+        new(ExportProfile.Hd1080p, CanvasWidth, CanvasHeight);
+
     /// <summary>Merdiven kaynağının 8 basamağı — 0.5 sn'de bir renk değişir (4 sn toplam).</summary>
     private static readonly string[] StaircaseColors =
         ["0x804020", "0x2080C0", "0xC02080", "0x20C080", "0x8040C0", "0xC08020", "0x2040C0", "0x40C020"];
@@ -70,13 +79,13 @@ public sealed class ExportM5GoldenTests : IDisposable
         // Referans: rate = 1, kaynak [0,4) → 4 sn, 120 kare.
         var reference = await RenderAsync(
             ExportCompiler.Compile(
-                SpeedDoc(0, 4_000_000, 1), sources, ExportProfile.Hd1080p), "speed-ref");
+                SpeedDoc(0, 4_000_000, 1), sources, CanvasSpec), "speed-ref");
         await AssertStreamAsync(reference, 4_000_000, 120);
 
         // 2x: kaynak [0,4) → 2 sn, 60 kare. Çıktı karesi n = referansın 2n. karesi.
         var fast = await RenderAsync(
             ExportCompiler.Compile(
-                SpeedDoc(0, 4_000_000, 2), sources, ExportProfile.Hd1080p), "speed-2x");
+                SpeedDoc(0, 4_000_000, 2), sources, CanvasSpec), "speed-2x");
         await AssertStreamAsync(fast, 2_000_000, 60);
         foreach (var n in (int[])[4, 10, 20, 40, 55])
         {
@@ -86,7 +95,7 @@ public sealed class ExportM5GoldenTests : IDisposable
         // 0.5x: kaynak [0,1) → 2 sn, 60 kare. Çıktı karesi n = referansın floor(n/2). karesi.
         var half = await RenderAsync(
             ExportCompiler.Compile(
-                SpeedDoc(0, 1_000_000, 0.5), sources, ExportProfile.Hd1080p), "speed-05x");
+                SpeedDoc(0, 1_000_000, 0.5), sources, CanvasSpec), "speed-05x");
         await AssertStreamAsync(half, 2_000_000, 60);
         foreach (var n in (int[])[6, 20, 36, 50])
         {
@@ -96,7 +105,7 @@ public sealed class ExportM5GoldenTests : IDisposable
         // 0.25x: kaynak [0,1) → 4 sn, 120 kare. atempo KATLAMASI (0.5 × 0.5) burada koşar.
         var quarter = await RenderAsync(
             ExportCompiler.Compile(
-                SpeedDoc(0, 1_000_000, 0.25), sources, ExportProfile.Hd1080p), "speed-025x");
+                SpeedDoc(0, 1_000_000, 0.25), sources, CanvasSpec), "speed-025x");
         await AssertStreamAsync(quarter, 4_000_000, 120);
         foreach (var n in (int[])[8, 40, 80, 100])
         {
@@ -115,7 +124,7 @@ public sealed class ExportM5GoldenTests : IDisposable
             {
                 [ExportTestDocs.AssetA] = new(source, true, "bt709", "bt709"),
             },
-            ExportProfile.Hd1080p);
+            CanvasSpec);
         Assert.Contains("atempo=0.5,atempo=0.5", compiled.FilterGraphScript);
 
         var output = await RenderAsync(compiled, "speed-audio");
@@ -154,7 +163,7 @@ public sealed class ExportM5GoldenTests : IDisposable
         {
             var name = "burst-" + rate.ToString("0.##", CultureInfo.InvariantCulture);
             var compiled = ExportCompiler.Compile(
-                SpeedDoc(0, sourceOutUs, rate), sources, ExportProfile.Hd1080p);
+                SpeedDoc(0, sourceOutUs, rate), sources, CanvasSpec);
             var output = await RenderAsync(compiled, name);
             var expectedSec = compiled.ExpectedDurationUs / 1_000_000d;
 
@@ -216,7 +225,7 @@ public sealed class ExportM5GoldenTests : IDisposable
             ]),
         ], width: CanvasWidth, height: CanvasHeight);
 
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
         Assert.Equal(4_000_000, compiled.ExpectedDurationUs);
 
         // Kurulumun kendisi ölçülür: sesli giriş GERÇEKTEN tek ve toplam süreden KISA olmalı,
@@ -255,7 +264,7 @@ public sealed class ExportM5GoldenTests : IDisposable
 
         var flat = DecodeMonoPcm(
             await RenderAsync(
-                ExportCompiler.Compile(VolumeDoc(null), sources, ExportProfile.Hd1080p), "vol-flat"),
+                ExportCompiler.Compile(VolumeDoc(null), sources, CanvasSpec), "vol-flat"),
             "vol-flat");
 
         // "V" eğrisi: 1 → 0 (2 sn) → 1 (4 sn). Tam ortadaki SIFIR, komutun DOĞRU ZAMANA
@@ -266,7 +275,7 @@ public sealed class ExportM5GoldenTests : IDisposable
                 ExportTestDocs.Kf(0, 1),
                 ExportTestDocs.Kf(2_000_000, 0),
                 ExportTestDocs.Kf(4_000_000, 1),
-            ]), sources, ExportProfile.Hd1080p);
+            ]), sources, CanvasSpec);
         // Ses zincirinde komut filtresi ASENDCMD'dir: 'sendcmd' (video tipi) grafiği
         // "Media type mismatch" ile kurulmadan düşürürdü.
         Assert.Contains("asendcmd=c='", compiled.FilterGraphScript);
@@ -311,7 +320,7 @@ public sealed class ExportM5GoldenTests : IDisposable
         };
 
         var plain = await RenderRawAsync(
-            ExportCompiler.Compile(EffectDoc(null), sources, ExportProfile.Hd1080p), "ca-plain");
+            ExportCompiler.Compile(EffectDoc(null), sources, CanvasSpec), "ca-plain");
         var baseline = PixelAt(RawFrame(plain, 15), 160, 120);
 
         (string Name, Effect Effect, ColorAdjustRef Params)[] cases =
@@ -333,7 +342,7 @@ public sealed class ExportM5GoldenTests : IDisposable
         foreach (var (name, effect, parameters) in cases)
         {
             var output = await RenderRawAsync(
-                ExportCompiler.Compile(EffectDoc(effect), sources, ExportProfile.Hd1080p),
+                ExportCompiler.Compile(EffectDoc(effect), sources, CanvasSpec),
                 "ca-" + name);
             var actual = PixelAt(RawFrame(output, 15), 160, 120);
             var expected = parameters.Apply(baseline);
@@ -361,13 +370,13 @@ public sealed class ExportM5GoldenTests : IDisposable
         };
 
         var plain = await RenderRawAsync(
-            ExportCompiler.Compile(EffectDoc(null), sources, ExportProfile.Hd1080p), "eq-plain");
+            ExportCompiler.Compile(EffectDoc(null), sources, CanvasSpec), "eq-plain");
         var baseline = PixelAt(RawFrame(plain, 15), 160, 120);
         var reference = new ColorAdjustRef(Contrast: 0.5, Brightness: 0.05).Apply(baseline);
 
         var compiled = ExportCompiler.Compile(
             EffectDoc(ExportTestDocs.ColorAdjust(contrast: 0.5, brightness: 0.05)),
-            sources, ExportProfile.Hd1080p);
+            sources, CanvasSpec);
         Assert.Contains("lutrgb=r='clip((val-127.5)*1.5+127.5+12.75,0,255)'",
             compiled.FilterGraphScript);
         Assert.DoesNotContain("eq=", compiled.FilterGraphScript);
@@ -411,11 +420,11 @@ public sealed class ExportM5GoldenTests : IDisposable
         };
 
         var plain = await RenderRawAsync(
-            ExportCompiler.Compile(EffectDoc(null), sources, ExportProfile.Hd1080p), "lut-plain");
+            ExportCompiler.Compile(EffectDoc(null), sources, CanvasSpec), "lut-plain");
         var baseline = PixelAt(RawFrame(plain, 15), 160, 120);
 
         var fullCompiled = ExportCompiler.Compile(
-            EffectDoc(ExportTestDocs.Lut(LutAsset)), sources, ExportProfile.Hd1080p);
+            EffectDoc(ExportTestDocs.Lut(LutAsset)), sources, CanvasSpec);
         Assert.Contains("lut3d=file=", fullCompiled.FilterGraphScript);
         Assert.Contains("interp=trilinear", fullCompiled.FilterGraphScript);
         Assert.DoesNotContain("split", fullCompiled.FilterGraphScript); // intensity=1 → düz lut3d
@@ -425,7 +434,7 @@ public sealed class ExportM5GoldenTests : IDisposable
             $"tam güçte LUT R/B takası vermeli: beklenen {Describe(swapped)}, ölçülen {Describe(full)}");
 
         var halfCompiled = ExportCompiler.Compile(
-            EffectDoc(ExportTestDocs.Lut(LutAsset, 0.5)), sources, ExportProfile.Hd1080p);
+            EffectDoc(ExportTestDocs.Lut(LutAsset, 0.5)), sources, CanvasSpec);
         Assert.Contains("split", halfCompiled.FilterGraphScript);
         Assert.Contains("blend=all_expr='A*(1-0.5)+B*0.5'", halfCompiled.FilterGraphScript);
         var half = PixelAt(RawFrame(await RenderRawAsync(halfCompiled, "lut-half"), 15), 160, 120);
@@ -447,7 +456,7 @@ public sealed class ExportM5GoldenTests : IDisposable
         var identity = PixelAt(
             RawFrame(await RenderRawAsync(
                 ExportCompiler.Compile(EffectDoc(ExportTestDocs.Lut(LutAsset)), sources,
-                    ExportProfile.Hd1080p), "lut-identity"), 15), 160, 120);
+                    CanvasSpec), "lut-identity"), 15), 160, 120);
         Assert.True(MaxDiff(identity, baseline) <= 2,
             $"kimlik LUT pikseli değiştirmemeli: taban {Describe(baseline)}, "
             + $"ölçülen {Describe(identity)}");
@@ -479,7 +488,7 @@ public sealed class ExportM5GoldenTests : IDisposable
                 [ExportTestDocs.AssetA] = new(bottom, false, "bt709", "bt709"),
                 [ExportTestDocs.AssetB] = new(top, false, "bt709", "bt709"),
             },
-            ExportProfile.Hd1080p);
+            CanvasSpec);
         Assert.DoesNotContain("sendcmd", compiled.FilterGraphScript);
 
         var output = await RenderAsync(compiled, "kf-linear");
@@ -525,7 +534,7 @@ public sealed class ExportM5GoldenTests : IDisposable
                 [ExportTestDocs.AssetA] = new(bottom, false, "bt709", "bt709"),
                 [ExportTestDocs.AssetB] = new(top, false, "bt709", "bt709"),
             },
-            ExportProfile.Hd1080p);
+            CanvasSpec);
         Assert.DoesNotContain("sendcmd", compiled.FilterGraphScript);
         Assert.Contains("overlay=x='floor(if(lt(t,", compiled.FilterGraphScript);
 
@@ -573,7 +582,7 @@ public sealed class ExportM5GoldenTests : IDisposable
                 [ExportTestDocs.AssetA] = new(bottom, false, "bt709", "bt709"),
                 [ExportTestDocs.AssetB] = new(top, false, "bt709", "bt709"),
             },
-            ExportProfile.Hd1080p);
+            CanvasSpec);
         Assert.Contains("fade=t=in:st=0.000000:d=2.000000:alpha=1", compiled.FilterGraphScript);
         Assert.DoesNotContain("sendcmd", compiled.FilterGraphScript);
 
@@ -620,7 +629,7 @@ public sealed class ExportM5GoldenTests : IDisposable
                 [ExportTestDocs.AssetA] = new(bottom, false, "bt709", "bt709"),
                 [ExportTestDocs.AssetB] = new(top, false, "bt709", "bt709"),
             },
-            ExportProfile.Hd1080p);
+            CanvasSpec);
         Assert.Contains(":eval=frame", compiled.FilterGraphScript);
 
         var output = await RenderAsync(compiled, "kf-scale");
@@ -663,7 +672,7 @@ public sealed class ExportM5GoldenTests : IDisposable
                 [ExportTestDocs.AssetA] = new(bottom, false, "bt709", "bt709"),
                 [ExportTestDocs.AssetB] = new(top, false, "bt709", "bt709"),
             },
-            ExportProfile.Hd1080p);
+            CanvasSpec);
         Assert.Contains("rotate=a='if(lt(t,", compiled.FilterGraphScript);
 
         var output = await RenderAsync(compiled, "kf-rotate");
@@ -689,7 +698,7 @@ public sealed class ExportM5GoldenTests : IDisposable
                 [ExportTestDocs.AssetA] = new(bottom, false, "bt709", "bt709"),
                 [ExportTestDocs.AssetB] = new(top, false, "bt709", "bt709"),
             },
-            ExportProfile.Hd1080p);
+            CanvasSpec);
         Assert.Contains("rotate=a='if(lt(t,", easedCompiled.FilterGraphScript);
         AssertRotation(await RenderAsync(easedCompiled, "kf-rotate-eased"), "ro-eas", linear: false);
     }

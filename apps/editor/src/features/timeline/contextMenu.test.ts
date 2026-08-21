@@ -33,6 +33,8 @@ import {
   removeTransitionBlockReason,
   splitBlockReason,
   trackDeleteBlockReason,
+  trackMoveBlockReason,
+  trackRenameBlockReason,
   trimToPlayheadBlockReason,
 } from '../../state/timelineOps';
 import { resolveTransitionEdge } from './transitions';
@@ -336,16 +338,42 @@ describe('buildTimelineMenu — track bağlamı', () => {
   const trackCtx = (over: Partial<TimelineMenuContext> = {}): TimelineMenuContext =>
     ctx({ target: { kind: 'track', trackId: V1 }, ...over });
 
-  it('offers paste, the three flags and track deletion', () => {
+  it('offers paste, rename, the two move items, the three flags and track deletion', () => {
     const entries = buildTimelineMenu(trackCtx({ doc: docWith([track(V1, 'video', []), track(V2, 'video', [])]) }));
     expect(ids(entries)).toEqual([
       'paste',
+      'renameTrack',
+      'moveTrackUp',
+      'moveTrackDown',
       'toggleMuted',
       'toggleHidden',
       'toggleLocked',
       'deleteTrack',
     ]);
-    expect(entries.filter((e) => e.kind === 'separator')).toHaveLength(1);
+    expect(entries.filter((e) => e.kind === 'separator')).toHaveLength(2);
+  });
+
+  it('greys the move items at the edges: top track cannot move up, bottom cannot move down', () => {
+    const doc = docWith([track(V1, 'video', []), track(V2, 'video', [])]);
+    const top = buildTimelineMenu(trackCtx({ doc }));
+    expect(find(top, 'moveTrackUp').disabled).toBe(true);
+    expect(find(top, 'moveTrackUp').blockReason).toBe('track already at the top');
+    expect(find(top, 'moveTrackDown').disabled).toBe(false);
+
+    const bottom = buildTimelineMenu(trackCtx({ doc, target: { kind: 'track', trackId: V2 } }));
+    expect(find(bottom, 'moveTrackUp').disabled).toBe(false);
+    expect(find(bottom, 'moveTrackDown').disabled).toBe(true);
+    expect(find(bottom, 'moveTrackDown').blockReason).toBe('track already at the bottom');
+  });
+
+  it('greys rename and both moves on a locked track (the op refuses them too)', () => {
+    const doc = docWith([
+      track(V1, 'video', [], { locked: true }),
+      track(V2, 'video', []),
+    ]);
+    const entries = buildTimelineMenu(trackCtx({ doc }));
+    expect(find(entries, 'renameTrack').blockReason).toBe('track is locked');
+    expect(find(entries, 'moveTrackDown').blockReason).toBe('track is locked');
   });
 
   it('flips the toggle labels with the track flags', () => {
@@ -484,6 +512,12 @@ function reasonFromOps(id: TimelineMenuActionId, c: TimelineMenuContext): string
     case 'toggleHidden':
     case 'toggleLocked':
       return gate(null);
+    case 'renameTrack':
+      return gate(trackId === null ? 'no track' : trackRenameBlockReason(c.doc, trackId));
+    case 'moveTrackUp':
+      return gate(trackId === null ? 'no track' : trackMoveBlockReason(c.doc, trackId, 'up'));
+    case 'moveTrackDown':
+      return gate(trackId === null ? 'no track' : trackMoveBlockReason(c.doc, trackId, 'down'));
     case 'deleteTrack':
       return gate(trackId === null ? 'no track' : trackDeleteBlockReason(c.doc, trackId));
     case 'addMarker':

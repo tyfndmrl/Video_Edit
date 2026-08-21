@@ -25,6 +25,8 @@ import { useProjectSession } from '../../state/projectSession';
 import {
   COLOR_ADJUST_MAX,
   COLOR_ADJUST_MIN,
+  LUT_INTENSITY_MAX,
+  LUT_INTENSITY_MIN,
   POSITION_LIMIT,
   POSITION_DECIMALS,
   ROTATION_DECIMALS,
@@ -47,11 +49,13 @@ import {
   VOLUME_MIN,
   applyClipAudioToDraft,
   applyClipColorAdjustToDraft,
+  applyClipLutToDraft,
   applyClipOpacityToDraft,
   applyClipShapeToDraft,
   applyClipTextToDraft,
   applyClipTransformToDraft,
   maxClipScale,
+  removeClipLut,
   resetClipColorAdjust,
   resetClipTransform,
   rotationBlockReason,
@@ -59,6 +63,9 @@ import {
   setClipAudio,
   setClipColorAdjust,
   setClipColorAdjustEnabled,
+  setClipLut,
+  setClipLutEnabled,
+  setClipLutIntensity,
   setClipOpacity,
   setClipShape,
   setClipSpeed,
@@ -72,6 +79,7 @@ import {
   type OpResult,
 } from '../../state/timelineOps';
 import { inspectorFailureMessage, inspectorNoticeMessage } from './inspectorFeedback';
+import { keyframeSampleBudget } from '../keyframes/keyframeModel';
 import { useKeyframeInspector } from '../keyframes/useKeyframeInspector';
 import { weightsFor } from '../text/fontManifest';
 import { useFontCatalogue } from '../text/fontCatalogue';
@@ -85,6 +93,7 @@ import {
   formatSpeed,
   MIXED_LABEL,
   type ColorSection,
+  type LutSection,
   type ShapeSection,
   type SpeedSection,
   type TextBoxMeasurer,
@@ -121,7 +130,7 @@ const measuredTextBox: TextBoxMeasurer = (clip) => {
 
 /** An op result the user has to see, tagged with the section that caused it. */
 interface OpMessage {
-  source: 'speed' | 'color' | 'visual';
+  source: 'speed' | 'color' | 'visual' | 'lut';
   text: string;
   kind: 'error' | 'notice';
 }
@@ -197,6 +206,7 @@ export function ClipPropertiesPanel() {
   const reportSpeed = reportFrom('speed');
   const reportColor = reportFrom('color');
   const reportVisual = reportFrom('visual');
+  const reportLut = reportFrom('lut');
 
   /**
    * Görüntü bölümünün iki ÖN bilgisi (tıklamadan önce söylenir, sonra değil):
@@ -214,6 +224,14 @@ export function ClipPropertiesPanel() {
     () => visualClipIds.some((id) => transitionChainSiblings(doc, id).length > 0),
     [doc, visualClipIds],
   );
+
+  /**
+   * Keyframe örnekleme bütçesi (rendering-semantics §3.4) — DERLEME GENELİ:
+   * eğrili kanallar ve ses seviyesi kanalı dışa aktarımda kare kare örneklenir
+   * ve 60.000'lik TEK bütçeyi paylaşır; aşan belge HTTP 422 alır. Kestirim üst
+   * sınırdır (bkz. keyframeSampleUpperBound) — rozet 422'den ÖNCE yanar.
+   */
+  const sampleBudget = useMemo(() => keyframeSampleBudget(doc), [doc]);
 
   /**
    * Scale ceiling is a per-CLIP property, not a constant: the export compiler
@@ -237,7 +255,7 @@ export function ClipPropertiesPanel() {
   }
 
   const editable = model.editable && sessionReady;
-  const { audio, visual, identity, text, shape, speed, color } = model;
+  const { audio, visual, identity, text, shape, speed, color, lut } = model;
 
   // Animated channels show the SAMPLE at the playhead (see useKeyframeInspector).
   const opacityShown = visual === null ? null : kf.display('opacity', visual.opacity);
@@ -326,6 +344,19 @@ export function ClipPropertiesPanel() {
       setClipShape(shape.clipIds, patch);
     }
   };
+  /**
+   * lut yoğunluğu: renk slider'larıyla aynı iki yol (sürükleme -> liveEdit
+   * transaction'ı, tekil değişim -> tek op). assetId yazımı hiç buradan geçmez
+   * — o bir <select> seçimidir ve her zaman tekil op'tur (LutPropertiesSection).
+   */
+  const writeLutIntensity = (intensity: number): void => {
+    if (lut === null || !editable) return;
+    if (isLiveEditOpen()) {
+      updateLiveEdit((d) => void applyClipLutToDraft(d, lut.clipIds, { intensity }));
+    } else {
+      reportLut(setClipLutIntensity(lut.clipIds, intensity));
+    }
+  };
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto" data-testid="clip-inspector">
@@ -354,6 +385,21 @@ export function ClipPropertiesPanel() {
         )}
         {!model.editable && (
           <p className="text-[11px] text-accent">Seçim kilitli bir track üzerinde — salt okunur.</p>
+        )}
+        {sampleBudget.warn && (
+          <p
+            className="text-[10px] leading-snug text-amber-400"
+            data-testid="clip-kf-budget-warning"
+            data-upper-bound={sampleBudget.upperBound}
+            data-max={sampleBudget.max}
+          >
+            Keyframe örnekleme bütçesi doluyor: projedeki eğrili (easing’li) animasyon
+            kanalları ve ses seviyesi kanalı dışa aktarımda kare kare örneklenir; kestirilen
+            üst sınır {sampleBudget.upperBound.toLocaleString('tr-TR')} /{' '}
+            {sampleBudget.max.toLocaleString('tr-TR')} örnek. Bütçe TÜM kliplerin
+            toplamıdır — aşarsanız dışa aktarım reddedilir. Eğrili aralıkları kısaltın ya da
+            görsel kanallarda easing’i lineere çevirin.
+          </p>
         )}
       </PropertySection>
 
@@ -559,6 +605,12 @@ export function ClipPropertiesPanel() {
             {visual?.maxScaleFromTextBox === true
               ? 'Metin katmanı kareye SIĞDIRILMAZ, kendi kutusu kadar çizilir (yazı boyutu × ölçek): tavanı bu yüzden metnin ölçülen kutusu belirliyor, proje çözünürlüğü değil.'
               : `Bu tavan proje çözünürlüğünden gelir (${doc.settings.width}×${doc.settings.height}).`}
+            {visual?.maxScaleLoweredByRotation === true && (
+              <span data-testid="clip-scale-rotation-note">
+                {' '}Klip DÖNÜK: dönen katman ara tuvali köşegeni kadar büyütür, bu yüzden
+                tavan dönmesiz halinden daha düşük. Daha büyük ölçek için dönmeyi azaltın.
+              </span>
+            )}
           </p>
         </PropertySection>
       )}
@@ -588,6 +640,16 @@ export function ClipPropertiesPanel() {
         />
       )}
 
+      {lut !== null && (
+        <LutPropertiesSection
+          section={lut}
+          editable={editable}
+          writeIntensity={writeLutIntensity}
+          report={reportLut}
+          message={opMessage?.source === 'lut' ? opMessage : null}
+        />
+      )}
+
       {/*
         Kapsam dürüstlüğü (review-gate kural 4): panelin kapsamadığı klip
         alanları burada AÇIKÇA yazılır. Sessizce eksik bırakmak, kullanıcının
@@ -596,16 +658,14 @@ export function ClipPropertiesPanel() {
       */}
       <PropertySection title="Kapsam" testId="clip-inspector-scope">
         <p className="text-[10px] leading-snug text-fg-muted">
-          Bu panel klibin hızını, rengini, sesini, dönüşümünü ve metin/şekil biçimini düzenler.
-          Keyframe animasyonu artık burada: alanların yanındaki elmas düğmesi playhead'e keyframe
-          yazar, eğri timeline'daki keyframe şeridinden düzenlenir. Henüz burada olmayanlar: çapa
-          (anchor) noktası — merkezde sabit; LUT (.cube) efekti — MVP KAPSAMI DIŞINDA: dosya
-          yükleme yolu, efekt seçimi ve önizleme shader'ı yoktur (dışa aktarma motorunda
-          karşılığı hazırdır, editör yüzeyi yazılmadı — bkz. docs/poc-bilinen-sinirlar.md §1.3).
-          Efekt parametreleri (fx.*) MVP
-          şemasında keyframe'lenemez (bilinçli karar). Hız ve renk düzeltme önizlemede ve dışa
-          aktarımda AYNI normatif formüllerle uygulanır (süre = kaynak ÷ hız; renk sırası
-          pozlama → sıcaklık → ton → kontrast+parlaklık → doygunluk); dışa aktarım tarafını M5’in
+          Bu panel klibin hızını, rengini, LUT'unu, sesini, dönüşümünü ve metin/şekil biçimini
+          düzenler. Keyframe animasyonu artık burada: alanların yanındaki elmas düğmesi playhead'e
+          keyframe yazar, eğri timeline'daki keyframe şeridinden düzenlenir. Henüz burada
+          olmayanlar: çapa (anchor) noktası — merkezde sabit. Efekt parametreleri (fx.*) MVP
+          şemasında keyframe'lenemez (bilinçli karar). Hız, renk düzeltme ve LUT önizlemede ve
+          dışa aktarımda AYNI normatif formüllerle uygulanır (süre = kaynak ÷ hız; renk sırası
+          pozlama → sıcaklık → ton → kontrast+parlaklık → doygunluk; LUT en sonda, trilinear +
+          yoğunluk karışımı); dışa aktarım tarafını M5’in
           sunucu dilimi karşılar — sunucu bir özelliği desteklemiyorsa gerekçe “Dışa Aktarmalar”
           kartında görünür, sessizce düşmez.
         </p>
@@ -804,6 +864,114 @@ function ColorPropertiesSection({
         Değerler −1..1 (0 = etkisiz) ve sıra sabittir: pozlama → sıcaklık → ton →
         kontrast+parlaklık → doygunluk. Önizleme bunu tek geçişli shader ile, dışa aktarım aynı
         formüllerle ffmpeg tarafında uygular; ±1/255 kanal farkı beklenir.
+      </p>
+    </PropertySection>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// LUT section — rendering-semantics §4.2 (.cube 3D LUT + intensity)
+// ---------------------------------------------------------------------------
+
+/** <select> değeri: '' = "Yok" (efekt kaldırılır). */
+const LUT_NONE = '';
+
+function LutPropertiesSection({
+  section,
+  editable,
+  writeIntensity,
+  report,
+  message,
+}: {
+  section: LutSection;
+  editable: boolean;
+  writeIntensity: (intensity: number) => void;
+  report: (result: OpResult) => OpResult;
+  message: OpMessage | null;
+}) {
+  /**
+   * Kitaplıktaki READY .cube varlıkları — seçenek listesi. Store aboneliği
+   * bilinçlidir: yeni yüklenen bir LUT "Hazır" olduğu anda listede belirmeli,
+   * panel yeniden açılmayı beklememeli.
+   */
+  const assets = useAssetStore((s) => s.assets);
+  const lutOptions = useMemo(() => {
+    const options: { value: string; label: string }[] = [{ value: LUT_NONE, label: 'Yok' }];
+    for (const a of assets.values()) {
+      if (a.kind === 'lut' && a.status === 'ready') options.push({ value: a.id, label: a.name });
+    }
+    return options;
+  }, [assets]);
+
+  /**
+   * Dokümandaki assetId seçenek listesinde olmayabilir (LUT silinmiş / başka
+   * projeden gelmiş belge). Seçili değer listede yoksa da eklenir: <select>
+   * yanlış bir seçeneğe düşmesin, kullanıcı "hangi dosyaydı" görebilsin.
+   */
+  const selected = section.assetId ?? null;
+  const options = useMemo(() => {
+    if (selected === null || selected === LUT_NONE) return lutOptions;
+    return lutOptions.some((o) => o.value === selected)
+      ? lutOptions
+      : [...lutOptions, { value: selected, label: 'Kitaplıkta yok (silinmiş LUT)' }];
+  }, [lutOptions, selected]);
+
+  const intensityShown = section.present ? section.intensity : null;
+
+  return (
+    <PropertySection
+      title="LUT"
+      testId="clip-inspector-lut"
+      action={
+        <button
+          type="button"
+          data-testid="clip-lut-reset"
+          disabled={!editable || !section.present}
+          onClick={() => report(removeClipLut(section.clipIds))}
+          className="rounded border border-edge bg-surface-2 px-1.5 py-0.5 text-[10px] text-fg-muted hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+        >
+          Kaldır
+        </button>
+      }
+    >
+      <SelectField
+        id="clip-lut-select"
+        testId="clip-lut-select"
+        label="Tablo"
+        value={selected}
+        options={options}
+        disabled={!editable}
+        onChange={(assetId) =>
+          report(assetId === LUT_NONE ? removeClipLut(section.clipIds) : setClipLut(section.clipIds, assetId))
+        }
+      />
+      <ToggleField
+        label="LUT etkin"
+        testId="clip-lut-enabled"
+        value={section.present ? section.enabled : false}
+        disabled={!editable || !section.present}
+        onChange={(enabled) => report(setClipLutEnabled(section.clipIds, enabled))}
+      />
+      <SliderField
+        id="clip-lut-intensity"
+        testId="clip-lut-intensity"
+        label="Yoğunluk"
+        value={intensityShown}
+        neutral={1}
+        min={LUT_INTENSITY_MIN}
+        max={LUT_INTENSITY_MAX}
+        step={0.01}
+        valueText={formatNumber(intensityShown, 2)}
+        disabled={!editable || !section.present}
+        gesture={{ actionType: 'clipLut', label: 'LUT yoğunluğu değiştirildi' }}
+        onChange={writeIntensity}
+      />
+      {message !== null && <OpMessageLine message={message} />}
+      <p className="text-[10px] leading-snug text-fg-muted" data-testid="clip-lut-note">
+        Kitaplığa yüklenen .cube dosyaları listelenir. Önizleme tabloyu 3B dokuyla (trilinear)
+        örnekler, dışa aktarım aynı tabloyu ffmpeg lut3d=interp=trilinear ile uygular; yoğunluk
+        iki tarafta da aynı formüldür: sonuç = mix(orijinal, LUT(orijinal), yoğunluk). Sıra
+        sabittir: renk düzeltme önce, LUT sonra (§4.2).
       </p>
     </PropertySection>
   );

@@ -34,6 +34,7 @@ void main() {
 
 export const FRAGMENT_SHADER = `#version 300 es
 precision highp float;
+precision highp sampler3D;
 
 uniform sampler2D uTex;
 uniform float uOpacity;
@@ -45,6 +46,17 @@ uniform float uTint;
 uniform float uBrightness;
 uniform float uContrast;
 uniform float uSaturation;
+
+// lut (rendering-semantics §4.2) — NORMATIVE uniform names. uLut3D samples with
+// LINEAR filtering (= trilinear in 3D); uLutScale = (N-1)/N and
+// uLutOffset = 1/(2N) put [0,1] exactly onto texel CENTERS (without the offset
+// the extremes would drift). uIntensity = 0 makes the stage an exact no-op
+// (mix returns c.rgb), which is how "no LUT" is drawn — a 1-texel dummy stays
+// bound so the sampler is never incomplete.
+uniform sampler3D uLut3D;
+uniform float uLutScale;
+uniform float uLutOffset;
+uniform float uIntensity;
 
 in vec2 vUv;
 out vec4 outColor;
@@ -70,6 +82,12 @@ void main() {
   // 5. saturation: linear mix around BT.709 luma.
   float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
   c.rgb = clamp(mix(vec3(l), c.rgb, 1.0 + uSaturation), 0.0, 1.0);
+
+  // 6. lut — AFTER colorAdjust (§4 normative order: colorAdjust -> lut).
+  //    out = mix(original, LUT(original), intensity) — same formula as the
+  //    ffmpeg split/blend chain (§4.2).
+  vec3 lutted = texture(uLut3D, c.rgb * uLutScale + uLutOffset).rgb;
+  c.rgb = mix(c.rgb, lutted, uIntensity);
 
   // Clip opacity multiplies straight (unassociated) alpha (§6.3).
   c.a *= uOpacity;
@@ -113,6 +131,7 @@ void main() {
 
 export const TRANSITION_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
+precision highp sampler3D;
 
 uniform sampler2D uTexA;
 uniform sampler2D uTexB;
@@ -135,6 +154,17 @@ uniform float uTintB;
 uniform float uBrightnessB;
 uniform float uContrastB;
 uniform float uSaturationB;
+// §4.2 lut of each side — the export applies effects in each clip's OWN source
+// chain before xfade, so a transition must grade+LUT each side independently
+// (uIntensity* = 0 -> stage is a no-op, dummy texture stays bound).
+uniform sampler3D uLut3DA;
+uniform float uLutScaleA;
+uniform float uLutOffsetA;
+uniform float uIntensityA;
+uniform sampler3D uLut3DB;
+uniform float uLutScaleB;
+uniform float uLutOffsetB;
+uniform float uIntensityB;
 // p = (t - (T - D/2)) / D, linear (§5.3).
 uniform float uProgress;
 uniform int uMode;
@@ -158,15 +188,23 @@ vec4 applyColorAdjust(vec4 c, float exposure, float temperature, float tint,
   return c;
 }
 
+/** §4.2 — same formula as the layer program's stage 6. */
+vec3 applyLut(vec3 rgb, sampler3D lut, float scale, float offset, float intensity) {
+  vec3 lutted = texture(lut, rgb * scale + offset).rgb;
+  return mix(rgb, lutted, intensity);
+}
+
 /** One side, sampled through its own placement. Outside its quad: nothing. */
 vec4 layerAt(sampler2D tex, mat3 inv, vec2 ndc, float opacity,
              float exposure, float temperature, float tint,
-             float brightness, float contrast, float saturation) {
+             float brightness, float contrast, float saturation,
+             sampler3D lut, float lutScale, float lutOffset, float lutIntensity) {
   vec3 q = inv * vec3(ndc, 1.0);
   vec2 uv = q.xy / q.z;
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return vec4(0.0);
   vec4 c = applyColorAdjust(texture(tex, uv), exposure, temperature, tint,
                             brightness, contrast, saturation);
+  c.rgb = applyLut(c.rgb, lut, lutScale, lutOffset, lutIntensity);
   c.a *= opacity;
   return c;
 }
@@ -196,6 +234,29 @@ float dissolveNoise(vec2 uv) {
   return fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
+/**
+ * BT.709 LIMITED-range code units (0..255 scale) — the space the export's
+ * fadeToBlack mixes in (§5.3, measured). Exact affine roundtrip; only the
+ * fadeToBlack branch uses it, so no other transition can drift.
+ */
+vec3 toYuv709(vec3 c) {
+  float yl = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  return vec3(
+    16.0 + 219.0 * yl,
+    128.0 + 224.0 * (c.b - yl) / 1.8556,
+    128.0 + 224.0 * (c.r - yl) / 1.5748);
+}
+
+vec3 fromYuv709(vec3 t) {
+  float yl = (t.x - 16.0) / 219.0;
+  float pb = (t.y - 128.0) / 224.0;
+  float pr = (t.z - 128.0) / 224.0;
+  return clamp(vec3(
+    yl + 1.5748 * pr,
+    yl - 0.1873 * pb - 0.4681 * pr,
+    yl + 1.8556 * pb), 0.0, 1.0);
+}
+
 void main() {
   float p = clamp(uProgress, 0.0, 1.0);
 
@@ -209,9 +270,11 @@ void main() {
   }
 
   vec4 a = layerAt(uTexA, uInvA, ndcA, uOpacityA,
-                   uExposureA, uTemperatureA, uTintA, uBrightnessA, uContrastA, uSaturationA);
+                   uExposureA, uTemperatureA, uTintA, uBrightnessA, uContrastA, uSaturationA,
+                   uLut3DA, uLutScaleA, uLutOffsetA, uIntensityA);
   vec4 b = layerAt(uTexB, uInvB, ndcB, uOpacityB,
-                   uExposureB, uTemperatureB, uTintB, uBrightnessB, uContrastB, uSaturationB);
+                   uExposureB, uTemperatureB, uTintB, uBrightnessB, uContrastB, uSaturationB,
+                   uLut3DB, uLutScaleB, uLutOffsetB, uIntensityB);
 
   // Screen uv (0..1, y down) — the geometric transitions are defined on it.
   vec2 s = vec2(vNdc.x * 0.5 + 0.5, 0.5 - vNdc.y * 0.5);
@@ -224,13 +287,28 @@ void main() {
     // wipeRight: the edge travels left -> right, B grows from the left.
     result = s.x < p ? b : a;
   } else if (uMode == 1) {
-    // dissolve: per-pixel threshold, no partial mixing.
+    // dissolve: per-pixel threshold, no partial mixing. The threshold RULE and the
+    // aggregate density match ffmpeg's dissolve exactly (B covers fraction p of the
+    // frame); the noise FIELD is a documented approximation — ffmpeg hashes integer
+    // pixel coords with libm sinf, which no shader can reproduce (measured: 50.01%
+    // pattern agreement at p=0.5, i.e. uncorrelated; rendering-semantics §5.3).
     result = dissolveNoise(s) < p ? b : a;
   } else if (uMode == 2) {
-    // fadeToBlack: A -> black in the first half, black -> B in the second.
-    float k = p < 0.5 ? 1.0 - 2.0 * p : 2.0 * p - 1.0;
-    vec4 src = p < 0.5 ? a : b;
-    result = vec4(src.rgb * k, src.a);
+    // fadeToBlack: ffmpeg xfade 'fadeblack' (phase 0.2) — KANONİK durumla (tek
+    // katmanlı hızlı yol, yuv420p) piksel-eşit (§5.3). O yolda "siyah"
+    // (Y=0, U=V=128) SÜPER-siyahtır (rgb siyahının afin görüntüsü Y=16 olurdu) —
+    // gerçek ffmpeg 8.0 çıktısından ölçüldü, vektörler transitionRef.test.ts'te.
+    // Kompozisyon yolunun rgb eğrisiyle dip farkı ≤ ~15/255 (bilinen sınır §2.3).
+    // ffmpeg ilerlemesi 1->0 akar (P = 1-p); eğri ASİMETRİKTİR: A pencerenin ilk
+    // %20'sinde söner, B kalan %80 boyunca yükselir.
+    float P = 1.0 - p;
+    float smA = smoothstep(0.8, 1.0, P);
+    float smB = smoothstep(0.2, 1.0, P);
+    vec3 bg = vec3(0.0, 128.0, 128.0);
+    vec3 ya = mix(bg, toYuv709(a.rgb), smA);
+    vec3 yb = mix(toYuv709(b.rgb), bg, smB);
+    float oa = P * (a.a * smA + (1.0 - smA)) + (1.0 - P) * (smB + b.a * (1.0 - smB));
+    result = vec4(fromYuv709(mix(yb, ya, P)), oa);
   } else if (uMode == 5) {
     result = overStraight(b, a);
   } else {

@@ -41,6 +41,8 @@ export interface ClipState {
 export interface TrackState {
   id: string;
   type: string;
+  /** Kullanıcı adı (yeniden adlandırma); yoksa undefined — başlık türetilmiş etiketi gösterir. */
+  name?: string;
   locked: boolean;
   clips: ClipState[];
 }
@@ -297,6 +299,7 @@ export async function readAppState(page: Page): Promise<AppState> {
         tracks: {
           id: string;
           type: string;
+          name?: string;
           locked: boolean;
           clips: {
             id: string;
@@ -323,6 +326,7 @@ export async function readAppState(page: Page): Promise<AppState> {
     const tracks = d.doc.tracks.map((t) => ({
       id: t.id,
       type: t.type,
+      name: t.name,
       locked: t.locked,
       clips: t.clips.map((c) => ({
         id: c.id,

@@ -271,6 +271,55 @@ describe('colour section', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// LUT section (§4.2)
+// ---------------------------------------------------------------------------
+
+const LUT_ASSET = '01890000-0000-7000-8000-00000000000b';
+const LUT_EFFECT = '01890000-0000-7000-8000-000000000302';
+
+describe('lut section', () => {
+  it('presents a clip with NO lut as "none selected" instead of disappearing', () => {
+    const model = build([track(V1, 'video', [videoClip(CLIP_A, 0, 10 * US)])], [CLIP_A]);
+    expect(model.lut).not.toBeNull();
+    expect(model.lut!.present).toBe(false);
+    expect(model.lut!.enabled).toBe(false);
+    expect(model.lut!.assetId).toBe('');
+  });
+
+  it('reads assetId + intensity + enabled off the first lut effect', () => {
+    const clip = videoClip(CLIP_A, 0, 10 * US, {
+      effects: [
+        { id: LUT_EFFECT, type: 'lut', enabled: true, params: { assetId: LUT_ASSET, intensity: 0.6 } },
+      ],
+    });
+    const model = build([track(V1, 'video', [clip])], [CLIP_A]);
+    expect(model.lut!.present).toBe(true);
+    expect(model.lut!.enabled).toBe(true);
+    expect(model.lut!.assetId).toBe(LUT_ASSET);
+    expect(model.lut!.intensity).toBe(0.6);
+  });
+
+  it('a mixed selection (one with, one without) collapses to null fields', () => {
+    const withLut = videoClip(CLIP_A, 0, 5 * US, {
+      effects: [
+        { id: LUT_EFFECT, type: 'lut', enabled: true, params: { assetId: LUT_ASSET, intensity: 1 } },
+      ],
+    });
+    const without = videoClip(CLIP_B, 5 * US, 5 * US);
+    const model = build([track(V1, 'video', [withLut, without])], [CLIP_A, CLIP_B]);
+    expect(model.lut!.present).toBe(true);
+    expect(model.lut!.assetId).toBeNull();
+    expect(model.lut!.enabled).toBeNull();
+  });
+
+  it('covers drawn clips but not audio (same target set as colour)', () => {
+    expect(build([track(OV1, 'overlay', [shapeClip(CLIP_B)])], [CLIP_B]).lut).not.toBeNull();
+    const audio = videoClip(CLIP_A, 0, 10 * US, { kind: 'audio' });
+    expect(build([track(A1, 'audio', [audio])], [CLIP_A]).lut).toBeNull();
+  });
+});
+
 describe('formatSpeed', () => {
   it('drops trailing zeros so the presets read cleanly', () => {
     expect(formatSpeed(2)).toBe('2x');

@@ -25,7 +25,9 @@
  * frames the exporter would sample (§3.4).
  */
 import {
+  MAX_KEYFRAME_SAMPLES,
   isMediaClip,
+  keyframeSampleUpperBound,
   sampleKeyframes,
   snapUsToFrameGrid,
   type Clip,
@@ -433,5 +435,45 @@ export function buildKeyframePanelModel(
     editable: !track.locked,
     channels,
     animated: KEYFRAME_CHANNELS.filter((c) => channels[c].animated),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Keyframe ornekleme butcesi (rendering-semantics 3.4) - Inspector uyarisi
+// ---------------------------------------------------------------------------
+
+/**
+ * Uyari esigi: derleme geneli ust sinir kestirimi butcenin bu oranini asinca
+ * Inspector rozet gosterir. 0.8 secildi cunku kestirim UST SINIRDIR (esdeger
+ * ardisik ornekleri derleyici teklestirir, editor sayar): rozet gercek
+ * harcamadan once yanar, 422 kullaniciyi asla ilk haberci olarak bulmaz.
+ */
+export const SAMPLE_BUDGET_WARN_RATIO = 0.8;
+
+export interface SampleBudgetStatus {
+  /** Derleyicinin harcayacagi orneklerin UST SINIRI (keyframeSampleUpperBound). */
+  upperBound: number;
+  /** Derleme geneli tavan - backend KeyframeCompiler.MaxSamples ikizi. */
+  max: number;
+  /** upperBound / max (0..N; 1 ustu derlemenin kesin reddi demektir). */
+  ratio: number;
+  /** ratio >= SAMPLE_BUDGET_WARN_RATIO - Inspector rozetinin kosulu. */
+  warn: boolean;
+}
+
+/**
+ * Dokumanin keyframe ornekleme butcesi durumu (DERLEME GENELI - tek klibin
+ * degil, tum kliplerin/kanallarin toplami; backend SampleBudget ayni sekilde
+ * tek muhasebe tutar). Saf dokuman aritmetigi: formul sema paketinde
+ * (keyframeSampleUpperBound), esik ve sunum burada.
+ */
+export function keyframeSampleBudget(doc: TimelineDoc): SampleBudgetStatus {
+  const upperBound = keyframeSampleUpperBound(doc);
+  const ratio = upperBound / MAX_KEYFRAME_SAMPLES;
+  return {
+    upperBound,
+    max: MAX_KEYFRAME_SAMPLES,
+    ratio,
+    warn: ratio >= SAMPLE_BUDGET_WARN_RATIO,
   };
 }

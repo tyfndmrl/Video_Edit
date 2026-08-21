@@ -143,6 +143,32 @@ public sealed class ProcessAssetJob(
                 return;
             }
 
+            // ── 2b) LUT (.cube): MEDYA DEĞİLDİR — ffprobe kapısına GİRMEZ (bir .cube
+            //      probe'dan "no video stream" ile döner), türev (proxy/filmstrip/waveform/
+            //      poster) ÜRETİLMEZ. Tek kapısı metin doğrulamasıdır (LUT_3D_SIZE + N³ veri
+            //      satırı + [0,1] domain — CubeLutValidator); geçerse doğrudan Ready.
+            //      Export tarafındaki simetrisi: ExportJob .cube'ü ffprobe'a SOKMAZ ve yalnız
+            //      YOL olarak compiler'a verir (lut3d=file=…).
+            if (asset.Kind == AssetKind.Lut)
+            {
+                await progress.ReportAsync(20, "validate", ct);
+                var validation = await Task.Run(() => CubeLutValidator.ValidateFile(originalPath), ct);
+                if (!validation.Ok)
+                {
+                    await FailDeterministicAsync(job, asset, "invalid-lut", validation.Error!);
+                    return;
+                }
+
+                // Medya metadata'sı bilinçli boş: süre/boyut/ses bir renk tablosunda anlamsız.
+                asset.DurationMicros = null;
+                asset.HasAudio = false;
+                await MarkReadyAsync(job, asset, jobId, ct);
+                logger.LogInformation(
+                    "ProcessAssetJob {JobId}: LUT asset {AssetId} ready (cube size {CubeSize}).",
+                    jobId, asset.Id, validation.Size);
+                return;
+            }
+
             // ── 3) ffprobe gate — %15-20. Parse edilemeyen → Failed('unsupported-media'), RETRY YOK.
             await progress.ReportAsync(15, "probe", ct);
             MediaProbe probe;
@@ -227,35 +253,8 @@ public sealed class ProcessAssetJob(
                 return;
             }
 
-            // ── 6) Ready + Succeeded.
-            var doneAt = clock.GetUtcNow();
-
-            // Son savunma (reaper yarışı): uzun bir koşu sırasında reaper asset'i DB'de
-            // Failed('stalled') yapmış olabilir — tracked entity bunu görmez. Domain kuralı
-            // Failed → Processing → Ready iki-adım kurtarmaya izin verir; DB'deki 'stalled'
-            // kalıntısının silinmesi için FailureReason yazımı açıkça zorlanır.
-            var dbStatus = await db.Assets.AsNoTracking()
-                .Where(a => a.Id == asset.Id)
-                .Select(a => a.Status)
-                .SingleAsync(ct);
-            if (dbStatus == AssetStatus.Failed && asset.Status == AssetStatus.Processing)
-            {
-                logger.LogWarning(
-                    "ProcessAssetJob {JobId}: asset {AssetId} was swept Failed('stalled') by the reaper "
-                    + "while this run was still alive; recovering via Failed -> Processing -> Ready.",
-                    jobId, asset.Id);
-                db.Entry(asset).Property(a => a.Status).OriginalValue = AssetStatus.Failed;
-                asset.Status = AssetStatus.Failed;
-                asset.TransitionTo(AssetStatus.Processing, doneAt); // FailureReason=null
-                db.Entry(asset).Property(a => a.FailureReason).IsModified = true;
-            }
-
-            asset.TransitionTo(AssetStatus.Ready, doneAt);
-            job.Status = JobStatus.Succeeded;
-            job.ProgressPercent = 100;
-            job.ProgressStage = "done";
-            job.CompletedAt = doneAt;
-            await db.SaveChangesAsync(ct);
+            // ── 6) Ready + Succeeded (LUT dalıyla ORTAK kapanış — reaper kurtarması dahil).
+            await MarkReadyAsync(job, asset, jobId, ct);
 
             logger.LogInformation(
                 "ProcessAssetJob {JobId}: asset {AssetId} ready (kind={Kind}, duration={DurationUs}us).",
@@ -277,6 +276,46 @@ public sealed class ProcessAssetJob(
         {
             TryDeleteDirectory(tempDir);
         }
+    }
+
+    /// <summary>
+    /// Ready + Succeeded kapanışı — medya ve LUT dallarının ORTAK son adımı.
+    ///
+    /// Son savunma (reaper yarışı): uzun bir koşu sırasında reaper asset'i DB'de
+    /// Failed('stalled') yapmış olabilir — tracked entity bunu görmez. Domain kuralı
+    /// Failed → Processing → Ready iki-adım kurtarmaya izin verir; DB'deki 'stalled'
+    /// kalıntısının silinmesi için FailureReason yazımı açıkça zorlanır.
+    ///
+    /// İptal semantiği REFAKTÖR ÖNCESİYLE AYNI: kapanış yazımı çağıranın ct'siyle koşar —
+    /// Hangfire shutdown'ında OperationCanceledException fırlar ve iş yeniden kuyruklanır
+    /// (idempotency kısa devresi ikinci teslimi zaten karşılar).
+    /// </summary>
+    private async Task MarkReadyAsync(Job job, Asset asset, Guid jobId, CancellationToken ct)
+    {
+        var doneAt = clock.GetUtcNow();
+
+        var dbStatus = await db.Assets.AsNoTracking()
+            .Where(a => a.Id == asset.Id)
+            .Select(a => a.Status)
+            .SingleAsync(ct);
+        if (dbStatus == AssetStatus.Failed && asset.Status == AssetStatus.Processing)
+        {
+            logger.LogWarning(
+                "ProcessAssetJob {JobId}: asset {AssetId} was swept Failed('stalled') by the reaper "
+                + "while this run was still alive; recovering via Failed -> Processing -> Ready.",
+                jobId, asset.Id);
+            db.Entry(asset).Property(a => a.Status).OriginalValue = AssetStatus.Failed;
+            asset.Status = AssetStatus.Failed;
+            asset.TransitionTo(AssetStatus.Processing, doneAt); // FailureReason=null
+            db.Entry(asset).Property(a => a.FailureReason).IsModified = true;
+        }
+
+        asset.TransitionTo(AssetStatus.Ready, doneAt);
+        job.Status = JobStatus.Succeeded;
+        job.ProgressPercent = 100;
+        job.ProgressStage = "done";
+        job.CompletedAt = doneAt;
+        await db.SaveChangesAsync(ct);
     }
 
     // ───────────────────────── Kind pipeline'ları ─────────────────────────
@@ -354,6 +393,11 @@ public sealed class ProcessAssetJob(
         asset.FilmstripKey = keys.FilmstripManifest;
         asset.WaveformKey = waveformPath is not null ? keys.Waveform : null;
         asset.ThumbnailKey = keys.Poster;
+
+        // Kota defteri (12. tur borcu): türevler de kullanıcının depolamasıdır. Toplam,
+        // YÜKLENEN yerel dosyaların boyutundan alınır — S3'e giden bayt sayısının kendisi.
+        asset.DerivedBytes = SumFileSizes(
+            [proxyPath, .. spriteFiles, manifestPath, waveformPath, posterPath]);
     }
 
     private async Task ProcessAudioAsync(
@@ -382,6 +426,7 @@ public sealed class ProcessAssetJob(
 
         asset.ProxyKey = keys.AudioProxy;
         asset.WaveformKey = keys.Waveform;
+        asset.DerivedBytes = SumFileSizes([proxyPath, waveformPath]);
     }
 
     private async Task ProcessImageAsync(
@@ -398,6 +443,7 @@ public sealed class ProcessAssetJob(
 
         await storage.UploadFileAsync(keys.Poster, posterPath, "image/jpeg", ct);
         asset.ThumbnailKey = keys.Poster;
+        asset.DerivedBytes = SumFileSizes([posterPath]);
     }
 
     // ───────────────────────── Yardımcılar ─────────────────────────
@@ -567,6 +613,10 @@ public sealed class ProcessAssetJob(
             "ProcessAssetJob {JobId}: asset {AssetId} failed deterministically ({Reason}): {Detail}",
             job.Id, asset.Id, reason, detail);
     }
+
+    /// <summary>Var olan yerel türev dosyalarının toplam boyutu (null girdiler atlanır).</summary>
+    private static long SumFileSizes(IEnumerable<string?> paths) =>
+        paths.Where(p => p is not null && File.Exists(p)).Sum(p => new FileInfo(p!).Length);
 
     private static long TryGetAvailableFreeSpace(string path)
     {

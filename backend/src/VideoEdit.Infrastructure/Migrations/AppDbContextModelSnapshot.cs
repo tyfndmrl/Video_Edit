@@ -243,6 +243,9 @@ namespace VideoEdit.Infrastructure.Migrations
                     b.Property<DateTimeOffset?>("DeletedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<long?>("DerivedBytes")
+                        .HasColumnType("bigint");
+
                     b.Property<long?>("DurationMicros")
                         .HasColumnType("bigint");
 

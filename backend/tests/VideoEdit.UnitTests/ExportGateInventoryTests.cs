@@ -344,6 +344,15 @@ public sealed class ExportGateInventoryTests : IDisposable
                 return t.SeedAsync(ExportTestDocs.Doc(clips: clip));
             }),
 
+        new("export-profile-aspect", GateOwner.SyncGate,
+            "Saf doküman+istek aritmetiği: tuval (settings.width/height) ile profilin hedef "
+            + "kutusunun rasyonel en-boy eşitliği. Kapının kendisi ExportProfiles.SpecFor'dadır "
+            + "(karar ölçümleri yorumunda); worker'ın Compile'ı aynı fonksiyonu sigorta olarak "
+            + "çağırır. Buradaki vaka: 9:16 tuval + varsayılan '1080p' (16:9) profili.",
+            t => t.SeedAsync(ExportTestDocs.Doc(
+                width: 1080, height: 1920,
+                clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 1_000_000)))),
+
         new("unknown-clip", GateOwner.Unreachable,
             "Şema union'ı: tanınmayan 'kind' ayrıştırma sırasında JsonException'a düşer, "
             + "istek derleyiciye HİÇ ULAŞMAZ (aşağıda ölçülür).",
@@ -480,7 +489,8 @@ public sealed class ExportGateInventoryTests : IDisposable
     private enum MediaClipKindOrSticker { Video, Audio, Image, Sticker }
 
     /// <summary>
-    /// KLİP TÜRÜ × VARLIK TÜRÜ matrisinin TAMAMI (4 × 3) + "sessiz video" özel hali. Her satır
+    /// KLİP TÜRÜ × VARLIK TÜRÜ matrisinin TAMAMI (4 × 4, LUT dahil) + "sessiz video" özel
+    /// hali. Her satır
     /// GERÇEKTEN koşturulur: belge kurulur, uç nokta çağrılır, kabul/ret ÖLÇÜLÜR.
     /// <para>
     /// Editör bu uyuşmazlıkların hiçbirini üretemez (klip türü varlığın türünden doğar:
@@ -507,6 +517,14 @@ public sealed class ExportGateInventoryTests : IDisposable
         new("çıkartma + görsel varlığı", MediaClipKindOrSticker.Sticker, AssetKind.Image, null),
         new("çıkartma + video varlığı", MediaClipKindOrSticker.Sticker, AssetKind.Video, "asset-clip-type"),
         new("çıkartma + ses varlığı", MediaClipKindOrSticker.Sticker, AssetKind.Audio, "asset-clip-type"),
+
+        // LUT (.cube) bir MEDYA değildir: hiçbir klip türü onu kaynak olarak okuyamaz.
+        // (LUT'un MEŞRU kullanımı — lut EFEKTİNİN assetId'si — bu matrisin dışıdır; onun
+        // kapısı dosya adına bakar: 'lut-asset-type' satırı, EnsureAssetFacts adım 3.)
+        new("video klibi + LUT varlığı", MediaClipKindOrSticker.Video, AssetKind.Lut, "asset-clip-type"),
+        new("ses klibi + LUT varlığı", MediaClipKindOrSticker.Audio, AssetKind.Lut, "asset-clip-type"),
+        new("görsel klibi + LUT varlığı", MediaClipKindOrSticker.Image, AssetKind.Lut, "asset-clip-type"),
+        new("çıkartma + LUT varlığı", MediaClipKindOrSticker.Sticker, AssetKind.Lut, "asset-clip-type"),
     ];
 
     // ─────────────────── RASTER HATTI DEFTERİ (yeni: M3 kaçağının sınıfı) ───────────────────
@@ -1013,6 +1031,11 @@ public sealed class ExportGateInventoryTests : IDisposable
         // zod paritesi KeyframeBoundsParityTests'te (paylaşılan vektör dosyasıyla) ölçülür.
         ("backend/src/VideoEdit.Media/Export/ClipAnimation.cs", 1, 8),
         ("backend/src/VideoEdit.Media/Export/ClipEffects.cs", 2, 7),
+        // 0 → 1 (dalga 2, export profilleri): 'export-profile-aspect' — profil hedef kutusu
+        // tuval oranına uymuyorsa tipli ret. SpecFor'da yaşar (Validate DEĞİL: kural belgenin
+        // değil, belge+PROFİL çiftinin kuralıdır ve profil Validate'in girdisi değildir);
+        // API senkron kapısı StartExport'ta SpecFor'u doğrudan çağırır, Compile sigortadır.
+        ("backend/src/VideoEdit.Media/Export/ExportProfiles.cs", 1, 0),
     ];
 
     // ───────────────────────────── TESTLER ─────────────────────────────
@@ -1102,7 +1125,11 @@ public sealed class ExportGateInventoryTests : IDisposable
             .Order(StringComparer.Ordinal)
             .ToList();
         Assert.Equal(
-            new[] { "ClipAnimation.cs", "ClipEffects.cs", "ExportCompiler.cs", "ExportExceptions.cs" },
+            new[]
+            {
+                "ClipAnimation.cs", "ClipEffects.cs", "ExportCompiler.cs", "ExportExceptions.cs",
+                "ExportProfiles.cs",
+            },
             scanned);
     }
 
@@ -1216,13 +1243,19 @@ public sealed class ExportGateInventoryTests : IDisposable
         foreach (var testCase in AssetClipTypeMatrix)
         {
             using var scope = new ExportGateInventoryTests();
+            // Satır DÜRÜST olgularla kurulur (LUT: boyut/süre/ses YOK — worker'ın Lut dalı
+            // hiçbirini yazmaz); kapının kararı yine de yalnız MediaKind'e dayanır.
+            var isLut = testCase.AssetKind == AssetKind.Lut;
             await scope.SeedAssetAsync(
                 ExportTestDocs.AssetB,
-                width: testCase.AssetKind == AssetKind.Audio ? null : 1920,
-                height: testCase.AssetKind == AssetKind.Audio ? null : 1080,
-                durationMicros: testCase.AssetKind == AssetKind.Image ? null : 3_600_000_000,
+                width: testCase.AssetKind == AssetKind.Audio || isLut ? null : 1920,
+                height: testCase.AssetKind == AssetKind.Audio || isLut ? null : 1080,
+                durationMicros: testCase.AssetKind == AssetKind.Image || isLut
+                    ? null
+                    : 3_600_000_000,
+                fileName: isLut ? "table.cube" : "clip.mp4",
                 kind: testCase.AssetKind,
-                hasAudio: testCase.AssetHasAudio);
+                hasAudio: !isLut && testCase.AssetHasAudio);
             var projectId = await scope.SeedAsync(MatrixDoc(testCase.ClipKind), seedAssets: false);
 
             var result = await scope.CallStartAsync(projectId);
@@ -1393,6 +1426,71 @@ public sealed class ExportGateInventoryTests : IDisposable
             endpoints, "CeilingFeatures = new(StringComparer.Ordinal)", "};"));
         Assert.Empty(server.Intersect(assetFacts));
         Assert.Empty(server.Intersect(ceilings));
+    }
+
+    [Fact]
+    public void TheClientAndServerAgreeOnWhichCodesMeanAProfileMismatch()
+    {
+        // AYNI DOKTRİN, DÖRDÜNCÜ SINIF (dalga 2, export profilleri): belge sağlam — İSTEĞİN
+        // seçtiği profil tuval oranına uymuyor. Öteki üç cümlenin hepsi kullanıcıyı BELGEYE
+        // baktırır; buradaki eylem ise SEÇİMİ değiştirmektir (uyumlu profil ya da tuval).
+        var server = QuotedStrings(Between(
+            File.ReadAllText(TestVectorFiles.Resolve(
+                "backend/src/VideoEdit.Api/Endpoints/ExportEndpoints.cs")),
+            "ProfileFeatures = new(StringComparer.Ordinal)", "};"));
+        var client = QuotedStrings(Between(
+            File.ReadAllText(TestVectorFiles.Resolve(
+                "apps/editor/src/features/export/exportLogic.ts")),
+            "const PROFILE_CODES = new Set([", "]);"));
+
+        Assert.NotEmpty(server);
+        Assert.Equal(server, client);
+
+        // Kodların hepsi derleyicide gerçekten VAR ve DÖRT KÜME BİRBİRİNDEN AYRIK.
+        var declared = CompilerGates.Select(g => g.Code).ToHashSet(StringComparer.Ordinal);
+        Assert.Empty(server.Except(declared));
+
+        var endpoints = File.ReadAllText(TestVectorFiles.Resolve(
+            "backend/src/VideoEdit.Api/Endpoints/ExportEndpoints.cs"));
+        foreach (var marker in new[]
+                 {
+                     "AssetFactFeatures = new(StringComparer.Ordinal)",
+                     "CeilingFeatures = new(StringComparer.Ordinal)",
+                     "DocumentValueFeatures = new(StringComparer.Ordinal)",
+                 })
+        {
+            Assert.Empty(server.Intersect(QuotedStrings(Between(endpoints, marker, "};"))));
+        }
+    }
+
+    /// <summary>
+    /// Profil geometrisinin istemci aynası: ExportDialog profilleri TUVAL ORANINA göre
+    /// yerinde devre dışı bırakır (opak 422 yerine yerinde Türkçe açıklama). Bunu
+    /// yapabilmesi için istemcideki hedef kutu tablosunun sunucuyla AYNI olması gerekir —
+    /// ayrışma çökme değil, YANLIŞ KAPALI/AÇIK BUTON üretir. İki kaynak da taranır.
+    /// </summary>
+    [Fact]
+    public void TheClientAndServerAgreeOnTheProfileGeometry()
+    {
+        var client = File.ReadAllText(TestVectorFiles.Resolve(
+            "apps/editor/src/features/export/exportLogic.ts"));
+        var block = Between(client, "const PROFILE_TARGETS", "};");
+
+        foreach (var profile in ExportProfiles.All)
+        {
+            var (w, h) = ExportProfiles.Target(profile);
+            // Anahtar tırnaklı ya da tırnaksız olabilir (eslint yalnız gerekli tırnağı tutar).
+            var pattern = $@"'?{Regex.Escape(ExportProfiles.Name(profile))}'?:\s*"
+                + $@"\{{ width: {w}, height: {h} \}}";
+            Assert.True(Regex.IsMatch(block, pattern),
+                $"exportLogic.PROFILE_TARGETS '{ExportProfiles.Name(profile)}' için "
+                + $"{w}x{h} kutusunu taşımıyor.");
+        }
+
+        // Tablo fazladan profil de taşımasın: satır sayısı sunucudaki profil sayısına eşit.
+        Assert.Equal(
+            ExportProfiles.All.Count,
+            Regex.Matches(block, @"width:\s*\d+").Count);
     }
 
     private static string Between(string source, string start, string end)

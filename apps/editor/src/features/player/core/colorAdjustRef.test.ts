@@ -195,8 +195,11 @@ describe('document -> shader chain (M5: the inspector drives these params)', () 
         name,
       );
     }
-    // uOpacity is the only extra float uniform (§6.3); anything else is drift.
-    expect(declared.filter((n) => n !== 'uOpacity')).toHaveLength(CA_KEYS.length);
+    // Extra float uniforms with their OWN contracts: uOpacity (§6.3) and the
+    // §4.2 lut trio uLutScale/uLutOffset/uIntensity (uLut3D is a sampler, not
+    // a float — it does not match this regex). Anything else is drift.
+    const KNOWN_EXTRAS = ['uOpacity', 'uLutScale', 'uLutOffset', 'uIntensity'];
+    expect(declared.filter((n) => !KNOWN_EXTRAS.includes(n))).toHaveLength(CA_KEYS.length);
   });
 
   it('every param actually MOVES the pixel (a param wired to nothing would not)', () => {

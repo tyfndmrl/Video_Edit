@@ -27,6 +27,8 @@ import {
   removeTransitionBlockReason,
   splitBlockReason,
   trackDeleteBlockReason,
+  trackMoveBlockReason,
+  trackRenameBlockReason,
   trimToPlayheadBlockReason,
 } from '../../state/timelineOps';
 import { resolveTransitionEdge, transitionEdgeLabel } from './transitions';
@@ -44,6 +46,9 @@ export type TimelineMenuActionId =
   | 'addTransition'
   | 'removeTransition'
   | 'paste'
+  | 'renameTrack'
+  | 'moveTrackUp'
+  | 'moveTrackDown'
   | 'toggleMuted'
   | 'toggleHidden'
   | 'toggleLocked'
@@ -266,6 +271,33 @@ function trackMenu(ctx: TimelineMenuContext, trackId: Uuid): TimelineMenuEntry[]
 
   return [
     pasteItem(ctx),
+    SEPARATOR,
+    // Yeniden adlandırma bir UI jestidir (başlıkta satır içi input) ama ret
+    // kuralı OP'UNDUR: kilitli track'te op reddeder, menü de gri gösterir.
+    // Aynı input başlığa çift tıkla da açılır — menü öğesi keşfedilebilirlik.
+    item(
+      'renameTrack',
+      'Yeniden adlandır',
+      undefined,
+      gated(ctx, () => trackRenameBlockReason(ctx.doc, trackId)),
+    ),
+    // tracks[0] = EN ÜST katman (şema sözleşmesi + export render sırası):
+    // "yukarı taşı" görselde bir satır yukarı = dizide bir indeks geri = render
+    // sırasında bir katman öne. Sürükle-bırak yerine menü: bkz. docs/backlog
+    // kararı — track başlığı sürüklemesi ayrı bir pointer/çizim altyapısı
+    // isterken menü aynı op'u sıfır yeni jest maliyetiyle sunar.
+    item(
+      'moveTrackUp',
+      'Yukarı taşı',
+      undefined,
+      gated(ctx, () => trackMoveBlockReason(ctx.doc, trackId, 'up')),
+    ),
+    item(
+      'moveTrackDown',
+      'Aşağı taşı',
+      undefined,
+      gated(ctx, () => trackMoveBlockReason(ctx.doc, trackId, 'down')),
+    ),
     SEPARATOR,
     item('toggleMuted', track.muted ? 'Sesi aç' : 'Sessize al', undefined, flagReason),
     item('toggleHidden', track.hidden ? 'Göster' : 'Gizle', undefined, flagReason),

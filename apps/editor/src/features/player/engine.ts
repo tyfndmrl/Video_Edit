@@ -20,8 +20,12 @@ export interface Observable<T> {
 
 /** What the engine needs to know about an asset to play it. */
 export interface PlayerAsset {
-  kind: 'video' | 'audio' | 'image';
-  /** Presigned PROXY url (12 h, media-urls endpoint). null while not ready. */
+  kind: 'video' | 'audio' | 'image' | 'lut';
+  /**
+   * Presigned url (12 h, media-urls endpoint). null while not ready.
+   * video/audio: proxy; image: poster; lut: the ORIGINAL .cube text —
+   * the kind rule lives in previewSource.previewSourceUrl.
+   */
   url: string | null;
   durationUs?: MicroSec;
   width?: number;
@@ -193,6 +197,26 @@ export interface VideoEditPlayerHook {
   version: 1;
   /** Composition pixel (project coords) after the next composed frame. */
   probePixel(x: number, y: number): Promise<[number, number, number, number]>;
+  /**
+   * The WHOLE composed frame as base64 RGBA (top-left origin), read in the same
+   * rAF as the draw. Optional: only the v1 engine provides it today. Exists for
+   * the preview↔export parity measurement (§9.3 full-frame SSIM) — a page
+   * cannot read the canvas any other way (drawing buffer is not preserved).
+   */
+  probeFrameBase64?(): Promise<{ width: number; height: number; base64: string } | null>;
+}
+
+/** Uint8Array -> base64, 32 KB dilimlerle (fromCharCode.apply'ın argüman sınırı). */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunk = 32768;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(
+      null,
+      bytes.subarray(i, i + chunk) as unknown as number[],
+    );
+  }
+  return btoa(binary);
 }
 
 /** Called by PlayerPanel when it creates/destroys its engine instance. */
@@ -206,7 +230,27 @@ export function registerPlaybackEngine(engine: PlaybackEngine | null): void {
     delete w.__videoeditPlayer;
     return;
   }
-  w.__videoeditPlayer = { version: 1, probePixel: (x, y) => probe.call(engine, x, y) };
+  const frameProbe = (
+    engine as unknown as {
+      probeFrame?: () => Promise<{ width: number; height: number; pixels: Uint8Array } | null>;
+    }
+  ).probeFrame;
+  w.__videoeditPlayer = {
+    version: 1,
+    probePixel: (x, y) => probe.call(engine, x, y),
+    probeFrameBase64:
+      typeof frameProbe === 'function'
+        ? async () => {
+            const frame = await frameProbe.call(engine);
+            if (!frame) return null;
+            return {
+              width: frame.width,
+              height: frame.height,
+              base64: bytesToBase64(frame.pixels),
+            };
+          }
+        : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------

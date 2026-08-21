@@ -23,6 +23,18 @@ import {
   VERTEX_SHADER,
 } from './shaders';
 
+/**
+ * GPU half of a §4.2 lut effect: the parsed .cube already uploaded as a 3D
+ * texture (createLutTexture). `size` feeds the normative uLutScale/uLutOffset
+ * ((N-1)/N and 1/(2N)); intensity is the mix weight.
+ */
+export interface LutDrawState {
+  texture: WebGLTexture;
+  size: number;
+  /** 0..1 (0 never arrives: resolve.lutOf collapses it to "no lut"). */
+  intensity: number;
+}
+
 export interface DrawItem {
   texture: WebGLTexture;
   /** Source natural size in px (video: videoWidth/Height). */
@@ -39,6 +51,11 @@ export interface DrawItem {
   opacity: number;
   /** null = no color adjust (identity — uniforms all 0 fall through as no-op). */
   colorAdjust: ColorAdjust | null;
+  /**
+   * §4.2 lut, or absent/null for none (uIntensity 0 + dummy 1-texel texture =
+   * exact no-op). Optional so callers that predate the effect stay valid.
+   */
+  lut?: LutDrawState | null;
 }
 
 /**
@@ -78,6 +95,11 @@ interface Uniforms {
   uBrightness: WebGLUniformLocation;
   uContrast: WebGLUniformLocation;
   uSaturation: WebGLUniformLocation;
+  // §4.2 — normative names.
+  uLut3D: WebGLUniformLocation;
+  uLutScale: WebGLUniformLocation;
+  uLutOffset: WebGLUniformLocation;
+  uIntensity: WebGLUniformLocation;
 }
 
 /** Uniform handles of the transition program (see shaders.ts). */
@@ -102,6 +124,15 @@ interface TransitionUniforms {
   uBrightnessB: WebGLUniformLocation;
   uContrastB: WebGLUniformLocation;
   uSaturationB: WebGLUniformLocation;
+  // §4.2 lut, per side (the export applies effects inside each source chain).
+  uLut3DA: WebGLUniformLocation;
+  uLutScaleA: WebGLUniformLocation;
+  uLutOffsetA: WebGLUniformLocation;
+  uIntensityA: WebGLUniformLocation;
+  uLut3DB: WebGLUniformLocation;
+  uLutScaleB: WebGLUniformLocation;
+  uLutOffsetB: WebGLUniformLocation;
+  uIntensityB: WebGLUniformLocation;
 }
 
 /** Suffix-per-side names of the §4.1 uniforms in the transition program. */
@@ -130,6 +161,14 @@ export class Compositor {
   private vao: WebGLVertexArrayObject;
   private uniforms: Uniforms;
   private transitionUniforms: TransitionUniforms;
+  /**
+   * 1-texel identity 3D texture, bound to the LUT units whenever a layer has
+   * no lut. WebGL defines sampling an unbound sampler3D as (0,0,0,1), so the
+   * math would still be right at uIntensity 0 — but leaving a sampler
+   * incomplete draws driver warnings on every frame and is undefined enough
+   * on old stacks that a real texture is the honest baseline.
+   */
+  private dummyLut: WebGLTexture;
   private width = 0;
   private height = 0;
   private disposed = false;
@@ -177,6 +216,9 @@ export class Compositor {
     // §6.4: never premultiply on upload.
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+
+    // LUT'suz katmanların örneklediği 1 texel'lik yer tutucu (uIntensity 0 ile no-op).
+    this.dummyLut = this.createLutTexture(1, new Float32Array([0, 0, 0, 1]));
   }
 
   private compileShader(type: number, source: string): WebGLShader {
@@ -239,6 +281,14 @@ export class Compositor {
       uOpacityB: get('uOpacityB'),
       uProgress: get('uProgress'),
       uMode: get('uMode'),
+      uLut3DA: get('uLut3DA'),
+      uLutScaleA: get('uLutScaleA'),
+      uLutOffsetA: get('uLutOffsetA'),
+      uIntensityA: get('uIntensityA'),
+      uLut3DB: get('uLut3DB'),
+      uLutScaleB: get('uLutScaleB'),
+      uLutOffsetB: get('uLutOffsetB'),
+      uIntensityB: get('uIntensityB'),
       ...grade,
     } as TransitionUniforms;
   }
@@ -255,6 +305,10 @@ export class Compositor {
       uBrightness: get('uBrightness'),
       uContrast: get('uContrast'),
       uSaturation: get('uSaturation'),
+      uLut3D: get('uLut3D'),
+      uLutScale: get('uLutScale'),
+      uLutOffset: get('uLutOffset'),
+      uIntensity: get('uIntensity'),
     };
   }
 
@@ -285,6 +339,36 @@ export class Compositor {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+  }
+
+  /**
+   * Parsed .cube -> 3D texture (rendering-semantics §4.2).
+   *
+   * - `data` is RGBA float, length size³×4, red-fastest (cubeLut.parseCubeLut's
+   *   layout — identical to texImage3D's x-fastest memory order, so the file
+   *   order IS the upload order).
+   * - Internal format RGBA16F: half floats keep the table's precision far
+   *   under the ±1/255 quantisation of the 8-bit output while staying
+   *   TEXTURE-FILTERABLE in core WebGL2 (32F would need an extension for
+   *   LINEAR filtering; 8-bit would quantise the table itself).
+   * - LINEAR min/mag on a 3D texture = trilinear interpolation, the §4.2
+   *   normative mode (matches the export's `interp=trilinear`).
+   * - CLAMP_TO_EDGE on all three axes: with the (N-1)/N + 1/(2N) mapping the
+   *   coordinates stay inside texel centers anyway; clamping is defence.
+   */
+  createLutTexture(size: number, data: Float32Array): WebGLTexture {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    if (!tex) throw new Error('createTexture failed');
+    gl.bindTexture(gl.TEXTURE_3D, tex);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, size, size, size, 0, gl.RGBA, gl.FLOAT, data);
+    gl.bindTexture(gl.TEXTURE_3D, null);
+    return tex;
   }
 
   deleteTexture(texture: WebGLTexture): void {
@@ -328,6 +412,8 @@ export class Compositor {
     gl.bindVertexArray(this.vao);
     gl.uniform1i(u.uTexA, 0);
     gl.uniform1i(u.uTexB, 1);
+    gl.uniform1i(u.uLut3DA, 2);
+    gl.uniform1i(u.uLut3DB, 3);
     gl.uniformMatrix3fv(u.uInvA, false, invA);
     gl.uniformMatrix3fv(u.uInvB, false, invB);
     gl.uniform1f(u.uOpacityA, item.from.opacity);
@@ -348,10 +434,23 @@ export class Compositor {
     gl.uniform1f(u.uBrightnessB, b?.brightness ?? 0);
     gl.uniform1f(u.uContrastB, b?.contrast ?? 0);
     gl.uniform1f(u.uSaturationB, b?.saturation ?? 0);
+    // §4.2, per side: the lut of A must not leak onto B (and vice versa).
+    const lutA = item.from.lut ?? null;
+    const lutB = item.to.lut ?? null;
+    gl.uniform1f(u.uLutScaleA, lutA ? (lutA.size - 1) / lutA.size : 0);
+    gl.uniform1f(u.uLutOffsetA, lutA ? 1 / (2 * lutA.size) : 0.5);
+    gl.uniform1f(u.uIntensityA, lutA ? lutA.intensity : 0);
+    gl.uniform1f(u.uLutScaleB, lutB ? (lutB.size - 1) / lutB.size : 0);
+    gl.uniform1f(u.uLutOffsetB, lutB ? 1 / (2 * lutB.size) : 0.5);
+    gl.uniform1f(u.uIntensityB, lutB ? lutB.intensity : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, item.from.texture);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, item.to.texture);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_3D, lutA ? lutA.texture : this.dummyLut);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_3D, lutB ? lutB.texture : this.dummyLut);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     // Leave the sampler unit where the layer program expects it.
     gl.activeTexture(gl.TEXTURE0);
@@ -375,6 +474,7 @@ export class Compositor {
       gl.bindVertexArray(this.vao);
       gl.activeTexture(gl.TEXTURE0);
       gl.uniform1i(this.uniforms.uTex, 0);
+      gl.uniform1i(this.uniforms.uLut3D, 1);
       layerProgramBound = true;
     };
 
@@ -410,6 +510,16 @@ export class Compositor {
     gl.uniform1f(this.uniforms.uBrightness, ca?.brightness ?? 0);
     gl.uniform1f(this.uniforms.uContrast, ca?.contrast ?? 0);
     gl.uniform1f(this.uniforms.uSaturation, ca?.saturation ?? 0);
+    // §4.2: uLutScale=(N-1)/N, uLutOffset=1/(2N); LUT yokken intensity 0 +
+    // dummy doku = kimlik (mix'in ilk kolu). Ölçek/ofsetin "boş" değerleri
+    // keyfî ama tanımlı: örneklenen texel hangisi olursa olsun karışıma girmez.
+    const lut = item.lut ?? null;
+    gl.uniform1f(this.uniforms.uLutScale, lut ? (lut.size - 1) / lut.size : 0);
+    gl.uniform1f(this.uniforms.uLutOffset, lut ? 1 / (2 * lut.size) : 0.5);
+    gl.uniform1f(this.uniforms.uIntensity, lut ? lut.intensity : 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_3D, lut ? lut.texture : this.dummyLut);
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, item.texture);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -437,6 +547,26 @@ export class Compositor {
     return [out[0], out[1], out[2], out[3]];
   }
 
+  /**
+   * Reads the WHOLE drawing buffer (RGBA, top-left origin — rows flipped from
+   * GL's bottom-left). Same same-frame contract as readPixel; exists for the
+   * preview↔export parity measurement (§9.3 SSIM needs the full frame, and
+   * probing it pixel-by-pixel through the queue would take minutes).
+   */
+  readFrame(): { width: number; height: number; pixels: Uint8Array } | null {
+    if (this.disposed || this.width === 0 || this.height === 0) return null;
+    const { width, height } = this;
+    const raw = new Uint8Array(width * height * 4);
+    this.gl.readPixels(0, 0, width, height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, raw);
+    // GL rows are bottom-up; callers (and PNG/ffmpeg frames) are top-down.
+    const pixels = new Uint8Array(width * height * 4);
+    const rowBytes = width * 4;
+    for (let y = 0; y < height; y++) {
+      pixels.set(raw.subarray((height - 1 - y) * rowBytes, (height - y) * rowBytes), y * rowBytes);
+    }
+    return { width, height, pixels };
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -444,5 +574,6 @@ export class Compositor {
     gl.deleteProgram(this.program);
     gl.deleteProgram(this.transitionProgram);
     gl.deleteVertexArray(this.vao);
+    gl.deleteTexture(this.dummyLut);
   }
 }

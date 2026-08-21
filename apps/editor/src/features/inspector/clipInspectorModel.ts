@@ -20,11 +20,13 @@
 import {
   formatTimecode,
   isMediaClip,
+  maxScaleForFit,
   type Clip,
   type ClipAudio,
   type Effect,
   type MediaClip,
   type MicroSec,
+  type ProjectSettings,
   type Rational,
   type ShapeClip,
   type TextClip,
@@ -32,7 +34,12 @@ import {
   type Track,
   type Uuid,
 } from '@videoedit/timeline-schema';
-import { maxClipScale, maxClipScaleFor, maxTextSizeFor } from '../../state/timelineOps';
+import {
+  SCALE_MAX,
+  SCALE_MIN,
+  maxClipScaleFor,
+  maxTextSizeFor,
+} from '../../state/timelineOps';
 
 /** Shown wherever a multi-selection disagrees. */
 export const MIXED_LABEL = '—';
@@ -81,11 +88,19 @@ export interface VisualSection {
    * Scale ceiling for the SELECTION: the strictest of the selected clips, since
    * one write goes to all of them. It is per-clip and not merely per-project
    * because a text layer is drawn at `bbox * scale` (§7), so a 2000 px caption
-   * runs out of room long before a video clip does (`maxClipScaleFor`).
+   * runs out of room long before a video clip does (`maxClipScaleFor`) — and
+   * because ROTATION opens the intermediate canvas up to the box's diagonal,
+   * lowering the ceiling again (rendering-semantics §2.5).
    */
   maxScale: number;
   /** True when the ceiling comes from a text layer's own box, not the canvas. */
   maxScaleFromTextBox: boolean;
+  /**
+   * True when at least one selected clip is rotated (rotationDeg % 360 != 0):
+   * the ceiling above is then the DIAGONAL-aware one and the panel says why it
+   * is lower than the project's unrotated ceiling.
+   */
+  maxScaleLoweredByRotation: boolean;
 }
 
 /**
@@ -175,6 +190,25 @@ export interface ColorSection {
   exposure: CommonNumber;
 }
 
+/**
+ * lut section (rendering-semantics §4.2). Offered for every DRAWN clip, like
+ * colour: "no lut yet" renders as assetId null + enabled false, so the section
+ * never blinks in and out while the user works. Unlike colour there is no
+ * identity value — a lut IS a chosen .cube — so the enable toggle only works
+ * once a table was picked.
+ */
+export interface LutSection {
+  /** Clips this section writes to (everything that is drawn). */
+  clipIds: Uuid[];
+  /** True when at least one selected clip owns a lut effect. */
+  present: boolean;
+  /** false = no lut at all, or one that is switched off. */
+  enabled: CommonBoolean;
+  /** Selected .cube asset id; null = none selected OR mixed selection. */
+  assetId: CommonString;
+  intensity: CommonNumber;
+}
+
 export interface ClipInspectorModel {
   /** Selected clips that still exist in the document. */
   count: number;
@@ -188,6 +222,7 @@ export interface ClipInspectorModel {
   shape: ShapeSection | null;
   speed: SpeedSection | null;
   color: ColorSection | null;
+  lut: LutSection | null;
 }
 
 export interface AssetNameSource {
@@ -327,6 +362,7 @@ export function buildClipInspectorModel(
       shape: null,
       speed: null,
       color: null,
+      lut: null,
     };
   }
 
@@ -375,10 +411,19 @@ export function buildClipInspectorModel(
           maxScale: Math.min(
             ...visualClips.map((c) => maxClipScaleFor(c, doc.settings, textBoxOf(c, measureTextBox))),
           ),
+          // Compared against the clip's OWN pose-aware canvas ceiling — both
+          // sides of the comparison carry the same rotation factor, so a
+          // rotated caption is only attributed to its text box when the box
+          // really is the binding constraint (not merely because rotation
+          // lowered every ceiling at once).
           maxScaleFromTextBox: visualClips.some(
             (c) =>
               c.kind === 'text' &&
-              maxClipScaleFor(c, doc.settings, textBoxOf(c, measureTextBox)) < maxClipScale(doc.settings),
+              maxClipScaleFor(c, doc.settings, textBoxOf(c, measureTextBox)) <
+                canvasCeilingFor(c, doc.settings),
+          ),
+          maxScaleLoweredByRotation: visualClips.some(
+            (c) => c.transform.rotationDeg % 360 !== 0,
           ),
         };
 
@@ -496,7 +541,59 @@ export function buildClipInspectorModel(
           exposure: colorParam('exposure'),
         };
 
-  return { count: located.length, editable, identity, audio, visual, text, shape, speed, color };
+  // lut (§4.2): renk ile aynı hedef küme (çizilen klipler). Bir klipte birden
+  // fazla lut varsa panel İLKİNİ gösterir — önizleme çözücüsüyle (lutOf) ve
+  // yazımların normalize ettiği tek-efekt sözleşmesiyle aynı seçim.
+  const lutEffects = colorClips.map((c) => c.effects.find((e) => e.type === 'lut'));
+  const lut: LutSection | null =
+    colorClips.length === 0
+      ? null
+      : {
+          clipIds: colorClips.map((c) => c.id),
+          present: lutEffects.some((e) => e !== undefined),
+          enabled: commonBoolean(lutEffects.map((e) => e?.enabled === true)),
+          assetId: commonString(
+            lutEffects.map((e) => {
+              const v = e?.params.assetId;
+              return typeof v === 'string' ? v : '';
+            }),
+          ),
+          intensity: commonNumber(
+            lutEffects.map((e) => {
+              const v = e?.params.intensity;
+              return typeof v === 'number' && Number.isFinite(v) ? v : 1;
+            }),
+          ),
+        };
+
+  return {
+    count: located.length,
+    editable,
+    identity,
+    audio,
+    visual,
+    text,
+    shape,
+    speed,
+    color,
+    lut,
+  };
+}
+
+/**
+ * The clip's pose-aware CANVAS scale ceiling (media/shape/sticker ceiling):
+ * what `maxClipScaleFor` returns for a non-text clip with the same transform.
+ * Used as the comparison base for `maxScaleFromTextBox` so both sides carry
+ * the same rotation/anchor factor.
+ */
+function canvasCeilingFor(
+  clip: Clip,
+  settings: Pick<ProjectSettings, 'width' | 'height'>,
+): number {
+  return Math.max(
+    SCALE_MIN,
+    Math.min(SCALE_MAX, maxScaleForFit(settings.width, settings.height, clip.transform)),
+  );
 }
 
 /** Free timeline space after `clip` on its track; null when nothing follows. */

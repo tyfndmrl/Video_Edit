@@ -13,7 +13,17 @@
  *
  * Pure `apply*ToDraft` helpers are exported for interactive drags: the
  * pointer code calls them inside a docStore transaction (one undo entry per
- * drag), while the plain op wrappers commit a single `mutate` each.
+ * drag), while the plain op wrappers commit a single `mutate` each. Only the
+ * ones a gesture actually drives are exported — a draft helper with no outside
+ * caller (split, speed) stays module-private until a gesture needs it.
+ *
+ * DELIBERATELY ONE MODULE (yazılı tasarım kararı): every mutation shares one
+ * private toolbox (locateClip, fitsInTrack, refitToGrid, reconcileTransitions)
+ * and one commit discipline. Splitting by feature would either export that
+ * toolbox (spreading the invariant knowledge over N files) or duplicate it —
+ * both are how a "small" op grows its own slightly-wrong copy of a rule. Dead
+ * exports get DELETED instead (this file is pruned per wave); the file stays
+ * big and boring on purpose.
  */
 import {
   clipTimelineDurationUs,
@@ -24,6 +34,7 @@ import {
   isOnFrameGrid,
   sourceSpanForDuration,
   maxScaleFor,
+  maxScaleForFit,
   roundHalfUp,
   sampleKeyframes,
   snapDurationToFrameSpan,
@@ -42,6 +53,7 @@ import {
   type MediaClip,
   type MicroSec,
   type ProjectSettings,
+  type LayerPose,
   type Rational,
   type ShapeClip,
   type StickerClip,
@@ -205,7 +217,7 @@ export type TransitionEdge = 'in' | 'out';
  * Duration a freshly added transition ASKS for (1 s). The effective value is
  * always the even-frame snap of `min(request, caps)` — see planTransitionDuration.
  */
-export const DEFAULT_TRANSITION_DURATION_US = 1_000_000;
+const DEFAULT_TRANSITION_DURATION_US = 1_000_000;
 
 /** Notice codes (see OpResult.notice). */
 export const TRANSITION_SHORTENED_HANDLE = 'transition shortened by source handle';
@@ -341,7 +353,7 @@ export function planTransitionDuration(
 // ---------------------------------------------------------------------------
 
 /** What reconcileTransitions had to do; `removed` counts CUTS, not edges. */
-export interface TransitionReconcileReport {
+interface TransitionReconcileReport {
   shortened: number;
   removed: number;
   /**
@@ -374,7 +386,7 @@ const NO_TRANSITION_CHANGE: TransitionReconcileReport = {
  * re-laid-out to match it is a consequence of that same edit and only worth the
  * single notice slot when nothing louder happened.
  */
-export function transitionReconcileNotice(
+function transitionReconcileNotice(
   report: TransitionReconcileReport,
 ): string | undefined {
   if (report.removed > 0) return TRANSITION_DROPPED;
@@ -386,7 +398,7 @@ export function transitionReconcileNotice(
   return report.aligned > 0 ? TRANSFORM_APPLIED_TO_TRANSITION_CHAIN : undefined;
 }
 
-export function mergeTransitionReports(
+function mergeTransitionReports(
   a: TransitionReconcileReport,
   b: TransitionReconcileReport,
 ): TransitionReconcileReport {
@@ -637,6 +649,92 @@ export const toggleTrackHidden = (trackId: Uuid): OpResult =>
 export const toggleTrackLocked = (trackId: Uuid): OpResult =>
   toggleTrackFlag(trackId, 'locked', 'Track kilitlendi/açıldı');
 
+/** Schema bound on a track name (TrackSchema: `z.string().max(200)`). */
+export const TRACK_NAME_MAX_LENGTH = 200;
+
+/**
+ * Why `trackId` cannot be renamed, or null. Exported for the context menu and
+ * the header's double-click path — both grey/skip with EXACTLY the op's rule.
+ */
+export function trackRenameBlockReason(d: TimelineDoc, trackId: Uuid): string | null {
+  const track = d.tracks.find((t) => t.id === trackId);
+  if (!track) return 'track not found';
+  if (track.locked) return 'track is locked';
+  return null;
+}
+
+/**
+ * Renames a track (inline edit in the track header). The name is trimmed and
+ * cut to the schema bound; an EMPTY result clears the custom name entirely, so
+ * the header falls back to its derived label ("Video 1") — a deliberate escape
+ * hatch, not an error. Locked tracks refuse, same as every other track edit.
+ */
+export function renameTrack(trackId: Uuid, name: string): OpResult {
+  const blocked = trackRenameBlockReason(doc(), trackId);
+  if (blocked !== null) return fail(blocked);
+  const track = doc().tracks.find((t) => t.id === trackId);
+  if (!track) return fail('track not found');
+  const trimmed = name.trim().slice(0, TRACK_NAME_MAX_LENGTH);
+  const next = trimmed.length === 0 ? undefined : trimmed;
+  if (track.name === next) return OK;
+  useDocStore.getState().mutate('renameTrack', 'Track yeniden adlandırıldı', (d) => {
+    const t = d.tracks.find((x) => x.id === trackId);
+    if (!t) return;
+    if (next === undefined) delete t.name;
+    else t.name = next;
+  });
+  return OK;
+}
+
+export type TrackMoveDirection = 'up' | 'down';
+
+/**
+ * Why `trackId` cannot move one row up/down, or null when it can.
+ *
+ * Exported for the context menu (same contract as trackDeleteBlockReason).
+ * `tracks[0]` is the TOP layer — both in the editor's header column and in the
+ * export compiler's render order — so 'up' means index - 1. Only the track
+ * BEING MOVED must be unlocked: a lock protects a track's content, and moving
+ * a sibling never edits that content (the sibling's clips are untouched).
+ */
+export function trackMoveBlockReason(
+  d: TimelineDoc,
+  trackId: Uuid,
+  direction: TrackMoveDirection,
+): string | null {
+  const index = d.tracks.findIndex((t) => t.id === trackId);
+  if (index < 0) return 'track not found';
+  if (d.tracks[index].locked) return 'track is locked';
+  if (direction === 'up' && index === 0) return 'track already at the top';
+  if (direction === 'down' && index === d.tracks.length - 1) return 'track already at the bottom';
+  return null;
+}
+
+/**
+ * Moves a track one row up/down (context-menu reorder).
+ *
+ * Reordering tracks IS reordering render layers: `tracks[0]` is the top layer
+ * for the preview compositor (resolveVisualStack draws the array back-to-front)
+ * AND for the export compiler (ExportCompiler iterates `doc.Tracks` in order),
+ * so a single splice changes both the same way — that shared contract is what
+ * the reorder tests pin (timelineOps.test.ts + the export graph comparison).
+ */
+export function moveTrack(trackId: Uuid, direction: TrackMoveDirection): OpResult {
+  const d = doc();
+  const blocked = trackMoveBlockReason(d, trackId, direction);
+  if (blocked !== null) return fail(blocked);
+  const label = direction === 'up' ? 'Track yukarı taşındı' : 'Track aşağı taşındı';
+  useDocStore.getState().mutate('moveTrack', label, (dd) => {
+    const from = dd.tracks.findIndex((t) => t.id === trackId);
+    if (from < 0) return;
+    const to = direction === 'up' ? from - 1 : from + 1;
+    if (to < 0 || to >= dd.tracks.length) return;
+    const [track] = dd.tracks.splice(from, 1);
+    dd.tracks.splice(to, 0, track);
+  });
+  return OK;
+}
+
 /**
  * Why `trackId` cannot be deleted, or null when it can.
  *
@@ -706,6 +804,10 @@ function buildClipFromAsset(
   startUs: MicroSec,
   fps: Rational,
 ): MediaClip | null {
+  // LUT (.cube) bir MEDYA değildir: klip türü yoktur, timeline'a konamaz — kullanım
+  // yeri lut EFEKTİNİN assetId'sidir (Inspector LUT bölümü). Sunucu yarısı aynı reddi
+  // 'asset-clip-type' olarak verir (ExportCompiler.IsTypeMismatch, MediaKind.Lut).
+  if (asset.kind === 'lut') return null;
   const sourceDurationUs = asset.kind === 'image' ? IMAGE_DEFAULT_DURATION_US : asset.durationUs;
   if (sourceDurationUs === undefined || sourceDurationUs <= 0) return null;
   const durationUs = floorDurationToFrameSpan(startUs, sourceDurationUs, fps);
@@ -750,6 +852,7 @@ export function addClipFromAsset(
   const asset = useAssetStore.getState().getAsset(assetId);
   if (!asset) return { ok: false, reason: 'asset not found' };
   if (asset.status !== 'ready') return { ok: false, reason: 'asset is not ready' };
+  if (asset.kind === 'lut') return { ok: false, reason: 'lut is not a clip source' };
 
   const startUs = snapUsToFrameGrid(Math.max(0, Math.round(timelineStartUs)), d.settings.fps);
   const clip = buildClipFromAsset(asset, startUs, d.settings.fps);
@@ -1642,7 +1745,7 @@ export function splitKeyframes(
  * Media clips get exact source continuity (B.sourceIn === A.sourceOut);
  * keyframes are divided per the schema rule via splitKeyframes.
  */
-export function applySplitToDraft(
+function applySplitToDraft(
   d: TimelineDoc,
   clipId: Uuid,
   timeUs: MicroSec,
@@ -1975,11 +2078,6 @@ export function transitionAt(cut: TransitionCut): Transition | undefined {
   return cut.a.transitionOut ?? cut.b.transitionIn;
 }
 
-/** Both edges of `clipId` that are real cuts, in `in`-then-`out` order. */
-export function transitionEdgesOf(d: TimelineDoc, clipId: Uuid): TransitionEdge[] {
-  return (['in', 'out'] as const).filter((edge) => findTransitionCut(d, clipId, edge) !== null);
-}
-
 // ---------------------------------------------------------------------------
 // Derleyicinin reddettiği BİLEŞİMLER — editör tarafı ön engeller
 // ---------------------------------------------------------------------------
@@ -2005,7 +2103,7 @@ export function transitionEdgesOf(d: TimelineDoc, clipId: Uuid): TransitionEdge[
  * `volume` bilinçli olarak DIŞARIDA: ses zincirine aittir, katman akışını hiç
  * ilgilendirmez, dolayısıyla geçişli klipte de serbesttir.
  */
-export const VISUAL_KEYFRAME_CHANNELS = ['x', 'y', 'scale', 'rotationDeg', 'opacity'] as const;
+const VISUAL_KEYFRAME_CHANNELS = ['x', 'y', 'scale', 'rotationDeg', 'opacity'] as const;
 
 type VisualKeyframeChannel = (typeof VISUAL_KEYFRAME_CHANNELS)[number];
 
@@ -2022,6 +2120,14 @@ export const REASON_ROTATION_NEEDS_STATIC_SCALE =
 
 /** Yerleşim, geçişli komşulara da uygulandı (sessiz değil — OpResult.notice). */
 export const TRANSFORM_APPLIED_TO_TRANSITION_CHAIN = 'transform applied to transition neighbours';
+
+/**
+ * Dönme yazımı, mevcut ölçeği dönmeli ara-tuval tavanının ÜSTÜNDE bıraktı ve
+ * op ölçeği tavana indirdi (OpResult.notice). Sessiz kalsaydı belge derleyicinin
+ * `transform-scale` kapısına (HTTP 422) takılırdı; reddetseydik dönme alanı
+ * "nedensiz" kilitlenirdi — geçişlerdeki "kısalt ve söyle" ürün kararının aynısı.
+ */
+export const SCALE_CLAMPED_BY_ROTATION = 'scale clamped by rotation canvas';
 
 function channelHasKeyframes(clip: Clip, channel: VisualKeyframeChannel): boolean {
   const kfs = clip.keyframes[channel];
@@ -2361,11 +2467,6 @@ let clipboard: ClipboardEntry[] | null = null;
 /** Test hook / paranoia: reset module clipboard. */
 export function clearClipboardForTests(): void {
   clipboard = null;
-}
-
-/** True when there is something to paste (context menu disabled state). */
-export function hasClipboardContent(): boolean {
-  return clipboard !== null && clipboard.length > 0;
 }
 
 function cloneClip(clip: Clip): Clip {
@@ -2717,26 +2818,38 @@ export function maxClipScale(settings: Pick<ProjectSettings, 'width' | 'height'>
   return Math.min(SCALE_MAX, maxScaleFor(settings));
 }
 
-/** Floors to the stored scale precision — see `maxScaleFor` for WHY it floors. */
-function floorToScaleDecimals(value: number): number {
-  const factor = 10 ** SCALE_DECIMALS;
-  return Math.floor(value * factor) / factor;
-}
+/** An unrotated, centered pose — the default when the caller has no clip. */
+const CENTERED_POSE: LayerPose = { rotationDeg: 0, anchorX: 0.5, anchorY: 0.5 };
 
 /**
  * Scale ceiling for a layer whose drawn box is `boxWidthPx x boxHeightPx` at
  * `scale = 1` — the general form of `maxClipScale` (which is this with the box
- * = the canvas).
+ * = the canvas and no rotation).
+ *
+ * `pose` is the clip's rotation + anchor: the compiler's ceiling gate measures
+ * the INTERMEDIATE canvas, and rotation opens it up to the box's diagonal
+ * (an off-center anchor pads it further) — see `maxScaleForFit` in the schema
+ * package, which carries the compiler's exact ledger formula. A rotated clip
+ * therefore gets a LOWER ceiling here, which is exactly what stops the editor
+ * from writing a document `EnsureLayerCeiling` rejects with HTTP 422.
  */
 export function maxScaleForBoxPx(
   settings: Pick<ProjectSettings, 'width' | 'height'>,
   boxWidthPx: number,
   boxHeightPx: number,
+  pose: LayerPose = CENTERED_POSE,
 ): number {
-  const longest = Math.max(boxWidthPx, boxHeightPx);
-  const canvasCeiling = maxClipScale(settings);
-  if (!Number.isFinite(longest) || longest <= 0) return canvasCeiling;
-  return Math.max(SCALE_MIN, Math.min(canvasCeiling, floorToScaleDecimals(MAX_LAYER_DIMENSION / longest)));
+  const canvasCeiling = Math.min(
+    SCALE_MAX,
+    maxScaleForFit(settings.width, settings.height, pose),
+  );
+  // ONE known axis is enough to bound the layer (the font-independent text
+  // lower bound reports width 0 — glyph advances need the font file); only a
+  // box with NO usable axis falls back to the canvas ceiling.
+  const w = Number.isFinite(boxWidthPx) && boxWidthPx > 0 ? boxWidthPx : 0;
+  const h = Number.isFinite(boxHeightPx) && boxHeightPx > 0 ? boxHeightPx : 0;
+  if (w === 0 && h === 0) return Math.max(SCALE_MIN, canvasCeiling);
+  return Math.max(SCALE_MIN, Math.min(canvasCeiling, maxScaleForFit(w, h, pose)));
 }
 
 /**
@@ -2800,13 +2913,20 @@ export function maxClipScaleFor(
   settings: Pick<ProjectSettings, 'width' | 'height'>,
   measuredBoxPx?: { widthPx: number; heightPx: number } | null,
 ): number {
+  // ROTATION lowers every ceiling below: the compiler's gate measures the
+  // intermediate canvas, and a rotated layer opens one as large as its box's
+  // diagonal (rendering-semantics §2.5; ExportCompiler.EnsureLayerCeiling).
+  const pose: LayerPose = clip.transform;
   if (clip.kind !== 'text') {
     // Media/image/sticker are fit=contain and a shape's natural box IS the
     // frame (ShapeGeometry.cs) — for all of them the canvas ceiling is exact.
-    return maxClipScale(settings);
+    return Math.max(
+      SCALE_MIN,
+      Math.min(SCALE_MAX, maxScaleForFit(settings.width, settings.height, pose)),
+    );
   }
   const box = measuredBoxPx ?? textBoxLowerBoundPx(clip.text);
-  return maxScaleForBoxPx(settings, box.widthPx, box.heightPx);
+  return maxScaleForBoxPx(settings, box.widthPx, box.heightPx, pose);
 }
 
 export const ROTATION_LIMIT = 360;
@@ -2838,12 +2958,12 @@ export const DEFAULT_TRANSFORM = {
 } as const;
 
 /** Audio properties live on video/audio clips; image clips carry `audio: null`. */
-export function clipHasAudio(clip: Clip): clip is MediaClip {
+function clipHasAudio(clip: Clip): clip is MediaClip {
   return isMediaClip(clip) && clip.audio !== null;
 }
 
 /** Everything except an audio clip is drawn, so everything else has a transform. */
-export function isVisualClip(clip: Clip): boolean {
+function isVisualClip(clip: Clip): boolean {
   return clip.kind !== 'audio';
 }
 
@@ -2937,6 +3057,7 @@ export function applyClipTransformToDraft(
   }
   let touched = 0;
   let chained = false;
+  let scaleClamped = false;
   for (const clipId of clipIds) {
     const loc = locateClip(d, clipId);
     if (!loc || loc.track.locked) continue;
@@ -2951,23 +3072,41 @@ export function applyClipTransformToDraft(
       const v = clampFinite(patch.y, -POSITION_LIMIT, POSITION_LIMIT, POSITION_DECIMALS);
       if (v !== null) t.y = v;
     }
+    // Dönme ÖNCE yazılır: ölçek tavanı dönmeye bağlıdır (ara tuval köşegeni,
+    // maxClipScaleFor) ve iki alan aynı patch'te geldiğinde ölçek YENİ dönmeye
+    // göre kelepçelenmelidir — eski sıra, dönen klibe eski (yüksek) tavandan
+    // ölçek yazıp belgeyi derleyicinin `transform-scale` kapısına düşürüyordu.
+    if (patch.rotationDeg !== undefined) {
+      const v = clampFinite(patch.rotationDeg, -ROTATION_LIMIT, ROTATION_LIMIT, ROTATION_DECIMALS);
+      if (v !== null) t.rotationDeg = v;
+    }
     if (patch.scale !== undefined) {
       // Ceiling is per-CLIP, not a constant and not merely per-project: a text
       // layer is drawn at `bbox * scale`, so a 2000 px font tops out around 3.4
       // even in a project where a video clip may go to 4.266 (see
-      // maxClipScaleFor — 3. tur denetim, blocker 2).
+      // maxClipScaleFor — 3. tur denetim, blocker 2). Rotation lowers it again
+      // (intermediate-canvas diagonal).
       const v = clampFinite(patch.scale, SCALE_MIN, maxClipScaleFor(clip, d.settings), SCALE_DECIMALS);
       if (v !== null) t.scale = v;
     }
+    // Dönme, MEVCUT ölçeği yeni (daha düşük) tavanın üstünde bırakmış olabilir:
+    // ölçek tavana iner ve bunu bildiririz (SCALE_CLAMPED_BY_ROTATION) — sessiz
+    // bırakmak, 422'yi dışa aktarımda öğrenmek demekti.
     if (patch.rotationDeg !== undefined) {
-      const v = clampFinite(patch.rotationDeg, -ROTATION_LIMIT, ROTATION_LIMIT, ROTATION_DECIMALS);
-      if (v !== null) t.rotationDeg = v;
+      const ceiling = maxClipScaleFor(clip, d.settings);
+      if (t.scale > ceiling) {
+        t.scale = ceiling;
+        scaleClamped = true;
+      }
     }
     touched++;
     // Geçiş zinciri: yerleşim EŞİT olmak zorunda (dosya başındaki kural 3).
     if (propagateTransformToChain(d, clipId)) chained = true;
   }
   if (touched === 0) return fail('no visual clip in selection');
+  // Ölçek kelepçesi manşettir: kullanıcının istemediği İKİ düzeltmeden daha
+  // görünmez olanı odur (zincir kopyası panelde zaten önceden ilan edilir).
+  if (scaleClamped) return okWith(SCALE_CLAMPED_BY_ROTATION);
   return chained ? okWith(TRANSFORM_APPLIED_TO_TRANSITION_CHAIN) : OK;
 }
 
@@ -3216,10 +3355,10 @@ export function selectAllClips(): void {
 // ---------------------------------------------------------------------------
 
 /** Fallback length of a new overlay clip when the caller does not say. */
-export const OVERLAY_CLIP_DEFAULT_DURATION_US = 5_000_000;
+const OVERLAY_CLIP_DEFAULT_DURATION_US = 5_000_000;
 
 /** Track name used when an overlay clip has to create its own lane. */
-export const OVERLAY_TRACK_NAME = 'Katman';
+const OVERLAY_TRACK_NAME = 'Katman';
 
 type OverlayClipBase = Pick<
   Clip,
@@ -3395,17 +3534,17 @@ export const TEXT_SIZE_MIN = 4;
  */
 export const TEXT_SIZE_MAX = 2000;
 /** Precision a font size is stored with (the inspector field shows integers). */
-export const TEXT_SIZE_DECIMALS = 1;
+const TEXT_SIZE_DECIMALS = 1;
 export const TEXT_LINE_HEIGHT_MIN = 0.5;
 export const TEXT_LINE_HEIGHT_MAX = 4;
-export const TEXT_WEIGHT_MIN = 100;
-export const TEXT_WEIGHT_MAX = 1000;
+const TEXT_WEIGHT_MIN = 100;
+const TEXT_WEIGHT_MAX = 1000;
 export const TEXT_STROKE_WIDTH_MAX = 200;
 export const TEXT_BACKGROUND_PADDING_MAX = 500;
 export const SHAPE_RADIUS_MAX = 1000;
 export const SHAPE_STROKE_WIDTH_MAX = 500;
 /** Guard against pathological documents (and pathological rasters). */
-export const TEXT_CONTENT_MAX_LENGTH = 5000;
+const TEXT_CONTENT_MAX_LENGTH = 5000;
 
 /**
  * Largest font size THIS text clip may take without pushing its layer past
@@ -3457,18 +3596,31 @@ export function maxTextSizeFor(
     perFontPx = Math.max(perPx, (longest - 2 * padding) / text.fontSizePx);
   }
 
+  // A ROTATED text layer opens an intermediate canvas as large as its box's
+  // diagonal (plus the anchor pad) — same ledger as the scale ceiling
+  // (rendering-semantics §2.5). The exact inverse depends on the box's aspect
+  // (which the font size itself changes), so the budget is shrunk by the WORST
+  // CASE factor instead: hypot(w, h) <= sqrt(2) * max(w, h), and an off-center
+  // anchor pads each axis by up to 2 * max(a, 1-a). Conservative only for
+  // rotated text (never lets through a size the compiler would reject).
+  const rotating = clip.transform.rotationDeg % 360 !== 0;
+  const mx = Math.max(clip.transform.anchorX, 1 - clip.transform.anchorX);
+  const my = Math.max(clip.transform.anchorY, 1 - clip.transform.anchorY);
+  const needsPad = rotating && (mx !== 0.5 || my !== 0.5);
+  const rotationFactor = rotating ? Math.SQRT2 * (needsPad ? 2 * Math.max(mx, my) : 1) : 1;
+
   // WHOLE pixels, floored. The inspector's size field shows integers, so a
   // fractional ceiling (743.9) would be clamped to itself and then ROUNDED UP
   // by the field to 744 — a value one tenth of a pixel past the ceiling the
   // same panel just advertised. Measured in the browser, not reasoned about.
-  const budgetPx = MAX_LAYER_DIMENSION / scale - 2 * padding;
+  const budgetPx = MAX_LAYER_DIMENSION / (scale * rotationFactor) - 2 * padding;
   return Math.max(TEXT_SIZE_MIN, Math.min(TEXT_SIZE_MAX, Math.floor(budgetPx / perFontPx)));
 }
 
 const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 /** A valid hex color, or null when the input is not one (write is skipped). */
-export function normalizeHexColor(value: unknown): string | null {
+function normalizeHexColor(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return HEX_COLOR_RE.test(trimmed) ? trimmed : null;
@@ -3722,7 +3874,7 @@ export function clipSupportsSpeed(clip: Clip): clip is MediaClip {
 }
 
 /** Clamp + round a requested rate into the schema range (null = not a number). */
-export function normalizeSpeedRate(rate: number): number | null {
+function normalizeSpeedRate(rate: number): number | null {
   return clampFinite(rate, SPEED_MIN, SPEED_MAX, SPEED_DECIMALS);
 }
 
@@ -3901,7 +4053,7 @@ export function planClipSpeed(
  * (rescaled), fades (re-clamped), and finally the track's transitions
  * (reconciled against the new durations AND the new `(D/2)*rate` handles).
  */
-export function applyClipSpeedToDraft(
+function applyClipSpeedToDraft(
   d: TimelineDoc,
   clipIds: readonly Uuid[],
   rate: number,
@@ -4000,7 +4152,7 @@ export function setClipSpeed(
 export const COLOR_ADJUST_MIN = -1;
 export const COLOR_ADJUST_MAX = 1;
 /** Stored precision (undo patches stay clean; well under the ±1/255 §4.1 note). */
-export const COLOR_ADJUST_DECIMALS = 3;
+const COLOR_ADJUST_DECIMALS = 3;
 
 /** The six §4.1 params, in the order the panel shows them. */
 export const COLOR_ADJUST_KEYS = [
@@ -4019,12 +4171,12 @@ export type ColorAdjustPatch = Partial<Record<ColorAdjustKey, number>>;
 export const COLOR_ADJUST_DEDUPED = 'duplicate colorAdjust effects merged';
 
 /** All six params at 0 — the identity the shader and the compiler agree on. */
-export function identityColorAdjustParams(): Record<ColorAdjustKey, number> {
+function identityColorAdjustParams(): Record<ColorAdjustKey, number> {
   return { brightness: 0, contrast: 0, saturation: 0, temperature: 0, tint: 0, exposure: 0 };
 }
 
 /** Audio clips draw nothing, so colour has nowhere to land. */
-export function clipSupportsColorAdjust(clip: Clip): boolean {
+function clipSupportsColorAdjust(clip: Clip): boolean {
   return isVisualClip(clip);
 }
 
@@ -4174,6 +4326,201 @@ export function resetClipColorAdjust(clipIds: readonly Uuid[]): OpResult {
       touched++;
     }
     result = touched > 0 ? OK : fail('no visual clip in selection');
+  });
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// lut effect (rendering-semantics §4.2) — .cube 3D LUT + intensity
+//
+// colorAdjust ile AYNI teklik sözleşmesi: klip başına EN FAZLA BİR lut efekti.
+// Önizleme çözücüsü (player/core/resolve.lutOf) İLK etkin lut'u okur ve shader
+// tek 3D doku örnekler; ikinci bir efekt dokümanda ve export'ta var olur ama
+// ekranda görünmezdi. Yazımlar bu yüzden klibi tek efekte normalize eder.
+//
+// Params şeması invariant kural 6'nın lut dalıdır: TAM OLARAK { assetId: Uuid,
+// intensity: 0..1 } — yabancı anahtar belgeyi export edilemez yapar.
+// ---------------------------------------------------------------------------
+
+export const LUT_INTENSITY_MIN = 0;
+export const LUT_INTENSITY_MAX = 1;
+/** Kayıt hassasiyeti (colorAdjust ile aynı gerekçe: temiz undo patch'leri). */
+const LUT_INTENSITY_DECIMALS = 3;
+/** Yeni uygulanan LUT'un varsayılan yoğunluğu (tam etki — §4.2 split/blend'siz yol). */
+export const LUT_DEFAULT_INTENSITY = 1;
+
+/** Bildirim kodu: klip birden fazla lut taşıyordu; fazlalıklar atıldı. */
+export const LUT_DEDUPED = 'duplicate lut effects merged';
+
+/** Ses klibi çizilmez — LUT'un ineceği piksel yok (colorAdjust ile aynı kural). */
+function clipSupportsLut(clip: Clip): boolean {
+  return isVisualClip(clip);
+}
+
+/** Klibin tek lut efekti, ya da null. Fazlalıklar DÖNDÜRÜLMEZ. */
+export function lutEffectOf(clip: Clip): Effect | null {
+  return clip.effects.find((e) => e.type === 'lut') ?? null;
+}
+
+/**
+ * DRAFT klipte invariant şekli garanti eder: en fazla bir lut efekti, params
+ * yalnız {assetId, intensity}. Efekt yoksa null döner (LUT, colorAdjust'tan
+ * farklı olarak "kimlik" değeriyle YARATILAMAZ — bir assetId şarttır; yaratma
+ * yalnız applyClipLutToDraft'ın assetId'li yolundadır).
+ */
+function normalizeLutEffect(clip: Clip): { effect: Effect | null; deduped: boolean } {
+  const found = clip.effects.filter((e) => e.type === 'lut');
+  let deduped = false;
+  if (found.length > 1) {
+    const keep = found[0];
+    clip.effects = clip.effects.filter((e) => e.type !== 'lut' || e === keep);
+    deduped = true;
+  }
+  const effect = clip.effects.find((e) => e.type === 'lut') ?? null;
+  if (effect !== null) {
+    const assetId = effect.params.assetId;
+    const intensity = effect.params.intensity;
+    effect.params = {
+      assetId: typeof assetId === 'string' ? assetId : '',
+      intensity:
+        typeof intensity === 'number' && Number.isFinite(intensity)
+          ? roundTo(
+              Math.min(LUT_INTENSITY_MAX, Math.max(LUT_INTENSITY_MIN, intensity)),
+              LUT_INTENSITY_DECIMALS,
+            )
+          : LUT_DEFAULT_INTENSITY,
+    };
+  }
+  return { effect, deduped };
+}
+
+export interface ClipLutPatch {
+  /** Verilirse efekt bu .cube varlığına (yeniden) bağlanır; efekt yoksa yaratılır. */
+  assetId?: Uuid;
+  /** Verilirse yoğunluk yazılır (0..1'e kelepçelenir). */
+  intensity?: number;
+}
+
+/**
+ * Saf draft yazımı — panelin canlı slider'ı (liveEdit) ve tekil op aynı yolu
+ * kullanır. `assetId` içermeyen bir patch, lut'u OLMAYAN klipleri atlar:
+ * yoğunluk tek başına bir efekt yaratamaz (neye uygulanacağı belirsiz olurdu).
+ */
+export function applyClipLutToDraft(
+  d: TimelineDoc,
+  clipIds: readonly Uuid[],
+  patch: ClipLutPatch,
+): OpResult {
+  let touched = 0;
+  let deduped = false;
+  for (const clipId of clipIds) {
+    const loc = locateClip(d, clipId);
+    if (!loc || loc.track.locked) continue;
+    if (!clipSupportsLut(loc.clip)) continue;
+    const normalized = normalizeLutEffect(loc.clip);
+    if (normalized.deduped) deduped = true;
+    let effect = normalized.effect;
+    if (effect === null) {
+      if (patch.assetId === undefined) continue; // yoğunluk yalnız var olan LUT'a yazılır
+      effect = {
+        id: uuidv7(),
+        type: 'lut',
+        enabled: true,
+        params: { assetId: patch.assetId, intensity: LUT_DEFAULT_INTENSITY },
+      };
+      loc.clip.effects.push(effect);
+    } else if (patch.assetId !== undefined) {
+      effect.params.assetId = patch.assetId;
+    }
+    if (patch.intensity !== undefined) {
+      const v = clampFinite(
+        patch.intensity, LUT_INTENSITY_MIN, LUT_INTENSITY_MAX, LUT_INTENSITY_DECIMALS);
+      if (v !== null) effect.params.intensity = v;
+    }
+    // Kapalı efekte dokunmak onu geri açar (colorAdjust ile aynı gerekçe:
+    // görünür sonucu olmayan denetim bozuk denetim gibi okunur).
+    effect.enabled = true;
+    touched++;
+  }
+  if (touched === 0) {
+    return fail(
+      patch.assetId === undefined ? 'no clip with a lut in selection' : 'no visual clip in selection');
+  }
+  return okWith(deduped ? LUT_DEDUPED : undefined);
+}
+
+/**
+ * LUT seç/uygula. `assetId` kitaplıktaki READY bir .cube (kind 'lut') olmalı —
+ * panel listeyi zaten filtreler ama op ikinci kez sorar: yanlış türde bir id
+ * yazılsaydı belge ancak export'ta ('lut-asset-type') reddedilirdi.
+ */
+export function setClipLut(clipIds: readonly Uuid[], assetId: Uuid): OpResult {
+  const asset = useAssetStore.getState().getAsset(assetId);
+  if (!asset || asset.kind !== 'lut' || asset.status !== 'ready') {
+    return fail('not a ready lut asset');
+  }
+  let result: OpResult = fail('no visual clip in selection');
+  useDocStore.getState().mutate('clipLut', 'LUT uygulandı', (d) => {
+    result = applyClipLutToDraft(d, clipIds, { assetId });
+  });
+  return result;
+}
+
+/** Yoğunluk yazımı (0..1) — yalnız lut'u OLAN kliplere. */
+export function setClipLutIntensity(clipIds: readonly Uuid[], intensity: number): OpResult {
+  let result: OpResult = fail('no clip with a lut in selection');
+  useDocStore.getState().mutate('clipLut', 'LUT yoğunluğu değiştirildi', (d) => {
+    result = applyClipLutToDraft(d, clipIds, { intensity });
+  });
+  return result;
+}
+
+/**
+ * Efekt aç/kapa. colorAdjust'tan farkı: kapalıyken AÇMAK efekt YARATMAZ —
+ * LUT'un kimlik değeri yoktur (bir .cube seçilmiş olmalı); efekti olmayan
+ * klipler atlanır. Params korunur: kullanıcı karşılaştırıyor, silmiyor.
+ */
+export function setClipLutEnabled(clipIds: readonly Uuid[], enabled: boolean): OpResult {
+  let result: OpResult = fail('no clip with a lut in selection');
+  useDocStore
+    .getState()
+    .mutate('clipLut', enabled ? 'LUT açıldı' : 'LUT kapatıldı', (d) => {
+      let touched = 0;
+      for (const clipId of clipIds) {
+        const loc = locateClip(d, clipId);
+        if (!loc || loc.track.locked) continue;
+        if (!clipSupportsLut(loc.clip)) continue;
+        const { effect } = normalizeLutEffect(loc.clip);
+        if (effect === null) continue;
+        effect.enabled = enabled;
+        touched++;
+      }
+      result = touched > 0 ? OK : fail('no clip with a lut in selection');
+    });
+  return result;
+}
+
+/**
+ * "Yok" seçimi / sıfırla: lut efektini KALDIRIR (yoğunluğu 0'a çekmek değil).
+ * Sıfır yoğunluklu etkin bir lut compiler'da zaten üretilmez ama dokümanda
+ * efekt olarak durur ve export'un özellik kapıları onu sorgular — kaldırmak
+ * klibi kullanıcı LUT'a hiç dokunmamış hale döndürür (resetClipColorAdjust
+ * ile aynı gerekçe).
+ */
+export function removeClipLut(clipIds: readonly Uuid[]): OpResult {
+  let result: OpResult = fail('no clip with a lut in selection');
+  useDocStore.getState().mutate('clipLut', 'LUT kaldırıldı', (d) => {
+    let touched = 0;
+    for (const clipId of clipIds) {
+      const loc = locateClip(d, clipId);
+      if (!loc || loc.track.locked) continue;
+      if (!clipSupportsLut(loc.clip)) continue;
+      if (loc.clip.effects.some((e) => e.type === 'lut')) {
+        loc.clip.effects = loc.clip.effects.filter((e) => e.type !== 'lut');
+        touched++;
+      }
+    }
+    result = touched > 0 ? OK : fail('no clip with a lut in selection');
   });
   return result;
 }

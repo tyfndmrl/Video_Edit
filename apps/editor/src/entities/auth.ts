@@ -94,19 +94,21 @@ export async function login(email: string, password: string): Promise<void> {
 }
 
 /**
- * Logout: sunucudaki refresh token'lar iptal edilir (POST /api/auth/logout),
- * yerel access token temizlenir. Sunucu çağrısı best-effort — ağ hatasında
- * bile yerel oturum kapanmış olur. Raw fetch: apiClient bu modülü import
- * ettiği için buradan apiFetch kullanmak döngü yaratırdı.
+ * Logout: yalnız BU CİHAZIN refresh token'ı iptal edilir
+ * (POST /api/auth/refresh/logout), yerel access token temizlenir. Rota bilinçli
+ * olarak refresh cookie path'inin (/api/auth/refresh) ALTINDADIR — httpOnly
+ * cookie yalnız oraya gönderilir; eski /api/auth/logout cookie'yi göremediği
+ * için hangi cihazın çıktığını bilemez ve TÜM oturumları düşürüyordu. Diğer
+ * cihazlardaki oturumlar artık açık kalır. Sunucu çağrısı best-effort — ağ
+ * hatasında bile yerel oturum kapanmış olur. Raw fetch: apiClient bu modülü
+ * import ettiği için buradan apiFetch kullanmak döngü yaratırdı.
  */
 export async function logout(): Promise<void> {
-  const token = accessToken;
   accessToken = null;
   try {
-    await fetch('/api/auth/logout', {
+    await fetch('/api/auth/refresh/logout', {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      credentials: 'include',
+      credentials: 'include', // kimlik httpOnly refresh cookie'sinin kendisidir
     });
   } catch {
     // best effort — yerel oturum zaten temizlendi

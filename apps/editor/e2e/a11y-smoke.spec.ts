@@ -17,6 +17,8 @@
  * ÖZNİTELİĞİNİ doğruluyor ama o özniteliğin VAAT ETTİĞİ davranışın hiçbirini
  * ölçmüyordu — yani ekran okuyucu sözleşmesi "yeşil" görünürken klavye
  * kullanıcısı diyaloğun arkasına düşebiliyordu. Sahte güven buradan geliyordu.
+ * (Bulgu KAPANDI: davranış src/lib/useModalFocus.ts ile uygulandı; aşağıdaki
+ * modal odak testleri artık gerçek geçiştir, test.fail işareti kalmadı.)
  */
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures/test';
@@ -204,38 +206,35 @@ test.describe('Erişilebilirlik — klavye ve roller', () => {
 //
 // !!! BU BÖLÜMÜ OKUMADAN DEĞİŞTİRMEYİN !!!
 //
-// Aşağıdaki testler ürünün BUGÜN yapmadığı davranışları tarif eder. Bunlar
-// M4 dalga 2 denetiminin YÜKSEK bulgusudur: üç overlay de `aria-modal="true"`
-// yazar (ExportDialog.tsx, ShortcutsHelpOverlay.tsx, ConflictDialog.tsx) ama
-// hiçbirinde odak yönetimi YOKTUR — ne açılışta odağı içeri alma, ne odak
-// tuzağı, ne kapanışta odağı tetikleyiciye döndürme; ExportDialog'da Escape
-// ile kapanma da yok (shortcuts/dispatcher.ts Escape'i yalnız kısayol
-// overlay'i için işler). Ekran okuyucuya "burası modal" denir, klavye
-// kullanıcısı ise Tab'la diyaloğun ARKASINDAKİ düğmelere düşer.
+// Aşağıdaki testler `aria-modal="true"` yazan overlay'lerin verdiği sözü
+// GERÇEK klavyeyle ölçer: açılışta odak içeri taşınır, Tab/Shift+Tab odağı
+// dışarı çıkaramaz, ExportDialog Escape ile kapanır, kapanışta odak
+// tetikleyici düğmeye döner. Davranış üç overlay'de de ORTAK
+// src/lib/useModalFocus.ts hook'undan gelir (ExportDialog.tsx,
+// ShortcutsHelpOverlay.tsx, ConflictDialog.tsx). ConflictDialog aynı hook'u
+// kullanır ama BURADA ölçülmez: 409 çakışması e2e'de tetiklenmiyor ve o
+// diyalog bilerek Escape almaz (tek güvenli çıkış "Sunucudaki sürümü yükle").
 //
-// Testler BİLEREK ZAYIFLATILMADI: gerçek klavyeyle beklenen davranışı ölçerler
-// ve `test.fail()` ile "şu an başarısız olması BEKLENİYOR" diye işaretlenirler.
-// Sonuç:
-//   - bugün: CI kırmızıya dönmez (düzeltme başka bir ajanın alanında: src/),
-//   - yarın: ürün odak yönetimini kazandığı an bu testler GEÇER ve Playwright
-//     "Expected to fail, but passed" diyerek KIRMIZI verir; o an yapılacak tek
-//     iş `test.fail(...)` satırını silmektir. Yani bulgu kaybolamaz.
+// TARİHÇE — bulgu kaybolmama deseni ÇALIŞTI: bu bölüm M4 dalga 2 denetiminin
+// YÜKSEK bulgusu olarak doğdu (üç overlay de aria-modal yazıyor, hiçbirinde
+// odak yönetimi yok) ve testler `test.fail(true, ...)` ile "bugün başarısız
+// olması BEKLENİYOR" diye işaretliydi. Ürün odak yönetimini kazandığı an
+// Playwright "Expected to fail, but passed" ile kırmızı verdi ve test.fail
+// satırları SİLİNDİ. Artık bunlar normal testlerdir; düşerlerse gerileme var
+// demektir, test.fail GERİ EKLENEREK yeşile boyanamaz.
 //
-// `test.fail()` bilinen zayıflığı: test YANLIŞ bir nedenle (ör. kurulum
-// bozulması) düşerse yine "beklenen başarısızlık" sayılır. Bu yüzden bölümün
-// başındaki KANARYA testi normal bir testtir — diyaloğu açan zincir bozulursa
-// kırmızıyı O verir, sessizce yutulmaz.
-const FIXME_FOCUS =
-  'Ürün henüz modal odak yönetimi uygulamıyor (ExportDialog/ShortcutsHelpOverlay: ' +
-  'odak tuzağı, açılışta odak, kapanışta odağı geri verme yok). Düzeltme src/ ' +
-  'alanında; bu satır düzeltmeyle birlikte SİLİNMELİDİR.';
+// KANARYA normal bir test olarak KALIR: odak testleri diyaloğu açan zincire
+// bağımlıdır. Bir odak testi "diyalog görünmedi" gibi bir nedenle düşerse
+// kırmızının sahibi kanaryadır — önce onu onarın, odak yönetiminde gerileme
+// aramayın.
 
 test.describe('Erişilebilirlik — modal odak sözleşmesi (aria-modal vaadi)', () => {
   test('KANARYA: export diyaloğu gerçek tıkla açılır ve içinde odaklanabilir iki düğme vardır', async ({
     editor,
   }) => {
-    // Aşağıdaki test.fail testlerinin ön koşulu. Bu test kırmızıysa oradaki
-    // "beklenen başarısızlıklar" ARTIK KANIT DEĞİLDİR — önce burayı onarın.
+    // Aşağıdaki odak testlerinin ön koşulu. Bu test kırmızıysa odak testleri
+    // "diyalog hiç açılmadı" diye düşüyordur — önce burayı onarın; odak
+    // yönetiminde gerileme aramayın.
     const page = editor.page;
     await page.getByRole('button', { name: 'Dışa Aktar', exact: true }).click();
 
@@ -246,7 +245,6 @@ test.describe('Erişilebilirlik — modal odak sözleşmesi (aria-modal vaadi)',
   });
 
   test('export diyaloğu AÇILINCA odak diyaloğun içine taşınır', async ({ editor }) => {
-    test.fail(true, FIXME_FOCUS);
     const page = editor.page;
     await page.getByRole('button', { name: 'Dışa Aktar', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -259,7 +257,6 @@ test.describe('Erişilebilirlik — modal odak sözleşmesi (aria-modal vaadi)',
   });
 
   test('export diyaloğu açıkken Tab odağı DIŞARI çıkaramaz (odak tuzağı)', async ({ editor }) => {
-    test.fail(true, FIXME_FOCUS);
     const page = editor.page;
     await page.getByRole('button', { name: 'Dışa Aktar', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -277,7 +274,6 @@ test.describe('Erişilebilirlik — modal odak sözleşmesi (aria-modal vaadi)',
   });
 
   test('export diyaloğu Escape ile kapanır', async ({ editor }) => {
-    test.fail(true, FIXME_FOCUS);
     const page = editor.page;
     await page.getByRole('button', { name: 'Dışa Aktar', exact: true }).click();
     const dialog = page.getByRole('dialog');
@@ -292,7 +288,6 @@ test.describe('Erişilebilirlik — modal odak sözleşmesi (aria-modal vaadi)',
   });
 
   test('export diyaloğu kapanınca odak TETİKLEYEN düğmeye döner', async ({ editor }) => {
-    test.fail(true, FIXME_FOCUS);
     const page = editor.page;
     const trigger = page.getByRole('button', { name: 'Dışa Aktar', exact: true });
     await trigger.click();
@@ -320,7 +315,6 @@ test.describe('Erişilebilirlik — modal odak sözleşmesi (aria-modal vaadi)',
   });
 
   test('kısayol yardımı AÇILINCA odak overlay\'in içine taşınır', async ({ editor }) => {
-    test.fail(true, FIXME_FOCUS);
     const page = editor.page;
     await page.getByRole('button', { name: 'Klavye kısayolları (?)' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -332,7 +326,6 @@ test.describe('Erişilebilirlik — modal odak sözleşmesi (aria-modal vaadi)',
   });
 
   test('kısayol yardımı açıkken Tab odağı DIŞARI çıkaramaz (odak tuzağı)', async ({ editor }) => {
-    test.fail(true, FIXME_FOCUS);
     const page = editor.page;
     await page.getByRole('button', { name: 'Klavye kısayolları (?)' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -345,7 +338,6 @@ test.describe('Erişilebilirlik — modal odak sözleşmesi (aria-modal vaadi)',
   });
 
   test('kısayol yardımı Escape ile kapanınca odak "?" düğmesine döner', async ({ editor }) => {
-    test.fail(true, FIXME_FOCUS);
     const page = editor.page;
     const trigger = page.getByRole('button', { name: 'Klavye kısayolları (?)' });
     await trigger.click();

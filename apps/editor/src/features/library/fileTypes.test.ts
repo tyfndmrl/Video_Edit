@@ -1,7 +1,8 @@
 /**
  * fileTypes — uzantı whitelist'i backend contentType whitelist'iyle senkron
  * (AssetUploadValidation.ValidateInit: video/mp4, video/quicktime, video/webm,
- * audio/mpeg, audio/mp4, audio/wav, image/png, image/jpeg, image/webp).
+ * audio/mpeg, audio/mp4, audio/wav, image/png, image/jpeg, image/webp,
+ * application/x-cube-lut).
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -48,7 +49,7 @@ describe('isSupportedMediaFile', () => {
 
 describe('FILE_ACCEPT', () => {
   it('is the comma-joined whitelist for the file input accept attribute', () => {
-    expect(FILE_ACCEPT).toBe('.mp4,.mov,.webm,.mp3,.m4a,.wav,.png,.jpg,.jpeg,.webp');
+    expect(FILE_ACCEPT).toBe('.mp4,.mov,.webm,.mp3,.m4a,.wav,.png,.jpg,.jpeg,.webp,.cube');
   });
 });
 
@@ -64,6 +65,7 @@ describe('contentTypeForFileName', () => {
     'image/png',
     'image/jpeg',
     'image/webp',
+    'application/x-cube-lut',
   ];
 
   it('maps EVERY supported extension to a type the backend accepts', () => {
@@ -81,6 +83,11 @@ describe('contentTypeForFileName', () => {
     expect(contentTypeForFileName('MUZIK.M4A')).toBe('audio/mp4');
   });
 
+  it('maps .cube to the shared x-type (browsers report an EMPTY File.type for it)', () => {
+    expect(contentTypeForFileName('teal-orange.cube')).toBe('application/x-cube-lut');
+    expect(contentTypeForFileName('TEAL.CUBE')).toBe('application/x-cube-lut');
+  });
+
   it('returns null outside the whitelist (that file never reaches upload)', () => {
     expect(contentTypeForFileName('movie.mkv')).toBeNull();
     expect(contentTypeForFileName('README')).toBeNull();
@@ -94,6 +101,7 @@ describe('unsupportedFileMessage', () => {
     expect(msg).toContain('MP4/MOV/WebM');
     expect(msg).toContain('MP3/M4A/WAV');
     expect(msg).toContain('PNG/JPG/WebP');
+    expect(msg).toContain('.cube');
   });
 
   it('handles extensionless files', () => {

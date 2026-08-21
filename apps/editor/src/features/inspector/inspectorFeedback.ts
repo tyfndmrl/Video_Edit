@@ -22,6 +22,9 @@ const M5_REASONS: Record<string, string> = {
   'no visual clip in selection': 'Bu ayar yalnız görüntülenen kliplere uygulanır',
   'no audio clip in selection': 'Seçimde sesi olan klip yok',
   'before timeline start': 'Zaman çizelgesinin başından öncesine taşınamaz',
+  // LUT bölümü (yalnız Inspector'dan ulaşılır).
+  'no clip with a lut in selection': "Seçimde LUT'u olan klip yok",
+  'not a ready lut asset': 'Seçilen dosya hazır bir LUT (.cube) değil',
 };
 
 const M5_NOTICES: Record<string, string> = {
@@ -31,6 +34,7 @@ const M5_NOTICES: Record<string, string> = {
     'Klip süresi tam kareye oturtuldu — bu hızda en yakın uygulanabilir uzunluk seçildi',
   'duplicate colorAdjust effects merged':
     'Klipte birden fazla renk düzeltme efekti vardı — ilki korundu',
+  'duplicate lut effects merged': 'Klipte birden fazla LUT efekti vardı — ilki korundu',
 };
 
 /** OpResult.reason -> Turkish sentence (falls back to the shared table). */

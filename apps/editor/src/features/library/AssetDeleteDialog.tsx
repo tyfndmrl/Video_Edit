@@ -63,7 +63,7 @@ export function AssetDeleteDialog({ asset, projectId, onClose }: AssetDeleteDial
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [onClose, deleting]);
 
-  const summary = usageQuery.data ? summarizeAssetUsage(usageQuery.data) : null;
+  const summary = usageQuery.data ? summarizeAssetUsage(usageQuery.data, asset.kind) : null;
 
   const confirm = async (): Promise<void> => {
     setDeleting(true);

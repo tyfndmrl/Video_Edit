@@ -81,6 +81,7 @@ const files = new Map<string, File>();
 function kindFromContentType(contentType: string): AssetKind {
   if (contentType.startsWith('audio/')) return 'audio';
   if (contentType.startsWith('image/')) return 'image';
+  if (contentType === 'application/x-cube-lut') return 'lut';
   return 'video';
 }
 

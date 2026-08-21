@@ -26,15 +26,20 @@ import {
   duplicateClips,
   knownAssetDurations,
   moveClips,
+  moveTrack,
   pasteAtPlayhead,
   pasteBlockReason,
   planMoveClips,
+  renameTrack,
   splitClipAt,
   splitKeyframes,
   toggleTrackLocked,
   trackDeleteBlockReason,
+  trackMoveBlockReason,
+  trackRenameBlockReason,
   trimClip,
 } from './timelineOps';
+import { resolveVisualStack } from '../features/player/core/resolve';
 
 const PROJECT_ID = '01890000-0000-7000-8000-000000000001';
 const ASSET_A = '01890000-0000-7000-8000-00000000000a';
@@ -811,5 +816,111 @@ describe('duplicate/paste — frame grid discipline (140 frames @ 30 fps)', () =
     expect(clips[1].timelineStartUs + clips[1].timelineDurationUs).toBe(nStart);
     expect(exportFrameGridIssues(currentDoc())).toEqual([]);
     expectValid();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Track yeniden siralama + adlandirma (tek kapi: moveTrack / renameTrack)
+// ---------------------------------------------------------------------------
+
+describe('moveTrack / renameTrack', () => {
+  const T2 = '01890000-0000-7000-8000-000000000102';
+  const C_TOP = '01890000-0000-7000-8000-000000000201';
+  const C_BOTTOM = '01890000-0000-7000-8000-000000000202';
+
+  function loadTwoTracks(over: { lockTop?: boolean } = {}): void {
+    const top = videoTrack(TRACK_1, [mediaClip(C_TOP, ASSET_A, 0, 0, 2 * US)]);
+    if (over.lockTop) top.locked = true;
+    const bottom = videoTrack(T2, [mediaClip(C_BOTTOM, ASSET_B, 0, 0, 2 * US)]);
+    useDocStore.getState().loadDoc(docWith([top, bottom]));
+  }
+
+  it('moveTrack down/up splices the array and stays undoable with Turkish labels', () => {
+    loadTwoTracks();
+    const down = moveTrack(TRACK_1, 'down');
+    expect(down.ok, !down.ok ? down.reason : '').toBe(true);
+    expect(currentDoc().tracks.map((t) => t.id)).toEqual([T2, TRACK_1]);
+    expect(useDocStore.getState().history.at(-1)?.label).toBe('Track aşağı taşındı');
+
+    const up = moveTrack(TRACK_1, 'up');
+    expect(up.ok).toBe(true);
+    expect(currentDoc().tracks.map((t) => t.id)).toEqual([TRACK_1, T2]);
+    expect(useDocStore.getState().history.at(-1)?.label).toBe('Track yukarı taşındı');
+
+    useDocStore.getState().undo();
+    expect(currentDoc().tracks.map((t) => t.id)).toEqual([T2, TRACK_1]);
+    useDocStore.getState().undo();
+    expect(currentDoc().tracks.map((t) => t.id)).toEqual([TRACK_1, T2]);
+    expectValid();
+  });
+
+  it('refuses the edges and locked tracks with the SAME reasons the menu shows', () => {
+    loadTwoTracks();
+    expect(trackMoveBlockReason(currentDoc(), TRACK_1, 'up')).toBe('track already at the top');
+    expect(trackMoveBlockReason(currentDoc(), T2, 'down')).toBe('track already at the bottom');
+    const upTop = moveTrack(TRACK_1, 'up');
+    expect(upTop).toEqual({ ok: false, reason: 'track already at the top' });
+    const downBottom = moveTrack(T2, 'down');
+    expect(downBottom).toEqual({ ok: false, reason: 'track already at the bottom' });
+
+    loadTwoTracks({ lockTop: true });
+    expect(trackMoveBlockReason(currentDoc(), TRACK_1, 'down')).toBe('track is locked');
+    expect(moveTrack(TRACK_1, 'down')).toEqual({ ok: false, reason: 'track is locked' });
+    // Kilit yalniz TASINAN track'i baglar: kilitsiz komsu serbestce tasinir.
+    expect(moveTrack(T2, 'up').ok).toBe(true);
+  });
+
+  it('reorder CHANGES the render layer order (tracks[0] = top; resolveVisualStack draws back-to-front)', () => {
+    loadTwoTracks();
+    // Iki gorsel klip ayni anda (t=1s) ust uste: yigin ALTTAN USTE siralanir,
+    // tracks[0] klibi EN SON (en ustte) gelir - export derleyicisinin katman
+    // sozlesmesinin onizleme yarisi.
+    const before = resolveVisualStack(currentDoc(), 1 * US).map((a) => a.clip.id);
+    expect(before).toEqual([C_BOTTOM, C_TOP]);
+
+    expect(moveTrack(TRACK_1, 'down').ok).toBe(true);
+
+    const after = resolveVisualStack(currentDoc(), 1 * US).map((a) => a.clip.id);
+    expect(after).toEqual([C_TOP, C_BOTTOM]);
+    // Ayni belge export tarafinda da ayni siradan derlenir (ExportCompiler
+    // doc.Tracks dizisini sirayla okur) - graf karsilastirmasi icin bkz.
+    // scratchpad kosumu raporu: reorder oncesi/sonrasi filtergraph overlay
+    // sirasi yer degistirir.
+    expectValid();
+  });
+
+  it('renameTrack trims, clamps to 200 chars, clears on empty, and refuses locked', () => {
+    loadTwoTracks();
+    expect(renameTrack(TRACK_1, '  Ana kurgu  ').ok).toBe(true);
+    expect(currentDoc().tracks[0].name).toBe('Ana kurgu');
+    expect(useDocStore.getState().history.at(-1)?.label).toContain('adland');
+
+    const long = 'x'.repeat(300);
+    expect(renameTrack(TRACK_1, long).ok).toBe(true);
+    expect(currentDoc().tracks[0].name).toHaveLength(200);
+
+    // Bos ad = ozel adi SIL (basliga turetilmis etiket doner).
+    expect(renameTrack(TRACK_1, '   ').ok).toBe(true);
+    expect(currentDoc().tracks[0].name).toBeUndefined();
+
+    // Ayni ada yeniden adlandirma no-op'tur: gecmis kirlenmez.
+    expect(renameTrack(TRACK_1, '').ok).toBe(true);
+    const historyLen = useDocStore.getState().history.length;
+    expect(renameTrack(TRACK_1, '  ').ok).toBe(true);
+    expect(useDocStore.getState().history).toHaveLength(historyLen);
+
+    loadTwoTracks({ lockTop: true });
+    expect(renameTrack(TRACK_1, 'yeni ad')).toEqual({ ok: false, reason: 'track is locked' });
+    expect(trackRenameBlockReason(currentDoc(), TRACK_1)).toBe('track is locked');
+    expect(currentDoc().tracks[0].name).toBeUndefined();
+    expectValid();
+  });
+
+  it('rename is undoable and validates against the schema (name max 200)', () => {
+    loadTwoTracks();
+    expect(renameTrack(T2, 'Muzik').ok).toBe(true);
+    expectValid();
+    useDocStore.getState().undo();
+    expect(currentDoc().tracks[1].name).toBeUndefined();
   });
 });

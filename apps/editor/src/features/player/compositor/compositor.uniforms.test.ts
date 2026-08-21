@@ -86,6 +86,11 @@ function makeFakeGl(readback: [number, number, number, number] = [0, 0, 0, 0]): 
     TEXTURE_2D: 15,
     TEXTURE0: 16,
     TEXTURE1: 27,
+    TEXTURE2: 28,
+    TEXTURE3: 29,
+    TEXTURE_3D: 30,
+    TEXTURE_WRAP_R: 31,
+    RGBA16F: 32,
     TRIANGLE_STRIP: 17,
     COLOR_BUFFER_BIT: 18,
     RGBA: 19,
@@ -142,7 +147,8 @@ function makeFakeGl(readback: [number, number, number, number] = [0, 0, 0, 0]): 
       state.programBinds.push(program);
     },
     activeTexture: (unit: number) => {
-      activeUnit = unit === 27 ? 1 : 0; // TEXTURE1 : TEXTURE0
+      // TEXTURE0..TEXTURE3 -> 0..3 (lut 3D dokulari 2/3'e gider — §4.2).
+      activeUnit = unit === 27 ? 1 : unit === 28 ? 2 : unit === 29 ? 3 : 0;
     },
     createTexture: () => ({}),
     deleteTexture: () => undefined,
@@ -151,6 +157,7 @@ function makeFakeGl(readback: [number, number, number, number] = [0, 0, 0, 0]): 
     },
     texParameteri: () => undefined,
     texImage2D: () => undefined,
+    texImage3D: () => undefined,
     uniform1i: (loc: { name: string }, value: number) => {
       state.uniform1i.push({ name: loc.name, value });
     },
@@ -462,6 +469,94 @@ describe('Compositor transition pass (§5.3: two sources, ONE draw)', () => {
     // The layer program's own uniforms were re-sent after the swap.
     expect(fake.uniform1f.some((c) => c.name === 'uOpacity')).toBe(true);
     expect(fake.uniform1i.some((c) => c.name === 'uTex')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §4.2 lut uniforms — dokümanın NORMATİF adları ve türetilmiş değerleri
+// ---------------------------------------------------------------------------
+
+describe('Compositor lut uniforms (§4.2: uLut3D/uLutScale/uLutOffset/uIntensity)', () => {
+  it('a layer WITH a lut uploads (N-1)/N, 1/(2N), intensity and binds the 3D texture to unit 1', () => {
+    const fake = makeFakeGl();
+    const compositor = makeCompositor(fake);
+    compositor.resize(1920, 1080);
+    const lutTexture = { lut: true } as unknown as WebGLTexture;
+    fake.textureBinds.length = 0;
+
+    compositor.render(
+      [{ ...drawItem(null), lut: { texture: lutTexture, size: 33, intensity: 0.75 } }],
+      '#000000',
+    );
+
+    expect(uniformsOf(fake)).toMatchObject({
+      uLutScale: 32 / 33,
+      uLutOffset: 1 / 66,
+      uIntensity: 0.75,
+    });
+    // Sampler birimi: uLut3D -> 1 (uTex 0'da kalır).
+    expect(fake.uniform1i).toContainEqual({ name: 'uLut3D', value: 1 });
+    expect(fake.uniform1i).toContainEqual({ name: 'uTex', value: 0 });
+    expect(fake.textureBinds).toContainEqual({ unit: 1, texture: lutTexture });
+  });
+
+  it('a layer WITHOUT a lut is drawn at uIntensity 0 with the dummy bound (exact no-op)', () => {
+    const fake = makeFakeGl();
+    const compositor = makeCompositor(fake);
+    compositor.resize(1920, 1080);
+
+    compositor.render([drawItem(null)], '#000000');
+
+    expect(uniformsOf(fake)).toMatchObject({ uIntensity: 0 });
+    // Unit 1'e YİNE bir 3D doku bağlanır (eksik sampler değil, dummy).
+    expect(fake.textureBinds.some((b) => b.unit === 1)).toBe(true);
+  });
+
+  it('per-item lut state does not leak: lut clip then plain clip resets intensity to 0', () => {
+    const fake = makeFakeGl();
+    const compositor = makeCompositor(fake);
+    compositor.resize(1920, 1080);
+    const lutTexture = {} as WebGLTexture;
+
+    compositor.render(
+      [
+        { ...drawItem(null), lut: { texture: lutTexture, size: 17, intensity: 1 } },
+        drawItem(null),
+      ],
+      '#000000',
+    );
+
+    const intensities = fake.uniform1f.filter((c) => c.name === 'uIntensity').map((c) => c.value);
+    expect(intensities).toEqual([1, 0]);
+  });
+
+  it('the transition pass carries the PER-SIDE luts (A at unit 2, B at unit 3)', () => {
+    const fake = makeFakeGl();
+    const compositor = makeCompositor(fake);
+    compositor.resize(1920, 1080);
+    const lutA = { side: 'lutA' } as unknown as WebGLTexture;
+    fake.textureBinds.length = 0;
+
+    compositor.render(
+      [
+        transitionItem({
+          from: { ...drawItem(null), texture: { side: 'A' } as unknown as WebGLTexture, lut: { texture: lutA, size: 2, intensity: 0.6 } },
+        }),
+      ],
+      '#000000',
+    );
+
+    expect(uniformsOf(fake)).toMatchObject({
+      uLutScaleA: 1 / 2,
+      uLutOffsetA: 1 / 4,
+      uIntensityA: 0.6,
+      uIntensityB: 0,
+    });
+    expect(fake.uniform1i).toContainEqual({ name: 'uLut3DA', value: 2 });
+    expect(fake.uniform1i).toContainEqual({ name: 'uLut3DB', value: 3 });
+    expect(fake.textureBinds).toContainEqual({ unit: 2, texture: lutA });
+    // B tarafı lut'suz: unit 3'e dummy bağlanır (eksik sampler bırakılmaz).
+    expect(fake.textureBinds.some((b) => b.unit === 3)).toBe(true);
   });
 });
 

@@ -12,6 +12,7 @@ import {
   clampChannelValue,
   easingLabel,
   keyframeAt,
+  keyframeSampleBudget,
   keyframeTimeAtPlayhead,
 } from './keyframeModel';
 
@@ -230,5 +231,53 @@ describe('easingLabel', () => {
     expect(easingLabel({ type: 'cubicBezier', x1: 0.1, y1: 0, x2: 0.9, y2: 1 })).toBe(
       'Özel eğri',
     );
+  });
+});
+
+describe('keyframeSampleBudget (Inspector uyarisinin esigi)', () => {
+  const curved = (fromUs: number, toUs: number) => [
+    { timeUs: fromUs, value: 0, easing: { type: 'easeIn' } as const },
+    { timeUs: toUs, value: 1, easing: { type: 'linear' } as const },
+  ];
+
+  it('bos dokuman: 0 harcama, uyari yok', () => {
+    const status = keyframeSampleBudget(docWith(mediaClip()));
+    expect(status.upperBound).toBe(0);
+    expect(status.max).toBe(60_000);
+    expect(status.warn).toBe(false);
+  });
+
+  it('esik ALTI egri animasyon uyari uretmez', () => {
+    // 4 s klip @30fps = 120 kare; tek egrili kanal = 120 ornek << 48000.
+    const doc = docWith(mediaClip({ keyframes: { x: curved(0, 4_000_000) } }));
+    const status = keyframeSampleBudget(doc);
+    expect(status.upperBound).toBe(120);
+    expect(status.warn).toBe(false);
+  });
+
+  it('esige ulasan dokuman uyari uretir (0.8 * 60000 = 48000)', () => {
+    // 30fps'te 48000 kare = 1600 s'lik klip; tek egrili kanal esigi tam doldurur.
+    const longClip = mediaClip({
+      timelineStartUs: 0,
+      timelineDurationUs: 1_600_000_000,
+      sourceOutUs: 1_600_000_000,
+      keyframes: { x: curved(0, 1_600_000_000) },
+    });
+    const status = keyframeSampleBudget(docWith(longClip));
+    expect(status.upperBound).toBe(48_000);
+    expect(status.ratio).toBeCloseTo(0.8, 10);
+    expect(status.warn).toBe(true);
+  });
+
+  it('esigin BIR kare altinda uyari henuz yoktur (sinir keskin)', () => {
+    const clip = mediaClip({
+      timelineStartUs: 0,
+      timelineDurationUs: 1_599_966_667, // 47999 kare
+      sourceOutUs: 1_599_966_667,
+      keyframes: { x: curved(0, 1_599_966_667) },
+    });
+    const status = keyframeSampleBudget(docWith(clip));
+    expect(status.upperBound).toBe(47_999);
+    expect(status.warn).toBe(false);
   });
 });

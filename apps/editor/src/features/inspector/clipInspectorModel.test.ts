@@ -352,6 +352,79 @@ describe('buildClipInspectorModel — layer size ceilings', () => {
     expect(model.visual?.maxScale).toBe(maxClipScale(defaultProjectSettings));
     expect(model.text?.maxFontSizePx).toBe(TEXT_SIZE_MAX);
   });
+
+  it('lowers the ceiling for a ROTATED clip and flags the rotation (1080p 45° -> 3.718)', () => {
+    const clip = videoClip(CLIP_A, 0, 5 * US);
+    clip.transform.rotationDeg = 45;
+    const model = build(docWith([track(V1, 'video', [clip])]), [CLIP_A]);
+    expect(model.visual?.maxScale).toBe(3.718);
+    expect(model.visual?.maxScaleLoweredByRotation).toBe(true);
+    // Dönme metin kutusu DEĞİL: rozet yanlış sebebi göstermemeli.
+    expect(model.visual?.maxScaleFromTextBox).toBe(false);
+  });
+
+  it('does not flag rotation for unrotated clips (multiples of 360 included)', () => {
+    const clip = videoClip(CLIP_A, 0, 5 * US);
+    clip.transform.rotationDeg = 720;
+    const model = build(docWith([track(V1, 'video', [clip])]), [CLIP_A]);
+    expect(model.visual?.maxScale).toBe(maxClipScale(defaultProjectSettings));
+    expect(model.visual?.maxScaleLoweredByRotation).toBe(false);
+  });
+
+  it('a rotated CAPTION is attributed to its text box only when the box really binds', () => {
+    // Küçük metin: dönmüş halde bile tavanı canvas köşegeni belirler — rozet
+    // "metin kutusundan" DEMEMELİ (iki taraf da aynı dönme çarpanını taşır).
+    const small = textClip(CLIP_A);
+    small.transform.rotationDeg = 45;
+    const modelSmall = build(docWith([track(A1, 'overlay', [small])]), [CLIP_A]);
+    expect(modelSmall.visual?.maxScaleFromTextBox).toBe(false);
+    expect(modelSmall.visual?.maxScaleLoweredByRotation).toBe(true);
+
+    // Dev metin: kutu gerçekten bağlayıcı — rozet doğru sebebi gösterir.
+    const huge = textClip(CLIP_B);
+    huge.transform.rotationDeg = 45;
+    huge.text.fontSizePx = 2000;
+    const modelHuge = build(docWith([track(A1, 'overlay', [huge])]), [CLIP_B]);
+    expect(modelHuge.visual?.maxScaleFromTextBox).toBe(true);
+  });
+});
+
+/**
+ * Madde 2(d) kanıtı: SES klibi seçiliyken görsel bölümler hiç sunulmaz —
+ * "grileme"nin bu paneldeki karşılığı bölümün yokluğudur (çizilmeyen şey
+ * animasyonlanamaz/renklendirilemez; keyframe elmasları da keyframeModel
+ * channelIsAvailable ile aynı kuralı okur).
+ */
+describe('buildClipInspectorModel — audio-kind selection has no visual surfaces', () => {
+  const audioClip = (id: string): MediaClip => ({
+    ...videoClip(id, 0, 5 * US),
+    kind: 'audio',
+  });
+
+  it('audio-only selection: visual/color/lut sections are null, audio stays', () => {
+    const model = build(docWith([track(A1, 'audio', [audioClip(CLIP_A)])]), [CLIP_A]);
+    expect(model.count).toBe(1);
+    expect(model.visual).toBeNull();
+    expect(model.color).toBeNull();
+    expect(model.lut).toBeNull();
+    expect(model.audio).not.toBeNull();
+    expect(model.speed).not.toBeNull();
+  });
+
+  it('mixed selection: the sections write ONLY to the drawn clips', () => {
+    const model = build(
+      docWith([
+        track(V1, 'video', [videoClip(CLIP_A, 0, 5 * US)]),
+        track(A1, 'audio', [audioClip(CLIP_B)]),
+      ]),
+      [CLIP_A, CLIP_B],
+    );
+    expect(model.visual?.clipIds).toEqual([CLIP_A]);
+    expect(model.color?.clipIds).toEqual([CLIP_A]);
+    expect(model.lut?.clipIds).toEqual([CLIP_A]);
+    // Ses bölümü iki klibe de yazar (ikisinin de sesi var).
+    expect(model.audio?.clipIds).toEqual([CLIP_A, CLIP_B]);
+  });
 });
 
 describe('buildClipInspectorModel — text / shape sections (M4 dalga 2)', () => {

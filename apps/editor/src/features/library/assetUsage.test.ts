@@ -37,6 +37,30 @@ describe('summarizeAssetUsage', () => {
     );
   });
 
+  it('LUT için efekt diliyle konuşur — "klipler bozulur" vaadi yapılmaz', () => {
+    // LUT bir klip kaynağı değil, klibe uygulanan efekttir: silinince klip bozulmaz;
+    // önizlemede efekt düşer, export 'asset-missing' ile reddedilir. Cümle bunu söyler.
+    const summary = summarizeAssetUsage(
+      { projects: [{ id: 'p1', name: 'Denetim', clipCount: 1 }] },
+      'lut',
+    );
+    expect(summary.warning).toBe(
+      'Bu renk tablosu 1 projede 1 klipte kullanılıyor — silinirse LUT efekti o kliplerden ' +
+        'düşer ve dışa aktarma reddedilir.',
+    );
+    expect(summary.warning).not.toContain('bozulur');
+  });
+
+  it('medya türlerinde (video dahil) medya cümlesi değişmedi', () => {
+    const summary = summarizeAssetUsage(
+      { projects: [{ id: 'p1', name: 'Deneme', clipCount: 1 }] },
+      'video',
+    );
+    expect(summary.warning).toBe(
+      'Bu medya 1 projede 1 klipte kullanılıyor — silinirse o klipler bozulur.',
+    );
+  });
+
   it('clipCount 0 gelen proje sayılmaz (sunucu filtrelemese bile)', () => {
     const summary = summarizeAssetUsage({
       projects: [

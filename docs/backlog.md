@@ -21,7 +21,7 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 
 | MVP özelliği (kullanıcı seçimi) | Durum | Hedef |
 |---|---|---|
-| Çoklu katman timeline | ✅ tam ⚠︎ track yeniden sıralama/adlandırma yok | sonraki dilim |
+| Çoklu katman timeline | ✅ tam (track yeniden sıralama + satır içi adlandırma 2026-08-21'de eklendi — sağ tık menüsü `Yukarı/Aşağı taşı` + başlığa çift tık; export katman sırası değişimi filtergraph karşılaştırmasıyla ölçüldü) | — |
 | Kırpma/kesme/ayırma/taşıma/katman | ✅ tam (frame ızgarası çelişkisi teslim düzeltme turunda kapandı — aşağıya bakınız) | — |
 | Frame, zoom, timecode, player, kısayollar | ✅ tam | — |
 | Undo/Redo + işlem geçmişi | ✅ tam | — |
@@ -30,13 +30,13 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 | **Çoklu katman export + transform** | ✅ tam (M4 dalga 1) | — |
 | **Görseller (PNG/JPG/WebP)** | ✅ tam (önizleme kusuru teslim düzeltme turunda kapandı — aşağıya bakınız) | — |
 | **Yazı & overlay** (metin, sticker, şekil) | ✅ tam (M4 dalga 2) ⚠︎ emoji yok; shaping iki motorda | sonraki dilim |
-| **Geçişler** (xfade/acrossfade) | ✅ tam (M4 dalga 2 — doküman/op/export + oynatıcı önizlemesi) ⚠︎ dissolve/fadeToBlack önizlemesi piksel-eşit değil | parity → dalga 3 |
-| Pis-dosya korpusu (iPhone HDR/VFR/döndürülmüş) testleri | ❌ yok | **M4 dalga 3** |
+| **Geçişler** (xfade/acrossfade) | ✅ tam (M4 dalga 2 — doküman/op/export + oynatıcı önizlemesi) · **fadeToBlack paritesi 2026-08-21'de ölçülerek kapandı** (ffmpeg YUV kapalı formu; zincir: GLSL ≡ ref ≡ gerçek ffmpeg vektörleri ≡ üretim golden'ları — §5.3) ⚠︎ dissolve deseni bilinçli yaklaşıklık (ölçüldü: aynı eşik kuralı/yoğunluk, desen korelasyonsuz %50,01; PRNG tam sayı piksel + libm bağımlı) ve fadeToBlack'in kompozisyon-yolu dibi ölçülü ≤ ~15/255 sapar | [`poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §2.3 |
+| Pis-dosya korpusu (iPhone HDR/VFR/döndürülmüş) testleri | ✅ **kapandı (backend borç turu, 2026-08-21)**: 7 sınıf (VFR, display-matrix döndürme, 319×241 tek çözünürlük, kapak resimli MP3, yanlış uzantı, HLG/BT.2020 etiketi, dikey 720×1280) gerçek ffmpeg'le üretilip HEM işleme HEM export hattından geçiriliyor; her sonuç TİPLİ (`DirtyMediaCorpusTests`, MinIO+ffmpeg kapılı, 7/7 yeşil) | — |
 | **Renk düzeltme — colorAdjust** (parlaklık/kontrast/doygunluk/sıcaklık/ton/pozlama) | ✅ tam (M5 — Inspector + önizleme shader'ı + export) | — |
-| **Filtreler — LUT (.cube)** | ⚠️ yalnız export + şema hazır; **editör UI'ı VE önizleme shader'ı YOK** (dört bacağın ikisi) — **M6'da yapılmadı** | **sonraki dilim** |
+| **Filtreler — LUT (.cube)** | ✅ **tam (2026-08-21)**: `.cube` yükleme türü (`AssetKind.Lut` + `application/x-cube-lut`, worker `CubeLutValidator` doğrulaması, türev/probe YOK) + Inspector LUT bölümü (seçici + yoğunluk + etkin + Kaldır) + §4.2 normatif önizleme shader'ı (`uLut3D/uLutScale/uLutOffset/uIntensity`, trilinear, geçişte taraf başına). Parite ÖLÇÜLDÜ (gerçek fare e2e `lut.spec.ts`): önizleme↔export SSIM(gri) **0,99424**, kanal |fark| ort **1,603** (§9.3 eşikleri ≥0,98 / ≤2,0); bozuk .cube `invalid-lut` tipli düşer. Sınırlar: domain [0,1] dışı ve N>129 KAPSAM DIŞI (yükleme kapısı tipli reddeder); `fx.*` keyframe'i hâlâ yok (ayrı satır) | — |
 | **Hız değiştirme** (slow-mo/timelapse) | ✅ tam (M5) ⚠︎ hız rampası yok | sonraki dilim |
 | **Keyframe animasyonları** | ✅ tam (M5, sınırlarıyla — aşağıya bakınız) ⚠︎ `fx.*` kanalı yok | sonraki dilim |
-| **1-2 GB'lık dosyalarda performans** ("dosya boyutları ortalama 1-2 gb aralıklarında oluyor… performanslı ve hızlı olmalı") | ⚠️ **bir kez uçtan uca ÖLÇÜLDÜ** (12. tur; 1,51 GiB / 10:40 kaynak: seçiciden "Hazır"a **75,6 sn**, 60 sn'lik kesimin export'u **19,5 sn**, tam 10:40'ın export'u **184 sn**) — ama **TEK koşum, TEK makine, LOKAL nesne deposu**; gerçek ağ/R2, eşzamanlı kullanıcı, >2 GB ve LRU süpürmesi **ölçülmedi** | ölçüm: [`poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §0.1 · açık borçlar: aşağıdaki "12. tur" |
+| **1-2 GB'lık dosyalarda performans** ("dosya boyutları ortalama 1-2 gb aralıklarında oluyor… performanslı ve hızlı olmalı") | ⚠️ **bir kez uçtan uca ÖLÇÜLDÜ** (12. tur; 1,51 GiB / 10:40 kaynak: seçiciden "Hazır"a **75,6 sn**, 60 sn'lik kesimin export'u **19,5 sn**, tam 10:40'ın export'u **184 sn**) — ama **TEK koşum, TEK makine, LOKAL nesne deposu**; gerçek ağ/R2, eşzamanlı kullanıcı ve >2 GB **ölçülmedi**. LRU süpürme MEKANİZMASI artık entegrasyon testli (küçültülmüş tavanla — `OriginalCacheLruTests`, 2026-08-21); 20 GiB tavan/GB'lık dosya ÖLÇEĞİ hâlâ değil | ölçüm: [`poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §0.1 · açık borçlar: aşağıdaki "12. tur" |
 | **R2'de saklayıp SONRADAN tekrar düzenleme** | ⚠️ İKİ YARI AYRI: "sonradan tekrar düzenleme" ✅ gerçek fare/klavyeyle ölçüldü (düzenle → "Kaydedildi" → çıkış → yenile → yeniden giriş → seçici → aynı belge + aynı medya); "**R2'de saklayıp**" ❌ **gerçek Cloudflare R2 HİÇ denenmedi** — dev de CI da MinIO | R2 doğrulaması: **ilk gerçek dağıtım** ([`poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §4.2 + [`deploy/README.md`](../deploy/README.md) §4) |
 
 > **M6 KAPSAM KAYDI (review-gate kural 4, 2026-08-12).** M6 planı bu dosyada altı madde
@@ -44,10 +44,12 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 > e2e `versions.spec.ts`) ve **kota/silme UX'i** (`quotaModel.ts`, `AssetDeleteDialog.tsx`,
 > e2e `library-manage.spec.ts`). Yapılmayan dört madde sessizce düşmedi, aşağıdaki
 > "M6 (Dayanıklılık)" bölümünde **açık** kalmaya devam ediyor: `fx.*` keyframe'i,
-> LUT editör yüzeyi, revision retention job, container sertleştirme (+ per-device logout,
-> Dockerfile restore, tsconfig.node tip denetimi). Bunların hepsi
+> revision retention job, tsconfig.node tip denetimi (LUT editör yüzeyi 2026-08-21'de
+> kapandı — kapsam tablosundaki satırı). Bunların hepsi
 > [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §1.3, §4.3, §4.5, §4.6'da
-> kullanıcıya da anlatıldı.
+> kullanıcıya da anlatıldı. *(Güncelleme 2026-08-21: bu listedeki container sertleştirme
+> [non-root `USER app`], per-device logout ve Dockerfile restore backend borç turunda
+> KAPANDI — aşağıdaki M6 tablosuna bakınız.)*
 
 > **Görseller satırının hikâyesi (kayda geçer).** Satır M4 dalga 1'den beri "✅ tam" diyordu;
 > POC dokümantasyon turu bunun **yanlış** olduğunu buldu: export doğruydu ama görsel ve sticker
@@ -96,9 +98,11 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 > **M6'ya yazılmıştı, M6'da YAPILMADI** (yukarıdaki kapsam kaydı) — sonraki dilime taşındı.
 > Motorun gerçekten çalıştığı testle sabit:
 > `ExportJobPipelineTests.Export_WithLutEffect_DownloadsTheCubeFile_AndActuallyChangesPixels`.
-> Kalan iş yalnız editör yüzeyidir: `.cube` yükleme yolu (`fileTypes.ts` whitelist'i +
-> backend contentType whitelist'i + probe'suz asset türü), efekt UI'ı ve önizleme
-> shader'ında 3D doku örneklemesi.
+> **KAPANIŞ (2026-08-21):** o "kalan iş" bu turda teslim edildi — `.cube` yükleme yolu
+> (`fileTypes.ts` + `UploadRules` + `AssetKind.Lut`, worker'da `CubeLutValidator` ile
+> probe'suz/türevsiz Ready), Inspector LUT bölümü ve §4.2 önizleme shader'ı
+> (`sampler3D` + trilinear + yoğunluk karışımı). Uçtan uca gerçek-fare kanıtı ve
+> önizleme↔export parite ölçümü: `e2e/lut.spec.ts` + `poc-bilinen-sinirlar.md` §1.3.
 
 > **Hız satırı (M5).** Inspector'da ön ayarlar + serbest oran (0.1x–10x), ripple/reddet
 > davranışı, keyframe zaman yeniden ölçekleme, ses fade'lerinin yeniden sınırlanması ve
@@ -154,7 +158,7 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 ### M4 dalga planı (denetim #18/#23 gereği yazıldı)
 - **Dalga 1** (tamam): çok katman overlay export, transform gizmo, klip özellikleri paneli, detach audio, görsel (still image) klipler.
 - **Dalga 2** (tamam): metin/şekil/sticker katmanları (SkiaSharp sunucu raster + client önizleme, font manifesti) + geçişler (xfade/acrossfade, D/2 handle sözleşmesi — pay kuralı görsel kliplerde uygulanmaz).
-- **Dalga 3**: pis-dosya korpusu (iPhone HLG, WhatsApp re-encode, OBS VFR, dikey/döndürülmüş MOV) uçtan uca testleri + parity sertleştirme.
+- **Dalga 3** (backend yarısı kapandı, 2026-08-21): pis-dosya korpusu uçtan uca testleri ✅ (`DirtyMediaCorpusTests` — HLG, VFR, döndürülmüş, tek çözünürlük, dikey, kapak resimli ses, yanlış uzantı; işleme + export, tipli sonuçlar) ve belge-değişmezi parity aileleri ✅ (keyframe sıralaması / geçiş simetrisi / klip yerleşimi vektörleri — aşağıdaki 14. tur başlığı). Önizleme piksel-parity borçlarından **fadeToBlack aynı gün ölçülerek KAPANDI** (§5.3 normatif YUV kapalı formu; kalan artıklar `poc-bilinen-sinirlar.md` §2.3'te); **dissolve** ölçülmüş gerekçeyle bilinçli yaklaşıklık olarak kaldı (desen korelasyonsuz %50,01 — golden yazılamaz).
 
 ## M1 (Upload + işleme)
 - **Waveform üretimi .NET içinde**: `audiowaveform` Debian'da paket olarak yok (denetim bulgusu #6); karar — worker ffmpeg ile PCM çekip C#'ta min/max pencereleme yapacak (tasarım `docs/design/02` §3.5'teki alternatif). Dockerfile'dan bağımlılık kaldırıldı.
@@ -163,7 +167,7 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 
 ## M2 (Timeline + player + autosave UI)
 - **Request decompression middleware**: plan "tam doküman, gzip" diyor; frontend gzip göndermeden önce `UseRequestDecompression` eklenmeli (denetim #5c).
-- **409 sonrası UX**: "başka sekmede değişti" diyaloğu + SignalR ile pasif sekme bilgilendirme (plandaki bilinçli MVP kabulü).
+- **409 sonrası UX**: "başka sekmede değişti" diyaloğu + SignalR ile pasif sekme bilgilendirme (plandaki bilinçli MVP kabulü). *14. tur triyaj ölçümü (2026-08-21, BG bulgu B6):* asset listesi poll'u yalnız listede uploaded/processing satır varken koşuyor (`entities/assets.ts` refetchInterval); başka istemcinin/sekmenin yüklediği asset ve kota göstergesi, odak/yenileme olmadan görünmüyor (canlıda yeniden ölçüldü: API'den yüklenen iki asset ready olduktan sonra açık sekme 192 medyada kaldı, yenilemeyle 194 geldi). Kod içinde "SignalR gelene kadar kabul edilmiş ara çözüm" beyanı doğru — SignalR maddesi kapsamına bu ölçüm dahildir.
 
 ## M3 (Export) öncesi
 - **sampleKeyframes / easingProgress için paylaşılan cross-language vektörler**: `easing-vectors.json` yalnız eğriyi kapsıyor; keyframe örnekleme vektörleri eklenmeli, C# compiler bunlarla test edilmeli (denetim #13).
@@ -240,12 +244,13 @@ KESİM görüp export'ta crossfade alıyordu. Karar **erteleme değil uygulama**
 ilerleme, handle ve ses rampası artık `docs/rendering-semantics.md` §5.3'te NORMATİF olarak
 yazılı ve motorda uygulanıyor. Aşağıdakiler bilerek dışarıda bırakıldı:
 
-- **`dissolve` deseni ve `fadeToBlack` eğrisi ffmpeg ile birebir değil.** Önizleme
-  dissolve'da kendi hash gürültüsünü, fadeToBlack'te düz lineer rampayı kullanıyor;
-  ffmpeg'in PRNG'si ve `smoothstep` yumuşatması farklı (tablo: rendering-semantics §5.3).
-  Gözle fark edilmez ama **piksel-eşit değildir** → bu iki tip için golden-frame
-  preview↔export karşılaştırması yazılamaz. Hedef: M4 dalga 3 (pis-dosya korpusu + parity
-  sertleştirme) içinde xfade referans karelerinin çıkarılması.
+- **`dissolve` deseni ffmpeg ile birebir değil (bilinçli; `fadeToBlack` 2026-08-21'de
+  ölçülerek eşitlendi).** fadeToBlack artık ffmpeg `fadeblack`ın YUV kapalı formunun
+  kendisidir (normatif formül + ölçüm zinciri: rendering-semantics §5.3; artıklar
+  poc-bilinen-sinirlar §2.3). Dissolve'da eşik kuralı ve yoğunluk birebirdir ama desen
+  eşitlenemez (ffmpeg tam sayı piksel koordinatını libm `sinf` ile hash'ler — çözünürlük
+  ve platform bağımlı; ölçülen desen uyuşması p=0.5'te %50,01 = bağımsız) → dissolve için
+  golden-frame preview↔export karşılaştırması yazılamaz.
 - **Geçiş penceresinde çözücü bütçesi 2 kat.** Pencere açıkken A ve B birlikte
   `priority 0` olur, yani POOL_SIZE=4'ün ikisini yer. Kalabalık bir kompozisyonda geçiş
   boyunca bir katman/ses DAHA düşebilir. Sessiz değil (mevcut `previewShortfallNote`
@@ -403,28 +408,49 @@ font-bağımsız alt sınır" satırı hâlâ geçerlidir, ama tek başına eksi
 ile durur (kusur belgede değil kurulumdadır — 422 yanlış olurdu). Gerekçe ve ölçüm:
 `poc-bilinen-sinirlar.md` §3.3.
 
-### Diğerleri (düşük/orta) — hepsi HÂLÂ AÇIK
+### Diğerleri (düşük/orta)
 
-- **Track yeniden sıralama / yeniden adlandırma yok.** `timelineOps` yalnız `addTrack`
-  ve `deleteTrack` sunar; track sağ tık menüsü (`contextMenu.trackMenu`)
-  yapıştır + üç bayrak + silme ile sınırlı. `addTrack` diziye **sona** ekler (`d.tracks.push`),
-  `tracks[0]` en üst katmandır — yani katman sırası ancak track'leri doğru sırada ekleyerek
-  kurulabiliyor.
-- **Ölçek animasyonu + dönme bileşimi export'ta reddediliyor**
-  (`ExportCompiler.ValidateGeometry`, `scale-keyframes-with-rotation`). Gerekçe doğru (ffmpeg `rotate`
-  çıkış tuvalini bir kez kurar, büyüyen girişi sessizce kırpardı) ve hata tipli — ama
-  **editör bunu önceden uyarmıyor**, kullanıcı 422'yi export anında görüyor. Proaktif rozet
-  M3 backlog'undaki "kapsam haritasının UI'da gösterimi" maddesiyle aynı ailedendir.
-- **Keyframe örnek bütçesi 60 000** (`ClipAnimation.MaxSamples`) — tipli hata verir
-  (`keyframe-sample-budget`), editörde önden uyarı yok.
-- **Katman boyut tavanı 8192 px** (`LayerGeometry.MaxLayerDimension`) — *bu satırın "editörde önden uyarı
-  yok" iddiası YANLIŞTI, düzeltildi (3. tur).* Editör ölçek alanının tavanını proje
-  çözünürlüğünden türetiyor (`invariants.maxScaleFor` → `timelineOps.maxClipScale`, 1080p'de
-  ~4.266) ve yazma anında kırpıyor. **Kalan gerçek boşluk:** editörün tavanı ölçek
-  KUTUSUNDAN, derleyicininki ARA TUVALDEN hesaplanır — dönme (~1.41×) ve merkez dışı çapa
-  (2×) ara tuvali büyütür, dolayısıyla dönmüş bir katman editörün izin verdiği ölçekte hâlâ
-  `transform-scale` 422'si alabilir. Editör tarafının dönmeyi hesaba katması açık iş.
-- **Tek export profili.** `ExportProfiles.cs` yalnız `Hd1080p` tanır; 720p/4K/dikey ön ayarı yok.
+- **Track yeniden sıralama / yeniden adlandırma** — ✅ **KAPANDI (2026-08-21)**:
+  `timelineOps.moveTrack('up'|'down')` + `renameTrack` (tek kapı disiplini, kendi
+  `*BlockReason`'ları, Türkçe undo etiketleri). UI: track sağ tık menüsünde
+  `Yeniden adlandır / Yukarı taşı / Aşağı taşı`, başlığa çift tıkla satır içi input
+  (Enter kaydeder, Escape vazgeçer). `tracks[0] = en üst katman` sözleşmesi korunuyor:
+  önizleme yarısı `resolveVisualStack` testiyle, export yarısı reorder öncesi/sonrası
+  `ExportCompiler.Compile` filtergraph karşılaştırmasıyla ÖLÇÜLDÜ (en üste bindirilen
+  kaynak yer değiştirir). Gerçek-fare e2e: `e2e/track-manage.spec.ts` (negatif dahil:
+  en üst track'te "Yukarı taşı" gri, `track already at the top`). Sürükle-bırak
+  sıralama BİLİNÇLİ ertelendi: başlık sütununda ayrı bir pointer/çizim altyapısı
+  isterken menü aynı op'u sıfır yeni jest maliyetiyle sunuyor; talep gelirse op hazır.
+- **Ölçek animasyonu + dönme bileşimi** (`scale-keyframes-with-rotation`) — editör
+  ÖNDEN engelliyor (bu dalgada yeniden ölçüldü, `guardPaths.test.ts` (b) bloğu +
+  Inspector `clip-rotation-block` rozeti): dönük klipte ölçek kanalı, ölçek animasyonlu
+  klipte dönme alanı/kanalı kapalı ve gerekçeli. 422 kapısının durduğu
+  `ExportGateInventoryTests` koşumuyla doğrulandı (2026-08-21, 104/104).
+- **Keyframe örnek bütçesi 60 000** — ✅ **editör önden uyarıyor (2026-08-21)**:
+  `MAX_KEYFRAME_SAMPLES` + `keyframeSampleUpperBound` şema paketine eklendi
+  (derleyicinin `EnsureSampleBudget` aritmetiğinin ÜST SINIR ikizi: eğrili görsel
+  kanallar kare×1, scale kare×2, opacity/volume lineerken de sayılır) ve Inspector
+  %80'de rozet basıyor (`clip-kf-budget-warning`). Kestirim bilinçli üst sınırdır —
+  uyarı 422'den önce yanar, hiç geç kalmaz.
+- **Katman boyut tavanı 8192 px** — ✅ **dönme boşluğu KAPANDI (2026-08-21)**: editörün
+  tavanı artık derleyici gibi ARA TUVALDEN hesaplanıyor (`invariants.maxScaleForFit` +
+  `intermediateCanvasLongSidePx` — `LayerGeometry.Compute` defterinin birebir ikizi:
+  dönmede köşegen `ceilEven(hypot)`, merkez dışı çapada `ceil(box·2·max(a,1−a))` pad'i).
+  1080p 45°'de tavan 4.266→3.718; dönme yazımı mevcut ölçeği taşırırsa op ölçeği tavana
+  indirir ve `scale clamped by rotation canvas` bildirimi düşer. Kanıt: şema testleri
+  (126 kombinasyonluk güvenli+maksimal tarama), `guardPaths.test.ts` (a2) op taraması,
+  gerçek-klavye e2e (`inspector.spec.ts` dönme-tavan testi). Dönük METİN tavanı güvenli
+  tarafta KONSERVATİF (√2·pad çarpanı worst-case; kutu oranına göre kesin ters çözüm
+  yapılmıyor — asla 422'lik değer önermez, bazen gereğinden düşük önerir).
+- **Tek export profili** — ✅ **KAPANDI (dalga 2, 2026-08-21)**: `ExportProfiles.cs` artık
+  1080p/720p/2160p(4K)/dikey (1080×1920) tanır; profil, bitmiş tuval kompozisyonunu kendi
+  hedef kutusuna ölçekler (yalnız AYNI en-boy oranında — farklı oran tipli 422
+  `export-profile-aspect`, letterbox BİLEREK yok; ölçülen gerekçeler `ExportProfiles.SpecFor`
+  yorumunda). ExportDialog profil seçicili; uyumsuz profil yerinde devre dışı + Türkçe neden.
+  Gerçek render kanıtları: `ExportProfileGoldenTests` (720p küçültme / 4K büyütme / dikey;
+  ffprobe boyut + SAR 1:1 + yuv420p + BT.709/tv tam takım + içerik geometrisi ±referans).
+  KAPSAM DIŞI: 16:9/9:16 dışı tuval (yalnız ham API kurabilir) hiçbir profile uymaz —
+  `poc-bilinen-sinirlar.md` §3'teki satırında beyanlı.
 - **Ses klibinde görsel keyframe / renk efekti reddediliyor**
   (`ExportCompiler.ValidateClip`: `keyframes-audio-clip`, `effects-audio-clip`) — doğru
   davranış, editörde önden engellenmiyor.
@@ -438,21 +464,22 @@ ile durur (kusur belgede değil kurulumdadır — 422 yanlış olurdu). Gerekçe
 | Madde | Doğrulama (2026-08-12) |
 |---|---|
 | `fx.*` keyframe'i | `packages/timeline-schema/src/schema.ts` `KeyframeTracksSchema` hâlâ STRICT, 6 kanal |
-| LUT editör yüzeyi **+ önizleme shader'ı** | `apps/editor/src/features/library/fileTypes.ts` `SUPPORTED_EXTENSIONS` içinde `.cube` yok; ayrıca `rendering-semantics.md` §4.2'nin NORMATİF önizleme uniform'ları (`uLut3D`, `uLutScale`, `uLutOffset`) `apps/`+`packages/` altında **0 kez** geçiyor — `player/core/resolve.ts` `colorAdjustOf` yalnız `colorAdjust` okur |
+| LUT editör yüzeyi **+ önizleme shader'ı** | ✅ **KAPANDI (2026-08-21)**: `SUPPORTED_EXTENSIONS` artık `.cube` içeriyor; §4.2'nin NORMATİF uniform'ları kodda (`compositor/shaders.ts` — katman + geçiş programı) ve `resolve.lutOf` lut efektini okuyor. Kanıt: `e2e/lut.spec.ts` (gerçek fare, piksel + parite ölçümü) + `poc-bilinen-sinirlar.md` §1.3 |
 | Revision retention job | `backend/src/VideoEdit.Worker/Program.cs` (`AddOrUpdate<AssetReaperJob>`) — kayıtlı tek yinelenen iş `asset-reaper` |
-| Container hardening | `Api/Dockerfile` + `Worker/Dockerfile` içinde `USER` direktifi **0 kez** geçiyor |
-| Per-device logout | `AuthEndpoints` `RevokeAllForUserAsync` — tüm cihazlar düşer |
-| Dockerfile restore (sln üyesi tüm csproj) | `Api/Dockerfile`'ın restore katmanı **6** csproj kopyalıyor (`COPY src/VideoEdit.*/…csproj` satırları); `backend/VideoEdit.sln` **8** csproj listeliyor (SchemaGen + UnitTests eksik) |
+| Container hardening | ✅ **KAPANDI (2026-08-21)**: iki Dockerfile'da da `USER app` (UID 1654); worker `/data` USER'dan önce `chown app:app`; iki imaj da yerelde build edilip `id` ile ölçüldü (yeni: `uid=1654(app)`, HEAD'deki Dockerfile ile build edilen negatif kontrol imajı: `uid=0(root)`). Seccomp profili + ffmpeg CPU kaynak sınırı HÂLÂ AÇIK (denetim #35'in kalan yarısı) |
+| Per-device logout | ✅ **KAPANDI (2026-08-21)**: logout artık `POST /api/auth/refresh/logout` (cookie path'inin altında — httpOnly refresh cookie'sini GÖREBİLEN tek yer) ve yalnız o cihazın token'ını iptal ediyor (`IRefreshTokenService.RevokeAsync`); `RevokeAllForUserAsync` theft-response + gelecekteki şifre değişimi için duruyor. Testler: `RefreshTokenServiceTests` (öteki cihaz rotasyona devam eder) + `LogoutEndpointTests` (gerçek Cookie başlığı). 14. tur triyajı (2026-08-21): logout'la iptal edilen token HALEFSİZDİR — replay'i artık theft cascade'i TETİKLEMEZ, düz 401 döner (`RefreshFailure.Revoked`); theft cascade yalnız ROTASYONLA iptal edilmiş (halefi olan) token'ın replay'inde çalışır. Logout'la yarışan uçuştaki refresh de aynı ayrımdan geçer (atomik claim 0 satır görünce taze satırdan halef bakılır) |
+| Dockerfile restore (sln üyesi tüm csproj) | ✅ **KAPANDI (2026-08-21)**: iki Dockerfile'ın restore katmanına SchemaGen + UnitTests csproj'ları eklendi (8/8 sln üyesi); iki imaj da bu katmanla build edildi |
 | `tsconfig.node.json` tip denetimi | `.github/workflows/ci.yml` ve `apps/editor/package.json` içinde geçmiyor (`build` = `check-public-assets` + `tsc -b` + `vite build`) |
 
 - **fx.\* keyframe'i** (colorAdjust/LUT parametrelerinin animasyonu): şema `KeyframeTracks`
   STRICT olduğu için doküman düzeyinde de yok; kanal listesi + örnekleme + compiler ifadesi
   birlikte açılmalı (M5 kapsam kaydı).
-- **LUT (.cube) editör yüzeyi + önizleme shader'ı**: `.cube` yükleme yolu (yeni asset türü)
-  + efekt UI'ı + WebGL2 tarafında 3D doku örneklemesi (`sampler3D`, `uLut3D/uLutScale/uLutOffset`
-  — `rendering-semantics.md` §4.2 bunları NORMATİF olarak tarif ediyor, kodda karşılığı yok).
-  **İki ayrı iş kalemidir**: yalnız UI yazılırsa kullanıcı LUT'u seçer ama önizlemede hiçbir
-  etkisini göremez. Export tarafı hazır (`ExportPlan.LutAssetIds`, `lut3d`).
+- **LUT (.cube) editör yüzeyi + önizleme shader'ı**: ✅ **KAPANDI (2026-08-21)** — iki iş
+  kalemi birlikte teslim edildi: (1) `.cube` yükleme yolu (`AssetKind.Lut`,
+  `application/x-cube-lut`, worker `CubeLutValidator` — probe/türev yok) + Inspector LUT
+  bölümü; (2) WebGL2 3D doku örneklemesi (`sampler3D`, `uLut3D/uLutScale/uLutOffset/uIntensity`,
+  trilinear — §4.2 birebir; geçiş programında taraf başına). Önizleme↔export paritesi ölçüldü
+  (SSIM 0,99424 / kanal ort 1,603 — `e2e/lut.spec.ts`).
 - **Revision retention job**: plandaki "son 50 auto + eskilerde inceltme" (denetim #5).
 - **Container hardening**: non-root `USER app` + volume sahipliği; worker için ayrıca seccomp/ffmpeg kaynak sınırları (denetim #35).
 - **Per-device logout**: mevcut logout tüm cihazların refresh token'larını iptal ediyor — cihaz bazlı oturum yönetimi (denetim #30).
@@ -724,22 +751,27 @@ Kapatılanlar:
 
 **AÇIK kalanlar (bu turda BİLEREK yapılmadı):**
 
-- **[AÇIK — B6/1, YÜKSEK sayılmalı] Modal odak yönetimi ürün tarafında YOK ve 143'lük E2E
-  sayısı bunu gizliyor.** `apps/editor/e2e/a11y-smoke.spec.ts` içinde **7 test**
-  `test.fail(true, FIXME_FOCUS)` taşıyor; Playwright bunları "passed" sayar, yani paket
-  sayısı 143 olsa da o 7'si GEÇEN test DEĞİLDİR — "bugün başarısız olması beklenen"
-  testlerdir. Kapsanan üç overlay (`ExportDialog.tsx`, `ShortcutsHelpOverlay.tsx`,
-  `ConflictDialog.tsx`) `aria-modal="true"` yazar ama odak yönetimi uygulamaz: açılışta odağı
-  içeri alma, odak tuzağı ve kapanışta odağı tetikleyiciye döndürme yoktur; `ExportDialog`
-  Escape ile de kapanmaz. Sonuç: ekran okuyucuya "burası modal" denir, klavye kullanıcısı
-  Tab'la diyaloğun ARKASINDAKİ düğmelere düşer.
-  - *Yapılacak:* üç overlay'e odak yönetimi (açılışta ilk odaklanabilir öğeye odak, Tab/Shift+Tab
-    tuzağı, kapanışta tetikleyiciye dönüş) + `ExportDialog` için Escape. Sonra
-    `a11y-smoke.spec.ts`'teki 7 `test.fail(...)` satırı SİLİNMELİDİR (silinmezse Playwright
-    "Expected to fail, but passed" ile kırmızı verir — bulgu kaybolamaz).
-  - *Neden bu turda yapılmadı:* bu tur render hattının asılmasını kapattı; düzeltme `src/`
-    yüzeyindedir ve kendi gerçek-girdi denetimini ister. **Kayıt burada olduğu için artık
-    "sessizce ertelenmiş" değildir** (review-gate kural 4).
+- **[✅ KAPANDI, 2026-08-21 — B6/1] Modal odak yönetimi üç overlay'e eklendi; 7 `test.fail`
+  SİLİNDİ, testler gerçek klavyeyle GERÇEKTEN geçiyor.** Ortak desen
+  `apps/editor/src/lib/useModalFocus.ts`: açılışta odak ilk odaklanabilir öğeye taşınır,
+  Tab/Shift+Tab uçlarda döngü yapar (odak tuzağı), kapanışta odak tetikleyici düğmeye döner;
+  `ExportDialog` artık Escape ile de kapanır (hook `stopPropagation` ile dispatcher'a çift
+  işletmez). `ConflictDialog` aynı hook'u kullanır ama BİLEREK Escape almaz (tek güvenli
+  çıkış “Sunucudaki sürümü yükle”) — ve odak davranışı e2e'de ÖLÇÜLMEDİ: 409 diyaloğunu
+  gerçek akışla tetikleyen tek e2e (`timeline-gates.spec.ts`, "Ctrl+Z dokümanı değiştirmez")
+  Ctrl+Z kapısını ölçer, odak sözleşmesini değil (aşağıdaki kalan borca bakınız).
+  - *Kanıt (2026-08-21, gerçek klavye):* `a11y-smoke.spec.ts` 14/14 — eski 7 `test.fail`
+    testi artık normal test. Negatif kontrol yapıldı: tuzak geçici bozuldu → iki “odak
+    tuzağı” testi Kırmızı (“Odak … DIŞINA sızdı”) → geri alındı → yeniden yeşil.
+  - *Kalan borç (bilinçli):* `ConflictDialog`'un odak sözleşmesi aynı ortak hook'tan gelir ama
+    gerçek-girdi e2e kanıtı yok (409 kurulumunu timeline-gates'ten a11y-smoke'a taşıyıp
+    odak içeri/tuzak/Escape-yok iddialarını ölçmek ayrı iş); `VersionsOverlay`,
+    `AssetDeleteDialog`, `TransitionEditor` gibi diğer `aria-modal` yüzeyleri henüz hook'a
+    geçirilmedi — kendi Escape dinleyicileri var, odak tuzağı/geri-verme yok.
+  - *(Tarihçe — bulgunun açık hâli:)* üç overlay `aria-modal="true"` yazıyor ama odak
+    yönetimi uygulamıyordu; `test.fail` deseni bulguyu görünür tuttu ve
+    öngörüldüğü gibi çalıştı — davranış eklenince Playwright "Expected to fail, but passed"
+    ile kırmızı verdi ve satırlar silindi (review-gate kural 4 kaydı kaybolmadı).
 - **[AÇIK] Çıktı saati tavanı YALNIZ export reçetesinde açık.** Pay (%10 + 5 sn) export
   grafiğinin `out_time` davranışı ÖLÇÜLEREK seçildi (normal render'ın en büyük `out_time`'ı
   beklenen sürenin 66,7 ms ALTINDA). Varlık işleme reçeteleri (proxy/filmstrip/poster) farklı
@@ -778,34 +810,52 @@ denenmedi**; MinIO'nun neyi kanıtladığı / neyi kanıtlamadığı §4.2'de ka
 
 **Bu ölçümün ortaya çıkardığı AÇIK borçlar:**
 
-- **[AÇIK — ORTA] Export'un disk rezervasyonu tahmini yüksek bit hızlı kaynakta KISA KALIYOR.**
-  `ExportJob.EstimateRequiredDiskBytes` çıktıyı `ExportProfiles.EstimatedBitsPerSecond` =
-  **10 Mbps** varsayımıyla hesaplıyor. Ölçüldü: 10:40'lık iş için "gerekli" 2 902 480 768 B
-  dedi, ölçülen tepe kullanım **3 926 837 249 B** oldu (**1,35 kat**) — çünkü CRF18 `veryfast`
-  grenli 1080p kaynakta **28,85 Mbps** üretti. Bu makinede ~390 GB boş alan vardı, kapı hiç
-  ısırmadı; dar diskli bir kurulumda kapı "yeter" deyip render ORTASINDA disk bitebilir.
-  - *Yapılacak:* tahmini ya kaynağın ölçülmüş bit hızına bağlamak (probe zaten elde) ya da
-    profil varsayımını gerçek ölçüme çekip payı büyütmek. Ürün kodu bu turda **değiştirilmedi**
-    (tur yalnız ölçüm + dokümandı).
-- **[AÇIK — DÜŞÜK] Kota yalnız ORİJİNALLERİ sayıyor.** `UploadQuota.Evaluate` `Assets.SizeBytes`
-  toplamını okur; türevler (proxy + filmstrip + waveform + poster) sayılmaz. Ölçüldü: türevler
-  orijinalin **%7,7**'si (1,51 GiB kaynak → 119 MiB türev). Yani "20 GiB kota" gerçekte
-  ~21,5 GiB'lik nesne deposu demektir ve fatura oradan gelir.
-  - *Yapılacak:* ya türev boyutlarını da deftere yazıp kotaya katmak, ya da kotanın "yalnız
-    orijinal" olduğunu ürün yüzeyinde (kitaplık göstergesinin başlığında) söylemek.
-- **[AÇIK — DÜŞÜK] LRU cache SÜPÜRMESİ ölçülmedi.** Cache **orijinali** tutar; 20 GiB tavan
-  bu boyutta ~13 kaynak alır. Ölçülen tek şey tavanın %7,5'inin bir dosyayla dolduğudur;
-  14. dosyada devreye girecek süpürme (ve süpürülen kaynağın bir sonraki export'ta yeniden
-  indirilmesi) **hiç koşulmadı** — bugüne kadar da koşulmamıştı.
-  - *Yapılacak:* cache'i tavana kadar doldurup süpürmenin EN ESKİ girdiyi seçtiğini ve pinli
-    (o an koşan export'un) kaynağını KORUDUĞUNU ürün düzeyinde ölçmek.
+- **[KAPANDI — 2026-08-21, backend borç turu] Export'un disk rezervasyonu tahmini yüksek bit
+  hızlı kaynakta KISA KALIYORDU.** Kapanış: tahmin artık kaynağın ÖLÇÜLMÜŞ bit hızını kullanıyor —
+  `ExportJob.EffectiveOutputBitsPerSecond` = max(profil 10 Mbps, max(kaynak SizeBytes×8e6/DurationMicros))
+  (yalnız Video/Audio türü, süresi bilinen satırlar; görsel/LUT'un boyut/süre oranı anlamsız).
+  ÖLÇÜLEREK kanıtlandı (`ExportDiskEstimateTests`, gerçek ffmpeg + MinIO, bu makinede):
+  113,8 Mbps'lik gerçek rastgele-içerikli 720p kaynakla gerçek export koşuldu; gerçek ayak izi
+  (cache'teki kaynak + üretilen çıktı) **156 436 793 B**, ESKİ formül **109 932 895 B** dedi
+  (ALTINDA — negatif kontrol), YENİ formül **187 793 641 B** (KAPSIYOR). Düşük bit hızlı
+  kaynakta (124 kb/s) yeni tahmin eskisiyle BİRE BİR aynı (profil tabanı kazanır — şişme yok)
+  ve ayak izini kapsamaya devam ediyor. Formül birim testleri: `ExportJobTests`
+  `EffectiveOutputBitsPerSecond_*` (taban/karışım/zaman-eksensiz dışlama).
+  *Tavan gerekçesine dipnot:* 10. turdaki "4 saatlik çizelge = 21,6 GB rezervasyon" sayısı
+  artık ALT SINIRDIR (profil tabanı; `EstimateRequiredDiskBytes_AtTimelineCeiling…` testi bunu
+  sabitlemeye devam ediyor) — yüksek bit hızlı kaynakta rezervasyon kaynağın ölçülen hızıyla
+  büyür; bu bilinçlidir, çünkü o export gerçekten o kadar disk yazar ve kapının işi "yalan
+  yeter" dememektir.
+- **[KAPANDI — 2026-08-21, backend borç turu] Kota yalnız ORİJİNALLERİ sayıyordu.** Kapanış:
+  işleme hattı türev toplamını asset satırına yazıyor (`Asset.DerivedBytes` — yeni migration
+  `AddAssetDerivedBytes`, nullable bigint) ve kota sorguları (InitUpload reddi + `/api/quota`
+  göstergesi) depolamayı `SizeBytes + (DerivedBytes ?? 0)` olarak sayıyor. Geriye dönük
+  davranış: NULL = 0 (eski asset'ler bir gecede kota doldurmaz; backfill bilinçli YOK).
+  Testler: `ProcessAssetPipelineTests` (DerivedBytes MinIO'daki türev objelerinin gerçek bayt
+  toplamına EŞİT — video + ses), `AssetUsageQuotaTests` (403 sınırına türevler dahil; negatif
+  kontrol: türev defteri NULL'a çekilince AYNI istek 201 alır).
+- **[KAPANDI — 2026-08-21, backend borç turu] LRU cache SÜPÜRMESİ hiç ölçülmemişti.** Kapanış:
+  `OriginalCacheLruTests` (gerçek MinIO indirmeleri, tavan test-yerel 250 KB'a indirilmiş):
+  tavan aşılınca EN ESKİ damgalı girdi düşüyor; cache isabetiyle damgası tazelenen AKTİF girdi
+  ve PİNLİ (koşan export'un) girdi — en eski olsa bile — korunuyor; süpürme tavana inince
+  duruyor; süpürülen girdinin sonraki isteği indirmeyi baştan ödeyip cache'e dönüyor.
+  Negatif kontrol: AYNI kurulum pin OLMADAN koşunca en eski girdi gerçekten siliniyor (pin
+  korumasının yeşili tesadüf değil). NOT: 20 GiB'lik GERÇEK tavanla, GB'lık dosyalarla ürün
+  düzeyi bir koşum hâlâ yapılmadı — mekanizma ölçüldü, ölçek ölçülmedi.
 - **[AÇIK — DÜŞÜK] Ölçüm n=1.** §0.1'in tamamı **tek** koşumdur (yalnız 60 sn'lik export üç
   kez tekrarlandı ve üçünde de bayt sayısı aynı çıktı). Varyans, ısınma etkisi ve eşzamanlı
   kullanıcı yükü **ölçülmedi**; §4.1'in "tek eşzamanlı export" sınırı bu rejimde de geçerlidir.
 - **[AÇIK — DÜŞÜK] >2 GB ve 4 GiB tek dosya tavanı denenmedi.** Kullanıcının aralığının üst ucu
   (2 GB) ölçüldü sayılmaz: ölçülen dosya 1,51 GiB'dir. `QuotasOptions.MaxFileSizeBytes` = 4 GiB
   ve `UploadRules.PartCount` o boyutta 64 parça üretir — ölçülmedi.
-- **[AÇIK — ORTA] Birim testi MAKİNE GENELİNDEKİ gerçek export cache'ini SİLİYOR (ölçüldü).**
+- **[KAPANDI — 2026-08-21, backend borç turu] Birim testi MAKİNE GENELİNDEKİ gerçek export
+  cache'ini SİLİYORDU (ölçülmüştü).** Kapanış: `ExportJobTests` artık test-yerel bir
+  `CacheDirectory` ile kurulur (sınıf başına temp dizin, Dispose'ta silinir) ve izolasyonun
+  kendisi ölçülür: `Run_DiskFullPath_NeverTouchesTheMachineWideCache` makine köküne
+  (`%TEMP%\videoedit-cache`) benzersiz adlı bir nöbetçi girdi koyar, agresif süpürme İÇEREN
+  disk-full yolunu koşar ve nöbetçinin YERİNDE olduğunu doğrular; negatif kontrol olarak
+  varsayılan `ProcessingOptions`'ın kökünün BUGÜN DE makine dizini olduğu (tehlike hâlâ gerçek,
+  izolasyon bilinçli seçim) aynı testte sabitlenir. Aşağıdaki tarihçe kayıt için duruyor:
   `ExportJobTests.CreateJobRunner` `new OriginalCache(storage, new ProcessingOptions())` kuruyor;
   `CacheDirectory` boş olduğu için `OriginalCache.Root` `%TEMP%\videoedit-cache`'e — yani
   **çalışan worker'ın kullandığı AYNI dizine** — düşüyor. `Run_GenuinelyFullDisk_OnFinalAttempt_StillFailsWithDiskFull`
@@ -816,9 +866,7 @@ denenmedi**; MinIO'nun neyi kanıtladığı / neyi kanıtlamadığı §4.2'de ka
   (öncesi 1 dizin, sonrası 0). Diğer iki dosya (`ExportJobPipelineTests`, `ExportJobTests`'in
   iki testi) `CacheDirectory`'yi AÇIKÇA veriyor; kusur yalnız varsayılana düşen yolda.
   CI konteynerinde zararsız (her sürecin kendi `TMPDIR`'i), geliştirici makinesinde **gerçek
-  veri siliyor** ve ölçümleri sessizce bozuyor.
-  - *Yapılacak:* `CreateJobRunner`'a da test-yerel bir `CacheDirectory` vermek (diğer testlerin
-    zaten yaptığı gibi). Ürün kodu bu turda değiştirilmediği için test de değiştirilmedi.
+  veri siliyordu** ve ölçümleri sessizce bozuyordu. *(Çözüm yukarıdaki kapanış notunda.)*
 - **[AÇIK — ORTA] Bu turun İKİ ölçümü de KOŞULDU ama KORUNMUYOR.** İkisi de
   `e2e/.artifacts/` altında koşan, repoya girmeyen betiklerdi (`poc-bilinen-sinirlar.md` §5.1):
   otomatik pakette karşılıkları YOK, yani bir regresyon ikisini de sessizce kırar ve
@@ -947,9 +995,116 @@ kendisi ızgara-hizalı gösterilemez (.5 → +1 µs, ızgara dışı) ve zaten 
 'duration' ile ölçülüyor — bu yeni dosya FORMÜLÜ değil BELGE reddini kapatır. Negatif kontrol:
 bir geçerli vaka bozulunca iki taraf da kırmızıya döndü, geri alınca md5 aynı.
 
-**Hâlâ AÇIK aileler:** keyframe sıralaması (`strictly sorted`/duplike), geçiş simetrisi
-(süre ≤ yarı komşu, bitişiklik, `sourceInUs ≥ D/2` el payı, hız-farkında el), klip yerleşimi
-(çakışmama, `timelineStartUs` sıralılığı). Aynı desenle sıradaki turlarda kapatılabilir.
+**Kalan üç aile de KAPANDI (backend borç turu, 2026-08-21) — aile başına bir vektör dosyası,
+iki dilde tüketim, dosya başına negatif kontrol (boz → İKİ taraf kırmızı → geri al, md5 aynı):**
+
+- **Keyframe sıralaması** → `keyframe-order-vectors.json` (8 vaka; her vaka opacity VE volume
+  kanalında) — `invariants.test.ts` "matches the shared keyframe-order vectors" +
+  `KeyframeOrderParityTests.cs`.
+- **Klip yerleşimi** → `clip-placement-vectors.json` (8 vaka: bitişik/boşluklu/zincir kabul;
+  yarım-klip/tek-kare çakışma, özdeş aralık, sırasız listeleme ret) —
+  `invariants.test.ts` "matches the shared clip-placement vectors" + `ClipPlacementParityTests.cs`.
+- **Geçiş simetrisi** → `transition-symmetry-vectors.json` (16 vaka: bitişiklik, derin-eşitlik,
+  ızgara/çift-kare/üst-sınır, hız-farkında BAŞ el payı, still-görsel muafiyeti) —
+  `invariants.test.ts` "matches the shared transition-symmetry vectors" +
+  `TransitionSymmetryParityTests.cs`. KUYRUK payı bilinçli KAPSAM DIŞI: asset süresi ister,
+  C# hakemi (`ExportCompiler.Validate`) o süreyi göremez — parite ancak aynı bilgiyle ölçülür
+  (zod tarafı da `assetDurations` vermeden koşar).
+
+**Bu aile GERÇEK bir ayrışma da yakaladı ve kapattı:** zod'un el payı formülü naif
+`roundHalfUp(D/2 × rate)` idi; derleyici yarımı KARE DEFTERİNDEN türetir
+(`halfUs = UsOf(dFrames/2)`), ve `UsOf(dFrames)` TEK sayı olduğunda ikisi ±1 µs ayrışır —
+30fps'te 14 karelik geçiş (466 667 µs) için zod 233 334 µs isterken derleyici 233 333 µs
+istiyor, yani editör kapısı renderer'ın kabul ettiği bir belgeyi REDDEDİYORDU (yanlış ret).
+`invariants.ts` `transitionHandleUs` artık kare-defteri yarımını kullanıyor;
+`half-frame-ledger-boundary` ve `minimum-two-frame-transition` vakaları sınırı iki dilde
+sabitliyor (düzeltme geri alınırsa vitest kırmızı olur).
+
+## Backend borç kapatma turu (2026-08-21 — sekiz kalem)
+
+Bu turda kapatılanlar (her biri kendi bölümünde işaretlendi; kanıtlar test adlarıyla):
+
+1. **Disk rezervasyonu tahmini** → kaynak bit hızına bağlandı (12. tur maddesi, yukarıda).
+2. **Kota türevleri sayıyor** → `Asset.DerivedBytes` + migration (12. tur maddesi, yukarıda).
+3. **LRU süpürmesi ölçüldü** → `OriginalCacheLruTests` (12. tur maddesi, yukarıda).
+4. **Birim testi makine cache'i** → izole kök + nöbetçi testi (12. tur maddesi, yukarıda).
+5. **Container hardening (kısmi) + Dockerfile restore + per-device logout** → M6 tablosu.
+   NOT: per-device logout ROTAYI değiştirdi (`/api/auth/logout` → `/api/auth/refresh/logout`;
+   `docs/design/03` uç listesi güncellendi); frontend `entities/auth.ts` yeni rotayı çağırıyor
+   ve artık Authorization başlığı GEREKMİYOR (kimlik cookie'nin kendisi — süresi geçmiş access
+   token'la da çıkış yapılabilir).
+6. **Pis-dosya korpusu (M4 dalga 3)** → `DirtyMediaCorpusTests` (kapsam tablosu satırı).
+7. **Belge-değişmezi parite aileleri (kalan üç)** → 14. tur bölümü; artı zod el-payı ±1 µs
+   yanlış-ret düzeltmesi (`invariants.ts` `transitionHandleUs`).
+8. **Doğrulama koşumları (bu makinede):** `dotnet build -warnaserror` 0 uyarı/0 hata;
+   `MINIO_AVAILABLE=1 dotnet test` **1371/1371, skip 0**; timeline-schema vitest 196/196;
+   `pnpm --filter @videoedit/editor exec tsc -b` temiz. Docker: `videoedit-api:hardened` ve
+   `videoedit-worker:hardened` yerelde build edildi; konteyner içi `id` = `uid=1654(app)`,
+   HEAD Dockerfile'ıyla build edilen kontrol imajı `uid=0(root)`.
+
+**Bu turun AÇIK bıraktıkları / notları:**
+
+- **[AÇIK — DÜŞÜK] Seccomp + ffmpeg CPU kaynak sınırı** (denetim #35'in kalan yarısı) —
+  non-root ile daralttık, süreç-düzeyi sınırlar hâlâ yok.
+- **[NOT — DAĞITIM] `AddAssetDerivedBytes` migration'ı** canlı/dev Postgres'e HENÜZ
+  uygulanmadı (bu tur canlı servislere bilerek dokunmadı; koşan eski ikililer kolonu
+  bilmediği için etkilenmez). Yeni ikililer devreye alınmadan ÖNCE `--migrate-only`
+  koşulmalı — aksi halde kota sorguları `DerivedBytes` kolonunu bulamaz.
+- **[NOT — DAĞITIM] Worker volume sahipliği:** root döneminden kalan MEVCUT bir
+  `worker_data` volume'u root sahipli kalır; bir kez
+  `docker compose run --user root worker chown -R app:app /data` gerekir
+  (Worker/Dockerfile içindeki not).
+
+## 14. tur denetim TRİYAJI (2026-08-21 — LUT/export/auth dalgasının bulguları)
+
+Triyaj sahibi bu turda kapattı: **BULGU-1** (CubeLutValidator ↔ ffmpeg bayt-düzeyi parite —
+7 tehlikeli-yön sapması: BOM×3, boşluksuz `LUT_3D_SIZE2`, öndeki boşluk, yalnız-CR, bitişik
+`DOMAIN_MIN0`; `CubeLutFfmpegParityTests` canlı ffmpeg golden'ı), **BULGU-2** (logout'la
+iptal edilen halefsiz token'ın replay'i artık theft cascade'i tetiklemiyor —
+`RefreshFailure.Revoked`), **BULGU-3** (önizleme-kelepçe/export-422 asimetrisi
+rendering-semantics §4.2'de beyan; DEV kapısının invariant kural 6 ile pre-catch ettiği
+teyit), **BULGU-5** (doküman iddiaları gerçeğe indirildi), BG **B1-B6** (LUT satırı '0:00',
+yazım hatası, LUT doku GC, `invalid-lut` Türkçe etiketi, LUT silme cümlesi, B6 ölçüm notu)
+ve perf listesinden **media-urls paralelleştirmesi** (8'lik eşzamanlılık kapağı).
+
+### AÇIK borçlar (milestone eşlemeli)
+
+- **[YÜKSEK — M3/Export sertleştirme] 2160p bellek kabul kapısı** (baş mimar BULGU-4 = perf
+  raporu §9-2): 2160p bileşim render'ında ffmpeg tepe RSS ~4,9 GB ölçüldü; disk için kabul
+  kapısı var (`EnsureDiskSpaceAsync` + `EffectiveOutputBitsPerSecond`), bellek için YOK.
+  Bugün `WorkerCount=1` ile güvenli; export eşzamanlılığı artırılmadan ÖNCE profil başına
+  kaba bellek tahmini + işe başlamadan kabul kapısı (ExportDiskEstimate'in bellek eşi) ve
+  4K işlerine tek-uçuş/ayrı kuyruk kuralı gerekir. Eşzamanlılık artırılırsa bu madde
+  BLOKER'dır.
+- **[YÜKSEK — M3/Export performansı] Bileşimli render hızı** (perf §"filtre grafiği"):
+  60 sn bileşim her profilde gerçek zamandan yavaş (720p 0,67x; 1080p 0,66x; 2160p 0,58x;
+  düz kesim 9,38x) ve 2160p'de ffmpeg ~12,3/20 çekirdek kullanıyor. Sıra: (1)
+  `filter_complex_threads`/thread ayarlarını ÖLÇEREK tara, (2) kaynak tuvale eşitken
+  normalize zincirindeki no-op scale/pad/fps adımlarını kısalt, (3) overlay/lut'u yalnız
+  etkin aralığa uygula, (4) en büyük kazanç: timeline'ı dilimlere bölüp N paralel ffmpeg +
+  concat (dilim sınırları geçişlerin dışında; tahmin 3-5x). Hedef: 1080p bileşimde ≥2x.
+  Filtre grafiği ÜRETİMİNE dokunduğu için render-golden korpusuyla birlikte ele alınmalı —
+  triyaj turunda bilinçli açılmadı.
+- **[ORTA — M1 iyileştirme] media-urls manifest'i Assets satırına yazmak** (perf §"GET
+  media-urls"): paralelleştirme bu turda yapıldı; kalıcı çözüm filmstrip manifest'ini
+  işleme sırasında `Assets` jsonb kolonuna yazıp çağrı anındaki storage GET'ini tümden
+  kaldırmak (migration ister).
+- **[ORTA — dev ortamı] Çok-GB ingest'te paylaşılan Docker/WSL2 diski** (perf §"Altyapı"):
+  aynı 1,4 GB dosyada part-PUT 14-267 MB/s dalgalanıyor, aynı pencerede Npgsql bağlantı
+  zaman aşımı uyarıları (MinIO+Postgres aynı sanal diskte). Dev compose'ta MinIO volümünü
+  ayrı fiziksel diske almak + Npgsql zaman aşımı günlüklerini izlemeye almak; yük testleri
+  bu dev diskinde yanıltıcı ölçülür (prod R2'de bu kip yok — R2 dağıtımı ayrıca kapsam dışı).
+- **[DÜŞÜK — M1 iyileştirme] Uzun medyada filmstrip payı** (perf §"İşleme"): 600 sn videoda
+  filmstrip 12-15 s (~%21). Sprite kare aralığını süreyle logaritmik seyreltmek ya da
+  filmstrip'i önce biten proxy'den üretmek; 10 dk medyada 5-10 s kazanç.
+- **[DÜŞÜK — M2 iyileştirme] PUT /timeline gövde sıkıştırması** (perf §"Kaydetme"): 500 klip
+  = 240 KB gövde; gerçek ağda (~5 Mb/s upstream) ~400 ms/kayıt hesaplanıyor (ağ süresi
+  ölçülmedi, boyut ölçüldü). İstek gövdesine gzip (`UseRequestDecompression` maddesi zaten
+  M2'de) + orta vadede delta-save; ProjectRevisions büyümesi snapshot politikasıyla izlensin.
+- **[DÜŞÜK — editör, yalnız DEV] Mutasyon başına doküman kapısı** (perf §"Editör"): 500
+  klipte 3,1 ms p50 — bugün taban çizgisinden ayrışmıyor; 1000+ klipte sürükleme
+  commit'lerinde hissedilmeden büyük belgelerde örnekleyerek (her N. commit) ya da yalnız
+  değişen track'i doğrulayan artımlı yolla koşulmalı. Şimdilik aksiyon YOK (izleme kaydı).
 
 ## Kayda geçen doğrulamalar (aksiyon gerekmez)
 - Restore'da "PreRestore satırı görünmüyor" davranışı veri kaybı DEĞİL — aynı revision'da zaten snapshot varsa terfi ediliyor; invaryant korunuyor (denetim #32).

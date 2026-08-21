@@ -12,7 +12,7 @@
  * gerçekten geri aldı mı.
  */
 import type { Page } from '@playwright/test';
-import { maxScaleFor, validateTimelineDoc } from '@videoedit/timeline-schema';
+import { maxScaleFor, maxScaleForFit, validateTimelineDoc } from '@videoedit/timeline-schema';
 import { test, expect } from './fixtures/test';
 
 /** Seed projesinin çıktı çözünürlüğü (fixtures/seed.ts). */
@@ -313,6 +313,78 @@ test.describe('Inspector — seçili klip özellikleri', () => {
       '0 yazmak klibi görünmez yapmamalı — pozitif tabana kırpılmalı.',
     ).toBeGreaterThan(0);
     expectDocValid(await readDoc(editor.page), 'ölçek tabanına kırpma sonrası');
+  });
+
+  /**
+   * Dönme ara tuvali büyütür (rendering-semantics §2.5): derleyicinin tavan
+   * kapısı ölçek kutusunu değil ARA TUVALİ ölçer, dönen katman köşegeni kadar
+   * kare tuval açar. Editörün ölçek tavanı bu dalgadan itibaren dönmeyi
+   * hesaba katar — bu test GERÇEK klavyeyle dönme yazar ve tavanın düştüğünü,
+   * taşan ölçeğin İNDİRİLDİĞİNİ, belgenin sözleşmeyi geçtiğini doğrular.
+   */
+  test('dönme yazınca ölçek tavanı köşegene iner ve taşan ölçek kırpılır (gerçek klavye)', async ({
+    editor,
+    seed,
+  }) => {
+    const unrotatedMax = maxScaleFor(SEED_SETTINGS);
+    const rotatedMax = maxScaleForFit(SEED_SETTINGS.width, SEED_SETTINGS.height, {
+      rotationDeg: 45,
+      anchorX: 0.5,
+      anchorY: 0.5,
+    });
+    expect(rotatedMax, '1080p 45° köşegen tavanı 3.718 olmalı.').toBe(3.718);
+    expect(rotatedMax).toBeLessThan(unrotatedMax);
+
+    await editor.timeline.click(await editor.timeline.clipCenter(seed.clipAId));
+    const scaleField = editor.page.getByTestId('clip-scale');
+    const rotationField = editor.page.getByTestId('clip-rotation');
+    await expect(scaleField).toBeVisible();
+
+    const typeInto = async (field: typeof scaleField, value: string): Promise<void> => {
+      const box = await field.boundingBox();
+      expect(box).not.toBeNull();
+      await editor.page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+      await editor.page.mouse.down();
+      await editor.page.mouse.up();
+      await editor.page.keyboard.press('Control+a');
+      await editor.page.keyboard.type(value);
+      await editor.page.keyboard.press('Enter');
+      await editor.page.waitForTimeout(150);
+    };
+
+    // 1) Dönmesiz tavana çık: 50 -> 4.266.
+    await typeInto(scaleField, '50');
+    expect((await readClip(editor.page, seed.clipAId)).transform.scale).toBe(unrotatedMax);
+
+    // 2) GERÇEK klavye ile 45° dönme: mevcut ölçek yeni tavanın üstünde
+    //    kalamaz — op onu köşegen tavanına indirir (sessiz değil: op notice
+    //    döndürür ve panel satırı yazar; belge sözleşmeyi geçer).
+    await typeInto(rotationField, '45');
+    const rotated = await readClip(editor.page, seed.clipAId);
+    expect(rotated.transform.rotationDeg).toBe(45);
+    expect(rotated.transform.scale, 'dönme yazımı ölçeği köşegen tavanına indirmeli').toBe(rotatedMax);
+    expectDocValid(await readDoc(editor.page), '45° dönme + ölçek kırpması sonrası');
+
+    // 3) Panel yeni tavanı İLAN eder: alan max'ı, tavan notu ve dönme rozeti.
+    await expect(scaleField).toHaveAttribute('max', String(rotatedMax));
+    await expect(editor.page.getByTestId('clip-scale-limit-note')).toHaveAttribute(
+      'data-max',
+      String(rotatedMax),
+    );
+    await expect(editor.page.getByTestId('clip-scale-rotation-note')).toBeVisible();
+
+    // 4) Dönük klipte ölçeğe 50 yazmak artık dönmesiz tavana ÇIKAMAZ.
+    await typeInto(scaleField, '50');
+    expect(
+      (await readClip(editor.page, seed.clipAId)).transform.scale,
+      'dönük klipte tavan 4.266 değil 3.718 olmalı',
+    ).toBe(rotatedMax);
+    expectDocValid(await readDoc(editor.page), 'dönük klipte tavana kırpma sonrası');
+
+    // 5) NEGATİF/simetri: dönmeyi sıfırlamak tavanı geri yükseltir, rozet kaybolur.
+    await typeInto(rotationField, '0');
+    await expect(scaleField).toHaveAttribute('max', String(unrotatedMax));
+    await expect(editor.page.getByTestId('clip-scale-rotation-note')).toHaveCount(0);
   });
 
   /**

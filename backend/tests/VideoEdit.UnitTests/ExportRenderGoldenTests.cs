@@ -24,6 +24,15 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
     private const int CanvasWidth = 320;
     private const int CanvasHeight = 240;
 
+    /// <summary>
+    /// Fixture tuvali (320x240, 4:3) HIZ icin kucuktur ve hicbir uretim profiline oran-uyumlu
+    /// degildir; kutusu tuvale esit bu spec ile olcek asamasi uretilmez ve script, eski
+    /// Compile(profile) ciktisiyla bayt bayt aynidir (ExportProfileGoldenTests bunu kosarak
+    /// sabitler). Profil-gecisli GERCEK olcek golden kanitlari ExportProfileGoldenTests tedir.
+    /// </summary>
+    private static readonly ExportOutputSpec CanvasSpec =
+        new(ExportProfile.Hd1080p, CanvasWidth, CanvasHeight);
+
     /// <summary>Kaynak A'nın (0x804020) hattan geçtikten sonraki ölçülmüş rgb24 değeri.</summary>
     private static readonly byte[] SolidA = [132, 68, 28];
 
@@ -67,7 +76,7 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
         // Tam ortası (frame 45, t = 1.5 sn) %50/%50 karışımdır ve bu ARİTMETİK olarak
         // doğrulanabilir: out = (A + B) / 2.
         var (doc, sources) = TwoSolidsWithTransition(TransitionType.Crossfade);
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
 
         Assert.Contains("xfade=transition=fade:duration=0.400000:offset=1.300000",
             compiled.FilterGraphScript);
@@ -104,24 +113,151 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
     }
 
     [FfmpegFact]
-    public async Task FadeToBlack_GoesThroughBlackAtTheMidpoint()
+    public async Task FadeToBlack_OnTheFastPath_MatchesTheYuvModelThePreviewUses()
     {
-        // §5.3 tip eşlemesi: fadeToBlack → ffmpeg 'fadeblack'. Crossfade'den AYRIŞTIĞININ
-        // kanıtı: ortada karışım değil SİYAH vardır (aynı fixture, tek fark tip).
+        // §5.3 KAPALI FORM KANITI (dalga 2). ffmpeg xfade fadeblack'i (phase 0.2) video
+        // kaynaklarında YUV DÜZLEMLERİNDE karıştırır ve "siyah"ı (Y=0, U=V=128) —
+        // yani yayın aralığının (Y≥16) ALTINDA bir süper-siyah; rgb siyahının afin
+        // görüntüsü Y=16 olurdu ve eski önizleme formülünün tüm sapması bu sabitti.
+        // Önizleme shader'ı artık aynı yuv modelini uygular (transitionRef.ts; gerçek
+        // ffmpeg yuv vektörleriyle sabitlenir). Burada model, ÜRETİM hattının TEK
+        // KATMANLI HIZLI YOLUNDA üç pencere noktasında doğrulanır. Kaynak YUV'ları
+        // dosyadan OKUNUR (öz-kalibrasyon): lavfi kaynağın hangi matrisle (601)
+        // kodlandığı beklentiye sızmasın.
         var (doc, sources) = TwoSolidsWithTransition(TransitionType.FadeToBlack);
-        var compiled = ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
         Assert.Contains("xfade=transition=fadeblack:", compiled.FilterGraphScript);
+        Assert.DoesNotContain("[base]", compiled.FilterGraphScript); // hızlı yol: taban tuval yok
 
-        var mid = Frame(await RenderAsync(compiled, "fadeblack"), 45, "fb-f45");
-        var pixel = PixelAt(mid, 160, 120);
-        var brightness = pixel[0] + pixel[1] + pixel[2];
-        // ffmpeg fadeblack, siyaha inişi smoothstep ile yumuşatır → orta kare TAM siyah değil
-        // ama HER İKİ kaynaktan da çok daha karanlıktır. Crossfade'in aynı karesi ~289 parlaklık
-        // verir (ölçüldü); eşik ikisini kesin ayırır.
-        Assert.True(brightness <= 120,
-            $"fadeToBlack'in ortası karanlık olmalı, ölçülen {Describe(pixel)} (parlaklık {brightness})");
-        AssertDistinct(mid, 160, 120, SolidA, "fadeToBlack ortası kaynak A DEĞİL");
-        AssertDistinct(mid, 160, 120, SolidB, "fadeToBlack ortası kaynak B DEĞİL");
+        var yuvA = SourceYuvAt(sources[ExportTestDocs.AssetA].Path);
+        var yuvB = SourceYuvAt(sources[ExportTestDocs.AssetB].Path);
+        var output = await RenderAsync(compiled, "fadeblack-fast");
+        foreach (var (frame, label) in new[] { (40, "A düşüşü"), (45, "orta"), (50, "B rampası") })
+        {
+            var p = 1d - ((frame / 30d) - 1.3d) / 0.4d;
+            var expected = YuvFadeBlackExpected(yuvA, yuvB, p);
+            AssertPixel(
+                Frame(output, frame, $"fbf-f{frame}"), 160, 120, expected, 6,
+                $"fadeblack yuv modeli ({label}, P={p:0.###})");
+        }
+    }
+
+    [FfmpegFact]
+    public async Task FadeToBlack_OnTheComposedPath_FollowsTheRgbChannelCurve_Measured()
+    {
+        // ÖLÇÜLMÜŞ AYRIŞMA (dalga 2): ffmpeg xfade'in "siyah"ı, xfade'in KOŞTUĞU piksel
+        // ailesine bağlıdır. Kompozisyon yolunda katmanlar format=rgba girer ve xfade
+        // KANAL BAŞINA siyah=0 ile karışır (rgb eğrisi); hızlı yol yuv420p'de koşar ve
+        // siyah (Y=0, U=V=128) süper-siyahtır. İki eğri uçlarda ve A-düşüşünde ≈ aynı,
+        // DİP bölgesinde farklıdır (bu fixture'da ölçülen: rgb dip (8,42,67) ↔ yuv dip
+        // (0,28,52) — fark ≤ ~15/255). Önizleme KANONİK durumun (tek katmanlı düz kesim
+        // = hızlı yol) yuv eğrisini uygular; kompozisyon yolundaki bu sapma
+        // docs/poc-bilinen-sinirlar.md §2.3'te beyanlıdır ve İKİ yol da burada ayrı ayrı
+        // sabitlenir — bir ffmpeg güncellemesi format müzakeresini sessizce değiştirirse
+        // bu çift test KIRMIZI yanar.
+        // Üstteki PiP katmanı BİLEREK vardır: tek başına iki tam-kare klip hızlı yola
+        // düşer; PiP kompozisyonu zorlar. Örnek nokta (60,180) PiP kutusunun
+        // (x[200,280) y[30,90)) DIŞINDADIR — alt track'in geçişi görünür.
+        var (doc, sources) = TwoSolidsWithPipAndTransition(TransitionType.FadeToBlack);
+        var compiled = ExportCompiler.Compile(doc, sources, CanvasSpec);
+        Assert.Contains("xfade=transition=fadeblack:duration=0.400000:offset=1.300000",
+            compiled.FilterGraphScript);
+        Assert.Contains("format=rgba,pad=320:240", compiled.FilterGraphScript); // kompozisyon yolu
+
+        // Kaynak rengin 709 çözümü (katman zinciri format=rgba'yı setparams=bt709
+        // metadata'sıyla çözer) — SABİT DEĞİL, dosyanın gerçek YUV'sinden türetilir.
+        var rgbA = Decode709(SourceYuvAt(sources[ExportTestDocs.AssetA].Path));
+        var rgbB = Decode709(SourceYuvAt(sources[ExportTestDocs.AssetB].Path));
+        var output = await RenderAsync(compiled, "fadeblack-composed");
+        foreach (var (frame, label) in new[] { (40, "A düşüşü"), (45, "orta"), (50, "B rampası") })
+        {
+            var p = 1d - ((frame / 30d) - 1.3d) / 0.4d;
+            var smA = SmoothStep(0.8, 1.0, p);
+            var smB = SmoothStep(0.2, 1.0, p);
+            var expected = new byte[3];
+            for (var c = 0; c < 3; c++)
+            {
+                // rgb eğrisi: out = P·A·smA + (1−P)·B·(1−smB) (kanal başına, siyah=0).
+                expected[c] = (byte)Math.Clamp(Math.Round(
+                    (p * rgbA[c] * smA) + ((1d - p) * rgbB[c] * (1d - smB))), 0d, 255d);
+            }
+
+            AssertPixel(
+                Frame(output, frame, $"fbc-f{frame}"), 60, 180, expected, 6,
+                $"fadeblack rgb eğrisi, kompozisyon yolu ({label}, P={p:0.###})");
+        }
+    }
+
+    /// <summary>bt709 sınırlı aralık YUV → rgb (kırpmalı) — katman zincirinin çözümü.</summary>
+    private static double[] Decode709((double Y, double U, double V) yuv)
+    {
+        var yl = (yuv.Y - 16d) / 219d;
+        var pb = (yuv.U - 128d) / 224d;
+        var pr = (yuv.V - 128d) / 224d;
+        return
+        [
+            Math.Clamp((yl + (1.5748 * pr)) * 255d, 0d, 255d),
+            Math.Clamp((yl - (0.1873 * pb) - (0.4681 * pr)) * 255d, 0d, 255d),
+            Math.Clamp((yl + (1.8556 * pb)) * 255d, 0d, 255d),
+        ];
+    }
+
+    /// <summary>GLSL/ffmpeg smoothstep — transitionRef.ts'teki kopyanın C# eşi.</summary>
+    private static double SmoothStep(double edge0, double edge1, double x)
+    {
+        var t = Math.Clamp((x - edge0) / (edge1 - edge0), 0d, 1d);
+        return t * t * (3d - (2d * t));
+    }
+
+    /// <summary>
+    /// Kaynak dosyanın (160,120) pikselindeki YUV kod değerleri (frame 15, yuv444p ham
+    /// çıkarım — düz renkte 4:2:0 → 4:4:4 örnekleme kayıpsızdır). Model beklentisi bu
+    /// GERÇEK bayt üçlüsünden kurulur; rgb üzerinden geri-türetme, kaynağın kodlama
+    /// matrisi varsayımını beklentiye sızdırırdı (ölçülen ders: lavfi 320x240 solid'i
+    /// 601 ile kodlar, hat 709 varsayar — fark ±4 Y birimiydi).
+    /// </summary>
+    private (double Y, double U, double V) SourceYuvAt(string path)
+    {
+        var rawPath = Path.Combine(
+            _dir, $"srcyuv-{_rawCounter++.ToString(CultureInfo.InvariantCulture)}.raw");
+        RunFfmpeg([
+            "-y", "-i", path, "-vf", "select=eq(n\\,15)",
+            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "yuv444p", rawPath,
+        ]);
+        var data = File.ReadAllBytes(rawPath);
+        Assert.Equal(CanvasWidth * CanvasHeight * 3, data.Length);
+        var offset = (120 * CanvasWidth) + 160;
+        var plane = CanvasWidth * CanvasHeight;
+        return (data[offset], data[plane + offset], data[(2 * plane) + offset]);
+    }
+
+    /// <summary>
+    /// ffmpeg xfade fadeblack'in YUV beklentisi: düzlem başına
+    /// <c>out = P·(A·smA + bg·(1−smA)) + (1−P)·(bg·smB + B·(1−smB))</c>, hedef
+    /// bg = (Y=0, U=128, V=128) — Y bilerek 16 DEĞİLDİR (vf_xfade "siyah"ı aralık
+    /// bilmez; ölçümle doğrulandı) — sonra bt709 sınırlı aralıkla rgb'ye kırpmalı dönüş
+    /// (çıktının extraction decode'uyla aynı matris).
+    /// </summary>
+    private static byte[] YuvFadeBlackExpected(
+        (double Y, double U, double V) srcA, (double Y, double U, double V) srcB, double p)
+    {
+        var smA = SmoothStep(0.8, 1.0, p);
+        var smB = SmoothStep(0.2, 1.0, p);
+
+        double Mix(double a, double b, double bg) =>
+            (p * ((a * smA) + (bg * (1 - smA)))) + ((1 - p) * ((bg * smB) + (b * (1 - smB))));
+
+        var yl = (Mix(srcA.Y, srcB.Y, 0) - 16d) / 219d;
+        var pb = (Mix(srcA.U, srcB.U, 128) - 128d) / 224d;
+        var pr = (Mix(srcA.V, srcB.V, 128) - 128d) / 224d;
+        return
+        [
+            Clip8((yl + (1.5748 * pr)) * 255d),
+            Clip8((yl - (0.1873 * pb) - (0.4681 * pr)) * 255d),
+            Clip8((yl + (1.8556 * pb)) * 255d),
+        ];
+
+        static byte Clip8(double value) => (byte)Math.Clamp(Math.Round(value), 0d, 255d);
     }
 
     [FfmpegFact]
@@ -132,7 +268,7 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
         // düşmediğinin) piksel kanıtıdır.
         var (doc, sources) = TwoSolidsWithTransition(TransitionType.WipeLeft);
         var mid = Frame(
-            await RenderAsync(ExportCompiler.Compile(doc, sources, ExportProfile.Hd1080p), "wipeleft"),
+            await RenderAsync(ExportCompiler.Compile(doc, sources, CanvasSpec), "wipeleft"),
             45, "wl-f45");
 
         var left = PixelAt(mid, 20, 120);
@@ -169,7 +305,7 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
             [ExportTestDocs.AssetA] = new(a, false, "bt709", "bt709"),
             [ExportTestDocs.AssetB] = new(b, false, "bt709", "bt709"),
             [ExportTestDocs.AssetC] = new(c, false, "bt709", "bt709"),
-        }, ExportProfile.Hd1080p);
+        }, CanvasSpec);
         Assert.Equal(4_500_000, compiled.ExpectedDurationUs);
 
         var output = await RenderAsync(compiled, "chain");
@@ -217,7 +353,7 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
             [ExportTestDocs.AssetA] = new(a, false, "bt709", "bt709"),
             [ExportTestDocs.AssetB] = new(b, false, "bt709", "bt709"),
             [ExportTestDocs.AssetC] = new(top, false, "bt709", "bt709"),
-        }, ExportProfile.Hd1080p);
+        }, CanvasSpec);
 
         // Kompozisyon yolu: rgba katmanlar + rgb blend + xfade (hızlı yol DEĞİL).
         Assert.Contains("format=rgba,pad=320:240:(ow-iw)/2:(oh-ih)/2:color=#00000000",
@@ -267,7 +403,7 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
         {
             [ExportTestDocs.AssetA] = new(a, true, "bt709", "bt709"),
             [ExportTestDocs.AssetB] = new(b, true, "bt709", "bt709"),
-        }, ExportProfile.Hd1080p);
+        }, CanvasSpec);
         Assert.Contains("acrossfade=d=0.400000:c1=tri:c2=tri", compiled.FilterGraphScript);
 
         var output = await RenderAsync(compiled, "transition-audio");
@@ -326,7 +462,7 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
         {
             [ExportTestDocs.AssetA] = new(a, true, "bt709", "bt709"),
             [ExportTestDocs.AssetB] = new(b, true, "bt709", "bt709"),
-        }, ExportProfile.Hd1080p);
+        }, CanvasSpec);
 
         // (1) Kurulumun kendisi ölçülür — rejim gerçekten kurulmuş mu?
         Assert.Equal(19_000_000, compiled.ExpectedDurationUs);
@@ -416,7 +552,7 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
             {
                 [ExportTestDocs.AssetA] = new(video, true, "bt709", "bt709"),
             },
-            ExportProfile.Hd1080p,
+            CanvasSpec,
             new Dictionary<Guid, ExportRasterSource> { [textId] = new(raster, 80, 40) });
 
         Assert.True(compiled.Inputs[1].Loop);                       // raster: -loop 1 -t
@@ -458,7 +594,7 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
         var textId = ((TextClip)doc.Tracks[0].Clips[0]).Id;
 
         var compiled = ExportCompiler.Compile(
-            doc, new Dictionary<Guid, ExportAssetSource>(), ExportProfile.Hd1080p,
+            doc, new Dictionary<Guid, ExportAssetSource>(), CanvasSpec,
             new Dictionary<Guid, ExportRasterSource> { [textId] = new(raster, 80, 40) });
         Assert.Contains("scale=160:80:force_original_aspect_ratio=decrease", compiled.FilterGraphScript);
 
@@ -507,7 +643,7 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
                 [ExportTestDocs.AssetA] = new(video, true, "bt709", "bt709"),
                 [ExportTestDocs.AssetC] = new(stickerAsset, false, "bt709", "bt709"),
             },
-            ExportProfile.Hd1080p,
+            CanvasSpec,
             new Dictionary<Guid, ExportRasterSource>
             {
                 [shapeId] = new(shapeRaster, CanvasWidth, CanvasHeight),
@@ -563,8 +699,8 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
         var inRun = ExportTestDocs.Doc(
             width: CanvasWidth, height: CanvasHeight, clips: [first, second]);
 
-        var aloneCompiled = ExportCompiler.Compile(alone, sources, ExportProfile.Hd1080p);
-        var runCompiled = ExportCompiler.Compile(inRun, sources, ExportProfile.Hd1080p);
+        var aloneCompiled = ExportCompiler.Compile(alone, sources, CanvasSpec);
+        var runCompiled = ExportCompiler.Compile(inRun, sources, CanvasSpec);
         Assert.DoesNotContain("pad=160:120", aloneCompiled.FilterGraphScript);   // tek segment: pad YOK
         Assert.Contains("pad=160:120:(ow-iw)*0.25:(oh-ih)*0.25:color=#00000000",
             runCompiled.FilterGraphScript);                                      // çapa ORANLI pad
@@ -596,6 +732,38 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
                 [ExportTestDocs.AssetA] = new(a, false, "bt709", "bt709"),
                 [ExportTestDocs.AssetB] = new(b, false, "bt709", "bt709"),
             });
+    }
+
+    /// <summary>
+    /// <see cref="TwoSolidsWithTransition"/> + köşede PiP üst katman (scale 0.25,
+    /// P=(240,60) → kutu x[200,280) y[30,90)): tek amaç derlemeyi TEK KATMANLI HIZLI
+    /// YOLDAN ÇIKARIP rgba kompozisyon yoluna sokmaktır — fadeblack'in iki yoldaki
+    /// eğrisi farklı ölçülmüştür ve kompozisyon yolu önizlemenin eşleniğidir.
+    /// </summary>
+    private (TimelineDoc Doc, Dictionary<Guid, ExportAssetSource> Sources)
+        TwoSolidsWithPipAndTransition(TransitionType type)
+    {
+        var a = MediaFile($"solid-a-{type}.mp4", "0x804020");
+        var b = MediaFile($"solid-b-{type}.mp4", "0x2080C0");
+        var top = MediaFile($"solid-top-{type}.mp4", "0xC02080");
+        var clipA = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 500_000, 2_000_000);
+        var clipB = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 1_500_000, 500_000, 2_000_000);
+        ExportTestDocs.Link(clipA, clipB, 400_000, type);
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetC, 0, 0, 3_000_000,
+                    transform: ExportTestDocs.Transform(x: 0.25, y: -0.25, scale: 0.25)),
+            ]),
+            ExportTestDocs.VideoTrack(clips: [clipA, clipB]),
+        ], width: CanvasWidth, height: CanvasHeight);
+        return (doc, new Dictionary<Guid, ExportAssetSource>
+        {
+            [ExportTestDocs.AssetA] = new(a, false, "bt709", "bt709"),
+            [ExportTestDocs.AssetB] = new(b, false, "bt709", "bt709"),
+            [ExportTestDocs.AssetC] = new(top, false, "bt709", "bt709"),
+        });
     }
 
     /// <summary>3 sn, @30fps DÜZ RENK H.264 (istenirse 440 Hz sinüs AAC ile).</summary>

@@ -76,18 +76,96 @@ describe('crossfade / dissolve — the mix at p', () => {
   });
 });
 
-describe('fadeToBlack — A to black, black to B', () => {
-  it('reaches BLACK (not transparency) at the midpoint', () => {
-    const mid = mixTransitionRef('fadeToBlack', RED, BLUE, 0.5);
-    expect(toBytes(mid)).toEqual([0, 0, 0]);
-    expect(mid.a, 'still opaque: the frame goes black, it does not disappear').toBe(1);
-  });
-
-  it('the first half darkens A, the second half lifts B', () => {
-    expect(toBytes(mixTransitionRef('fadeToBlack', RED, BLUE, 0.25))).toEqual([128, 0, 0]);
-    expect(toBytes(mixTransitionRef('fadeToBlack', RED, BLUE, 0.75))).toEqual([0, 0, 128]);
+describe('fadeToBlack — ffmpeg xfade fadeblack (phase 0.2), pixel-exact', () => {
+  it('endpoints are the pure sources and stays opaque throughout', () => {
     expect(toBytes(mixTransitionRef('fadeToBlack', RED, BLUE, 0))).toEqual([255, 0, 0]);
     expect(toBytes(mixTransitionRef('fadeToBlack', RED, BLUE, 1))).toEqual([0, 0, 255]);
+    const mid = mixTransitionRef('fadeToBlack', RED, BLUE, 0.5);
+    expect(mid.a, 'opak girdide kare kararır ama KAYBOLMAZ (alpha siyahı opaktır)').toBe(1);
+  });
+
+  it('matches REAL ffmpeg 8.0 output (measured yuv vectors, ±4 per channel)', () => {
+    // ÖLÇÜM DÜZENEĞİ (2026-08-21, ffmpeg 8.0 gyan build) — HİÇ RGB DÖNÜŞÜMSÜZ:
+    // iki düz renk yuv444p kaynak, xfade=transition=fadeblack:duration=1:offset=0.5
+    // @30fps, çıktı rawvideo yuv444p. Kaynak ve çıktı YUV baytları DOĞRUDAN
+    // dosyadan okundu (p = (frame-15)/30). Üretim hattının iki yolunun da aynı
+    // eğriyi verdiği C# tarafında koşarak sabitlenir (ExportRenderGoldenTests
+    // FadeToBlack_* çifti). Ref'e girdi/beklenti bt709 sınırlı çözümle taşınır —
+    // çözüm afin ve birebir olduğundan karışımın kendisi ölçüme karşı sınanmış olur.
+    const SRC_A: [number, number, number] = [84, 104, 158];
+    const SRC_B: [number, number, number] = [108, 170, 81];
+    const measured: [number, [number, number, number]][] = [
+      [1 / 30, [75, 106, 154]],
+      [3 / 30, [38, 116, 140]],
+      [5 / 30, [7, 126, 128]],
+      [6 / 30, [3, 128, 125]],
+      [10 / 30, [13, 132, 121]],
+      [15 / 30, [36, 141, 111]],
+      [20 / 30, [66, 153, 98]],
+      [24 / 30, [86, 161, 90]],
+      [27 / 30, [97, 165, 85]],
+      [29 / 30, [104, 168, 82]],
+    ];
+
+    // bt709 sınırlı aralık çözümü (standart matris; test tarafında bağımsız kopya).
+    const dec = ([y, u, v]: [number, number, number]): Rgba => {
+      const yl = (y - 16) / 219;
+      const pb = (u - 128) / 224;
+      const pr = (v - 128) / 224;
+      const c = (x: number): number => Math.min(1, Math.max(0, x));
+      return {
+        r: c(yl + 1.5748 * pr),
+        g: c(yl - 0.1873 * pb - 0.4681 * pr),
+        b: c(yl + 1.8556 * pb),
+        a: 1,
+      };
+    };
+
+    const A = dec(SRC_A);
+    const B = dec(SRC_B);
+    for (const [p, yuv] of measured) {
+      const out = toBytes(mixTransitionRef('fadeToBlack', A, B, p));
+      const expected = toBytes(dec(yuv));
+      for (let c = 0; c < 3; c++) {
+        // Tolerans 4: ffmpeg düzlem başına tam sayıya AŞAĞI kırpar (ölçülen
+        // sistematik −1 sapma), ref sürekli hesaplar — fiziksel taban ±1 kod
+        // birimi/düzlemdir. 1 kroma birimi rgb'ye 1.575/1.856·(255/224) ≈ 1.8-2.1
+        // bayt, 1 Y birimi ≈ 1.2 bayt taşır; Y+kroma birleşik tavan ~4 bayttır
+        // (p=0.5 B kanalında ölçüldü: 4).
+        expect(
+          Math.abs(out[c]! - expected[c]!),
+          `p=${p.toFixed(3)} kanal ${c}: ref ${out[c]}, ffmpeg ${expected[c]}`,
+        ).toBeLessThanOrEqual(4);
+      }
+    }
+  });
+
+  it('the curve is ASYMMETRIC: A dies inside the first 20%, B ramps over the rest', () => {
+    // Eski önizleme simetrik V çiziyordu (yarıda tam siyah); ffmpeg'in eğrisi öyle
+    // değil — p=0.25'te A tamamen gitmiştir, orta kare de TAM siyah değildir.
+    expect(toBytes(mixTransitionRef('fadeToBlack', RED, BLUE, 0.25))[0]).toBe(0);
+    const mid = toBytes(mixTransitionRef('fadeToBlack', RED, BLUE, 0.5));
+    expect(mid[2], 'orta karede B zayıf ama sıfır değil (ölçülen ffmpeg davranışı)').toBeGreaterThan(0);
+    expect(mid[2]).toBeLessThan(128);
+  });
+
+  it('alpha mixes against OPAQUE black — measured on semi-transparent inputs', () => {
+    // Alpha düzlemi renk modelinden BAĞIMSIZDIR: vf_xfade'in alpha "siyahı" her
+    // format ailesinde max'tır (opak). Ölçüm rgba düzeneğinden (A gri 200 @0.25,
+    // B gri 100 @0.75 — lavfi color@, xfade fadeblack, rawvideo rgba): alpha baytları.
+    const A: Rgba = { r: 200 / 255, g: 200 / 255, b: 200 / 255, a: 63 / 255 };
+    const B: Rgba = { r: 100 / 255, g: 100 / 255, b: 100 / 255, a: 191 / 255 };
+    const measuredAlpha: [number, number][] = [
+      [3 / 30, 168],
+      [6 / 30, 253],
+      [15 / 30, 233],
+      [27 / 30, 197],
+    ];
+    for (const [p, expected] of measuredAlpha) {
+      const out = Math.round(mixTransitionRef('fadeToBlack', A, B, p).a * 255);
+      expect(Math.abs(out - expected), `p=${p.toFixed(3)}: ref a=${out}, ffmpeg ${expected}`)
+        .toBeLessThanOrEqual(1);
+    }
   });
 });
 
@@ -201,5 +279,12 @@ describe('shader-drift alarm: the GLSL agrees with the TS reference', () => {
 
   it('the shader clamps p, so a stale progress cannot brighten a frame', () => {
     expect(TRANSITION_FRAGMENT_SHADER).toMatch(/clamp\(uProgress,\s*0\.0,\s*1\.0\)/);
+  });
+
+  it('the fadeToBlack branch carries the ffmpeg fadeblack smoothstep edges (phase 0.2)', () => {
+    // TS referansı ölçülü vektörlerle sabitlenir; GLSL kopyası da AYNI kenarları
+    // taşımalı — aksi halde önizleme sessizce eski (simetrik) eğriye döner.
+    expect(TRANSITION_FRAGMENT_SHADER).toMatch(/smoothstep\(0\.8,\s*1\.0,\s*P\)/);
+    expect(TRANSITION_FRAGMENT_SHADER).toMatch(/smoothstep\(0\.2,\s*1\.0,\s*P\)/);
   });
 });

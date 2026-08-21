@@ -46,4 +46,48 @@ test.describe('Proje açılışı', () => {
     expect(box.x - wrap.x).toBeGreaterThanOrEqual(0);
     expect(box.x - wrap.x + box.width).toBeLessThanOrEqual(wrap.width + 1);
   });
+
+  /**
+   * "Fit" düğmesi GERÇEK fareyle çalışır — ve ensureContentVisible'ın fit dalı
+   * CANLIDIR. Harness bulgusu: EditorApp.fitButton /Sığdır/ arıyordu ama
+   * düğmenin erişilebilir adı "Fit" (görünen metin; "Sığdır (Shift+Z)" yalnız
+   * title). Locator hiçbir düğmeyle eşleşmediği için fit dalı HİÇ çalışmamış,
+   * açılıştaki auto-fit her testte yettiği için fark edilmemişti. Bu test dalı
+   * BİLEREK tetikler: derin zoom ile içeriği ekrandan çıkarır, yardımcının
+   * düğmeye gerçekten basıp görünümü içeriğe oturttuğunu doğrular.
+   */
+  test('Fit düğmesi (gerçek tıklama) derin zoom sonrası içeriği ekrana geri getirir', async ({
+    editor,
+    seed,
+  }) => {
+    // Locator canlılığı iddianın kendisi: düğme TEKİL olarak bulunur.
+    await expect(editor.fitButton).toHaveCount(1);
+
+    // Derin zoom (gerçek Ctrl+tekerlek): klip A tam-görünür olmaktan çıkana
+    // kadar yaklaş — fit dalının tetiklenme ön koşulu budur.
+    let fullyVisible = true;
+    for (let step = 0; step < 12 && fullyVisible; step++) {
+      await editor.timeline.ctrlWheel(-360); // yaklaş
+      const wrap = await editor.timeline.wrapBox();
+      const box = await editor.timeline.clipBox(seed.clipAId);
+      fullyVisible = box.x >= wrap.x && box.x + box.width <= wrap.x + wrap.width;
+    }
+    expect(
+      fullyVisible,
+      'Zoom içeriği ekrandan çıkaramadı — fit dalı tetiklenmeden test anlamsız.',
+    ).toBe(false);
+
+    // Fit dalı: içerik görünmediği için yardımcı GERÇEK tıklamayla Fit'e basar.
+    await editor.ensureContentVisible(seed.clipAId);
+
+    const wrap = await editor.timeline.wrapBox();
+    for (const clipId of [seed.clipAId, seed.clipBId]) {
+      const box = await editor.timeline.clipBox(clipId);
+      expect(box.x - wrap.x, `Fit sonrası ${clipId} solda ekran dışında.`).toBeGreaterThanOrEqual(0);
+      expect(
+        box.x - wrap.x + box.width,
+        `Fit sonrası ${clipId} sağda ekran dışında.`,
+      ).toBeLessThanOrEqual(wrap.width + 1);
+    }
+  });
 });

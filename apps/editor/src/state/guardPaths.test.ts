@@ -19,7 +19,9 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  MAX_LAYER_DIMENSION,
   clipTimelineDurationUs,
+  intermediateCanvasLongSidePx,
   validateTimelineDoc,
   type Keyframe,
   type MediaClip,
@@ -36,6 +38,7 @@ import {
   REASON_ROTATION_NEEDS_STATIC_SCALE,
   REASON_SCALE_KEYFRAMES_NEED_NO_ROTATION,
   REASON_TRANSITION_NEEDS_STATIC_CLIPS,
+  SCALE_CLAMPED_BY_ROTATION,
   TRANSFORM_APPLIED_TO_TRANSITION_CHAIN,
   addTransition,
   addTransitionAtEdge,
@@ -305,6 +308,96 @@ describe('(a) geçiş + keyframe', () => {
 // ---------------------------------------------------------------------------
 // (b) scale-keyframes-with-rotation — ExportCompiler.cs:~1831
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// (a2) transform-scale ara tuval tavanı — ExportCompiler.EnsureLayerCeiling
+//
+// Derleyicinin kapısı ÖLÇEK KUTUSUNU değil ARA TUVALİ ölçer: dönen katman
+// köşegeni kadar kare bir tuval açar (LayerGeometry.Compute), merkez dışı çapa
+// onu ayrıca pad'ler. Editörün ölçek tavanı bu dalgaya kadar dönmeyi hesaba
+// katmıyordu — dönük klibe eski (dönmesiz) tavandan ölçek yazılabiliyor ve
+// belge dışa aktarımda `transform-scale` (HTTP 422) ile geri dönüyordu.
+// ---------------------------------------------------------------------------
+
+describe('(a2) dönme ara tuvali büyütür — ölçek tavanı dönme farkındalıklı', () => {
+  /** Derleyicinin kapı yüklemi, editör tarafındaki ikiziyle (invariants.ts). */
+  function ledgerLongSide(clipId: string): number {
+    const c = clipById(clipId);
+    const { width, height } = currentDoc().settings;
+    const rhu = (v: number): number => Math.floor(v + 0.5);
+    return intermediateCanvasLongSidePx(
+      rhu(width * c.transform.scale),
+      rhu(height * c.transform.scale),
+      c.transform,
+    );
+  }
+
+  it('dönmesiz tavan değişmedi: 1080p ölçek 4.266 ya kelepçelenir', () => {
+    const r = setClipTransform([CLIP_A], { scale: 9 });
+    expect(r.ok).toBe(true);
+    expect(clipById(CLIP_A).transform.scale).toBe(4.266);
+    expect(ledgerLongSide(CLIP_A)).toBeLessThanOrEqual(MAX_LAYER_DIMENSION);
+  });
+
+  it('dönük klipte ölçek YAZIMI köşegen tavanına kelepçelenir (1080p 45° -> 3.718)', () => {
+    expect(setClipTransform([CLIP_A], { rotationDeg: 45 }).ok).toBe(true);
+    const r = setClipTransform([CLIP_A], { scale: 4.2 });
+    expect(r.ok).toBe(true);
+    expect(clipById(CLIP_A).transform.scale).toBe(3.718);
+    expect(ledgerLongSide(CLIP_A)).toBeLessThanOrEqual(MAX_LAYER_DIMENSION);
+    expectDocValid();
+  });
+
+  it('dönme yazımı mevcut ölçeği tavanın üstünde bırakırsa ölçek İNER ve bu SÖYLENİR', () => {
+    expect(setClipTransform([CLIP_A], { scale: 4.266 }).ok).toBe(true);
+    const r = setClipTransform([CLIP_A], { rotationDeg: 45 });
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.notice).toBe(SCALE_CLAMPED_BY_ROTATION);
+    expect(clipById(CLIP_A).transform.rotationDeg).toBe(45);
+    expect(clipById(CLIP_A).transform.scale).toBe(3.718);
+    expect(ledgerLongSide(CLIP_A)).toBeLessThanOrEqual(MAX_LAYER_DIMENSION);
+    expectDocValid();
+  });
+
+  it('aynı patch te dönme + ölçek: ölçek YENİ (dönük) tavana göre kelepçelenir', () => {
+    const r = setClipTransform([CLIP_A], { rotationDeg: 45, scale: 4.2 });
+    expect(r.ok).toBe(true);
+    expect(clipById(CLIP_A).transform.scale).toBe(3.718);
+    expect(ledgerLongSide(CLIP_A)).toBeLessThanOrEqual(MAX_LAYER_DIMENSION);
+  });
+
+  it('360 ın katları dönme sayılmaz: tavan dönmesiz kalır (derleyicideki % 360)', () => {
+    expect(setClipTransform([CLIP_A], { rotationDeg: 360 }).ok).toBe(true);
+    expect(setClipTransform([CLIP_A], { scale: 4.266 }).ok).toBe(true);
+    expect(clipById(CLIP_A).transform.scale).toBe(4.266);
+  });
+
+  it('merkez dışı çapa tavanı ayrıca düşürür (çapa pad i — 90° + çapa(0,0) -> 1.859)', () => {
+    editClip(CLIP_A, (c) => {
+      c.transform.anchorX = 0;
+      c.transform.anchorY = 0;
+      c.transform.rotationDeg = 90;
+    });
+    expect(setClipTransform([CLIP_A], { scale: 3 }).ok).toBe(true);
+    expect(clipById(CLIP_A).transform.scale).toBe(1.859);
+    expect(ledgerLongSide(CLIP_A)).toBeLessThanOrEqual(MAX_LAYER_DIMENSION);
+  });
+
+  it('EDITÖR ARTIK ÜRETEMEZ: taranan her (ölçek, dönme) yazımı derleyici yüklemini tutar', () => {
+    for (const rotationDeg of [0, 15, 45, 90, 179, 359]) {
+      for (const scale of [0.5, 2, 4.266, 7, 10]) {
+        load(threeAdjacent());
+        const r = setClipTransform([CLIP_A], { rotationDeg, scale });
+        expect(r.ok).toBe(true);
+        expect(
+          ledgerLongSide(CLIP_A),
+          `rot=${rotationDeg} scale=${scale} -> yazılan ${clipById(CLIP_A).transform.scale}`,
+        ).toBeLessThanOrEqual(MAX_LAYER_DIMENSION);
+        expectDocValid();
+      }
+    }
+  });
+});
 
 describe('(b) ölçek animasyonu + dönme', () => {
   it('dönme 0 iken ölçek kanalı serbesttir', () => {

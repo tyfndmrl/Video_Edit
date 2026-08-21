@@ -3,8 +3,9 @@
  *
  * Backend contentType whitelist'i (AssetUploadValidation.ValidateInit /
  * UploadRules.TryGetKind): video/mp4, video/quicktime, video/webm, audio/mpeg,
- * audio/mp4, audio/wav, image/png, image/jpeg, image/webp. Tarayıcı tarafında
- * eşleme UZANTI üzerinden yapılır (File.type tarayıcılar arası güvenilmez);
+ * audio/mp4, audio/wav, image/png, image/jpeg, image/webp, application/x-cube-lut.
+ * Tarayıcı tarafında eşleme UZANTI üzerinden yapılır (File.type tarayıcılar arası
+ * güvenilmez; .cube için Chromium BOŞ string bildirir — kayıtlı bir MIME tipi yok);
  * desteklenmeyen dosya sunucuya init isteği atılmadan Türkçe hatayla düşer.
  */
 
@@ -20,6 +21,7 @@ export const SUPPORTED_EXTENSIONS = [
   '.jpg',
   '.jpeg',
   '.webp',
+  '.cube',
 ] as const;
 
 /** <input type="file" accept="..."> değeri. */
@@ -51,6 +53,10 @@ const EXTENSION_CONTENT_TYPES: Record<string, string> = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+  // 3D LUT — IANA'da kayıtlı tipi yok; sunucuyla ORTAK sözleşme bu x-tipidir
+  // (UploadRules.ContentTypeKinds → AssetKind.Lut). Tarayıcı File.type'ı .cube
+  // için boş döndürür, yani uzantı eşlemesi burada tek güvenilir yoldur.
+  '.cube': 'application/x-cube-lut',
 };
 
 /**
@@ -78,6 +84,6 @@ export function unsupportedFileMessage(fileName: string): string {
   const what = ext !== '' ? `${ext}` : 'uzantısız dosya';
   return (
     `Desteklenmeyen format: ${what} — MP4/MOV/WebM (video), ` +
-    'MP3/M4A/WAV (ses) veya PNG/JPG/WebP (görsel) yükleyebilirsiniz.'
+    'MP3/M4A/WAV (ses), PNG/JPG/WebP (görsel) veya .cube (LUT) yükleyebilirsiniz.'
   );
 }

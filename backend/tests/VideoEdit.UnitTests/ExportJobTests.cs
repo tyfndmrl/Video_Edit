@@ -32,18 +32,40 @@ public sealed class ExportJobTests : IDisposable
     /// </summary>
     private readonly RunningRenderRegistry Renders = new();
 
+    /// <summary>
+    /// Bu test sınıfının LRU cache kökü — HER ZAMAN test-yerel bir temp dizini.
+    /// <para>
+    /// 12. tur ölçümü (docs/backlog.md): burada `new ProcessingOptions()` kullanılıyordu,
+    /// `CacheDirectory` boş kalınca `OriginalCache.Root` MAKİNE GENELİNDEKİ
+    /// `%TEMP%\videoedit-cache`'e düşüyordu ve disk-darlığı testi `TrimAsync(0)` ile oradaki
+    /// GERÇEK export cache girdilerini siliyordu (1,51 GiB'lık canlı girdi ölçüm sırasında
+    /// böyle kayboldu). İzolasyonun kendisi
+    /// <see cref="Run_DiskFullPath_NeverTouchesTheMachineWideCache"/> ile ölçülür.
+    /// </para>
+    /// </summary>
+    private readonly string _cacheRoot;
+
     public ExportJobTests()
     {
         _connection = new SqliteConnection("DataSource=:memory:");
         _connection.Open();
         _db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlite(_connection).Options);
         _db.Database.EnsureCreated();
+        _cacheRoot = Directory.CreateTempSubdirectory("videoedit-exportjobtests-cache-").FullName;
     }
 
     public void Dispose()
     {
         _db.Dispose();
         _connection.Dispose();
+        try
+        {
+            Directory.Delete(_cacheRoot, recursive: true);
+        }
+        catch
+        {
+            // best-effort temp temizliği
+        }
     }
 
     private ExportJob CreateJobRunner(IBackgroundJobClient? jobClient = null)
@@ -55,7 +77,7 @@ public sealed class ExportJobTests : IDisposable
             storage,
             new FfprobeService(ffmpegOptions),
             new FfmpegRunner(ffmpegOptions),
-            new OriginalCache(storage, new ProcessingOptions()),
+            new OriginalCache(storage, new ProcessingOptions { CacheDirectory = _cacheRoot }),
             jobClient ?? new NoOpJobClient(),
             NullLogger<ExportJob>.Instance,
             TimeProvider.System,
@@ -231,6 +253,63 @@ public sealed class ExportJobTests : IDisposable
         Assert.Equal((100_000_000L + 75_000_000L) * 12 / 10, estimate);
     }
 
+    private static Asset SourceAsset(AssetKind kind, long sizeBytes, long? durationUs)
+    {
+        var asset = Asset.Create(
+            Guid.CreateVersion7(), kind, "src.bin", "application/octet-stream",
+            sizeBytes, DateTimeOffset.UtcNow);
+        asset.DurationMicros = durationUs;
+        return asset;
+    }
+
+    [Fact]
+    public void EffectiveOutputBitsPerSecond_UsesTheMeasuredSourceBitrate_WhenItExceedsTheProfile()
+    {
+        // 12. tur borcu: sabit 10 Mbps varsayımı 28,85 Mbps'lik gerçek CRF çıktısını
+        // KÜÇÜMSÜYORDU. 25 MB / 10 sn = 20 Mbps'lik kaynak artık tahmine girer.
+        var highBitrate = SourceAsset(AssetKind.Video, 25_000_000, 10_000_000);
+        var bps = ExportJob.EffectiveOutputBitsPerSecond(ExportProfile.Hd1080p, [highBitrate]);
+        Assert.Equal(20_000_000, bps);
+
+        // Ve rezervasyon o bit hızıyla büyür: 10 sn × 20 Mbps = 25 MB çıktı payı.
+        var estimate = ExportJob.EstimateRequiredDiskBytes(25_000_000, 10_000_000, bps);
+        Assert.Equal((25_000_000L + 25_000_000L) * 12 / 10, estimate);
+    }
+
+    [Fact]
+    public void EffectiveOutputBitsPerSecond_KeepsTheProfileFloor_ForLowBitrateSources()
+    {
+        // NEGATİF KONTROL (şişme yok): 1,25 MB / 10 sn = 1 Mbps'lik kaynakta taban profil
+        // varsayımıdır — tahmin ESKİ formülle bire bir aynı kalır.
+        var lowBitrate = SourceAsset(AssetKind.Video, 1_250_000, 10_000_000);
+        var bps = ExportJob.EffectiveOutputBitsPerSecond(ExportProfile.Hd1080p, [lowBitrate]);
+        Assert.Equal(ExportProfiles.EstimatedBitsPerSecond(ExportProfile.Hd1080p), bps);
+    }
+
+    [Fact]
+    public void EffectiveOutputBitsPerSecond_IgnoresAssetsWithoutARealTimeAxis()
+    {
+        // Görsel varlığın "süresi" bir zaman ekseni değildir: 2 MB'lık PNG'ye 40 ms süre
+        // yazılsaydı 400 Mbps'lik saçma bir bit hızı çıkardı. Süresiz satırlar da atlanır.
+        var stillWithTinyDuration = SourceAsset(AssetKind.Image, 2_000_000, 40_000);
+        var noDuration = SourceAsset(AssetKind.Video, 500_000_000, null);
+        var zeroDuration = SourceAsset(AssetKind.Video, 500_000_000, 0);
+        var bps = ExportJob.EffectiveOutputBitsPerSecond(
+            ExportProfile.Hd1080p, [stillWithTinyDuration, noDuration, zeroDuration]);
+        Assert.Equal(ExportProfiles.EstimatedBitsPerSecond(ExportProfile.Hd1080p), bps);
+    }
+
+    [Fact]
+    public void EffectiveOutputBitsPerSecond_TakesTheMaxAcrossSources()
+    {
+        // Birden çok kaynak: en yüksek ölçülen bit hızı kazanır (çıktının karmaşıklığını
+        // en karmaşık kaynak belirler); sesli kaynaklar da sayılır.
+        var video = SourceAsset(AssetKind.Video, 15_000_000, 10_000_000); // 12 Mbps
+        var audio = SourceAsset(AssetKind.Audio, 40_000_000, 10_000_000); // 32 Mbps
+        var bps = ExportJob.EffectiveOutputBitsPerSecond(ExportProfile.Hd1080p, [video, audio]);
+        Assert.Equal(32_000_000, bps);
+    }
+
     [Fact]
     public void EstimateRequiredDiskBytes_AtTimelineCeiling_StaysWithinReservationBudget()
     {
@@ -244,6 +323,19 @@ public sealed class ExportJobTests : IDisposable
             ExportProfiles.EstimatedBitsPerSecond(ExportProfile.Hd1080p));
 
         Assert.Equal(21_600_000_000L, atCeiling);
+
+        // DALGA 2 (profiller): en yüksek taban 2160p'dir (40 Mbps — 1080p bandının piksel
+        // alanı ölçeklemesi). Tavandaki 4K rezervasyonu 86,4 GB'dir; kullanıcı başına 2
+        // eşzamanlı exportla en kötü uç 172,8 GB — bu uç bir GARANTİ değil, worker'ın
+        // disk-wait/disk-full hattının görev alanıdır (gerçek darlık orada tipli düşer;
+        // Run_GenuinelyFullDisk_OnFinalAttempt_StillFailsWithDiskFull). Sayı burada
+        // sabitlenir ki taban değişirse tavanın gerekçesi güncellenmeye zorlansın.
+        var atCeiling4K = ExportJob.EstimateRequiredDiskBytes(
+            totalSourceBytes: 0,
+            ExportCompiler.MaxTimelineDurationUs,
+            ExportProfiles.EstimatedBitsPerSecond(ExportProfile.Uhd2160p));
+
+        Assert.Equal(86_400_000_000L, atCeiling4K);
     }
 
     [Fact]
@@ -400,6 +492,70 @@ public sealed class ExportJobTests : IDisposable
             catch
             {
                 // best-effort
+            }
+        }
+    }
+
+    /// <summary>
+    /// 12. TUR BULGUSUNUN KAPANIŞI (docs/backlog.md "[AÇIK — ORTA] Birim testi MAKİNE
+    /// GENELİNDEKİ gerçek export cache'ini SİLİYOR"): disk-darlığı yolu agresif
+    /// <c>TrimAsync(0)</c> çağırır ve eskiden bu sınıfın runner'ı varsayılan
+    /// <c>ProcessingOptions</c> ile kurulduğundan süpürme <c>%TEMP%\videoedit-cache</c>'e —
+    /// canlı worker'ın gerçek cache'ine — iniyordu.
+    /// <para>
+    /// Kanıt iki bacaklıdır: (1) TEHLİKE HÂLÂ GERÇEK (negatif kontrol) — varsayılan
+    /// ayarlarla kurulan cache'in kökü bugün de makine dizinidir; kusur "kendiliğinden"
+    /// kapanmamıştır, testin izolasyonu bilinçli bir seçimdir. (2) İZOLASYON ÇALIŞIYOR —
+    /// makine köküne konan nöbetçi girdi, agresif süpürme İÇEREN disk-full koşusundan
+    /// sonra yerli yerindedir (eski kurulumda ölçülen davranış silinmesiydi).
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Run_DiskFullPath_NeverTouchesTheMachineWideCache()
+    {
+        // (1) Negatif kontrol: varsayılan ProcessingOptions HÂLÂ makine köküne düşer.
+        var machineRoot = Path.Combine(Path.GetTempPath(), "videoedit-cache");
+        Assert.Equal(machineRoot, new OriginalCache(new StubStorage(), new ProcessingOptions()).Root);
+
+        // Bu sınıfın runner'ı ise test-yerel bir kökte yaşar.
+        Assert.NotEqual(machineRoot, _cacheRoot);
+        Assert.False(_cacheRoot.StartsWith(machineRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+
+        // (2) Nöbetçi: makine cache köküne benzersiz adlı, TAZE damgalı küçük bir girdi.
+        // (Guid'li ad gerçek girdilerle çakışmaz; taze damga canlı worker'ın olağan LRU
+        // süpürmesinin onu "en eski" diye seçmesini de imkânsızlaştırır.)
+        Directory.CreateDirectory(machineRoot);
+        var sentinelDir = Path.Combine(machineRoot, Guid.CreateVersion7().ToString("N"));
+        Directory.CreateDirectory(sentinelDir);
+        var sentinelFile = Path.Combine(sentinelDir, "original.bin");
+        await File.WriteAllBytesAsync(sentinelFile, new byte[64]);
+        File.SetLastWriteTimeUtc(sentinelFile, DateTime.UtcNow);
+
+        try
+        {
+            // Agresif süpürme İÇEREN yol: hep dolu disk + son deneme → TrimAsync(0) + Failed.
+            var job = await SeedReadyAssetAndJobAsync();
+            job.AttemptCount = ExportJob.MaxDiskFullAttempts - 1;
+            await _db.SaveChangesAsync();
+            var runner = CreateJobRunner(new RecordingJobClient());
+            runner.FreeSpaceProbe = _ => 1;
+
+            await runner.Run(job.Id, CancellationToken.None);
+            Assert.Equal(JobStatus.Failed, Reload(job.Id).Status); // yol gerçekten koşuldu
+
+            // Nöbetçi HAYATTA: süpürme test-yerel kökte kaldı, makine cache'ine inmedi.
+            Assert.True(File.Exists(sentinelFile),
+                "disk-full yolu makine genelindeki cache'i süpürdü — izolasyon delinmiş");
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(sentinelDir, recursive: true);
+            }
+            catch
+            {
+                // best-effort nöbetçi temizliği
             }
         }
     }

@@ -42,7 +42,13 @@ import type {
 import { createSubject } from '../engine';
 import { setIsPlayingSafe } from '../editorBridge';
 import { forceRefreshMediaUrls } from '../mediaUrls';
-import { Compositor, type DrawItem, type RenderItem } from '../compositor/compositor';
+import {
+  Compositor,
+  type DrawItem,
+  type LutDrawState,
+  type RenderItem,
+} from '../compositor/compositor';
+import { parseCubeLut } from '../lut/cubeLut';
 import {
   type ActiveClip,
   type ActiveTransition,
@@ -51,6 +57,7 @@ import {
   effectiveOpacity,
   effectiveTransform,
   isClipMuted,
+  lutOf,
   projectDurationUs,
   resolveAudible,
   resolveVisualStack,
@@ -108,6 +115,8 @@ const MEDIA_ERROR_REFRESH_MIN_MS = 10_000;
  * Mirrors videoPool's per-slot MEDIA_ERROR_RETRY_MIN_MS.
  */
 const IMAGE_ERROR_RETRY_MIN_MS = 5_000;
+/** Same throttle for a failed .cube fetch/parse (same rAF-storm reasoning). */
+const LUT_ERROR_RETRY_MIN_MS = 5_000;
 
 interface LoadedModel {
   doc: TimelineDoc;
@@ -123,6 +132,24 @@ interface ImageEntry {
   /** URL this entry was loaded from — a refreshed presign retries immediately. */
   url: string;
   /** Timestamp of the last decode failure (0 = none) — retry throttle. */
+  failedAt: number;
+}
+
+/**
+ * A parsed .cube uploaded as a 3D texture (rendering-semantics §4.2), keyed by
+ * LUT ASSET id — one table serves every clip that selects it. Lifecycle is the
+ * image path's, only the decode is fetch+parse instead of <img>: while the
+ * fetch is in flight the clip draws WITHOUT its lut (a §4.2 stage at
+ * intensity 0), and failures retry on URL refresh or after a cooldown.
+ */
+interface LutEntry {
+  texture: WebGLTexture;
+  /** LUT kenar boyu N (uLutScale/uLutOffset bundan türetilir). */
+  size: number;
+  ready: boolean;
+  /** URL this entry was loaded from — a refreshed presign retries immediately. */
+  url: string;
+  /** Timestamp of the last fetch/parse failure (0 = none) — retry throttle. */
   failedAt: number;
 }
 
@@ -204,6 +231,8 @@ export class VideoPlaybackEngine implements PlaybackEngine {
   /** Last uploaded video time per slot — skips redundant uploads while paused. */
   private slotUploadedAt = new Map<number, number>();
   private imageTextures = new Map<Uuid, ImageEntry>();
+  /** 3D LUT tabloları, LUT ASSET id'siyle (see LutEntry). */
+  private lutTextures = new Map<Uuid, LutEntry>();
   /** Text/shape rasters, keyed by clip id (see OverlayEntry). */
   private overlayTextures = new Map<Uuid, OverlayEntry>();
   /** Last emitted previewStatus$ value — the change filter for the note. */
@@ -239,6 +268,11 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     resolve: (value: [number, number, number, number]) => void;
   }[] = [];
 
+  /** Pending FULL-frame readbacks (parity e2e) — same same-frame queue contract. */
+  private frameProbes: ((
+    value: { width: number; height: number; pixels: Uint8Array } | null,
+  ) => void)[] = [];
+
   constructor(canvas: HTMLCanvasElement) {
     this.compositor = new Compositor(canvas);
     this.pool = new VideoPool(
@@ -269,6 +303,36 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     // Doc edits invalidate scheduled envelopes (volumes/fades may have changed).
     this.scheduledAudio.clear();
     this.pruneOverlayTextures(doc);
+    this.pruneLutTextures(doc);
+  }
+
+  /**
+   * Frees 3D LUT tables no lut effect references any more (effect removed,
+   * clip deleted, undo, project switch). Poster dokularının aksine bir LUT
+   * tablosu büyüklük SINIFI olarak farklıdır (129³ RGBA16F ≈ 17 MB) — dispose'a
+   * kadar biriktirmek LUT deneyip vazgeçen bir oturumda GPU belleğini yer.
+   * Devre dışı (enabled=false) efektin referansı YAŞAR sayılır: aç/kapa
+   * anahtarı 17 MB'lık yeniden yüklemeye dönüşmesin. Dokümanda referansı duran
+   * ama kitaplıktan silinmiş LUT'un girdisini lutFor düşürür (resolver artık
+   * çözmediğinde) — iki süpürge birlikte tam kapsar.
+   */
+  private pruneLutTextures(doc: TimelineDoc): void {
+    if (this.lutTextures.size === 0) return;
+    const alive = new Set<Uuid>();
+    for (const track of doc.tracks) {
+      for (const clip of track.clips) {
+        for (const effect of clip.effects) {
+          if (effect.type !== 'lut') continue;
+          const assetId = effect.params.assetId;
+          if (typeof assetId === 'string') alive.add(assetId);
+        }
+      }
+    }
+    for (const [assetId, entry] of this.lutTextures) {
+      if (alive.has(assetId)) continue;
+      this.compositor.deleteTexture(entry.texture);
+      this.lutTextures.delete(assetId);
+    }
   }
 
   /**
@@ -435,6 +499,8 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     this.slotTextures.clear();
     for (const [, entry] of this.imageTextures) this.compositor.deleteTexture(entry.texture);
     this.imageTextures.clear();
+    for (const [, entry] of this.lutTextures) this.compositor.deleteTexture(entry.texture);
+    this.lutTextures.clear();
     for (const [, entry] of this.overlayTextures) this.compositor.deleteTexture(entry.texture);
     this.overlayTextures.clear();
     this.compositor.dispose();
@@ -442,6 +508,8 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     // left awaiting a frame that will not come.
     for (const probe of this.pixelProbes) probe.resolve([0, 0, 0, 0]);
     this.pixelProbes = [];
+    for (const probe of this.frameProbes) probe(null);
+    this.frameProbes = [];
     this.clock$.clear();
     this.playState$.clear();
     this.blocked$.clear();
@@ -907,12 +975,34 @@ export class VideoPlaybackEngine implements PlaybackEngine {
   }
 
   private servePixelProbes(): void {
-    if (this.pixelProbes.length === 0) return;
-    const pending = this.pixelProbes;
-    this.pixelProbes = [];
-    for (const probe of pending) {
-      probe.resolve(this.compositor.readPixel(probe.x, probe.y) ?? [0, 0, 0, 0]);
+    if (this.pixelProbes.length > 0) {
+      const pending = this.pixelProbes;
+      this.pixelProbes = [];
+      for (const probe of pending) {
+        probe.resolve(this.compositor.readPixel(probe.x, probe.y) ?? [0, 0, 0, 0]);
+      }
     }
+    if (this.frameProbes.length > 0) {
+      const pending = this.frameProbes;
+      this.frameProbes = [];
+      const frame = this.compositor.readFrame();
+      for (const probe of pending) probe(frame);
+    }
+  }
+
+  /**
+   * The WHOLE composed frame (RGBA, top-left origin), read in the same rAF as
+   * the draw — the parity measurement's preview half (rendering-semantics
+   * §9.3 needs full-frame SSIM, and 2 M single-pixel probes are not a plan).
+   */
+  probeFrame(): Promise<{ width: number; height: number; pixels: Uint8Array } | null> {
+    return new Promise((resolve) => {
+      if (this.disposed) {
+        resolve(null);
+        return;
+      }
+      this.frameProbes.push(resolve);
+    });
   }
 
   /**
@@ -1022,7 +1112,94 @@ export class VideoPlaybackEngine implements PlaybackEngine {
       transform: effectiveTransform(clip, tUs),
       opacity: effectiveOpacity(clip, tUs),
       colorAdjust: colorAdjustOf(clip),
+      lut: this.lutFor(clip),
     };
+  }
+
+  /**
+   * The clip's §4.2 lut as GPU state, or null while there is nothing to sample
+   * (no effect, table still downloading, or a failed fetch cooling down).
+   *
+   * Drawing WITHOUT the lut during the (sub-second) fetch is the same
+   * degradation contract as a warming-up decoder: an unstyled frame beats a
+   * black one, and the very next rAF picks the texture up.
+   */
+  private lutFor(clip: Clip): LutDrawState | null {
+    const model = this.model;
+    if (!model) return null;
+    const selection = lutOf(clip);
+    if (!selection) return null;
+
+    const asset = model.resolver(selection.assetId);
+    // Yalnız LUT türü varlıklar örneklenir: yanlış id'yle yazılmış bir doküman
+    // (export'un 'lut-asset-type' reddi) önizlemede sessizce LUT'suz çizilir.
+    // Çözülemeyen (silinmiş) LUT'un GPU girdisi de burada bırakılır — doküman
+    // referansı durduğu için pruneLutTextures onu göremez; ilk çizim denemesi
+    // dokuyu serbest bırakır (varlık geri gelirse sıradan ilk-yükleme yolu açılır).
+    if (!asset || asset.kind !== 'lut') {
+      const stale = this.lutTextures.get(selection.assetId);
+      if (stale) {
+        this.compositor.deleteTexture(stale.texture);
+        this.lutTextures.delete(selection.assetId);
+      }
+      return null;
+    }
+    const url = asset.url;
+    let entry = this.lutTextures.get(selection.assetId);
+
+    // Başarısız girdinin yeniden denemesi: URL tazelendiyse hemen, değilse
+    // soğuma süresi sonunda — imageDrawItem ile aynı fırtına freni.
+    if (entry && entry.failedAt !== 0) {
+      const refreshed = url !== null && url !== entry.url;
+      const cooled = Date.now() - entry.failedAt >= LUT_ERROR_RETRY_MIN_MS;
+      if (!refreshed && !cooled) return null;
+      this.compositor.deleteTexture(entry.texture);
+      this.lutTextures.delete(selection.assetId);
+      entry = undefined;
+    }
+
+    if (!entry) {
+      if (!url) return null;
+      // Doku SLOT'u hemen yaratılır (entry kimliği budur); veri fetch bitince
+      // texImage3D ile dolar. ready=false iken örneklenmez.
+      const texture = this.compositor.createLutTexture(1, new Float32Array([0, 0, 0, 1]));
+      const created: LutEntry = { texture, size: 1, ready: false, url, failedAt: 0 };
+      this.lutTextures.set(selection.assetId, created);
+      const owned = (): LutEntry | null => {
+        if (this.disposed) return null;
+        const e = this.lutTextures.get(selection.assetId);
+        return e && e.texture === texture ? e : null;
+      };
+      void fetch(url)
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.text();
+        })
+        .then((text) => {
+          const e = owned();
+          if (!e) return;
+          const parsed = parseCubeLut(text);
+          if (!parsed.ok) throw new Error(parsed.error);
+          this.compositor.deleteTexture(e.texture);
+          e.texture = this.compositor.createLutTexture(parsed.lut.size, parsed.lut.data);
+          e.size = parsed.lut.size;
+          e.ready = true;
+          e.failedAt = 0;
+        })
+        .catch(() => {
+          const e = owned();
+          if (!e) return;
+          e.ready = false;
+          e.failedAt = Date.now();
+          // Süresi geçmiş presign ile aynı kurtarma yolu: media-urls tazelenir,
+          // yukarıdaki "refreshed" dalı yeni URL'i alır.
+          this.handleMediaError();
+        });
+      return null;
+    }
+
+    if (!entry.ready) return null;
+    return { texture: entry.texture, size: entry.size, intensity: selection.intensity };
   }
 
   /** Draw item for any visual clip kind (null = nothing to draw right now). */
@@ -1065,6 +1242,7 @@ export class VideoPlaybackEngine implements PlaybackEngine {
       transform: effectiveTransform(clip, tUs),
       opacity: effectiveOpacity(clip, tUs),
       colorAdjust: colorAdjustOf(clip),
+      lut: this.lutFor(clip),
     };
   }
 
@@ -1136,6 +1314,7 @@ export class VideoPlaybackEngine implements PlaybackEngine {
       transform: effectiveTransform(clip, tUs),
       opacity: effectiveOpacity(clip, tUs),
       colorAdjust: colorAdjustOf(clip),
+      lut: this.lutFor(clip),
     };
   }
 }

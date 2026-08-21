@@ -37,7 +37,8 @@ public static class AssetUploadValidation
         if (!UploadRules.TryGetKind(request.ContentType, out kind))
         {
             errors["contentType"] = ["contentType is not allowed. Allowed: video/mp4, video/quicktime, "
-                + "video/webm, audio/mpeg, audio/mp4, audio/wav, image/png, image/jpeg, image/webp."];
+                + "video/webm, audio/mpeg, audio/mp4, audio/wav, image/png, image/jpeg, image/webp, "
+                + "application/x-cube-lut."];
         }
 
         return errors;

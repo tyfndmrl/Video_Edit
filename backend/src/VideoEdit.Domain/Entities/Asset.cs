@@ -20,6 +20,16 @@ public class Asset
     public string StorageKey { get; set; } = "";
 
     public long SizeBytes { get; set; }
+
+    /// <summary>
+    /// İşleme hattının ürettiği türevlerin (proxy + filmstrip + waveform + poster) toplam
+    /// boyutu — işleme Ready ile biterken yazılır ve kota sorguları depolamayı
+    /// SizeBytes + DerivedBytes olarak sayar (12. tur borcu: türevler orijinalin ~%7,7'siydi
+    /// ve kotadan kaçıyordu). NULL = "bu asset türev defteri tutulmadan işlendi" (geriye
+    /// dönük satırlar) ve kotada 0 sayılır — eski asset'ler geçmişe dönük şişirilmez.
+    /// </summary>
+    public long? DerivedBytes { get; set; }
+
     public string ContentType { get; set; } = "";
 
     /// <summary>R2 multipart upload id (Uploading iken dolu).</summary>

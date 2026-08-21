@@ -2,8 +2,9 @@
  * assetSync — the server asset poll must MERGE into assetStore (finding 11):
  * presigned URL fields written by the media-urls sync survive the 3 s poll.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
-import type { AssetDto } from '../../entities/assets';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { queryClient } from '../../app/queryClient';
+import { quotaQueryKey, type AssetDto } from '../../entities/assets';
 import { useAssetStore } from '../../state/assetStore';
 import { syncServerAssets } from './assetSync';
 
@@ -101,6 +102,33 @@ describe('syncServerAssets', () => {
     syncServerAssets([dto({ id: A1, durationMicros: 10_000_000 })]);
     syncServerAssets([dto({ id: A1, durationMicros: null as unknown as undefined })]);
     expect(useAssetStore.getState().getAsset(A1)?.durationUs).toBe(10_000_000);
+  });
+
+  /**
+   * The server adds DERIVED bytes to the storage quota the moment an asset
+   * turns ready (worker-side, no user gesture). The poll observing that flip
+   * is the only place that can refresh the header quota indicator — without
+   * it the UI diverged from GET /api/quota until a full reload.
+   */
+  it('invalidates the quota query when the poll observes a flip to ready', () => {
+    const spy = vi.spyOn(queryClient, 'invalidateQueries');
+    try {
+      syncServerAssets([dto({ id: A1, status: 'processing' })]);
+      expect(spy, 'processing tek başına kota sorgusunu tazelememeli.').not.toHaveBeenCalled();
+
+      syncServerAssets([dto({ id: A1, status: 'ready' }), dto({ id: A2, status: 'ready' })]);
+      // Batch'te iki asset ready'ye geçse bile TEK invalidation (A2 poll'da
+      // ilk kez görülüyor — bilinen bir geçiş değil, sayılmaz).
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith({ queryKey: quotaQueryKey });
+
+      spy.mockClear();
+      // Kararlı ready -> ready poll'ları tekrar tekrar invalidate ETMEZ.
+      syncServerAssets([dto({ id: A1, status: 'ready' }), dto({ id: A2, status: 'ready' })]);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('keeps the fresher local uploading progress over the polled one', () => {

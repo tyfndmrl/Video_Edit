@@ -136,9 +136,14 @@ public sealed class ExportJobPipelineTests : IDisposable
         _db.Assets.Add(asset);
 
         var projectId = Guid.CreateVersion7();
+        // Tuval 1280x720 + profil "720p" (dalga 2): profil artık hedef kutu taşır ve tuval
+        // oranıyla eşleşmek zorundadır ('export-profile-aspect'); 720p kutusu tuvale eşit
+        // olduğu için ölçek aşaması üretilmez — render maliyeti küçük kalır. Bilerek
+        // BAŞARISIZ biten testlerin belgeleri 320x240 kaldı: onların tipli hataları
+        // Validate/worker kapılarında, en-boy kapısından ÖNCE fırlar (öncelik ölçülüdür).
         var doc = ExportTestDocs.Doc(
             projectId: projectId,
-            width: 320, height: 240,
+            width: 1280, height: 720,
             clips:
             [
                 ExportTestDocs.VideoClip(asset.Id, 0, 0, 1_000_000, ExportTestDocs.Audio()),
@@ -150,7 +155,7 @@ public sealed class ExportJobPipelineTests : IDisposable
         var job = Job.Create(JobType.Export, _userId, now,
             projectId: projectId,
             timelineSnapshot: JsonDocument.Parse(ExportTestDocs.ToJson(doc)),
-            exportProfile: "1080p");
+            exportProfile: "720p");
         _db.Jobs.Add(job);
         await _db.SaveChangesAsync();
 
@@ -201,7 +206,9 @@ public sealed class ExportJobPipelineTests : IDisposable
         var video = Asset.Create(_userId, AssetKind.Video, "solid.mp4", "video/mp4",
             new FileInfo(sourcePath).Length, now);
         MarkReady(video, now);
-        var lut = Asset.Create(_userId, AssetKind.Image, "swap-rb.cube", "application/octet-stream",
+        // Gerçek yükleme hattının yazdığı türle (AssetKind.Lut + application/x-cube-lut) —
+        // .cube'ün 'Image' beyanıyla girebildiği eski rejim artık üretimde yok.
+        var lut = Asset.Create(_userId, AssetKind.Lut, "swap-rb.cube", "application/x-cube-lut",
             new FileInfo(cubePath).Length, now);
         MarkReady(lut, now);
         _db.Assets.AddRange(video, lut);
@@ -209,12 +216,12 @@ public sealed class ExportJobPipelineTests : IDisposable
         var clip = ExportTestDocs.VideoClip(video.Id, 0, 0, 1_000_000);
         clip.Effects = [ExportTestDocs.Lut(lut.Id)];
         var projectId = Guid.CreateVersion7();
-        var doc = ExportTestDocs.Doc(projectId: projectId, width: 320, height: 240, clips: clip);
+        var doc = ExportTestDocs.Doc(projectId: projectId, width: 1280, height: 720, clips: clip);
 
         var job = Job.Create(JobType.Export, _userId, now,
             projectId: projectId,
             timelineSnapshot: JsonDocument.Parse(ExportTestDocs.ToJson(doc)),
-            exportProfile: "1080p");
+            exportProfile: "720p");
         _db.Jobs.Add(job);
         await _db.SaveChangesAsync();
 
@@ -376,7 +383,7 @@ public sealed class ExportJobPipelineTests : IDisposable
 
         var projectId = Guid.CreateVersion7();
         var doc = ExportTestDocs.MultiTrackDoc(
-            projectId: projectId, width: 320, height: 240,
+            projectId: projectId, width: 1280, height: 720,
             tracks:
             [
                 ExportTestDocs.AudioTrack(clips:
@@ -386,7 +393,7 @@ public sealed class ExportJobPipelineTests : IDisposable
         var job = Job.Create(JobType.Export, _userId, now,
             projectId: projectId,
             timelineSnapshot: JsonDocument.Parse(ExportTestDocs.ToJson(doc)),
-            exportProfile: "1080p");
+            exportProfile: "720p");
         _db.Jobs.Add(job);
         await _db.SaveChangesAsync();
 
@@ -424,7 +431,7 @@ public sealed class ExportJobPipelineTests : IDisposable
 
         var projectId = Guid.CreateVersion7();
         var doc = ExportTestDocs.MultiTrackDoc(
-            projectId: projectId, width: 320, height: 240,
+            projectId: projectId, width: 1280, height: 720,
             tracks:
             [
                 ExportTestDocs.VideoTrack(clips:
@@ -436,7 +443,7 @@ public sealed class ExportJobPipelineTests : IDisposable
         var job = Job.Create(JobType.Export, _userId, now,
             projectId: projectId,
             timelineSnapshot: JsonDocument.Parse(ExportTestDocs.ToJson(doc)),
-            exportProfile: "1080p");
+            exportProfile: "720p");
         _db.Jobs.Add(job);
         await _db.SaveChangesAsync();
 

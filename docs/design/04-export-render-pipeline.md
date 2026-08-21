@@ -327,6 +327,17 @@ Worker (ayrı Docker imajı: .NET runtime + ffmpeg/ffprobe static build + SkiaSh
 | 4K H.264 | libx264 | `-preset veryfast -crf 19 -level 5.1` |
 | 1080p/4K H.265 (ops.) | libx265 | `-preset fast -crf 22 -tag:v hvc1` — x264'ten 4-8x yavaş; "küçük dosya" seçeneği, uyarıyla |
 
+> **UYGULANAN KÜME (dalga 2, 2026-08-21):** `1080p` (1920×1080, CRF18), `720p` (1280×720,
+> CRF18), `2160p` (3840×2160, CRF19) ve `dikey` (1080×1920, CRF18) — hepsi libx264
+> `veryfast` + yukarıdaki ortak kuyruk. İki bilinçli sapma: (1) `-level 5.1` VERİLMEZ —
+> proje fps penceresi 1–240'tır ve 4K@60+ karede sabit 5.1 bitstream'e yanlış uyumluluk
+> beyanı yazar; x264'ün otomatik seviye seçimi her çözünürlük/fps için doğrudur. (2)
+> "1080p Yüksek Kalite" ve H.265 hâlâ yok (backlog). **Profil geometrisi tuvale nasıl
+> uygulanır:** profil, bitmiş tuval kompozisyonunu kendi kutusuna TEK `scale` ile taşır ve
+> yalnız AYNI en-boy oranını kabul eder — farklı oran senkron tipli 422
+> (`export-profile-aspect`; ölçülen gerekçeler `ExportProfiles.SpecFor` yorumunda ve
+> `docs/poc-bilinen-sinirlar.md` §3 satırında).
+
 - CRF > sabit bitrate: içerik uyarlamalı, sosyal medya re-encode ediyor zaten. `+faststart` şart (progressive playback).
 - `-g 150` (5 sn GOP) scrub edilebilirlik için makul.
 

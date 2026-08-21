@@ -45,6 +45,39 @@ function clamp01(x: number): number {
   return Math.min(1, Math.max(0, x));
 }
 
+/** GLSL/ffmpeg smoothstep: t = clamp((x-e0)/(e1-e0)), t*t*(3-2t). */
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = clamp01((x - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * BT.709 LIMITED-range code units (0..255 scale) from straight gamma rgb 0..1 —
+ * the space the export's fadeToBlack actually mixes in (measured; §5.3). The
+ * roundtrip is exact affine, so using it ONLY inside fadeToBlack cannot drift
+ * any other transition.
+ */
+function toYuv709(r: number, g: number, b: number): { y: number; u: number; v: number } {
+  const yl = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return {
+    y: 16 + 219 * yl,
+    u: 128 + (224 * (b - yl)) / 1.8556,
+    v: 128 + (224 * (r - yl)) / 1.5748,
+  };
+}
+
+/** Inverse of `toYuv709`, clamped to displayable rgb (super-black clips to 0). */
+function fromYuv709(y: number, u: number, v: number): { r: number; g: number; b: number } {
+  const yl = (y - 16) / 219;
+  const pb = (u - 128) / 224;
+  const pr = (v - 128) / 224;
+  return {
+    r: clamp01(yl + 1.5748 * pr),
+    g: clamp01(yl - 0.1873 * pb - 0.4681 * pr),
+    b: clamp01(yl + 1.8556 * pb),
+  };
+}
+
 /** Weighted average of two straight-alpha colours (premultiply -> mix -> unpremultiply). */
 export function mixStraight(a: Rgba, b: Rgba, p: number): Rgba {
   const oa = a.a + (b.a - a.a) * p;
@@ -97,11 +130,47 @@ export function mixTransitionRef(
     case 'wipeRight':
       return uv.x < p ? b : a;
     case 'dissolve':
+      // Threshold rule = ffmpeg's dissolve exactly (B iff noise < p — measured:
+      // the B fraction tracks p to 3 decimals on real renders). Only the noise
+      // FIELD is an approximation; see the §5.3 note in shaders.ts.
       return (opts.noise ?? 0.5) < p ? b : a;
     case 'fadeToBlack': {
-      const k = p < 0.5 ? 1 - 2 * p : 2 * p - 1;
-      const src = p < 0.5 ? a : b;
-      return { r: src.r * k, g: src.g * k, b: src.b * k, a: src.a };
+      // ffmpeg xfade 'fadeblack' (phase 0.2) — pixel-exact against the EXPORT'S
+      // ACTUAL behaviour, measured from real ffmpeg 8.0 frames (the vectors live
+      // in transitionRef.test.ts). ffmpeg's progress P runs 1->0; the mix is per
+      // PLANE in BT.709 limited YUV with black = (Y=0, U=V=128):
+      //   out = mix(mix(A, bg, sm(0.8,1,P)), mix(bg, B, sm(0.2,1,P)), P)
+      // with ffmpeg mix(a,b,m) = a*m + b*(1-m).
+      //
+      // WHY YUV, NOT per-channel rgb: the CANONICAL fadeToBlack (a plain cut
+      // between two full-frame clips) compiles to the single-layer fast path,
+      // which runs the xfade on yuv420p — and vf_xfade's yuv "black" is Y=0, a
+      // SUPER-black below broadcast range, NOT the affine image of rgb black
+      // (that would be Y=16). The composed path (layered docs) negotiates an
+      // rgb family instead and mixes channel-wise toward 0; the two curves were
+      // MEASURED to differ only in the dip (≤ ~15/255 on the golden fixture —
+      // §5.3, known limit poc-bilinen-sinirlar §2.3). The preview follows the
+      // fast path; both export curves are pinned by running goldens
+      // (ExportRenderGoldenTests.FadeToBlack_* pair).
+      // The curve is asymmetric: A is gone by p=0.2, B ramps over the rest.
+      const P = 1 - p;
+      const smA = smoothstep(0.8, 1, P);
+      const smB = smoothstep(0.2, 1, P);
+      const ya = toYuv709(a.r, a.g, a.b);
+      const yb = toYuv709(b.r, b.g, b.b);
+      const plane = (av: number, bv: number, bg: number): number =>
+        P * (av * smA + bg * (1 - smA)) + (1 - P) * (bg * smB + bv * (1 - smB));
+      const rgb = fromYuv709(
+        plane(ya.y, yb.y, 0),
+        plane(ya.u, yb.u, 128),
+        plane(ya.v, yb.v, 128),
+      );
+      // Alpha plane: vf_xfade'in alpha "siyahı" OPAKTIR (black[3] = max) — format
+      // ailesinden bağımsız; yarı saydam girdilerle ölçüldü (test vektörleri).
+      return {
+        ...rgb,
+        a: P * (a.a * smA + (1 - smA)) + (1 - P) * (smB + b.a * (1 - smB)),
+      };
     }
     case 'slideUp':
       return overStraight(b, a);

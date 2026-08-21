@@ -34,9 +34,44 @@ const REASONS: Record<string, string> = {
   'split too close to clip edge': 'Bölme noktası klip kenarına çok yakın',
   'no room to trim': 'Kırpmak için yer yok',
   'no room to roll': 'Kaydırmak için yer yok',
+  'no room to ripple the following clips': 'Sonraki klipler kaydırılınca sığmıyor',
   'clip not found': 'Klip bulunamadı',
   'track not found': 'Track bulunamadı',
   'cannot delete the last video track': 'Son video track silinemez',
+  'track already at the top': 'Track zaten en üstte',
+  'track already at the bottom': 'Track zaten en altta',
+  // Kırpma/bölme/kaydırma çözücüleri: istenen kenar için kare ızgarasında
+  // uygulanabilir bir uzunluk bulunamadı (uç durum — tipik olarak 1 karelik
+  // klipler ya da kaynak penceresi tükenmiş yavaşlatılmış klipler).
+  'trim failed': 'Kırpma bu konumda uygulanamıyor',
+  'split failed': 'Bölme bu konumda uygulanamıyor',
+  'split rounding failed': 'Bölme noktası kare ızgarasına oturtulamadı',
+  'roll rounding failed': 'Kaydırma kare ızgarasına oturtulamadı',
+  'unchanged': 'Değişiklik yok',
+  'nothing to move': 'Taşınacak klip yok',
+  // Sağ tık menüsü hedef uyuşmazlıkları (menuActions): menü bir klip/track/cetvel
+  // hedefiyle açılmadıysa eylemin muhatabı yoktur.
+  'no clip target': 'Bu eylem için bir klibe sağ tıklayın',
+  'no track target': "Bu eylem için bir track'e sağ tıklayın",
+  'no ruler target': 'Bu eylem için cetvele sağ tıklayın',
+  'no overlay track': 'Uygun katman track’i yok',
+  // Sesi ayırma ön koşulları.
+  'only a video clip has detachable audio': 'Yalnız video klibinin ayrılabilir sesi var',
+  'clip has no embedded audio': 'Klipte gömülü ses yok (zaten ayrılmış olabilir)',
+  // Kütüphaneden ekleme yolu (asset kapıları).
+  'asset not found': 'Medya bulunamadı',
+  'asset is not ready': 'Medya henüz hazır değil — işlenmesi bitince ekleyin',
+  'asset has no known duration': 'Medyanın süresi bilinmiyor, klip oluşturulamadı',
+  'lut is not a clip source': "LUT (.cube) timeline'a eklenmez — Inspector'daki LUT bölümünden bir klibe uygulayın",
+  'only an image asset can be a sticker': 'Çıkartma yalnız görsel (resim) dosyadan eklenir',
+  'invalid opacity': 'Geçersiz opaklık değeri',
+  'no text clip in selection': 'Seçimde metin klibi yok',
+  'no shape clip in selection': 'Seçimde şekil klibi yok',
+  // Keyframe op'ları (features/keyframes) — aynı uyarı yüzeyini kullanır.
+  'no keyframe at this time': 'Bu karede keyframe yok',
+  'a keyframe already exists at this time': 'Bu karede zaten bir keyframe var',
+  'invalid keyframe value': 'Geçersiz keyframe değeri',
+  'empty transform patch': 'Uygulanacak dönüşüm değişikliği yok',
   // Geçişler (rendering-semantics §5).
   'no adjacent clip at this cut': 'Geçiş yalnız bitişik iki klip arasına eklenir',
   'clips are not adjacent': 'Geçiş yalnız bitişik iki klip arasına eklenir',
@@ -75,6 +110,10 @@ const NOTICES: Record<string, string> = {
   'transition removed by edit': 'Kesim bozulduğu için geçiş kaldırıldı',
   'transform applied to transition neighbours':
     'Yerleşim geçişli komşu klibe de uygulandı (geçişli kliplerin yerleşimi aynı olmalı)',
+  // Dönme ara tuvali büyütür (köşegen): dönme yazılınca mevcut ölçek yeni
+  // tavanın üstünde kaldıysa op ölçeği tavana indirir ve bunu söyler.
+  'scale clamped by rotation canvas':
+    'Ölçek, dönme ara tuvali 8192 px sınırına sığsın diye küçültüldü',
 };
 
 /** timelineOps `reason` -> kullanıcıya gösterilecek Türkçe uyarı. */

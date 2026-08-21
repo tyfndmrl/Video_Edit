@@ -15,6 +15,14 @@ public enum AssetKind
     Video = 0,
     Audio = 1,
     Image = 2,
+
+    /// <summary>
+    /// 3D LUT (.cube) — MEDYA DEĞİLDİR: ffprobe'dan geçmez, proxy/filmstrip/waveform/poster
+    /// türevi üretilmez; worker yalnız metin doğrulaması yapar (LUT_3D_SIZE + veri satırları,
+    /// bkz. CubeLutValidator) ve doğrudan Ready'ye alır. Timeline'a klip olarak KONAMAZ —
+    /// yalnız <c>lut</c> efektinin <c>assetId</c>'si olarak kullanılır.
+    /// </summary>
+    Lut = 3,
 }
 
 public enum RevisionKind

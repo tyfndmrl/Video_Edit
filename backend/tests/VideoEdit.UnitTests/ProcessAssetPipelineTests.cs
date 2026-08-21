@@ -136,6 +136,42 @@ public sealed class ProcessAssetPipelineTests : IDisposable
         Assert.NotNull(await _storage.HeadObjectAsync($"{basePrefix}/filmstrip/sprite_1.jpg"));
         Assert.NotNull(await _storage.HeadObjectAsync(asset.WaveformKey!));
         Assert.NotNull(await _storage.HeadObjectAsync(asset.ThumbnailKey!));
+
+        // KOTA DEFTERİ (12. tur borcu): DerivedBytes, YÜKLENEN türev objelerinin toplamına
+        // bire bir eşit — iddia DB kolonuna değil, MinIO'daki gerçek bayt sayısına dayanır.
+        Assert.Equal(await SumDerivativeObjectBytesAsync(asset), asset.DerivedBytes);
+        Assert.True(asset.DerivedBytes > 0);
+    }
+
+    /// <summary>Asset'in depodaki TÜM türev objelerinin (proxy/filmstrip+sprite'lar/waveform/poster) toplam boyutu.</summary>
+    private async Task<long> SumDerivativeObjectBytesAsync(Asset asset)
+    {
+        long total = 0;
+        foreach (var key in new[] { asset.ProxyKey, asset.FilmstripKey, asset.WaveformKey, asset.ThumbnailKey })
+        {
+            if (key is null)
+            {
+                continue;
+            }
+
+            var head = await _storage.HeadObjectAsync(key);
+            Assert.NotNull(head);
+            total += head!.SizeBytes;
+        }
+
+        for (var i = 1; i <= 64; i++) // filmstrip sprite'ları: sprite_1..N (ardışık)
+        {
+            var head = await _storage.HeadObjectAsync(
+                $"u/{asset.OwnerId}/a/{asset.Id}/filmstrip/sprite_{i}.jpg");
+            if (head is null)
+            {
+                break;
+            }
+
+            total += head.SizeBytes;
+        }
+
+        return total;
     }
 
     [MinioAndFfmpegFact]
@@ -158,6 +194,11 @@ public sealed class ProcessAssetPipelineTests : IDisposable
         Assert.NotNull(await _storage.HeadObjectAsync(asset.ProxyKey!));
         Assert.NotNull(await _storage.HeadObjectAsync(asset.WaveformKey!));
         Assert.Equal(JobStatus.Succeeded, job.Status);
+
+        // Kota defteri: ses varlığında türevler proxy + waveform'dur; toplam depodaki
+        // objelerin gerçek boyutlarına eşit.
+        Assert.Equal(await SumDerivativeObjectBytesAsync(asset), asset.DerivedBytes);
+        Assert.True(asset.DerivedBytes > 0);
     }
 
     [MinioAndFfmpegFact]
@@ -178,6 +219,67 @@ public sealed class ProcessAssetPipelineTests : IDisposable
         Assert.Equal(JobStatus.Failed, job.Status);
         Assert.StartsWith("unsupported-media", job.ErrorMessage!, StringComparison.Ordinal);
         Assert.NotNull(job.CompletedAt);
+        Assert.Null(asset.ProxyKey);
+    }
+
+    [MinioAndFfmpegFact]
+    public async Task LutAsset_EndToEnd_ReadyWithoutProbeOrDerivatives()
+    {
+        // .cube MEDYA DEĞİLDİR: ffprobe kapısına girmemeli (girse "no video stream" ile
+        // ölürdü), türev üretilmemeli; metin doğrulaması geçince DOĞRUDAN Ready.
+        var cubePath = Path.Combine(media.Dir, "pipeline-swap-rb.cube");
+        var text = new System.Text.StringBuilder();
+        text.AppendLine("TITLE \"swap-rb\"");
+        text.AppendLine("LUT_3D_SIZE 2");
+        text.AppendLine("DOMAIN_MIN 0.0 0.0 0.0");
+        text.AppendLine("DOMAIN_MAX 1.0 1.0 1.0");
+        for (var b = 0; b < 2; b++)
+        for (var g = 0; g < 2; g++)
+        for (var r = 0; r < 2; r++)
+        {
+            text.AppendLine($"{b}.0 {g}.0 {r}.0");
+        }
+
+        await File.WriteAllTextAsync(cubePath, text.ToString());
+
+        var (asset, job) = await SeedAssetAsync(
+            AssetKind.Lut, cubePath, "swap-rb.cube", "application/x-cube-lut");
+
+        await CreatePipeline().Run(job.Id, CancellationToken.None);
+
+        Assert.Equal(AssetStatus.Ready, asset.Status);
+        Assert.NotNull(asset.ReadyAt);
+        Assert.Equal(JobStatus.Succeeded, job.Status);
+        Assert.Equal(100, job.ProgressPercent);
+
+        // Türev YOK, medya metadata'sı YOK — LUT bir renk tablosudur.
+        Assert.Null(asset.ProxyKey);
+        Assert.Null(asset.FilmstripKey);
+        Assert.Null(asset.WaveformKey);
+        Assert.Null(asset.ThumbnailKey);
+        Assert.Null(asset.DurationMicros);
+        Assert.Null(asset.Width);
+        Assert.False(asset.HasAudio);
+        Assert.Null(asset.Probe); // ffprobe HİÇ koşmadı
+    }
+
+    [MinioAndFfmpegFact]
+    public async Task InvalidLutAsset_FailsDeterministically_WithTypedReason()
+    {
+        // LUT_3D_SIZE 2 der ama 7 satır taşır — doğrulayıcı satır sayısını yakalamalı.
+        var cubePath = Path.Combine(media.Dir, "pipeline-broken.cube");
+        await File.WriteAllTextAsync(cubePath,
+            "LUT_3D_SIZE 2\n" + string.Concat(Enumerable.Repeat("0 0 0\n", 7)));
+
+        var (asset, job) = await SeedAssetAsync(
+            AssetKind.Lut, cubePath, "broken.cube", "application/x-cube-lut");
+
+        await CreatePipeline().Run(job.Id, CancellationToken.None);
+
+        Assert.Equal(AssetStatus.Failed, asset.Status);
+        Assert.Equal("invalid-lut", asset.FailureReason);
+        Assert.Equal(JobStatus.Failed, job.Status);
+        Assert.StartsWith("invalid-lut", job.ErrorMessage!, StringComparison.Ordinal);
         Assert.Null(asset.ProxyKey);
     }
 

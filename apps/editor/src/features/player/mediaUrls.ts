@@ -89,6 +89,11 @@ export function startMediaUrlSync(projectId: string): () => void {
       const patch: Partial<Omit<AssetSummary, 'id'>> = {};
       if (urls.proxy && existing.proxyUrl !== urls.proxy) patch.proxyUrl = urls.proxy;
       if (urls.poster && existing.posterUrl !== urls.poster) patch.posterUrl = urls.poster;
+      // original: LUT (.cube) varlığının TEK url'i — türevi yoktur, önizlemenin
+      // 3D doku yükleyicisi ham tabloyu buradan çeker (previewSource 'lut' kuralı).
+      if (urls.original && existing.originalUrl !== urls.original) {
+        patch.originalUrl = urls.original;
+      }
       if (urls.filmstrip && existing.filmstripUrl !== urls.filmstrip) {
         patch.filmstripUrl = urls.filmstrip;
       }
@@ -151,7 +156,8 @@ export function startMediaUrlSync(projectId: string): () => void {
     [...assets.values()].some((a) => {
       if (a.status !== 'ready') return false;
       const field = previewDerivative(a.kind);
-      const storeUrl = field === 'poster' ? a.posterUrl : a.proxyUrl;
+      const storeUrl =
+        field === 'poster' ? a.posterUrl : field === 'original' ? a.originalUrl : a.proxyUrl;
       return !storeUrl && !(cached && cached.assets[a.id]?.[field]);
     });
 

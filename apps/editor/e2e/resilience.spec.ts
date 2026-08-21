@@ -115,16 +115,39 @@ test.describe('WebGL2 yok — editör yine de kullanılabilir', () => {
     const scope = page.getByTestId('clip-inspector-scope');
     await expect(scope, 'Seçili klip varken inspector klip panelini çizmiyor.').toBeVisible();
     // Aynı yerde KAPSAM DÜRÜSTLÜĞÜ de doğrulanır (teslim denetimi bulgusu):
-    // panel "LUT efekti → M6" diyordu; M6 teslim edildi ve LUT gelmedi. Bir
-    // milestone vaadi geçtikten sonra ekranda kalırsa metin yalan söyler.
+    // kapsam metni gerçekle aynı hizada kalmalı. LUT artık KAPSAMDA (.cube
+    // yükleme + Inspector LUT bölümü + §4.2 normatif önizleme shader'ı) —
+    // eski "MVP KAPSAMI DIŞINDA" cümlesi ekranda kalsaydı metin yalan
+    // söylerdi; yerine önizleme↔dışa aktarım paritesi anlatılır.
     await expect(
       scope,
-      'Inspector hâlâ LUT için teslim edilmiş bir milestone (M6) vaat ediyor.',
-    ).not.toContainText(/LUT[\s\S]{0,60}→\s*M6/);
+      'Kapsam metni LUT için hâlâ "kapsam dışı" diyor — LUT teslim edildi, metin bayat.',
+    ).not.toContainText(/LUT[\s\S]{0,60}KAPSAMI DIŞINDA/i);
     await expect(
       scope,
-      'LUT\'un MVP kapsamı dışında olduğu ve önizleme shader\'ının bulunmadığı yazmıyor.',
-    ).toContainText(/LUT[\s\S]{0,60}MVP KAPSAMI DIŞINDA/);
+      'Kapsam metni LUT\'un önizleme ve dışa aktarımda AYNI normatif formülle uygulandığını yazmıyor.',
+    ).toContainText(/LUT[\s\S]{0,80}AYNI normatif formül/);
+
+    // BİLİNÇLİ BEKLENTİ (WebGL2-yok rejimi × LUT): LUT önizlemesi ayrı bir
+    // çizim yolu DEĞİL, WebGL2 kompozitörünün içindeki bir 3D doku
+    // örneklemesidir (compositor.ts uLut3D — §4.2). Motor yokken LUT
+    // önizlemesi de motorla BİRLİKTE devre dışıdır: ayrı bir LUT hata paneli
+    // ya da CPU fallback'i yoktur, gerekçeyi motor paneli taşır (yukarıda
+    // doğrulandı, burada hâlâ ayakta olduğu teyit edilir). BELGE düzenlemesi
+    // ise motordan bağımsız çalışır: LUT bölümü çizilir ve seçici ETKİN
+    // kalır — kullanıcı LUT atayabilir, sonucu dışa aktarımda görür.
+    await expect(
+      page.getByTestId('clip-inspector-lut'),
+      'LUT bölümü WebGL2 yokken kayboldu — belge düzenlemesi motora bağlanmamalıydı.',
+    ).toBeVisible();
+    await expect(
+      page.getByTestId('clip-lut-select'),
+      'LUT seçici WebGL2 yokken devre dışı — LUT ataması önizleme değil belge işlemidir.',
+    ).toBeEnabled();
+    await expect(
+      enginePanel,
+      'Motor paneli kayboldu: LUT önizlemesinin neden çalışmadığını hiçbir şey söylemiyor.',
+    ).toBeVisible();
 
     // --- 5. Dışa aktarma yolu açık (gerçek tıklama) -----------------------
     const exportButton = page.getByRole('button', { name: 'Dışa Aktar' }).first();

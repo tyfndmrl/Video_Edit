@@ -26,8 +26,9 @@ declare module 'node:child_process' {
 declare module 'node:fs' {
   export function existsSync(path: string): boolean;
   export function mkdirSync(path: string, options?: { recursive?: boolean }): void;
-  export function writeFileSync(path: string, data: string): void;
+  export function writeFileSync(path: string, data: string | Uint8Array, encoding?: 'utf8'): void;
   export function readFileSync(path: string): Uint8Array;
+  export function readFileSync(path: string, encoding: 'utf8'): string;
   export function rmSync(path: string, options?: { force?: boolean; recursive?: boolean }): void;
   export function statSync(path: string): { size: number };
 }

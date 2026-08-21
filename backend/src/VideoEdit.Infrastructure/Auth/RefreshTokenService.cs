@@ -14,9 +14,15 @@ public enum RefreshFailure
     /// <summary>Token süresi dolmuş.</summary>
     Expired,
 
-    /// <summary>Revoke edilmiş token tekrar kullanıldı — theft detection tetiklendi,
-    /// kullanıcının TÜM refresh token'ları iptal edildi.</summary>
+    /// <summary>ROTASYONLA iptal edilmiş (halefi olan) token tekrar kullanıldı — theft
+    /// detection tetiklendi, kullanıcının TÜM refresh token'ları iptal edildi.</summary>
     ReuseDetected,
+
+    /// <summary>HALEFSİZ iptal edilmiş token (per-device logout ya da RevokeAllForUser)
+    /// tekrar kullanıldı. Bu bir zincir çatallanması DEĞİLDİR — korunacak canlı halef yok;
+    /// düz 401 verilir, theft cascade TETİKLENMEZ (per-device logout vaadi: öteki cihazlar
+    /// açık kalır; logout'la yarışan benign bir refresh tüm oturumları DÜŞÜREMEZ).</summary>
+    Revoked,
 }
 
 public sealed record RefreshRotationResult(
@@ -40,11 +46,27 @@ public interface IRefreshTokenService
 
     /// <summary>
     /// Rotation: geçerli token revoke edilir, yenisi verilir, eski kayda ReplacedByTokenId yazılır.
-    /// Revoke edilmiş token tekrar gelirse (çalıntı şüphesi) kullanıcının tüm token'ları iptal edilir.
+    /// ROTASYONLA iptal edilmiş (halefi olan) token tekrar gelirse çalıntı şüphesidir —
+    /// kullanıcının tüm token'ları iptal edilir. HALEFSİZ iptal edilmiş (logout) token'ın
+    /// tekrarı ise düz 401'dir: cascade yok (bkz. <see cref="RefreshFailure.Revoked"/>).
     /// </summary>
     Task<RefreshRotationResult> RotateAsync(string rawToken, DateTimeOffset nowUtc, CancellationToken ct = default);
 
-    /// <summary>Kullanıcının tüm aktif refresh token'larını iptal eder (logout / theft response).</summary>
+    /// <summary>
+    /// PER-DEVICE logout: yalnız verilen ham token'ın kaydını iptal eder — kullanıcının diğer
+    /// cihazlarındaki oturumlara DOKUNMAZ. Token bulunamadıysa/zaten iptalse sessiz no-op
+    /// (false döner); theft-detection TETİKLENMEZ — bu, token'ın sahibi tarafından İLK ve
+    /// meşru kullanımıdır, bir yeniden-kullanım değil. İptalden SONRA aynı ham token refresh'e
+    /// gelirse düz 401 alır (halefi olmayan iptal — cascade YOK; "tek cihazdan çıkış" vaadi
+    /// logout'la yarışan bir refresh yüzünden "tüm cihazlardan çıkış"a tırmanamaz).
+    /// </summary>
+    Task<bool> RevokeAsync(string rawToken, DateTimeOffset nowUtc, CancellationToken ct = default);
+
+    /// <summary>
+    /// Kullanıcının TÜM aktif refresh token'larını iptal eder. Logout artık BUNU KULLANMAZ
+    /// (per-device RevokeAsync kullanır); bu metot theft response için ve ileride şifre
+    /// değişimi ("tüm cihazlardan çıkış") için durur.
+    /// </summary>
     Task RevokeAllForUserAsync(Guid userId, DateTimeOffset nowUtc, CancellationToken ct = default);
 }
 
@@ -79,8 +101,20 @@ public sealed class RefreshTokenService(AppDbContext db) : IRefreshTokenService
 
         if (existing.RevokedAt is not null)
         {
-            // Theft detection: rotate edilmiş (revoke edilmiş) token tekrar kullanıldı.
-            // Zincirin tamamı tehlikede kabul edilir — kullanıcının tüm token'ları iptal.
+            // İptal edilmiş token'ın tekrar kullanımı. KİMİN iptal ettiği ayrımı modelde
+            // zaten var (14. tur denetimi BULGU-2):
+            //  - ReplacedByTokenId != null → ROTASYONLA iptal: zincirin canlı bir halefi
+            //    var ve bu token'ı iki taraf birden kullanmış demektir (çalıntı şüphesi) —
+            //    zincirin tamamı tehlikede kabul edilir, kullanıcının tüm token'ları iptal.
+            //  - ReplacedByTokenId == null → LOGOUT/RevokeAll ile iptal: halef yok,
+            //    korunacak oturum da yok. Replay düz 401 alır; "tek cihazdan çıkış"
+            //    özelliğinin içinde tüm cihazları düşüren gizli bir kapı bırakılmaz
+            //    (çok cihaz + poll'lu refresh'in logout'la yarışı benign bir tekrardır).
+            if (existing.ReplacedByTokenId is null)
+            {
+                return RefreshRotationResult.Fail(RefreshFailure.Revoked, existing.UserId);
+            }
+
             await RevokeAllForUserAsync(existing.UserId, nowUtc, ct);
             return RefreshRotationResult.Fail(RefreshFailure.ReuseDetected, existing.UserId);
         }
@@ -104,6 +138,19 @@ public sealed class RefreshTokenService(AppDbContext db) : IRefreshTokenService
 
         if (claimed == 0)
         {
+            // Yarışı kaybettik — KİME kaybettiğimiz önemli. Satırın taze halini oku
+            // (AsNoTracking: identity map'teki stale kopyayı DEĞİL, DB'dekini görür):
+            //  - halef yazılmışsa yarışı eşzamanlı bir ROTATION kazandı → zincir çatallandı,
+            //    theft yanıtı;
+            //  - halef yoksa yarışı bir LOGOUT (ya da RevokeAll) kazandı → logout'la yarışan
+            //    meşru refresh'tir, tek cihazın kapanışı yeter; cascade YOK.
+            var current = await db.RefreshTokens.AsNoTracking()
+                .SingleOrDefaultAsync(t => t.Id == existing.Id, ct);
+            if (current?.ReplacedByTokenId is null)
+            {
+                return RefreshRotationResult.Fail(RefreshFailure.Revoked, existing.UserId);
+            }
+
             await RevokeAllForUserAsync(existing.UserId, nowUtc, ct);
             return RefreshRotationResult.Fail(RefreshFailure.ReuseDetected, existing.UserId);
         }
@@ -121,6 +168,23 @@ public sealed class RefreshTokenService(AppDbContext db) : IRefreshTokenService
         await db.SaveChangesAsync(ct);
 
         return RefreshRotationResult.Ok(existing.UserId, raw, replacement);
+    }
+
+    public async Task<bool> RevokeAsync(string rawToken, DateTimeOffset nowUtc, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(rawToken))
+        {
+            return false;
+        }
+
+        // Atomik tekil iptal (RotateAsync'teki claim deseninin aynısı): yalnız hâlâ aktif
+        // satır güncellenir. ReplacedByTokenId YAZILMAZ — bu bir rotation değil, oturum
+        // kapanışıdır; zincir kaydında "yenisi yok" olarak görünür.
+        var hash = Hash(rawToken);
+        var revoked = await db.RefreshTokens
+            .Where(t => t.TokenHash == hash && t.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, nowUtc), ct);
+        return revoked == 1;
     }
 
     public async Task RevokeAllForUserAsync(Guid userId, DateTimeOffset nowUtc, CancellationToken ct = default)

@@ -211,10 +211,13 @@ public static class ExportCompiler
     /// tavanının AYNI sayı olması sistemi tek cümleye indirger — "yükleyebileceğin en uzun
     /// dosya" = "dışa aktarabileceğin en uzun çizelge". İki varsayılanın birlikte kalması
     /// <c>ExportJobTests.TimelineCeiling_MatchesTheIngestDurationCeiling</c> ile korunur.
-    /// (1) DİSK — 4 saatte profil bitrate'inden doğan rezervasyon 21,6 GB'dir
-    /// (<c>ExportJobTests.EstimateRequiredDiskBytes_AtTimelineCeiling_StaysWithinReservationBudget</c>
-    /// bu sayıyı koşarak sabitler), kullanıcı başına eşzamanlı export tavanı 2 olduğu için
-    /// en kötü hâlde 43,2 GB; (2) RENDER SÜRESİ — tek worker, tek Hangfire iş kanalı;
+    /// (1) DİSK — 4 saatte profil TABANINDAN doğan rezervasyon profile göre 10,8-86,4 GB'dir
+    /// (1080p/dikey 21,6 GB, 720p 10,8 GB, 2160p 86,4 GB —
+    /// <c>ExportJobTests.EstimateRequiredDiskBytes_AtTimelineCeiling_StaysWithinReservationBudget</c>
+    /// 1080p ve 2160p uçlarını koşarak sabitler), kullanıcı başına eşzamanlı export tavanı 2
+    /// olduğu için en kötü hâlde 172,8 GB — bu uç GERÇEK darlıkta worker'ın
+    /// disk-wait/disk-full hattına düşer (tavan onu İMKÂNSIZ kılmaz, belge kusurunu
+    /// altyapı hatasından ayırır); (2) RENDER SÜRESİ — tek worker, tek Hangfire iş kanalı;
     /// (3) KAPSAM — kurgu projelerinin tamamı bu pencerenin çok altındadır (demo saniyeler,
     /// uzun metraj bir film ~2-3 saat), yani tavan hiçbir makul belgeyi reddetmez.
     /// </para>
@@ -600,14 +603,45 @@ public static class ExportCompiler
     /// Derleme: plan + asset kaynak yolları + metin/şekil rasterleri + profil → deterministik
     /// CompiledExport. sources her plan.AssetIds öğesi, rasters her plan.RasterClips öğesi için
     /// dolu olmalıdır (worker garanti eder).
+    /// <para>
+    /// Çıktı geometrisi profilden türer (<see cref="ExportProfiles.SpecFor"/>): tuval en-boyu
+    /// profil kutusuyla TAM eşleşmiyorsa tipli 'export-profile-aspect' fırlar (aynı kural
+    /// API'nin senkron kapısında da sorulur — bu dal worker'ın ve birim testlerinin sigortasıdır).
+    /// </para>
     /// </summary>
     public static CompiledExport Compile(
         TimelineDoc doc,
         IReadOnlyDictionary<Guid, ExportAssetSource> sources,
         ExportProfile profile,
         IReadOnlyDictionary<Guid, ExportRasterSource>? rasters = null)
+        => Compile(doc, sources, spec: null, profile, rasters);
+
+    /// <summary>
+    /// Test dikişi: hazır <see cref="ExportOutputSpec"/> ile derleme. Golden testlerin küçük
+    /// (ör. 320x240) fixture tuvalleri hiçbir üretim profiline oran-uyumlu değildir; kutusu
+    /// tuvale eşit bir spec verildiğinde ölçek aşaması üretilmez ve script, profil yolunun
+    /// tuval==hedef hâliyle bayt bayt aynıdır. ÜRETİM YOLU BU OVERLOAD'I KULLANMAZ —
+    /// worker profil overload'ından geçer ve en-boy kapısı orada kilitlidir.
+    /// </summary>
+    public static CompiledExport Compile(
+        TimelineDoc doc,
+        IReadOnlyDictionary<Guid, ExportAssetSource> sources,
+        ExportOutputSpec spec,
+        IReadOnlyDictionary<Guid, ExportRasterSource>? rasters = null)
+        => Compile(doc, sources, spec, spec.Profile, rasters);
+
+    private static CompiledExport Compile(
+        TimelineDoc doc,
+        IReadOnlyDictionary<Guid, ExportAssetSource> sources,
+        ExportOutputSpec? spec,
+        ExportProfile profile,
+        IReadOnlyDictionary<Guid, ExportRasterSource>? rasters)
     {
         var plan = Validate(doc);
+
+        // Çıktı geometrisi belge DOĞRULANDIKTAN sonra sorulur: geçersiz belgeye en-boy cevabı
+        // vermek yanlış önceliklendirme olurdu (kullanıcı önce belgesini düzeltir).
+        spec ??= ExportProfiles.SpecFor(profile, plan.Width, plan.Height);
         foreach (var assetId in plan.AssetIds)
         {
             if (!sources.ContainsKey(assetId))
@@ -902,10 +936,23 @@ public static class ExportCompiler
             }
         }
 
+        // ÇIKTI ÖLÇEĞİ (profil kutusu ≠ tuval ise): bitmiş tuval görüntüsü profilin hedef
+        // kutusuna TEK scale ile taşınır. En-boy eşitliği SpecFor'da kilitlendiği için bu
+        // ölçek oranı korur; setsar=1 emniyet kemeridir (aynı oranlı scale SAR'ı zaten 1
+        // bırakır — ffprobe ile ölçüldü, ExportProfileGoldenTests koşarak sabitler).
+        // flags=bicubic açıktır ki determinizm ffmpeg varsayılanının değişmesine kalmasın.
+        // SIRA: ölçek ÖNCE, renk damgası SONRA — "setparams zincirin SON sözüdür" garantisi
+        // (bir üstteki yorum) ölçekli yolda da aynen korunur. Ölçek rgba/yuv düzleminde saf
+        // yeniden örneklemedir, renk uzayı matematiği içermez.
+        var outputScale = spec.Width != plan.Width || spec.Height != plan.Height
+            ? $"scale={spec.Width.ToString(CultureInfo.InvariantCulture)}"
+              + $":{spec.Height.ToString(CultureInfo.InvariantCulture)}:flags=bicubic,setsar=1,"
+            : string.Empty;
+
         // Kompozisyon SONRASI setparams frame'leri BT.709/tv işaretler — ffmpeg 7+/8 çıktı renk
         // tag'lerini filtergraph frame metadata'sından alır; CLI -color_* bayrakları tek başına
         // EZİLİR (bayraklar emniyet kemeri olarak profilde durmaya devam eder).
-        videoLines.Add($"[{composite}]" + OutputColorParams + "[vout]");
+        videoLines.Add($"[{composite}]" + outputScale + OutputColorParams + "[vout]");
 
         var lines = new List<string>(videoLines.Count + audioLines.Count + 1);
         lines.AddRange(videoLines);
@@ -1082,9 +1129,10 @@ public static class ExportCompiler
     }
 
     /// <summary>
-    /// LUT varlığının dosya adı gerçekten bir <c>.cube</c> mi? Domain'de LUT diye bir
-    /// <c>AssetKind</c> YOKTUR (yükleme whitelist'i .cube'ü bir medya
-    /// content-type'ıyla kabul eder), o yüzden tek ayırt edici uzantıdır.
+    /// LUT varlığının dosya adı gerçekten bir <c>.cube</c> mi? Domain'de artık bir
+    /// <c>AssetKind.Lut</c> VARDIR ama bu kapı bilerek UZANTIYA bakar: ham API'yle medya
+    /// türü beyan edilip .cube olmayan bir dosyayı LUT olarak gösteren belge de aynı
+    /// retten geçmek zorundadır (tür beyanı istemcinin sözüdür, dosya adı yüklemenin).
     /// </summary>
     private static bool IsCubeFile(string? fileName) =>
         fileName is not null
@@ -1096,6 +1144,7 @@ public static class ExportCompiler
         ExportAssetMediaKind.Video => "video",
         ExportAssetMediaKind.Audio => "ses",
         ExportAssetMediaKind.Image => "görsel",
+        ExportAssetMediaKind.Lut => "LUT (renk tablosu)",
         _ => "bilinmeyen tür",
     };
 
@@ -1115,9 +1164,11 @@ public static class ExportCompiler
         // -loop 1 girişi durağan bir görselden gelir; video/ses dosyası ffmpeg'i düşürür.
         ExportSourceNeed.Still => facts.MediaKind != ExportAssetMediaKind.Image,
 
-        // Ses akışı: ses varlığında GARANTİDİR (GateByKind), görselde YOKTUR, videoda ise
-        // ancak PROBE EDİLMİŞ (Ready) satırda kesin bilinir.
-        ExportSourceNeed.Audio => facts.MediaKind == ExportAssetMediaKind.Image
+        // Ses akışı: ses varlığında GARANTİDİR (GateByKind), görselde ve LUT'ta YOKTUR
+        // (bir .cube metin tablosudur), videoda ise ancak PROBE EDİLMİŞ (Ready) satırda
+        // kesin bilinir.
+        ExportSourceNeed.Audio => facts.MediaKind
+                is ExportAssetMediaKind.Image or ExportAssetMediaKind.Lut
             || (facts.MediaKind == ExportAssetMediaKind.Video
                 && facts is { Readiness: ExportAssetReadiness.Ready, HasAudio: false }),
 

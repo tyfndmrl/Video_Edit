@@ -11,7 +11,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from './apiClient';
 
-export type ExportProfile = '1080p';
+/**
+ * Wire names of the export profiles — mirror of `ExportProfiles.TryParse` on the
+ * server (dalga 2: 720p / 2160p / dikey eklendi). The target geometry of each
+ * profile lives in `exportLogic.PROFILE_TARGETS`, guarded against the server by
+ * `ExportGateInventoryTests.TheClientAndServerAgreeOnTheProfileGeometry`.
+ */
+export type ExportProfile = '1080p' | '720p' | '2160p' | 'dikey';
 
 export type ExportJobStatusDto = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
 

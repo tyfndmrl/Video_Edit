@@ -30,6 +30,10 @@ public static class UploadRules
         ["image/png"] = AssetKind.Image,
         ["image/jpeg"] = AssetKind.Image,
         ["image/webp"] = AssetKind.Image,
+        // .cube (3D LUT) — IANA'da kayıtlı bir tipi yok; istemciyle ORTAK sözleşme bu
+        // x-tipidir (fileTypes.EXTENSION_CONTENT_TYPES '.cube' → buraya). Tarayıcı File.type'ı
+        // .cube için boş döndürür, karar zaten uzantıdan verilir (aynı dosyadaki gerekçe).
+        ["application/x-cube-lut"] = AssetKind.Lut,
     };
 
     /// <summary>

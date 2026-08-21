@@ -27,6 +27,7 @@ import {
   type LibraryDragPayload,
 } from '../timeline/libraryDnd';
 import { formatBytes, formatDurationUs, formatEta, formatSpeed } from './format';
+import { assetErrorLabel } from './assetErrors';
 import { AssetDeleteDialog } from './AssetDeleteDialog';
 import { adoptServerAssetList, resetAssetPresence } from './missingMedia';
 import { quotaView } from './quotaModel';
@@ -728,6 +729,7 @@ const KIND_LABELS: Record<string, string> = {
   video: 'VID',
   audio: 'AUD',
   image: 'IMG',
+  lut: 'LUT',
 };
 
 function AssetRow({
@@ -739,28 +741,46 @@ function AssetRow({
 }) {
   const dragHandlers = useAssetDragSource(dto);
   const sessionReady = useProjectSession((s) => s.status) === 'ready';
+  // LUT (.cube) bir klip DEĞİLDİR: sürükleme/çift tık timeline'a bir şey koyamaz —
+  // satır bu jestleri hiç sunmaz, title kullanıcıyı doğru yere (Inspector) yönlendirir.
+  const isLut = dto.kind === 'lut';
   const meta: string[] = [];
   if (dto.status === 'ready') {
-    if (dto.durationMicros !== undefined) meta.push(formatDurationUs(dto.durationMicros));
+    if (isLut) meta.push('3D LUT');
+    // Sunucu süresi olmayan türlerde (lut, image) durationMicros'u JSON null yollar —
+    // '!== undefined' null'u süre formatlayıcısına sokup anlamsız '0:00' basıyordu.
+    if (typeof dto.durationMicros === 'number' && dto.durationMicros > 0) {
+      meta.push(formatDurationUs(dto.durationMicros));
+    }
     if (dto.width && dto.height) meta.push(`${dto.width}×${dto.height}`);
   }
   meta.push(formatBytes(dto.sizeBytes));
-  if (dto.status === 'failed' && dto.errorCode) meta.push(dto.errorCode);
+  // Hata kodu Türkçe yüzeyde çıplak bırakılmaz; kod, e2e/log/destek için parantezde kalır.
+  if (dto.status === 'failed' && dto.errorCode) meta.push(assetErrorLabel(dto.errorCode));
 
   return (
     <div
       className={`flex items-center gap-2 rounded border border-edge bg-surface-2 px-2 py-1.5 hover:bg-surface-3 ${
-        dto.status === 'ready' ? 'cursor-grab touch-none select-none' : ''
+        dto.status === 'ready' && !isLut ? 'cursor-grab touch-none select-none' : ''
       }`}
-      {...dragHandlers}
+      {...(isLut ? {} : dragHandlers)}
       // Çift tık: DnD'nin yedek yolu — playhead'e (çakışıyorsa proje sonuna) ekler.
-      onDoubleClick={dto.status === 'ready' ? () => addAssetToTimelineAtPlayhead(dto.id) : undefined}
+      onDoubleClick={
+        dto.status === 'ready' && !isLut ? () => addAssetToTimelineAtPlayhead(dto.id) : undefined
+      }
       // Sağ tık: satırın işlem menüsü (Sil). Tarayıcı menüsü bastırılır.
       onContextMenu={(e) => {
         e.preventDefault();
         onRequestMenu(dto, e.clientX, e.clientY);
       }}
-      title={dto.status === 'ready' ? "Timeline'a sürükleyin · Çift tık: timeline'a ekle" : undefined}
+      title={
+        dto.status === 'ready'
+          ? isLut
+            ? 'Renk tablosu (.cube) — bir klibe uygulamak için klibi seçin ve ' +
+              "Inspector'daki LUT bölümünden bu dosyayı seçin"
+            : "Timeline'a sürükleyin · Çift tık: timeline'a ekle"
+          : undefined
+      }
     >
       <span className="flex h-8 w-10 shrink-0 items-center justify-center rounded bg-surface-3 text-[9px] font-bold tracking-wider text-fg-muted">
         {KIND_LABELS[dto.kind] ?? 'MED'}

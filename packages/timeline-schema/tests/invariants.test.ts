@@ -2,11 +2,15 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_KEYFRAME_SAMPLES,
   MAX_LAYER_DIMENSION,
   TRANSFORM_SCALE_DECIMALS,
   TRANSFORM_SCALE_MIN,
   exportFrameGridIssues,
+  intermediateCanvasLongSidePx,
+  keyframeSampleUpperBound,
   maxScaleFor,
+  maxScaleForFit,
   validateTimelineDoc,
 } from '../src/index.js';
 import type { Effect, MediaClip, TextClip, TimelineDoc, Track, Transform } from '../src/schema.js';
@@ -662,6 +666,134 @@ describe('transition placement (both clips of a cut share one transform)', () =>
   });
 });
 
+describe('cross-language document-invariant vectors (zod <-> C# parity)', () => {
+  // Üç aile de backend'de birebir aynı dosyalardan koşulur:
+  //   keyframe-order-vectors.json      -> KeyframeOrderParityTests.cs
+  //   clip-placement-vectors.json      -> ClipPlacementParityTests.cs
+  //   transition-symmetry-vectors.json -> TransitionSymmetryParityTests.cs
+  // Hakem orada ExportCompiler.Validate'tir; burada validateTimelineDoc. Vektör dosyası
+  // iki YÖNÜ de (kabul + ret) taşımak zorundadır — tek yönlü dosya sınırı ölçmez.
+  function loadVectors<TCase>(file: string): { cases: TCase[] } {
+    const vectors = JSON.parse(
+      readFileSync(fileURLToPath(new URL(`../test-vectors/${file}`, import.meta.url)), 'utf8'),
+    ) as { cases: (TCase & { valid: boolean })[] };
+    expect(vectors.cases.length).toBeGreaterThan(0);
+    expect(vectors.cases.some((c) => c.valid)).toBe(true);
+    expect(vectors.cases.some((c) => !c.valid)).toBe(true);
+    return vectors;
+  }
+
+  function bareDoc(clips: MediaClip[]): TimelineDoc {
+    return {
+      schemaVersion: 1,
+      projectId: uid(1),
+      settings: {
+        width: 1920,
+        height: 1080,
+        fps: { num: 30, den: 1 },
+        audioSampleRate: 48000,
+        backgroundColor: '#000000',
+      },
+      tracks: [videoTrack(clips)],
+      markers: [],
+    };
+  }
+
+  it('matches the shared keyframe-order vectors', () => {
+    interface OrderCase {
+      name: string;
+      timelineDurationUs: number;
+      timesUs: number[];
+      valid: boolean;
+    }
+    const vectors = loadVectors<OrderCase>('keyframe-order-vectors.json');
+    for (const c of vectors.cases) {
+      for (const channel of ['opacity', 'volume'] as const) {
+        const kfs = c.timesUs.map((timeUs) => ({ timeUs, value: 1, easing: { type: 'linear' as const } }));
+        const clip = mediaClip({
+          timelineStartUs: 0,
+          timelineDurationUs: c.timelineDurationUs,
+          keyframes: channel === 'opacity' ? { opacity: kfs } : { volume: kfs },
+        });
+        const result = validateTimelineDoc(bareDoc([clip]));
+        expect(result.success, `${c.name} / ${channel}`).toBe(c.valid);
+      }
+    }
+  });
+
+  it('matches the shared clip-placement vectors', () => {
+    interface PlacementCase {
+      name: string;
+      clips: { startUs: number; durationUs: number }[];
+      valid: boolean;
+    }
+    const vectors = loadVectors<PlacementCase>('clip-placement-vectors.json');
+    for (const c of vectors.cases) {
+      const clips = c.clips.map((spec) =>
+        mediaClip({ timelineStartUs: spec.startUs, timelineDurationUs: spec.durationUs }),
+      );
+      const result = validateTimelineDoc(bareDoc(clips));
+      expect(result.success, c.name).toBe(c.valid);
+    }
+  });
+
+  it('matches the shared transition-symmetry vectors', () => {
+    interface TransitionSpec {
+      type: 'crossfade' | 'dissolve';
+      durationUs: number;
+    }
+    interface TransitionCase {
+      name: string;
+      aDurationUs: number;
+      bDurationUs: number;
+      gapUs: number;
+      aRate: number;
+      bRate: number;
+      bSourceInUs: number;
+      aTransition: TransitionSpec | null;
+      bTransition: TransitionSpec | null;
+      bStill: boolean;
+      valid: boolean;
+    }
+    const vectors = loadVectors<TransitionCase>('transition-symmetry-vectors.json');
+    for (const c of vectors.cases) {
+      const a = mediaClip({
+        timelineStartUs: 0,
+        timelineDurationUs: c.aDurationUs,
+        sourceInUs: 0,
+        sourceOutUs: c.aDurationUs * c.aRate,
+        speed: { rate: c.aRate },
+        assetId: ASSET_A,
+        transitionOut: c.aTransition ?? undefined,
+      });
+      const bStart = c.aDurationUs + c.gapUs;
+      const b = c.bStill
+        ? mediaClip({
+            kind: 'image',
+            timelineStartUs: bStart,
+            timelineDurationUs: c.bDurationUs,
+            sourceInUs: 0,
+            sourceOutUs: c.bDurationUs,
+            assetId: ASSET_B,
+            transitionIn: c.bTransition ?? undefined,
+          })
+        : mediaClip({
+            timelineStartUs: bStart,
+            timelineDurationUs: c.bDurationUs,
+            sourceInUs: c.bSourceInUs,
+            sourceOutUs: c.bSourceInUs + c.bDurationUs * c.bRate,
+            speed: { rate: c.bRate },
+            assetId: ASSET_B,
+            transitionIn: c.bTransition ?? undefined,
+          });
+      // assetDurations BİLEREK verilmez: kuyruk (tail) payı asset süresi ister; C# hakemi
+      // (ExportCompiler.Validate) de o süreyi göremez — parite ancak aynı bilgiyle ölçülür.
+      const result = validateTimelineDoc(bareDoc([a, b]));
+      expect(result.success, c.name).toBe(c.valid);
+    }
+  });
+});
+
 describe('effect params (rendering-semantics §4)', () => {
   function docWithEffect(effect: Effect): TimelineDoc {
     const doc = validDoc();
@@ -883,6 +1015,196 @@ describe('maxScaleFor (shared with the export compiler)', () => {
   it('never returns a ceiling below the floor', () => {
     expect(maxScaleFor({ width: 10_000_000, height: 10_000_000 })).toBe(TRANSFORM_SCALE_MIN);
     expect(maxScaleFor({ width: 0, height: 0 })).toBe(TRANSFORM_SCALE_MIN);
+  });
+});
+
+describe('intermediateCanvasLongSidePx (LayerGeometry.Compute ledger twin)', () => {
+  const centered = { rotationDeg: 0, anchorX: 0.5, anchorY: 0.5 };
+
+  it('unrotated: the canvas IS the scale box (long side)', () => {
+    expect(intermediateCanvasLongSidePx(7137, 4014, centered)).toBe(7137);
+    // Multiples of 360 produce no rotate filter — same as the compiler's
+    // `rotationDeg % 360` normalization.
+    expect(intermediateCanvasLongSidePx(7137, 4014, { ...centered, rotationDeg: 360 })).toBe(7137);
+    expect(intermediateCanvasLongSidePx(7137, 4014, { ...centered, rotationDeg: -720 })).toBe(7137);
+  });
+
+  it('rotated + centered anchor: smallest EVEN integer covering the diagonal', () => {
+    // hypot(7137, 4014) = 8188.34…; ceil -> 8189; even -> 8190. The angle only
+    // matters as zero/non-zero — the square canvas covers every rotation, which
+    // is exactly the compiler's `2*ceil(hypot(iw,ih)/2)` square.
+    for (const deg of [45, 90, 10, 359]) {
+      expect(intermediateCanvasLongSidePx(7137, 4014, { ...centered, rotationDeg: deg })).toBe(8190);
+    }
+  });
+
+  it('rotated + off-center anchor: the anchor pad widens the box first', () => {
+    // anchor (0,0): mx = my = 1 -> pad = ceil(box*2). hypot(2000,1000)=2236.07;
+    // ceil 2237; even 2238.
+    expect(
+      intermediateCanvasLongSidePx(1000, 500, { rotationDeg: 90, anchorX: 0, anchorY: 0 }),
+    ).toBe(2238);
+    // anchor (0.75, 0.5): padW = ceil(100*1.5) = 150, padH = ceil(100*1.0) = 100;
+    // hypot(150,100) = 180.27…; ceil 181; even 182.
+    expect(
+      intermediateCanvasLongSidePx(100, 100, { rotationDeg: 10, anchorX: 0.75, anchorY: 0.5 }),
+    ).toBe(182);
+  });
+});
+
+describe('maxScaleForFit (rotation-aware scale ceiling)', () => {
+  const roundHalfUpPx = (v: number): number => Math.floor(v + 0.5);
+  const centered = { rotationDeg: 0, anchorX: 0.5, anchorY: 0.5 };
+
+  it('reduces to maxScaleFor with no rotation', () => {
+    for (const [w, h] of [[1920, 1080], [3840, 2160], [720, 1280]] as const) {
+      expect(maxScaleForFit(w, h, centered)).toBe(maxScaleFor({ width: w, height: h }));
+    }
+  });
+
+  it('rotation lowers the ceiling by the diagonal (pinned values)', () => {
+    // 1080p: unrotated 4.266; rotated the DIAGONAL must fit into 8192.
+    expect(maxScaleForFit(1920, 1080, { ...centered, rotationDeg: 45 })).toBe(3.718);
+    expect(maxScaleForFit(1920, 1080, { ...centered, rotationDeg: 90 })).toBe(3.718);
+    // Off-center anchor pads the canvas by 2x on top of the diagonal.
+    expect(maxScaleForFit(1920, 1080, { rotationDeg: 90, anchorX: 0, anchorY: 0 })).toBe(1.859);
+    expect(maxScaleForFit(3840, 2160, { ...centered, rotationDeg: 30 })).toBe(1.859);
+  });
+
+  it('is SAFE and MAXIMAL against the ledger predicate across a sweep', () => {
+    const step = 10 ** -TRANSFORM_SCALE_DECIMALS;
+    for (const [w, h] of [[1920, 1080], [3840, 2160], [1280, 720], [720, 1280], [100, 100], [223, 104]] as const) {
+      for (const rotationDeg of [0, 15, 45, 90, 180, 359, -45]) {
+        for (const [anchorX, anchorY] of [[0.5, 0.5], [0, 0], [1, 0.25]] as const) {
+          const pose = { rotationDeg, anchorX, anchorY };
+          const s = maxScaleForFit(w, h, pose);
+          const at = (scale: number): number =>
+            intermediateCanvasLongSidePx(roundHalfUpPx(w * scale), roundHalfUpPx(h * scale), pose);
+          // Safe: the offered ceiling passes the compiler's gate…
+          expect(at(s), `${w}x${h} rot=${rotationDeg} a=(${anchorX},${anchorY}) s=${s}`).toBeLessThanOrEqual(MAX_LAYER_DIMENSION);
+          // …and maximal UP TO the ledger's own resolution: one scale-grid
+          // step above either violates the gate or leaves the gated quantity
+          // (the canvas LONG side) exactly where it was — at tiny fit sizes a
+          // 0.001 step moves the box under half a pixel, and the unrotated
+          // closed form deliberately floors on the longest side only (the
+          // pre-existing maxScaleFor contract, unchanged by this wave).
+          const above = Math.round((s + step) * 1000) / 1000;
+          if (s > TRANSFORM_SCALE_MIN && at(above) <= MAX_LAYER_DIMENSION) {
+            expect(
+              at(above),
+              `${w}x${h} rot=${rotationDeg} a=(${anchorX},${anchorY}) s+1grid=${above} passes AND grew the gated canvas`,
+            ).toBe(at(s));
+          }
+        }
+      }
+    }
+  });
+
+  it('one zero axis binds on the other alone (font-independent text bound has no width)', () => {
+    // (0, 2400) rotated: the diagonal of a (0, 2400s) box is 2400s itself.
+    expect(maxScaleForFit(0, 2400, { rotationDeg: 45, anchorX: 0.5, anchorY: 0.5 })).toBe(3.413);
+    // Unrotated it reduces to the longest-side closed form.
+    expect(maxScaleForFit(0, 2400, centered)).toBe(3.413);
+  });
+
+  it('degenerate fit sizes fall to the floor instead of NaN/Infinity', () => {
+    expect(maxScaleForFit(0, 0, { rotationDeg: 45, anchorX: 0.5, anchorY: 0.5 })).toBe(TRANSFORM_SCALE_MIN);
+    expect(maxScaleForFit(Number.NaN, 1080, { rotationDeg: 45, anchorX: 0.5, anchorY: 0.5 })).toBe(TRANSFORM_SCALE_MIN);
+  });
+});
+
+describe('keyframeSampleUpperBound (compiler sample-budget upper bound)', () => {
+  it('mirrors the backend KeyframeCompiler.MaxSamples constant', () => {
+    expect(MAX_KEYFRAME_SAMPLES).toBe(60_000);
+  });
+
+  const kf = (timeUs: number, value: number, easing: 'linear' | 'easeIn' = 'linear') => ({
+    timeUs,
+    value,
+    easing: { type: easing } as const,
+  });
+
+  const docOf = (tracks: Track[]): TimelineDoc => {
+    const base = validDoc();
+    return { ...base, tracks };
+  };
+
+  /** 10 s clip at the 30 fps project = 300 frames. `audio` defaults to owned. */
+  const clipWith = (keyframes: MediaClip['keyframes'], over: Partial<MediaClip> = {}): TimelineDoc =>
+    docOf([
+      videoTrack([
+        mediaClip({
+          timelineStartUs: 0,
+          timelineDurationUs: 10_000_000,
+          keyframes,
+          audio: { volume: 1, fadeInUs: 0, fadeOutUs: 0, muted: false },
+          ...over,
+        }),
+      ]),
+    ]);
+
+  it('a fully linear visual channel costs 0 (closed-form path)', () => {
+    expect(keyframeSampleUpperBound(clipWith({ x: [kf(0, 0), kf(9_000_000, 0.5)] }))).toBe(0);
+  });
+
+  it('a curved segment samples per frame; the LAST keyframe easing is inert', () => {
+    expect(
+      keyframeSampleUpperBound(clipWith({ x: [kf(0, 0, 'easeIn'), kf(9_000_000, 0.5)] })),
+    ).toBe(300);
+    // Easing on the last keyframe has no segment after it — same as the
+    // compiler's AllLinear (Keys.Take(Count-1)).
+    expect(
+      keyframeSampleUpperBound(clipWith({ x: [kf(0, 0), kf(9_000_000, 0.5, 'easeIn')] })),
+    ).toBe(0);
+  });
+
+  it('scale charges TWICE (ScaleWidth + ScaleHeight are sampled separately)', () => {
+    expect(
+      keyframeSampleUpperBound(clipWith({ scale: [kf(0, 1, 'easeIn'), kf(9_000_000, 2)] })),
+    ).toBe(600);
+  });
+
+  it('opacity charges even when linear (colorchannelmixer has no closed form)', () => {
+    expect(
+      keyframeSampleUpperBound(clipWith({ opacity: [kf(0, 0), kf(9_000_000, 1)] })),
+    ).toBe(300);
+  });
+
+  it('volume charges only when the clip still owns audio', () => {
+    const volume = { volume: [kf(0, 1), kf(9_000_000, 0.5)] };
+    expect(keyframeSampleUpperBound(clipWith(volume))).toBe(300);
+    expect(keyframeSampleUpperBound(clipWith(volume, { audio: null }))).toBe(0);
+  });
+
+  it('an audio-kind clip spends no visual samples (nothing draws them)', () => {
+    const d = clipWith(
+      { x: [kf(0, 0, 'easeIn'), kf(9_000_000, 0.5)], volume: [kf(0, 1), kf(9_000_000, 0.5)] },
+      { kind: 'audio' },
+    );
+    // volume: 300; the curved x channel would be 300 more on a visual clip.
+    expect(keyframeSampleUpperBound(d)).toBe(300);
+  });
+
+  it('sums across clips and channels (the budget is compile-wide)', () => {
+    const d = docOf([
+      videoTrack([
+        mediaClip({
+          timelineStartUs: 0,
+          timelineDurationUs: 10_000_000,
+          keyframes: {
+            x: [kf(0, 0, 'easeIn'), kf(9_000_000, 0.5)],
+            scale: [kf(0, 1, 'easeIn'), kf(9_000_000, 2)],
+          },
+        }),
+        mediaClip({
+          timelineStartUs: 10_000_000,
+          timelineDurationUs: 10_000_000,
+          keyframes: { opacity: [kf(0, 0), kf(9_000_000, 1)] },
+        }),
+      ]),
+    ]);
+    // 300 (x curved) + 600 (scale curved, twice) + 300 (opacity) = 1200.
+    expect(keyframeSampleUpperBound(d)).toBe(1200);
   });
 });
 

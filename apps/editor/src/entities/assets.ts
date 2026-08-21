@@ -10,7 +10,7 @@ import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from './apiClient';
 
 export type AssetStatusDto = 'uploading' | 'uploaded' | 'processing' | 'ready' | 'failed';
-export type AssetKindDto = 'video' | 'audio' | 'image';
+export type AssetKindDto = 'video' | 'audio' | 'image' | 'lut';
 
 export interface AssetDto {
   id: string;

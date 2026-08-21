@@ -331,13 +331,11 @@ test.describe('Kare ızgarası — ızgara DIŞI süreli GERÇEK kaynak', () => 
     /**
      * `timeUs` canvas'ın İÇİNDE kalana kadar GERÇEK Ctrl+tekerlek ile uzaklaş.
      *
-     * Neden EditorApp.ensureContentVisible değil: o yardımcı, içerik ekrana
-     * sığmıyorsa "Sığdır" düğmesine basar — ama düğmenin erişilebilir adı
-     * "Fit"tir (title="Sığdır (Shift+Z)", metin "Fit"), yani locator hiç
-     * eşleşmez ve 15 sn sonra düşer. Diğer testlerde bu dal hiç çalışmadığı
-     * için (açılıştaki auto-fit zaten yetiyor) fark edilmemişti. Burada
-     * gereken şey zaten kırpma hedefinin GÖRÜNÜR olması, o da gerçek fare
-     * jestiyle sağlanır.
+     * Neden EditorApp.ensureContentVisible değil: o yardımcı "Sığdır"
+     * düğmesine basar, yani görünümü PROJEYE sığdırır. Buradaki hedef ise
+     * projenin SONUNDAN da ilerideki bir zaman (sınır ötesine kırpacağız) —
+     * sığdırma onu görünür yapmayı garanti etmez. Gereken şey hedef zamanın
+     * görünür olması; o da gerçek Ctrl+tekerlek jestiyle sağlanır.
      */
     const ensureTimeVisible = async (timeUs: number): Promise<void> => {
       for (let guard = 0; guard < 8; guard++) {

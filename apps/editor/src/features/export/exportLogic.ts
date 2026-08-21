@@ -9,7 +9,7 @@ import {
   frameGridIssueSummary,
   type TimelineDoc,
 } from '@videoedit/timeline-schema';
-import type { ExportJobStatusDto } from '../../entities/exports';
+import type { ExportJobStatusDto, ExportProfile } from '../../entities/exports';
 import type { AutosaveStatus } from '../../state/autosave';
 
 // ---------------------------------------------------------------------------
@@ -30,6 +30,50 @@ import type { AutosaveStatus } from '../../state/autosave';
 export function exportFrameGridBlockReason(doc: TimelineDoc): string | null {
   const issues = exportFrameGridIssues(doc);
   return issues.length === 0 ? null : frameGridIssueSummary(issues);
+}
+
+// ---------------------------------------------------------------------------
+// Profile geometry pre-flight (ExportProfiles.SpecFor's gate, run in the dialog)
+// ---------------------------------------------------------------------------
+
+/**
+ * Target box of every export profile — MIRROR of `ExportProfiles.Target` on the
+ * server, compared literally by
+ * `ExportGateInventoryTests.TheClientAndServerAgreeOnTheProfileGeometry`.
+ * Drift here is not a crash: it is a profile button that is wrongly enabled
+ * (opaque 422 later) or wrongly disabled (feature vanishes).
+ */
+export const PROFILE_TARGETS: Record<ExportProfile, { width: number; height: number }> = {
+  '1080p': { width: 1920, height: 1080 },
+  '720p': { width: 1280, height: 720 },
+  '2160p': { width: 3840, height: 2160 },
+  dikey: { width: 1080, height: 1920 },
+};
+
+/**
+ * Why this profile cannot export a canvas of this size, or null when the canvas
+ * aspect matches the profile's box (rational cross-product — the exact rule of
+ * `ExportProfiles.SpecFor`). The server refuses mismatches with a typed 422
+ * ('export-profile-aspect'); running the same arithmetic here disables the
+ * profile IN PLACE with the reason, instead of a round-trip error. The server
+ * gate stays authoritative (PROFILE_CODES handles its answer).
+ */
+export function profileAspectBlockReason(
+  width: number,
+  height: number,
+  profile: ExportProfile,
+): string | null {
+  const target = PROFILE_TARGETS[profile];
+  if (width * target.height === target.width * height) return null;
+  return (
+    `Bu profil ${target.width}×${target.height} üretir; proje tuvali ` +
+    `${width}×${height} farklı bir en-boy oranında. Tuval oranına uyan bir profil seçin.`
+  );
+}
+
+/** `profileAspectBlockReason` over the live document (the submit pre-flight). */
+export function exportProfileBlockReason(doc: TimelineDoc, profile: ExportProfile): string | null {
+  return profileAspectBlockReason(doc.settings.width, doc.settings.height, profile);
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +180,13 @@ export type ExportStartErrorKind =
    * Calling that "an unsupported feature" hides the one-field fix.
    */
   | 'value'
+  /**
+   * 422 with a profile-mismatch code (see `PROFILE_CODES`). The document is fine —
+   * the REQUEST's chosen profile does not match the project canvas aspect. The fix
+   * is a different choice (or a different canvas), not a document edit; every other
+   * sentence would send the user digging through the timeline.
+   */
+  | 'profile'
   /** 429 — concurrent export limit reached (informational, not a failure). */
   | 'limit'
   /** anything else — generic failure. */
@@ -188,6 +239,19 @@ const CEILING_CODES = new Set([
 const VALUE_CODES = new Set([
   'project-background-color',
   'lut-asset',
+]);
+
+/**
+ * Backend feature codes that mean "the chosen profile does not match the canvas".
+ *
+ * MIRRORS `ExportEndpoints.ProfileFeatures`; compared by
+ * `ExportGateInventoryTests.TheClientAndServerAgreeOnWhichCodesMeanAProfileMismatch`.
+ * Normally the dialog's own pre-flight (`exportProfileBlockReason`) disables the
+ * profile before a request is made — this mapping is the belt for documents that
+ * changed between render and submit, and for API consumers.
+ */
+const PROFILE_CODES = new Set([
+  'export-profile-aspect',
 ]);
 
 /** Extract the machine-readable `feature` extension from a ProblemDetails body. */
@@ -243,6 +307,14 @@ export function mapExportError(status: number, body: unknown): ExportStartError 
         message: detail
           ? `Bu projedeki bir ayar geçersiz bir değer taşıyor: ${detail}`
           : 'Bu projedeki bir ayar geçersiz bir değer taşıyor.',
+      };
+    }
+    if (feature !== null && PROFILE_CODES.has(feature)) {
+      return {
+        kind: 'profile',
+        message: detail
+          ? `Seçilen profil bu projeye uymuyor: ${detail}`
+          : 'Seçilen profil proje tuvalinin en-boy oranına uymuyor. Farklı bir profil seçin.',
       };
     }
     return {

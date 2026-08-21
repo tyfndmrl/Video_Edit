@@ -145,16 +145,27 @@ test.describe('Kitaplık — silme ve kota', () => {
     await app.open(project.projectId, { email: account.email, password: account.password });
     const library = new LibraryPanelHarness(page);
 
+    // Taban çizgisi: bu yüklemeden ÖNCE sunucunun saydığı bayt. (Hesap worker
+    // başına PAYLAŞILIR — mutlak bir "0 B" beklemek diğer spec'lerin bıraktığı
+    // medyaya bağımlı olurdu.) Silmeden sonra kota BU sayıya geri dönmeli:
+    // sunucu bir asset'i silerken orijinal VE türev (proxy/filmstrip/waveform/
+    // poster) baytlarının tamamını düşürür — yalnız dosya boyutunu değil.
+    const usedBaseline = await readQuotaUsedBytes(account.context.request, account.accessToken);
+
     await library.pickFiles([video.path]);
     await library.waitForReady(video.fileName);
 
-    // Kota göstergesi: yükleme sonrası kullanılan alanı GÖSTERİR.
-    // (Hesap worker başına PAYLAŞILIR — mutlak bir "0 B" beklemek diğer
-    //  spec'lerin bıraktığı medyaya bağımlı olurdu; bu yüzden sayılar sunucu
-    //  kotasından okunur ve gösterge ONUNLA karşılaştırılır.)
+    // Kota göstergesi: asset HAZIR olduktan sonra sunucuyla aynı sayıyı
+    // gösterir. Kritik olan an: türev baytlar worker "ready" yazdığı anda
+    // kotaya eklenir — hiçbir kullanıcı jesti bu ana sahip değildir, göstergeyi
+    // asset poll'unun ready geçişini görmesi tazeler (assetSync).
     const quota = page.getByTestId('library-quota');
     await expect(quota).toBeVisible();
     const usedBefore = await readQuotaUsedBytes(account.context.request, account.accessToken);
+    expect(
+      usedBefore,
+      'Sunucu kotası orijinal + türev baytları saymıyor — DerivedBytes ready anında yazılmalıydı.',
+    ).toBeGreaterThanOrEqual(usedBaseline + video.sizeBytes);
     await expect
       .poll(async () => (await quota.innerText()).replace(/\s+/g, ' '), {
         timeout: 15_000,
@@ -190,19 +201,20 @@ test.describe('Kitaplık — silme ve kota', () => {
     );
     expect(assets, 'Silinen asset sunucu listesinde hâlâ duruyor.').toHaveLength(0);
 
-    // Kota: sunucuda TAM olarak dosya boyutu kadar düşer, gösterge de onu yazar.
+    // Kota: silme asset'in TÜM katkısını (orijinal + türev) düşürür — sunucu
+    // yükleme öncesi taban çizgisine geri döner, gösterge de onu yazar.
     await expect
       .poll(() => readQuotaUsedBytes(account.context.request, account.accessToken), {
         timeout: 15_000,
-        message: 'Silinen medya kotadan düşmedi.',
+        message: 'Silinen medya kotadan düşmedi (orijinal + türev baytlar geri gelmeliydi).',
       })
-      .toBe(usedBefore - video.sizeBytes);
+      .toBe(usedBaseline);
     await expect
       .poll(async () => (await quota.innerText()).replace(/\s+/g, ' '), {
         timeout: 15_000,
         message: 'Silme sonrası kota göstergesi güncellenmedi.',
       })
-      .toContain(`${formatBytes(usedBefore - video.sizeBytes)} /`);
+      .toContain(`${formatBytes(usedBaseline)} /`);
   });
 
   test('timeline\'da kullanılan medyayı silmek UYARI gösterir; onaydan sonra klip "medya eksik" olur', async ({

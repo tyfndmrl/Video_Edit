@@ -93,6 +93,21 @@ public static class ExportEndpoints
         "project-background-color", "lut-asset",
     };
 
+    /// <summary>
+    /// PROFİL-TUVAL UYUŞMAZLIĞI kodu — DÖRDÜNCÜ cümle sınıfı. Belge geçerlidir, özellik
+    /// desteklidir, hiçbir alan bozuk değildir; İSTEĞİN SEÇTİĞİ PROFİL projenin tuval oranına
+    /// uymuyordur. Diğer üç cümlenin hepsi kullanıcıyı BELGEYE baktırır — oysa buradaki eylem
+    /// belgeyi değil SEÇİMİ değiştirmektir (uyumlu profili seçmek ya da tuvali değiştirmek).
+    /// Kapının kendisi <c>ExportProfiles.SpecFor</c>'dadır (gerekçe ve ölçümleriyle);
+    /// istemcideki aynası <c>exportLogic.ts</c> → <c>PROFILE_CODES</c>, ikisi
+    /// <c>ExportGateInventoryTests.TheClientAndServerAgreeOnWhichCodesMeanAProfileMismatch</c>
+    /// ile karşılaştırılır.
+    /// </summary>
+    private static readonly HashSet<string> ProfileFeatures = new(StringComparer.Ordinal)
+    {
+        "export-profile-aspect",
+    };
+
     public static IEndpointRouteBuilder MapExportEndpoints(this IEndpointRouteBuilder app)
     {
         var projects = app.MapGroup("/api/projects").WithTags("Exports").RequireAuthorization();
@@ -131,9 +146,10 @@ public static class ExportEndpoints
         var profileName = string.IsNullOrWhiteSpace(request?.Profile) ? "1080p" : request!.Profile!;
         if (!ExportProfiles.TryParse(profileName, out var profile))
         {
+            var supported = string.Join(", ", ExportProfiles.All.Select(ExportProfiles.Name));
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["profile"] = [$"Unknown export profile '{profileName}'. Supported: 1080p."],
+                ["profile"] = [$"Unknown export profile '{profileName}'. Supported: {supported}."],
             });
         }
 
@@ -221,6 +237,13 @@ public static class ExportEndpoints
 
             var plan = ExportCompiler.Validate(doc, overlayMeasurer, assetFacts);
 
+            // PROFİL-TUVAL EN-BOY KAPISI (senkron): worker'daki Compile aynı kuralı sigorta
+            // olarak yeniden sorar; buradaki koşum belgeyi kuyruğa hiç sokmaz. Kural, kapı
+            // sınıflandırmasının diliyle SAF DOKÜMAN+İSTEK aritmetiğidir (tuval iki tam sayı,
+            // profil istek parametresi) — dosya/asset/font gerekmez. Doğrulamadan SONRA
+            // sorulur: geçersiz belgeye en-boy cevabı vermek yanlış önceliklendirme olurdu.
+            ExportProfiles.SpecFor(profile, plan.Width, plan.Height);
+
             // METİN ÖLÇÜM YOLU KAPALIYSA 503 (İŞ 4 kararı — 422 DEĞİL). Gerekçe ölçüldü:
             // ölçüm yolu kapalıyken (a) metin katmanı kapıları alt sınıra düşer ve GERÇEK
             // ihlaller görünmez olur, (b) aynı kurulumda font manifesti de okunamadığı için
@@ -266,7 +289,10 @@ public static class ExportEndpoints
                         // Üçüncü sınıf: özellik destekli, proje pencerede — DEĞER hatalı.
                         : DocumentValueFeatures.Contains(ex.Feature)
                             ? "Timeline contains a value the exporter cannot use."
-                            : "Timeline uses a feature the exporter does not support yet.",
+                            // Dördüncü sınıf: belge sağlam — İSTEĞİN profili tuvale uymuyor.
+                            : ProfileFeatures.Contains(ex.Feature)
+                                ? "Export profile does not match the project canvas."
+                                : "Timeline uses a feature the exporter does not support yet.",
                 detail: ex.Message,
                 extensions: new Dictionary<string, object?> { ["feature"] = ex.Feature });
         }
@@ -408,6 +434,7 @@ public static class ExportEndpoints
         AssetKind.Video => ExportAssetMediaKind.Video,
         AssetKind.Audio => ExportAssetMediaKind.Audio,
         AssetKind.Image => ExportAssetMediaKind.Image,
+        AssetKind.Lut => ExportAssetMediaKind.Lut,
         _ => ExportAssetMediaKind.Unknown,
     };
 

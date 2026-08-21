@@ -12,7 +12,8 @@ import type { MicroSec, Uuid } from '@videoedit/timeline-schema';
  *  ("expired" is represented as failed + errorCode 'expired'.) */
 export type AssetStatus = 'uploading' | 'uploaded' | 'processing' | 'ready' | 'failed';
 
-export type AssetKind = 'video' | 'audio' | 'image';
+/** 'lut' = .cube renk tablosu — medya değildir: klip olamaz, yalnız lut efektinin kaynağıdır. */
+export type AssetKind = 'video' | 'audio' | 'image' | 'lut';
 
 export interface AssetSummary {
   id: Uuid;
@@ -27,6 +28,12 @@ export interface AssetSummary {
   /** Presigned URLs (batch media-urls endpoint), present once status === 'ready'. */
   proxyUrl?: string;
   posterUrl?: string;
+  /**
+   * Orijinal dosyanın presigned URL'i. Önizlemenin .cube okuyucusu için gerekli:
+   * bir LUT varlığının TÜREVİ yoktur (worker üretmez), shader ham .cube metnini
+   * bu adresten çeker (engineV1 LUT dokusu yükleyicisi).
+   */
+  originalUrl?: string;
   /** First filmstrip sprite (single-sprite fallback when `sprites` is absent). */
   filmstripUrl?: string;
   filmstripManifestUrl?: string;

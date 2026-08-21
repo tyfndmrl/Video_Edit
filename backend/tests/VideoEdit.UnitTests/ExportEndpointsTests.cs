@@ -180,6 +180,53 @@ public sealed class ExportEndpointsTests : IDisposable
         Assert.Equal(0, _jobs.CreateCount);
     }
 
+    [Theory]
+    [InlineData("720p")]
+    [InlineData("2160p")]
+    public async Task StartExport_LandscapeProfiles_AreAcceptedOnTheDefaultCanvas_AndPersisted(
+        string profile)
+    {
+        // Dalga 2: yeni profiller varsayılan (1920x1080, 16:9) tuvalde kuyruğa girer ve
+        // İŞ KAYDINA profil ADI yazılır — worker o adı TryParse ile geri çözer.
+        var project = await SeedProjectAsync();
+
+        var accepted = Assert.IsType<Accepted<ExportJobCreatedResponse>>(
+            await CallStartAsync(project.Id, profile: profile));
+        Assert.Equal(profile, _db.Jobs.Single(j => j.Id == accepted.Value!.JobId).ExportProfile);
+    }
+
+    [Fact]
+    public async Task StartExport_ProfileAspectMismatch_Returns422_WithTheFourthSentenceClass()
+    {
+        // 'dikey' (1080x1920) 16:9 tuvale uymaz: senkron tipli 422 — başlık BELGEYE değil
+        // SEÇİME baktıran dördüncü cümle sınıfıdır, gövde uyumlu profilleri sayar.
+        var project = await SeedProjectAsync();
+
+        var problem = Assert.IsType<ProblemHttpResult>(
+            await CallStartAsync(project.Id, profile: "dikey"));
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("export-profile-aspect", problem.ProblemDetails.Extensions["feature"]);
+        Assert.Equal("Export profile does not match the project canvas.", problem.ProblemDetails.Title);
+        Assert.Contains("1080p, 720p, 2160p", problem.ProblemDetails.Detail);
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
+    [Fact]
+    public async Task StartExport_VerticalProfile_IsAcceptedOnAPortraitCanvas()
+    {
+        // Madalyonun öteki yüzü: 9:16 tuvalde 'dikey' kuyruğa girer (yanlış ret yok).
+        var projectId = Guid.CreateVersion7();
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(ExportTestDocs.Doc(
+            projectId: projectId,
+            width: 1080, height: 1920,
+            clips: ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000))));
+
+        var accepted = Assert.IsType<Accepted<ExportJobCreatedResponse>>(
+            await CallStartAsync(project.Id, profile: "dikey"));
+        Assert.Equal("dikey", _db.Jobs.Single(j => j.Id == accepted.Value!.JobId).ExportProfile);
+    }
+
     [Fact]
     public async Task StartExport_ConcurrentCapReached_Returns429()
     {

@@ -22,6 +22,8 @@ public static class UploadQuota
     /// <param name="usedBytes">
     /// Kullanıcının silinmemiş TÜM asset'lerinin toplamı (Failed DAHİL — objesi R2'den
     /// silinen yollar asset'i soft-delete eder, bkz. AssetEndpoints kota sorgusu).
+    /// Toplam SizeBytes + DerivedBytes'tır (türevler de depolamadır; NULL türev = 0 —
+    /// 12. tur borcunun kapanışı).
     /// </param>
     /// <param name="activeUploads">Kullanıcının hâlen Uploading durumundaki asset sayısı.</param>
     public static QuotaViolation Evaluate(

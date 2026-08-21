@@ -18,6 +18,7 @@ public class UploadRulesTests
     [InlineData("image/png", AssetKind.Image)]
     [InlineData("image/jpeg", AssetKind.Image)]
     [InlineData("image/webp", AssetKind.Image)]
+    [InlineData("application/x-cube-lut", AssetKind.Lut)] // .cube (fileTypes.ts ile ortak sözleşme)
     public void TryGetKind_WhitelistedTypes_DeriveKind(string contentType, AssetKind expected)
     {
         Assert.True(UploadRules.TryGetKind(contentType, out var kind));
