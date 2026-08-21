@@ -604,6 +604,23 @@ Kazanç zinciri birim testlerle pinlendi (geçişte toplam kazanç her an 1), am
 OfflineAudioContext tabanlı sayısal RMS karşılaştırması yazılmadı. Yani "önizlemedeki ses
 export'takiyle aynı" iddiası **test edilmiş değil, tasarımla gerekçelendirilmiş**tir.
 
+### 2.7 [DÜŞÜK] `audioSampleRate` yalnız önizlemeyi etkiler; export her zaman 48 kHz
+
+Proje şeması `audioSampleRate` için `44100 | 48000` kabul eder ve seçilen değer önizleme
+`AudioContext`'inin örnekleme hızını belirler. Ölçüm (Chromium / Windows, bu depo):
+`AudioContext({ sampleRate: 44100 })` gerçekten 44100, `48000` gerçekten 48000 döndürdü.
+**Ama export bu ayarı hiç okumaz** — `ExportCompiler` `aformat=...:sample_rates=48000` +
+profil `-ar 48000` ile sabit 48 kHz üretir (`ExportCompiler` içinde `audioSampleRate`'in
+geçtiği tek satır yoktur; mevcut export çıktıları ffprobe ile `sample_rate=48000`).
+
+Sonuç: 44100 seçili bir projede önizleme 44100'de, export 48000'de çalışır — yani bu ayar
+için önizleme/export **aynı örnekleme hızında değildir**. Duyulur ses içeriği değişmez (her
+iki hız da tam bant) ve çıktı her hâlde 48000'e resample edilir; ayarın gözlemlenebilir tek
+etkisi önizleme context hızıdır. Kullanıcı "44100 seçince dosyam 44100 olur" beklerse bu
+karşılanmaz. Not: `AudioContext` sampleRate seçeneği tarayıcı/OS garantisi değildir; başka
+bir tarayıcı/donanım istenen hızı reddedip kendi hızına düşürebilir (bu depoda ölçülmedi —
+kapsam dışı). İlgili sözleşme: `rendering-semantics.md` §8.5.
+
 ---
 
 ## 3. Şema / export motoru sınırları (tipli hata verir, sessiz bozulma yok)

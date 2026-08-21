@@ -836,6 +836,121 @@ denenmedi**; MinIO'nun neyi kanıtladığı / neyi kanıtlamadığı §4.2'de ka
   locator'ı baypas etti (`/^(Fit|Sığdır)$/`), **repo dosyası değiştirilmedi**.
   - *Yapılacak:* ya `fitButton`'ı ürünün adıyla hizalamak ya da düğmeye `data-testid` vermek.
 
+## 13. tur denetiminden (2026-08-21 — backend düzeltme turu: kapatılanlar + BG kayıtları)
+
+Kapatılanlar (bu turda):
+
+- **[ORTA — C1] Keyframe `timeUs` üst sınırı C# tarafında hiçbir katmanda yoktu.** zod
+  belge kapısı "keyframe timeUs … is outside [0, timelineDurationUs]" ile reddederken
+  `KeyframeCompiler` yalnız negatif/sıralılık/sonluluk denetliyordu; ham API'yle süre-ötesi
+  opacity rampası PUT 200 + POST 202 + succeeded alıyor ve ffmpeg çıktısı rampayı son
+  örneklenen değerde donduruyordu (SESSİZ yanlış çıktı). Kural artık `KeyframeCompiler.Parse`
+  içinde (üst sınır KAPSAYICI, zod'la aynı cümle); HTTP karşılığı `ExportEndpointsTests`,
+  zod paritesi paylaşılan `keyframe-bounds-vectors.json` üzerinden iki dilde
+  (`invariants.test.ts` + `KeyframeBoundsParityTests`) ölçülüyor. Editörden üretilemez
+  (remapKeyframes trim'de düşürür) — ham-API-yalnız vaka, ama zod↔Validate eşitliği bu
+  projede bağlayıcı sözleşme olduğu için kapatıldı.
+- **[DÜŞÜK — BG-3] CI golden-drift denetimi `backend/tests/RasterGoldens`'ı taramıyordu.**
+  `RasterAssert.MatchesGolden` golden dosyası yoksa `File.Copy` ile üretip GEÇTİĞİ için
+  kaybolan/yeniden üretilen shape golden'ı CI'da iz bırakmadan kendini yazardı. `ci.yml`
+  "Golden/snapshot drift kontrolu" adımının PATHS listesine dizin eklendi; adımın komutu
+  yerelde koşularak yapay değişikliğin yakalandığı, temiz ağaçta geçtiği doğrulandı.
+
+**AÇIK kalanlar (bu turda BİLEREK yapılmadı — kayıt buraya):**
+
+- **[AÇIK — DÜŞÜK, BG-4] `timelineOps` ret kodlarının bir bölümü iki Türkçe mesaj tablosunun
+  (`feedback.ts` REASONS + `inspectorFeedback.ts`) hiçbirinde eşli değil; bu retlerde kullanıcı
+  jenerik "İşlem uygulanamadı" görüyor.** Ölçülen alt sınır: literal `fail('…')` kodlarından
+  9'u eşlenmemiş (comm diff) + dolaylı reason yollarından en az 2'si ("asset is not ready",
+  "clip cannot keep its frame span here") tablolarda 0 geçiş; 21'lik sayım dolaylı reason
+  dizeleri dahil sayımdır, yöntem farkı çelişki değil. YANLIŞ eylem öneren mesaj yok —
+  mesajlar eksik ama yanıltıcı değil.
+  - *Neden ertelendi:* kullanıcı engeli yok (işlem zaten reddediliyor; export/kota/çakışma
+    gibi kritik yollar doğru mesajlı — canlı doğrulandı). ~11-21 koda doğru Türkçe cümle
+    yazmak UX kararı isteyen hacimli iş; dev-modda "eşlenmemiş reason" `console.warn` alarmı
+    da aynı pakete girmeli. Bu turun yüksek/orta düzeltmeleriyle yarışmasın.
+- **[AÇIK — DÜŞÜK, BG-5] `timelineOps.ts` 3815 satır; 163 export'un ~30'u dışarıda
+  kullanılmıyor, `hasClipboardContent` tam ölü.** Doğrulanan kısım: `hasClipboardContent`
+  src ağacında yalnız tanımında geçiyor (1 hit, modül içi çağrı da 0). 30 sembollük liste
+  tek tek yeniden üretilmedi (düşük şiddet; tarama yöntemi makul).
+  - *Neden ertelendi:* davranış etkisi sıfır (ölü kod + fazla export); dosya bölme "tüm
+    mutasyonlar tek kapıda" yazılı tasarım gerekçesine dokunan bir mimari karar.
+    `hasClipboardContent` silme ve export budaması, BG-1 düzeltmesi aynı dosyaya dokunurken
+    fırsatçı olarak birleştirilebilir; kendi başına tur harcatmaz.
+
+## 14. tur denetiminden (2026-08-21 — 13. turun triyaja ulaşmayan üç bulgusu: M1/M2/M3)
+
+13. turda baş mimarın nihai yapılandırılmış çıktısı taslağa sıkışmış ve üç bulgusu triyaja
+ulaşmamıştı; transcript'ten çıkarılıp bu turda canlı ortamda yeniden üretilerek işlendi.
+
+Kapatılanlar (bu turda):
+
+- **[ORTA — M1] `rendering-semantics.md` §8.5 ürünle çelişiyordu.** Doküman "Preview
+  `AudioContext({ sampleRate: 48000 })` ile açılır" diyordu; kod ise önizlemeyi projenin
+  `settings.audioSampleRate` değeriyle açıyor (`engineV1` → `AudioGraph.setSampleRate` →
+  `new AudioContext({ sampleRate })`), şema bu ayara `44100 | 48000` izin veriyor. Ölçüm
+  (Chromium/Windows): istenen hız birebir veriliyor (44100→44100, 48000→48000, varsayılan
+  48000). Export ise ayardan bağımsız sabit 48 kHz (`aformat …:sample_rates=48000` + profil
+  `-ar 48000`; `ExportCompiler` `audioSampleRate`'i hiç okumuyor — grep 0; mevcut export
+  çıktıları ffprobe ile `sample_rate=48000`). §8.5 gerçeğe göre yeniden yazıldı,
+  `audioGraph.ts` başlık yorumu düzeltildi ve önizleme/export örnekleme-hızı ayrışması
+  `poc-bilinen-sinirlar.md` §2.7'ye bilinen sınır olarak eklendi (ayarın gözlemlenebilir tek
+  etkisi önizleme hızı; çıktı her hâlde 48000).
+- **[ORTA — M2, savunma derinliği] `media-urls` (ve asset `ListForProject`) join'inde
+  sahiplik filtresi yoktu.** Güvenlik "ProjectAssets asla cross-user satır içermez"
+  değişmezine dayanıyordu (tek yazım noktası InitUpload, korumalı). Aktif sömürü yoktu ama
+  değişmez tek noktadan delinirse başka kullanıcının imzalı URL'leri sızardı. Canlı ölçümle
+  kanıtlandı: demo projesine kasten cross-user bir `ProjectAssets` satırı enjekte edilince
+  düzeltmeden önceki ikili başka kullanıcının `original` imzalı URL'ini döndürdü (URL yolunda
+  yabancı `OwnerId`). Sorgulara `a.OwnerId == userId && a.DeletedAt == null` eklendi (defter/
+  kota sorgularındaki desenin aynısı); düzeltmeden sonra cross-user satır DÖNMÜYOR, normal 3
+  asset'lik yanıt bozulmadan 200 dönüyor (yanlış-ret yok). Diğer uçlar tarandı: `exports`
+  (GetJob/CancelJob/ListForProject) `RequestedBy == userId`, `projects`/`revisions`
+  `OwnerId == userId` + `OwnsProjectAsync`, `fonts` kullanıcı-verisiz — desen zaten mevcut.
+- **[DÜŞÜK — M3, sınıf kaydı] Belge-değişmezi katmanında cross-language parite vektörü
+  eksikliği** — aşağıda ayrı başlıkta.
+
+### [AÇIK — DÜŞÜK, M3 sınıfı] Belge-değişmezi ailelerinde zod↔C# parite vektörü eksik
+
+Mevcut cross-language test-vektörleri (`test-vectors/`) HESAP/FORMÜL paritelerini kapsıyor:
+`easing-vectors`, `time-vectors`, `text-layout-vectors`, `frame-grid-corpus` ve 13. turda
+eklenen `keyframe-bounds-vectors`. Ama **belge-değişmezi** (structural invariant) katmanının
+çoğu ailesi tek dilden ölçülüyor — zod tarafı `invariants.test.ts`'te zengin, C# tarafı
+(`ExportCompiler.Validate` / `KeyframeCompiler.Parse` / geçiş-el kontrolü) ayrı yazılmış ve
+ikisini tek kaynaktan koşan paylaşılan vektör YOK. Vektörsüz aileler:
+
+- **Keyframe sıralaması** — `strictly sorted` / duplike `timeUs` reddi (zod:
+  invariants.test.ts "rejects unsorted/duplicate keyframes").
+- **Kaynak aralığı** — `sourceOutUs > sourceInUs`; `timelineDurationUs == round((sourceOutUs
+  − sourceInUs) / speed.rate)` (half-up yuvarlama — iki dilde ayrışma riski en yüksek burada);
+  `sourceOutUs ≤ asset süresi`.
+- **Geçiş simetrisi** — süre ≤ kısa komşunun yarısı; bitişiklik; el payı `sourceInUs ≥ D/2`
+  ve hız-farkında el hesabı.
+- **Klip yerleşimi** — çakışmama; `timelineStartUs`'a göre sıralılık.
+
+**C1 tam bu sınıftan çıktı:** keyframe üst sınırı C# kapısında yokken zod'da vardı; 13. tur
+o deliği kapattı ama *keyframe sınırı* ailesiyle sınırlı kaldı. Kök neden (aynı değişmezin
+iki dilde ayrı yazılıp tek kaynaktan ölçülmemesi) sıralama/kaynak-aralığı/geçiş ailelerinde
+DEVAM EDİYOR. **Önerilen kapatma deseni:** her aile için `keyframe-bounds-vectors.json`
+kalıbı — geçerli+geçersiz vakaları tek JSON'da tutan, hem `invariants.test.ts` (zod
+`validateTimelineDoc`) hem bir `*ParityTests.cs` (`ExportCompiler.Validate`) tarafından
+koşulan, dosyanın iki yönü de taşıdığını ayrıca doğrulayan bir vektör dosyası.
+
+**Bu turda kapatılan aile — KAYNAK ARALIĞI.** `source-range-vectors.json` eklendi ve iki
+dilde tüketildi (`invariants.test.ts` "matches the shared source-range vectors" +
+`SourceRangeParityTests.cs`). Kabul/ret paritesi ölçülüyor: `sourceInUs >= 0`, `sourceOutUs
+> sourceInUs`, `timelineDurationUs == roundHalfUp((sourceOutUs − sourceInUs) / rate)`.
+İncelik: C# hakemi (`ExportCompiler.Validate`) frame-grid'i kaynak-aralığından ÖNCE
+denetlediği için tüm süreler 30fps ızgarasına oturacak seçildi; geçersiz vakalar ızgara-geçerli
+süre tutup yalnız kaynak-aralığı kuralını ihlal ederek onu izole ediyor. Half-up SINIRININ
+kendisi ızgara-hizalı gösterilemez (.5 → +1 µs, ızgara dışı) ve zaten `time-vectors.json`
+'duration' ile ölçülüyor — bu yeni dosya FORMÜLÜ değil BELGE reddini kapatır. Negatif kontrol:
+bir geçerli vaka bozulunca iki taraf da kırmızıya döndü, geri alınca md5 aynı.
+
+**Hâlâ AÇIK aileler:** keyframe sıralaması (`strictly sorted`/duplike), geçiş simetrisi
+(süre ≤ yarı komşu, bitişiklik, `sourceInUs ≥ D/2` el payı, hız-farkında el), klip yerleşimi
+(çakışmama, `timelineStartUs` sıralılığı). Aynı desenle sıradaki turlarda kapatılabilir.
+
 ## Kayda geçen doğrulamalar (aksiyon gerekmez)
 - Restore'da "PreRestore satırı görünmüyor" davranışı veri kaybı DEĞİL — aynı revision'da zaten snapshot varsa terfi ediliyor; invaryant korunuyor (denetim #32).
 - `.gitignore` üretilen-artefakt-commit'lenir kararıyla tutarlı (denetim #37).

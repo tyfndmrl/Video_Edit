@@ -2615,11 +2615,22 @@ public static class ExportCompiler
                 + "dışa aktarıcı bu klibi işleyemiyor."),
         };
 
+        // Süre pozitifliği keyframe ayrıştırmasından ÖNCE sorulur: KeyframeCompiler.Parse
+        // klip süresini keyframe zamanlarının üst sınırı olarak kullanır — süre zaten
+        // geçersizken "outside [0, -5]" gibi İKİNCİL bir cümle üretmek yerine asıl kusur
+        // kendi cümlesiyle kalmalı (13. tur, C1).
+        if (planned.TimelineDurationUs <= 0)
+        {
+            throw new InvalidTimelineException(
+                $"'{planned.Id}' klibinin süresi pozitif olmalı (gelen değer "
+                + $"{planned.TimelineDurationUs.ToString(CultureInfo.InvariantCulture)} us).");
+        }
+
         // ── M5: efektler (§4) ve keyframe'ler (§3) artık DERLENİR; doğrulama tipli hatalar üretir.
         planned = planned with
         {
             Effects = ColorPipeline.Parse(planned.Id, EffectsOf(clip)),
-            Animation = KeyframeCompiler.Parse(planned.Id, KeyframesOf(clip)),
+            Animation = KeyframeCompiler.Parse(planned.Id, planned.TimelineDurationUs, KeyframesOf(clip)),
         };
 
         // Ses klibi görsel katman üretmez → transform/opaklık keyframe'inin karşılığı yoktur.
@@ -2635,13 +2646,6 @@ public static class ExportCompiler
         {
             throw new UnsupportedFeatureException("effects-audio-clip",
                 $"'{planned.Id}' ses klibinde renk efekti var — ses klibi görüntü üretmez.");
-        }
-
-        if (planned.TimelineDurationUs <= 0)
-        {
-            throw new InvalidTimelineException(
-                $"'{planned.Id}' klibinin süresi pozitif olmalı (gelen değer "
-                + $"{planned.TimelineDurationUs.ToString(CultureInfo.InvariantCulture)} us).");
         }
 
         if (planned.Kind == ExportClipKind.Sticker && planned.AssetId == Guid.Empty)

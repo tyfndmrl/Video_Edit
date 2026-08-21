@@ -4,8 +4,9 @@
  *   <video>/<audio> element -> MediaElementAudioSourceNode -> clip GainNode
  *     -> master GainNode -> destination
  *
- * - The AudioContext is created at 48 kHz (§8.5) lazily on the first play()
- *   (autoplay policy: needs a user gesture).
+ * - The AudioContext is created lazily on the first play() (autoplay policy: needs a
+ *   user gesture) at the project's settings.audioSampleRate (44100 | 48000, §8.5), set via
+ *   setSampleRate() before the context exists. Export is fixed 48 kHz regardless (§8.5).
  * - createMediaElementSource() can only ever be called ONCE per element, so
  *   the source node is created when a pool element is first attached and lives
  *   as long as the element.

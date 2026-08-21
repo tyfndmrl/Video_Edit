@@ -107,9 +107,12 @@ jobs:
       # Golden/snapshot drift kontrolu: testler golden PNG ya da export snapshot'i yeniden
       # uretip DEGISTIRDIYSE commit'li hali bayat demektir -> CI kirmizi (uretilen fark
       # incelemeden merge edilemez; degisiklik bilincliyse dosyalar commit'lenir).
+      # RasterGoldens da listede (13. tur, BG-3): RasterAssert.MatchesGolden golden dosyasi
+      # yoksa File.Copy ile uretip GECER — dizin taranmazsa kaybolan/yeniden uretilen shape
+      # golden'i CI'da hicbir iz birakmadan kendini yazardi.
       - name: Golden/snapshot drift kontrolu
         run: |
-          PATHS="backend/tests/GoldenFrames backend/tests/VideoEdit.UnitTests/ExportSnapshots"
+          PATHS="backend/tests/GoldenFrames backend/tests/RasterGoldens backend/tests/VideoEdit.UnitTests/ExportSnapshots"
           if [ -n "$(git status --porcelain -- $PATHS)" ]; then
             echo "::error::Golden/snapshot drift tespit edildi:"
             git status --porcelain -- $PATHS

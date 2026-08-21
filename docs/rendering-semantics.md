@@ -1380,9 +1380,25 @@ Her ses zinciri miks öncesi normalize edilir (iki taraf aynı hedef):
 aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000
 ```
 
-- Preview `AudioContext({ sampleRate: 48000 })` ile açılır; mono kaynaklar stereo'ya
-  upmix edilir (her iki kanala aynı sinyal — ffmpeg `aformat` davranışıyla aynı).
-- Export ses çıkışı AAC 48 kHz stereo.
+- Preview `AudioContext`, projenin `settings.audioSampleRate` değeriyle açılır (şema yalnız
+  `44100 | 48000` kabul eder; `engineV1` bu değeri `AudioGraph.setSampleRate` üzerinden
+  `new AudioContext({ sampleRate })`'e geçirir). Ölçüm (Chromium / Windows): istenen hız
+  birebir veriliyor — 44100 istenince 44100, 48000 istenince 48000, seçeneksiz varsayılan
+  48000. Not: `AudioContext` sampleRate seçeneği tarayıcı/OS garantisi değildir; farklı bir
+  tarayıcı veya ses donanımı istenen hızı reddedip kendi hızına düşürebilir (bu depoda
+  ölçülmedi — kapsam dışı).
+- Mono kaynaklar stereo'ya upmix edilir (her iki kanala aynı sinyal — ffmpeg `aformat`
+  davranışıyla aynı).
+- Export ses çıkışı **ayardan bağımsız sabit** AAC 48 kHz stereo: derleyici `aformat=...:
+  sample_rates=48000` + profil `-ar 48000` uygular ve `audioSampleRate`'i hiç okumaz
+  (`ExportCompiler` içinde bu ayarın geçtiği tek satır yoktur). Ölçüm: mevcut export
+  çıktılarının ses akışı ffprobe ile `sample_rate=48000, channels=2`.
+- **Sonuç — `audioSampleRate` ayarının gerçek etkisi yalnız önizlemededir.** `sample_rates`
+  hedefi bu yüzden iki tarafta *aynı değildir*: 44100'lük bir projede önizleme 44100'de
+  çalışır, export ise yine 48000'e resample eder. Duyulur ses içeriği değişmez (44100 de
+  48000 de tam bant); tek fark önizlemenin iç örnekleme hızıdır ve çıktı her hâlde 48000'dir.
+  44100 seçmek "çıktı 44100 olur" anlamına GELMEZ. Bu ayrışma [poc-bilinen-sinirlar.md]'de
+  bilinen sınır olarak kayıtlıdır.
 
 ---
 

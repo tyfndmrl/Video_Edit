@@ -84,21 +84,29 @@ public static class KeyframeCompiler
 
     /// <summary>
     /// Klibin keyframe defterini doğrular. Kurallar (§3.3 + şema invaryantları):
-    /// boş olmayan kanal, timeUs artan ve tekrarsız, timeUs ≥ 0, cubicBezier x1/x2 ∈ [0..1].
+    /// boş olmayan kanal, timeUs artan ve tekrarsız, timeUs ∈ [0, <paramref name="timelineDurationUs"/>]
+    /// (iki uç da KAPSAYICI — zod invaryantıyla birebir), cubicBezier x1/x2 ∈ [0..1].
     /// </summary>
-    public static ClipAnimation Parse(Guid clipId, KeyframeTracks? tracks)
+    /// <param name="timelineDurationUs">
+    /// Klibin timeline süresi — keyframe zamanının ÜST SINIRI. zod bu kuralı belge kapısında
+    /// kurar (invariants.ts: "keyframe timeUs … is outside [0, timelineDurationUs]"); C# tarafı
+    /// kurmayınca ham API'den gelen süre-ötesi rampa 202 + succeeded alıyor ve ffmpeg çıktısında
+    /// animasyon klip sonunda SON ÖRNEKLENEN değerde donuyordu (sessiz yanlış çıktı — 13. tur, C1).
+    /// Çağıran süreyi pozitif doğrulamış olmalıdır (ExportCompiler.ValidateClip öyle yapar).
+    /// </param>
+    public static ClipAnimation Parse(Guid clipId, long timelineDurationUs, KeyframeTracks? tracks)
     {
         if (tracks is null)
         {
             return ClipAnimation.None;
         }
 
-        var x = Track(clipId, "x", tracks.X);
-        var y = Track(clipId, "y", tracks.Y);
-        var scale = Track(clipId, "scale", tracks.Scale);
-        var rotation = Track(clipId, "rotationDeg", tracks.RotationDeg);
-        var opacity = Track(clipId, "opacity", tracks.Opacity);
-        var volume = Track(clipId, "volume", tracks.Volume);
+        var x = Track(clipId, "x", tracks.X, timelineDurationUs);
+        var y = Track(clipId, "y", tracks.Y, timelineDurationUs);
+        var scale = Track(clipId, "scale", tracks.Scale, timelineDurationUs);
+        var rotation = Track(clipId, "rotationDeg", tracks.RotationDeg, timelineDurationUs);
+        var opacity = Track(clipId, "opacity", tracks.Opacity, timelineDurationUs);
+        var volume = Track(clipId, "volume", tracks.Volume, timelineDurationUs);
 
         if (scale is not null && scale.MinValue <= 0)
         {
@@ -277,7 +285,8 @@ public static class KeyframeCompiler
     public static string Command(long timeUs, string target, string command, string value) =>
         $"{Sec(timeUs)} {target} {command} {value}";
 
-    private static AnimationTrack? Track(Guid clipId, string name, IReadOnlyList<SchemaKeyframe>? keys)
+    private static AnimationTrack? Track(
+        Guid clipId, string name, IReadOnlyList<SchemaKeyframe>? keys, long timelineDurationUs)
     {
         if (keys is not { Count: > 0 })
         {
@@ -293,6 +302,17 @@ public static class KeyframeCompiler
                 throw new InvalidTimelineException(
                     $"'{clipId}' klibinin '{name}' keyframe'lerinden birinin zamanı negatif "
                     + $"({key.TimeUs.ToString(CultureInfo.InvariantCulture)} us).");
+            }
+
+            // Üst sınır KAPSAYICI (timeUs == süre geçerli: rampalar olağan olarak klip sonunda
+            // biter ve zod da kabul eder). Cümlenin İngilizce parçası zod'un mesajıyla
+            // (invariants.ts) bilerek birebirdir — iki kapı tek grep'le yan yana getirilebilir.
+            if (key.TimeUs > timelineDurationUs)
+            {
+                throw new InvalidTimelineException(
+                    $"'{clipId}' klibinin '{name}' keyframe'lerinden biri klip süresinin ötesinde: "
+                    + $"keyframe timeUs {key.TimeUs.ToString(CultureInfo.InvariantCulture)} is "
+                    + $"outside [0, {timelineDurationUs.ToString(CultureInfo.InvariantCulture)}].");
             }
 
             if (i > 0 && key.TimeUs <= keys[i - 1].TimeUs)

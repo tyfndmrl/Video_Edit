@@ -370,10 +370,13 @@ public static class AssetEndpoints
         int skip;
         (page, pageSize, skip) = TimelineRequestValidation.NormalizePaging(page, pageSize);
 
+        // Sahiplik filtresi (x.a.OwnerId == userId): media-urls ile aynı savunma derinliği —
+        // proje sahipliği OwnsProjectAsync ile doğrulanmış olsa da, cross-user bir ProjectAssets
+        // satırı asla listelenemesin (tek değişmez delinse bile).
         var query = db.ProjectAssets.AsNoTracking()
             .Where(pa => pa.ProjectId == projectId)
             .Join(db.Assets.AsNoTracking(), pa => pa.AssetId, a => a.Id, (pa, a) => new { pa, a })
-            .Where(x => x.a.DeletedAt == null);
+            .Where(x => x.a.OwnerId == userId && x.a.DeletedAt == null);
 
         var total = await query.CountAsync(ct);
         var assets = await query
@@ -399,10 +402,15 @@ public static class AssetEndpoints
         }
 
         // Yalnız READY asset'ler — işlenmemiş/başarısız asset'in servis edilecek türevi yoktur.
+        // Sahiplik filtresi (a.OwnerId == userId) savunma derinliğidir: proje sahipliği zaten
+        // OwnsProjectAsync ile doğrulandı ve ProjectAssets satırları InitUpload'ta hep sahip
+        // asset'e bağlanır, ama o tek değişmez delinirse (ör. yanlış bir bakım betiği cross-user
+        // satır yazarsa) bu filtre olmadan başka kullanıcının imzalı URL'leri sızardı. Aynı
+        // desen defter/kota sorgularında da kullanılır (OwnerId == userId && DeletedAt == null).
         var assets = await db.ProjectAssets.AsNoTracking()
             .Where(pa => pa.ProjectId == projectId)
             .Join(db.Assets.AsNoTracking(), pa => pa.AssetId, a => a.Id, (pa, a) => a)
-            .Where(a => a.DeletedAt == null && a.Status == AssetStatus.Ready)
+            .Where(a => a.OwnerId == userId && a.DeletedAt == null && a.Status == AssetStatus.Ready)
             .ToListAsync(ct);
 
         var expiresAt = clock.GetUtcNow().Add(R2StorageService.GetUrlLifetime);

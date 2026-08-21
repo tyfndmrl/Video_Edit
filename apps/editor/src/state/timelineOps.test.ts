@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   clipTimelineDurationUs,
   exportFrameGridIssues,
+  frameSpanCount,
+  frameSpanUs,
   frameToUs,
   usToFrame,
   validateTimelineDoc,
@@ -16,10 +18,16 @@ import { useEditorStore } from './editorStore';
 import {
   addClipFromAsset,
   addTrack,
+  clearClipboardForTests,
+  copyClips,
   deleteClips,
   deleteTrack,
+  duplicateBlockReason,
+  duplicateClips,
   knownAssetDurations,
   moveClips,
+  pasteAtPlayhead,
+  pasteBlockReason,
   planMoveClips,
   splitClipAt,
   splitKeyframes,
@@ -674,5 +682,134 @@ describe('deleteClips', () => {
     useEditorStore.getState().setSelection([c1.id]);
     deleteClips([c1.id]);
     expect(useEditorStore.getState().selection.size).toBe(0);
+  });
+});
+
+/**
+ * Ctrl+D / Ctrl+V kare-ızgara disiplini (BG-1 regresyonu).
+ *
+ * 30 fps'te ızgara toplama altında kapalı değildir: kare süresi mikrosaniye
+ * cinsinden 33_333/33_334 arasında salınır ve kalıntı ancak 3 karede bir
+ * kapanır. 140 kare (3'e bölünmeyen) bir klibin süresi 4_666_667 us'tur; kopya
+ * bu HAM süre ofsetiyle yerleştirilirse kendi SONU ızgaradan 1 us sapar
+ * (9_333_334, en yakın kare 9_333_333) — belge kaydedilir (PUT 200) ama export
+ * 422 ile reddeder. Kopyalar bu yüzden KARE yürüyüşüyle yerleşir ve
+ * refitToGrid'ten geçer: kare SAYISI korunur, süre ızgaradan türetilir, medya
+ * klibinde kaynak penceresi süreyi izler.
+ */
+describe('duplicate/paste — frame grid discipline (140 frames @ 30 fps)', () => {
+  const C1 = '01890000-0000-7000-8000-000000000201';
+  const C2 = '01890000-0000-7000-8000-000000000202';
+  const NEIGHBOUR = '01890000-0000-7000-8000-000000000203';
+  const F140 = frameToUs(140, FPS30); // 4_666_667 — 140 kare, 3'e bölünmez
+
+  function load140FrameClip(extra: MediaClip[] = []): void {
+    useDocStore
+      .getState()
+      .loadDoc(docWith([videoTrack(TRACK_1, [mediaClip(C1, ASSET_A, 0, 0, F140), ...extra])]));
+  }
+
+  beforeEach(() => clearClipboardForTests());
+
+  it('duplicate lands both edges of the copy on the grid (frame count preserved)', () => {
+    load140FrameClip();
+    const res = duplicateClips([C1]);
+    expect(res.ok, !res.ok ? res.reason : '').toBe(true);
+
+    const clips = currentDoc().tracks[0].clips;
+    expect(clips).toHaveLength(2);
+    const dup = clips[1] as MediaClip;
+    // Kopya seçimin hemen ardında: kare 140'ta başlar...
+    expect(dup.timelineStartUs).toBe(F140);
+    // ...ve SONU kare 280'in tam sınırında biter (ham ofset 9_333_334 verirdi).
+    expect(dup.timelineStartUs + dup.timelineDurationUs).toBe(frameToUs(280, FPS30));
+    // Kare SAYISI korunur; mikrosaniye süresi bu başlangıçta 1 us kısadır.
+    expect(frameSpanCount(dup.timelineStartUs, dup.timelineDurationUs, FPS30)).toBe(140);
+    expect(dup.timelineDurationUs).toBe(F140 - 1);
+    // Kaynak penceresi süreyi izler (kural 3 mikrosaniyesine kadar kesin).
+    expect(dup.sourceOutUs - dup.sourceInUs).toBe(dup.timelineDurationUs);
+    // Orijinal klibe dokunulmaz.
+    const original = clips[0] as MediaClip;
+    expect(original.timelineStartUs).toBe(0);
+    expect(original.timelineDurationUs).toBe(F140);
+    expect(original.sourceOutUs).toBe(F140);
+
+    expect(exportFrameGridIssues(currentDoc())).toEqual([]);
+    expectValid();
+
+    // Tek undo girdisi: geri alınca kopya kaybolur, belge yine iki kapıdan geçer.
+    useDocStore.getState().undo();
+    expect(currentDoc().tracks[0].clips).toHaveLength(1);
+    expect(exportFrameGridIssues(currentDoc())).toEqual([]);
+    expectValid();
+  });
+
+  it('paste at an off-grid playhead snaps the base and keeps every edge on the grid', () => {
+    load140FrameClip();
+    expect(copyClips([C1])).toBe(true);
+
+    // Menü grisi ile op reddi AYNI plandan gelir: yapıştırma serbest olmalı.
+    expect(pasteBlockReason(currentDoc(), frameToUs(152, FPS30))).toBeNull();
+
+    // Kullanıcı cetvelde kare arasına tıklamış olsun (152. karenin 33 us sağı).
+    const res = pasteAtPlayhead(frameToUs(152, FPS30) + 33);
+    expect(res.ok, !res.ok ? res.reason : '').toBe(true);
+
+    const clips = currentDoc().tracks[0].clips;
+    expect(clips).toHaveLength(2);
+    const pasted = clips[1] as MediaClip;
+    expect(pasted.timelineStartUs).toBe(frameToUs(152, FPS30)); // 5_066_667
+    // Ham ofset sonu 9_733_334'e taşırdı; kare yürüyüşü 292. kare sınırında bitirir.
+    expect(pasted.timelineStartUs + pasted.timelineDurationUs).toBe(frameToUs(292, FPS30));
+    expect(frameSpanCount(pasted.timelineStartUs, pasted.timelineDurationUs, FPS30)).toBe(140);
+    expect(pasted.sourceOutUs - pasted.sourceInUs).toBe(pasted.timelineDurationUs);
+
+    expect(exportFrameGridIssues(currentDoc())).toEqual([]);
+    expectValid();
+
+    useDocStore.getState().undo();
+    expect(currentDoc().tracks[0].clips).toHaveLength(1);
+    expectValid();
+  });
+
+  it('multi-clip paste keeps the batch offsets in FRAMES', () => {
+    // C2, C1'in bittiği karenin 1 kare sağında: kare 141, 10 kare uzunlukta.
+    const start2 = frameToUs(141, FPS30);
+    load140FrameClip([mediaClip(C2, ASSET_B, start2, 0, frameSpanUs(start2, 10, FPS30))]);
+    expect(copyClips([C1, C2])).toBe(true);
+
+    const res = pasteAtPlayhead(frameToUs(152, FPS30));
+    expect(res.ok, !res.ok ? res.reason : '').toBe(true);
+
+    const clips = currentDoc().tracks[0].clips;
+    expect(clips).toHaveLength(4);
+    const [pasted1, pasted2] = clips.slice(2) as MediaClip[];
+    // İlk kopya tam yapıştırma noktasında; ikincisi 141 KARE ofsetini korur
+    // (mikrosaniye ofseti değil — 30 fps'te ikisi aynı şey değildir).
+    expect(pasted1.timelineStartUs).toBe(frameToUs(152, FPS30));
+    expect(pasted2.timelineStartUs).toBe(frameToUs(152 + 141, FPS30));
+    expect(frameSpanCount(pasted1.timelineStartUs, pasted1.timelineDurationUs, FPS30)).toBe(140);
+    expect(frameSpanCount(pasted2.timelineStartUs, pasted2.timelineDurationUs, FPS30)).toBe(10);
+
+    expect(exportFrameGridIssues(currentDoc())).toEqual([]);
+    expectValid();
+  });
+
+  it('menu and op agree: the refit duplicate fits EXACTLY against a neighbour on frame 280', () => {
+    // Komşu tam kare 280'de başlar. Ham yerleşim kopyanın sonunu 9_333_334'e
+    // taşıyıp 1 us'lik sahte çakışmayla reddederdi; refit'li yerleşim tam oturur.
+    const nStart = frameToUs(280, FPS30);
+    load140FrameClip([mediaClip(NEIGHBOUR, ASSET_B, nStart, 0, frameSpanUs(nStart, 30, FPS30))]);
+
+    expect(duplicateBlockReason(currentDoc(), [C1])).toBeNull();
+    const res = duplicateClips([C1]);
+    expect(res.ok, !res.ok ? res.reason : '').toBe(true);
+
+    const clips = currentDoc().tracks[0].clips;
+    expect(clips).toHaveLength(3);
+    // Kopya [kare 140, kare 280) aralığını doldurur, komşuya değmez.
+    expect(clips[1].timelineStartUs + clips[1].timelineDurationUs).toBe(nStart);
+    expect(exportFrameGridIssues(currentDoc())).toEqual([]);
+    expectValid();
   });
 });

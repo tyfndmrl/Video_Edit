@@ -1007,7 +1007,11 @@ public sealed class ExportGateInventoryTests : IDisposable
         // 24 → 26: 'project-fps-out-of-range' ve 'timeline-too-long' (10. tur, F2 ve F1). İkisi
         // de SAF DOKÜMAN aritmetiğidir ve ikisinin de CompilerGates'te SyncGate satırı vardır.
         ("backend/src/VideoEdit.Media/Export/ExportCompiler.cs", 26, 33),
-        ("backend/src/VideoEdit.Media/Export/ClipAnimation.cs", 1, 7),
+        // 7 → 8 (13. tur, C1): keyframe timeUs üst sınırı — zod'un "outside [0,
+        // timelineDurationUs]" invaryantının C# eşi. Saf doküman aritmetiğidir, Validate'te
+        // (KeyframeCompiler.Parse → Track) yaşar; HTTP karşılığı ExportEndpointsTests'te,
+        // zod paritesi KeyframeBoundsParityTests'te (paylaşılan vektör dosyasıyla) ölçülür.
+        ("backend/src/VideoEdit.Media/Export/ClipAnimation.cs", 1, 8),
         ("backend/src/VideoEdit.Media/Export/ClipEffects.cs", 2, 7),
     ];
 

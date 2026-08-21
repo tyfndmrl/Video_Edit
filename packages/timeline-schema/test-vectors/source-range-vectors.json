@@ -1,0 +1,12 @@
+{
+  "description": "Source-range document-invariant contract (accept/reject parity, NOT the numeric formula). A media clip is valid only when sourceInUs >= 0, sourceOutUs > sourceInUs, and timelineDurationUs == roundHalfUp((sourceOutUs - sourceInUs) / speed.rate). Consumed by packages/timeline-schema/tests/invariants.test.ts (zod validateTimelineDoc) and backend/tests/VideoEdit.UnitTests/SourceRangeParityTests.cs (ExportCompiler.Validate). This closes one family of the document-invariant parity gap in docs/backlog.md (the class that produced C1): the half-up rounding of the duration formula is already vector-covered by time-vectors.json 'duration', but whether a whole document is ACCEPTED or REJECTED on this rule was measured in only one language. Every timelineDurationUs here is chosen to sit on the 30fps project frame grid so the C# referee (which checks the frame grid before the source range) does not short-circuit; the invalid cases keep a grid-valid duration and violate ONLY the source-range rule, isolating it. The half-up boundary itself cannot be shown grid-aligned (a .5 rounds to +1us, off-grid) and stays in time-vectors.json.",
+  "cases": [
+    { "name": "exact-rate1", "sourceInUs": 0, "sourceOutUs": 1000000, "rate": 1, "timelineDurationUs": 1000000, "valid": true },
+    { "name": "nonzero-source-in", "sourceInUs": 500000, "sourceOutUs": 1500000, "rate": 1, "timelineDurationUs": 1000000, "valid": true },
+    { "name": "speed-2x-halves-duration", "sourceInUs": 0, "sourceOutUs": 1000000, "rate": 2, "timelineDurationUs": 500000, "valid": true },
+    { "name": "speed-half-doubles-duration", "sourceInUs": 0, "sourceOutUs": 2000000, "rate": 0.5, "timelineDurationUs": 4000000, "valid": true },
+    { "name": "rate2-duration-not-halved", "sourceInUs": 0, "sourceOutUs": 1000000, "rate": 2, "timelineDurationUs": 1000000, "valid": false },
+    { "name": "duration-doubled-is-wrong", "sourceInUs": 0, "sourceOutUs": 1000000, "rate": 1, "timelineDurationUs": 2000000, "valid": false },
+    { "name": "source-out-equals-in", "sourceInUs": 1000000, "sourceOutUs": 1000000, "rate": 1, "timelineDurationUs": 1000000, "valid": false }
+  ]
+}

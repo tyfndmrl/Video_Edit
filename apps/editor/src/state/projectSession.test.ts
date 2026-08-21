@@ -24,6 +24,7 @@ vi.mock('../entities/apiClient', () => {
   return { apiFetch: apiFetchMock, ApiError };
 });
 
+import { useAssetStore } from './assetStore';
 import { createEmptyDoc, defaultProjectSettings, useDocStore } from './docStore';
 import { disposeAutosave, getAutosaveController, useAutosaveStore } from './autosave';
 import { closeProject, openProject, useProjectSession } from './projectSession';
@@ -113,6 +114,29 @@ describe('openProject success', () => {
     expect(useProjectSession.getState().status).toBe('ready');
     dirtyTheDoc(); // works again after ready
     expect(useDocStore.getState().history).toHaveLength(1);
+  });
+
+  /**
+   * assetStore satırları PROJE-BAŞI durumdur ama açılış yolu onu hiç
+   * sıfırlamıyordu: assetSync yalnız BİRLEŞTİRİR, silmez — A projesinden
+   * B'ye geçişte A'nın ready satırları B'de yaşamaya devam ediyordu. Yeni
+   * projenin /media-urls yanıtı o satırların URL'ünü asla getiremeyeceği
+   * için reaktif media-url yoklaması süresiz kurulup duruyordu (BG-2 yan
+   * gözleminin kökü).
+   */
+  it('clears the previous project\'s asset rows on open AND on close', async () => {
+    useAssetStore.getState().setAssets([
+      { id: '01890000-0000-7000-8000-00000000000a', kind: 'image', name: 'p.png', status: 'ready' },
+    ]);
+    apiFetchMock.mockResolvedValueOnce(detailFor(P2, 1));
+    await openProject(P2);
+    expect(useAssetStore.getState().assets.size, 'openProject eski satırları temizlemeli').toBe(0);
+
+    useAssetStore.getState().setAssets([
+      { id: '01890000-0000-7000-8000-00000000000b', kind: 'video', name: 'a.mp4', status: 'ready' },
+    ]);
+    closeProject();
+    expect(useAssetStore.getState().assets.size, 'closeProject de temizlemeli').toBe(0);
   });
 
   it('a superseded open is fully ignored (newer call owns the session)', async () => {

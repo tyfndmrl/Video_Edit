@@ -21,6 +21,9 @@ const REASONS: Record<string, string> = {
   'target track no longer exists': 'Hedef track artık yok',
   'no track at target position': 'Hedef konumda track yok',
   'before timeline start': 'Zaman çizelgesinin başından öncesine taşınamaz',
+  // Taşı/yapıştır/çoğalt kare disiplini: kopya, hedef konumda kare sayısını
+  // koruyamıyorsa (kaynak penceresi bir kareye bile yetmiyorsa) op reddedilir.
+  'clip cannot keep its frame span here': 'Klip bu konumda kare sayısını koruyamıyor',
   'clipboard empty': 'Pano boş',
   'nothing to delete': 'Silinecek klip yok',
   'nothing to duplicate': 'Çoğaltılacak klip yok',

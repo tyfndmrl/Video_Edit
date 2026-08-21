@@ -214,6 +214,77 @@ describe('keyframes', () => {
     expectIssue(doc, 'outside [0, 2000000]');
   });
 
+  it('matches the shared keyframe-bounds vectors (zod <-> C# parity)', () => {
+    // Aynı dosya backend'de KeyframeBoundsParityTests tarafından ExportCompiler.Validate'e
+    // karşı koşulur: sınır sözleşmesi ([0, timelineDurationUs], iki uç kapsayıcı) iki dilde
+    // tek kaynaktan ölçülür. Her vaka görsel (opacity) VE ses (volume) kanalında koşar.
+    interface BoundsVectors {
+      cases: { name: string; timelineDurationUs: number; timeUs: number; valid: boolean }[];
+    }
+    const vectors: BoundsVectors = JSON.parse(
+      readFileSync(
+        fileURLToPath(new URL('../test-vectors/keyframe-bounds-vectors.json', import.meta.url)),
+        'utf8',
+      ),
+    );
+    expect(vectors.cases.length).toBeGreaterThan(0);
+    expect(vectors.cases.some((c) => c.valid)).toBe(true); // dosya iki YÖNÜ de taşımalı
+    expect(vectors.cases.some((c) => !c.valid)).toBe(true);
+    for (const c of vectors.cases) {
+      for (const channel of ['opacity', 'volume'] as const) {
+        const kfs = [{ timeUs: c.timeUs, value: 1, easing: { type: 'linear' as const } }];
+        const doc = validDoc();
+        const solo = mediaClip({
+          timelineStartUs: 0,
+          timelineDurationUs: c.timelineDurationUs,
+          keyframes: channel === 'opacity' ? { opacity: kfs } : { volume: kfs },
+        });
+        doc.tracks[1].clips = [solo];
+        const result = validateTimelineDoc(doc);
+        expect(result.success, `${c.name} / ${channel}`).toBe(c.valid);
+      }
+    }
+  });
+
+  it('matches the shared source-range vectors (zod <-> C# parity)', () => {
+    // Aynı dosya backend'de SourceRangeParityTests tarafından ExportCompiler.Validate'e karşı
+    // koşulur: kaynak-aralığı belge-değişmezinin ([0 <= in < out], süre = roundHalfUp((out-in)/
+    // rate)) KABUL/RET davranışı iki dilde tek kaynaktan ölçülür. Formülün sayısal paritesi
+    // ayrıca time-vectors.json 'duration' ile ölçülür; bu dosya BELGE reddini ölçer (C1 sınıfı).
+    interface SourceRangeVectors {
+      cases: {
+        name: string;
+        sourceInUs: number;
+        sourceOutUs: number;
+        rate: number;
+        timelineDurationUs: number;
+        valid: boolean;
+      }[];
+    }
+    const vectors: SourceRangeVectors = JSON.parse(
+      readFileSync(
+        fileURLToPath(new URL('../test-vectors/source-range-vectors.json', import.meta.url)),
+        'utf8',
+      ),
+    );
+    expect(vectors.cases.length).toBeGreaterThan(0);
+    expect(vectors.cases.some((c) => c.valid)).toBe(true); // dosya iki YÖNÜ de taşımalı
+    expect(vectors.cases.some((c) => !c.valid)).toBe(true);
+    for (const c of vectors.cases) {
+      const doc = validDoc();
+      const solo = mediaClip({
+        timelineStartUs: 0,
+        timelineDurationUs: c.timelineDurationUs,
+        sourceInUs: c.sourceInUs,
+        sourceOutUs: c.sourceOutUs,
+        speed: { rate: c.rate },
+      });
+      doc.tracks[1].clips = [solo];
+      const result = validateTimelineDoc(doc);
+      expect(result.success, `${c.name}`).toBe(c.valid);
+    }
+  });
+
   it('rejects unsorted keyframes', () => {
     const doc = validDoc();
     const clip = doc.tracks[1].clips[0] as MediaClip;

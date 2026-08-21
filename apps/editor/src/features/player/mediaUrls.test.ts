@@ -139,6 +139,66 @@ describe('reaktif yenileme — throttle ERTELER, DÜŞÜRMEZ', () => {
   });
 });
 
+describe('görsel (image) asset — poster tek türetilmiş URL (BG-2 regresyonu)', () => {
+  /**
+   * Gerçek sunucu her çağrıda YENİ imzalı URL üretir (X-Amz-Date/imza değişir).
+   * Döngü canlıda tam da bu yüzden sonsuzdu: worker görsele proxy ÜRETMEZ
+   * (yalnız poster), eski kural yalnız proxyUrl'e baktığı için ready görsel
+   * kalıcı olarak "url'süz" sayılıyordu; her fetch store'a TAZE poster dizesi
+   * yazıp aboneliği yeniden tetikliyor ve 5 sn'de bir /media-urls çağrısı
+   * kuruluyordu. Sabit (aynı nesneyi döndüren) bir mock bu mekaniği GİZLER —
+   * o yüzden burada imza her çağrıda döner.
+   */
+  function freshImageResponse(seq: number) {
+    return {
+      expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+      assets: { img1: { poster: `https://cdn/poster.jpg?sig=${seq}` } },
+    };
+  }
+
+  it("ready+poster görsel 'url'süz' sayılmaz: tek fetch, yeniden yoklama kurulmaz", async () => {
+    let seq = 0;
+    apiFetchMock.mockImplementation(() => Promise.resolve(freshImageResponse(++seq)));
+    useAssetStore
+      .getState()
+      .setAssets([{ id: 'img1', kind: 'image', name: 'foto.png', status: 'ready' }]);
+
+    stop = startMediaUrlSync('p1');
+    await flushMicrotasks();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(useAssetStore.getState().getAsset('img1')!.posterUrl).toBe(
+      'https://cdn/poster.jpg?sig=1',
+    );
+
+    // ESKİ hata: ~5 sn aralıklarla süresiz yoklama (canlı ölçüm: 40 sn'de 8
+    // istek). 40 sn ilerlet: poster'lı görsel eksik URL DEĞİLDİR, sessiz kalır.
+    await vi.advanceTimersByTimeAsync(40_000);
+    await flushMicrotasks();
+    expect(apiFetchMock, "görselli projede yeniden yoklama zamanlayıcısı kurulmamalı").toHaveBeenCalledTimes(1);
+  });
+
+  it("proxy'si hâlâ eksik ready VİDEO yeniden yoklatır (kural görseli istisna yapar, videoyu değil)", async () => {
+    let seq = 0;
+    apiFetchMock.mockImplementation(() =>
+      Promise.resolve({
+        expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+        // Video için poster gelmiş ama proxy HENÜZ yok — gerçek eksik-URL hali.
+        assets: { a1: { poster: `https://cdn/poster.jpg?sig=${++seq}` } },
+      }),
+    );
+
+    stop = startMediaUrlSync('p1');
+    await flushMicrotasks();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+
+    // Poster yazımı store'u değiştirir -> proxy'siz ready video ertelenmiş
+    // reaktif yenilemeyi kurar ve pencere açılınca istek GİDER.
+    await vi.advanceTimersByTimeAsync(6_000);
+    await flushMicrotasks();
+    expect(apiFetchMock.mock.calls.length, 'video için reaktif yenileme kaybolmamalı').toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe('forceRefreshMediaUrls (contract B: player media-error path)', () => {
   it('refetches immediately but is throttled against error storms', async () => {
     apiFetchMock.mockResolvedValue(response());

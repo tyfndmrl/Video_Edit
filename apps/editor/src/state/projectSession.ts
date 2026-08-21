@@ -9,6 +9,7 @@
 import { create } from 'zustand';
 import { validateTimelineDoc, type TimelineDoc } from '@videoedit/timeline-schema';
 import { apiFetch } from '../entities/apiClient';
+import { useAssetStore } from './assetStore';
 import { createEmptyDoc, defaultProjectSettings, useDocStore } from './docStore';
 import {
   disposeAutosave,
@@ -83,6 +84,13 @@ export async function openProject(projectId: string): Promise<void> {
   const seq = ++openSeq;
   useProjectSession.setState({ status: 'loading', projectId, projectName: null, error: null });
   useDocStore.getState().setLocked(true);
+  // The asset store is PER-PROJECT state but nothing on the open path reset it:
+  // rows of the previously open project survived the switch (assetSync only
+  // merges, never removes). A stale ready row whose preview url the NEW
+  // project's /media-urls can never return then keeps the reactive refetch
+  // firing forever. Clear here (and in closeProject) — the library poll and
+  // media-urls sync repopulate for the project being opened.
+  useAssetStore.getState().setAssets([]);
   const historyLenAtStart = useDocStore.getState().history.length;
   try {
     const detail = await apiFetch<ProjectDetailDto>(`/api/projects/${projectId}`);
@@ -127,6 +135,8 @@ export function closeProject(): void {
   openSeq++;
   disposeAutosave();
   useDocStore.getState().setLocked(false);
+  // See openProject: asset rows are per-project state.
+  useAssetStore.getState().setAssets([]);
   useProjectSession.setState({ status: 'idle', projectId: null, projectName: null, error: null });
 }
 

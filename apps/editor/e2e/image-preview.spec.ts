@@ -526,3 +526,53 @@ test.describe('Görsel/çıkartma önizlemesi — gerçek fare, gerçek medya, g
     ).toEqual([]);
   });
 });
+
+test.describe('Görselli proje media-urls yoklaması (BG-2)', () => {
+  /**
+   * Worker görsele proxy ÜRETMEZ (yalnız poster). "Hazır asset'in URL'ü eksik
+   * mi" kuralı yalnız proxyUrl'e bakınca ready görsel KALICI olarak "url'süz"
+   * sayılıyordu ve sekme /media-urls ucunu ~5 sn'de bir süresiz yokluyordu
+   * (canlı ölçüm: 40 sn'de 8 istek, tam 5,0 sn aralık). Buradaki kanıt ağ
+   * katmanından: poster indikten sonraki 13 sn'lik pencerede uç en fazla bir
+   * kez (yarıda kalmış ertelenmiş yenileme payı) çağrılabilir — eski kodda bu
+   * pencereye 2-3 istek düşerdi.
+   */
+  test('hazır görselden sonra /media-urls yoklaması SUSAR', async ({ page, account }) => {
+    test.skip(ffmpegVersion() === null, FFMPEG_SKIP_REASON);
+    test.setTimeout(240_000);
+
+    const foto = ensureTestImage('foto');
+    const project = await createEmptyProject(
+      account.context.request,
+      account.accessToken,
+      'E2E media-urls yoklama',
+    );
+
+    const mediaUrlHits: number[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes('/media-urls')) mediaUrlHits.push(Date.now());
+    });
+
+    const app = new EditorApp(page);
+    await app.open(project.projectId, { email: account.email, password: account.password });
+    const library = new LibraryPanelHarness(page);
+
+    // GERÇEK yükleme -> worker gerçekten işler -> satır READY olur.
+    await library.pickFiles([foto.path]);
+    await library.waitForReady(foto.fileName);
+
+    // READY geçişinin tetiklediği (meşru) ertelenmiş yenilemenin oturması için
+    // throttle penceresinden uzun bekle; SONRA pencereyi ölçmeye başla.
+    await page.waitForTimeout(6_500);
+    const before = mediaUrlHits.length;
+    expect(before, 'Açılış + ready sonrası en az bir media-urls çağrısı beklenir').toBeGreaterThan(0);
+
+    await page.waitForTimeout(13_000);
+    const during = mediaUrlHits.length - before;
+    expect(
+      during,
+      `posterli görsel "url'süz" sayılmaya devam ediyor: 13 sn'lik pencerede ${during} ` +
+        '/media-urls isteği (eski hatada ~5 sn aralıkla 2-3 istek düşerdi)',
+    ).toBeLessThanOrEqual(1);
+  });
+});

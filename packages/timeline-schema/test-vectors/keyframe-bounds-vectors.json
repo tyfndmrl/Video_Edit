@@ -1,0 +1,11 @@
+{
+  "description": "Keyframe timeUs bounds contract: every keyframe must lie within [0, clip.timelineDurationUs], BOTH ends inclusive. Consumed by packages/timeline-schema/tests/invariants.test.ts (zod validateTimelineDoc) and backend/tests/VideoEdit.UnitTests/KeyframeBoundsParityTests.cs (ExportCompiler.Validate); both runners exercise every case on a visual channel (opacity) AND the audio channel (volume). The 9600000-in-a-5000000-clip case is the audited live reproduction that used to pass the C# gate and freeze the rendered ramp at its last sampled value (round 13, C1).",
+  "cases": [
+    { "name": "audited-overflow", "timelineDurationUs": 5000000, "timeUs": 9600000, "valid": false },
+    { "name": "upper-bound-inclusive", "timelineDurationUs": 5000000, "timeUs": 5000000, "valid": true },
+    { "name": "one-us-past-the-end", "timelineDurationUs": 5000000, "timeUs": 5000001, "valid": false },
+    { "name": "lower-bound-inclusive", "timelineDurationUs": 5000000, "timeUs": 0, "valid": true },
+    { "name": "mid-clip", "timelineDurationUs": 5000000, "timeUs": 2500000, "valid": true },
+    { "name": "negative-time", "timelineDurationUs": 5000000, "timeUs": -1, "valid": false }
+  ]
+}

@@ -26,6 +26,7 @@
 import { useEffect } from 'react';
 import { apiFetch } from '../../entities/apiClient';
 import { useAssetStore, type AssetSummary } from '../../state/assetStore';
+import { previewDerivative } from './previewSource';
 
 interface AssetMediaUrls {
   original?: string | null;
@@ -132,13 +133,27 @@ export function startMediaUrlSync(projectId: string): () => void {
     }
   };
 
-  /** Is there a READY asset whose url neither the store nor `cached` knows? */
+  /**
+   * Is there a READY asset whose url neither the store nor `cached` knows?
+   *
+   * "Its url" is KIND-dependent and the rule is previewSource's
+   * (`previewDerivative`), not a copy of it: a still image's preview source is
+   * the POSTER — the worker never writes a proxy for an image (ProcessAssetJob:
+   * "Image için proxy ÜRETİLMEZ"). Asking for `proxy` here counted every ready
+   * image as permanently url-less, and since each /media-urls response carries
+   * FRESH presigned strings (new signature per call), every fetch re-armed the
+   * store subscription below — a project with one photo re-polled the endpoint
+   * every 5 s for as long as the tab lived.
+   */
   const hasUrllessReadyAsset = (
     assets: ReadonlyMap<string, AssetSummary> = useAssetStore.getState().assets,
   ): boolean =>
-    [...assets.values()].some(
-      (a) => a.status === 'ready' && !a.proxyUrl && !(cached && cached.assets[a.id]?.proxy),
-    );
+    [...assets.values()].some((a) => {
+      if (a.status !== 'ready') return false;
+      const field = previewDerivative(a.kind);
+      const storeUrl = field === 'poster' ? a.posterUrl : a.proxyUrl;
+      return !storeUrl && !(cached && cached.assets[a.id]?.[field]);
+    });
 
   /**
    * Deferred reactive refetch timer. Kept SEPARATE from `timer` (the presigned
@@ -187,8 +202,9 @@ export function startMediaUrlSync(projectId: string): () => void {
     attempt();
   };
 
-  // React to store changes: a newly READY asset without a proxy url either
-  // gets the cached url applied, or triggers a throttled refetch.
+  // React to store changes: a newly READY asset without its preview url
+  // (kind rule above) either gets the cached url applied, or triggers a
+  // throttled refetch.
   const unsubscribe = useAssetStore.subscribe((state, prev) => {
     if (stopped || state.assets === prev.assets) return;
     applyCached();

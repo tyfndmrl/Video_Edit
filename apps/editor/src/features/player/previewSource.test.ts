@@ -8,7 +8,7 @@
  * drawn nowhere. Nothing in any store recorded the failure — hence this test.
  */
 import { describe, expect, it } from 'vitest';
-import { previewSourceUrl, type PreviewSourceAsset } from './previewSource';
+import { previewDerivative, previewSourceUrl, type PreviewSourceAsset } from './previewSource';
 
 const PROXY = 'https://r2.example/proxy.mp4';
 const POSTER = 'https://r2.example/poster.jpg';
@@ -40,5 +40,20 @@ describe('previewSourceUrl', () => {
 
   it('returns null for a ready image whose poster url has not arrived yet', () => {
     expect(previewSourceUrl(asset({ kind: 'image', posterUrl: undefined }))).toBeNull();
+  });
+});
+
+describe('previewDerivative (the kind rule as data — shared with mediaUrls)', () => {
+  it('maps image to poster, video/audio to proxy', () => {
+    expect(previewDerivative('image')).toBe('poster');
+    expect(previewDerivative('video')).toBe('proxy');
+    expect(previewDerivative('audio')).toBe('proxy');
+  });
+
+  it('agrees with previewSourceUrl for every kind (one rule, not two copies)', () => {
+    for (const kind of ['image', 'video', 'audio'] as const) {
+      const url = previewSourceUrl(asset({ kind }));
+      expect(url).toBe(previewDerivative(kind) === 'poster' ? POSTER : PROXY);
+    }
   });
 });

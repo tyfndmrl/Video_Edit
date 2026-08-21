@@ -612,6 +612,72 @@ public sealed class ExportEndpointsTests : IDisposable
         return ExportTestDocs.Doc(clips: [.. clips]);
     }
 
+    // ---------- Keyframe zamanının klip süresi ÜST SINIRI (13. tur, C1) ----------
+
+    [Fact]
+    public async Task StartExport_KeyframeBeyondTheClipDuration_Returns422_BeforeQueueing()
+    {
+        // ÖLÇÜLEN KUSUR: zod belge kapısı bu dokümanı "keyframe timeUs 9600000 is outside
+        // [0, 5000000]" ile reddederken C# hiçbir katmanda üst sınıra bakmıyordu — ham API'yle
+        // PUT 200 + POST 202 + iş succeeded, ama çıktı SESSİZCE YANLIŞTI: opacity rampası klip
+        // süresinin ötesinde tanımlı olduğundan ffmpeg animasyonu son örneklenen değerde (~0.52
+        // alpha) donduruyordu. Kapı artık senkron ve zod'la aynı cümleyi kurar. Sayılar ölçülen
+        // vakanın kendisidir: 5 sn'lik klip, 9.6 sn'de keyframe.
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 5_000_000);
+        clip.Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks
+        {
+            Opacity = [ExportTestDocs.Kf(0, 0), ExportTestDocs.Kf(2_500_000, 0.5),
+                       ExportTestDocs.Kf(9_600_000, 1)],
+        };
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        var problem = Assert.IsType<ProblemHttpResult>(await CallStartAsync(project.Id));
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Contains("outside [0, 5000000]", problem.ProblemDetails.Detail);
+        Assert.Contains("9600000", problem.ProblemDetails.Detail);
+        Assert.Empty(_db.Jobs.ToList());    // job satırı yazılmadı
+        Assert.Equal(0, _jobs.CreateCount); // kuyruğa çöp atılmadı
+    }
+
+    [Fact]
+    public async Task StartExport_KeyframeExactlyAtTheClipDuration_IsAccepted()
+    {
+        // SINIRIN ÖBÜR YANI (zod paritesi): üst sınır KAPSAYICIDIR — timeUs == süre, editörün
+        // rampaları bitirdiği olağan yerdir; zod da kabul eder, kapı da REDDETMEMELİ.
+        var clip = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 5_000_000);
+        clip.Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks
+        {
+            Opacity = [ExportTestDocs.Kf(0, 0), ExportTestDocs.Kf(5_000_000, 1)],
+        };
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        Assert.IsType<Accepted<ExportJobCreatedResponse>>(await CallStartAsync(project.Id));
+    }
+
+    [Fact]
+    public async Task StartExport_VolumeKeyframeBeyondTheClipDuration_Returns422_BeforeQueueing()
+    {
+        // Kapı TEK NOKTADAN kurulur (KeyframeCompiler.Track): ses seviyesi kanalı görsel
+        // kanallarla AYNI yoldan geçer. Bu test o tekliği HTTP düzeyinde ölçer — volume
+        // keyframe'i de süre ötesinde 422 alır, kuyruğa girmez.
+        var clip = ExportTestDocs.VideoClip(
+            ExportTestDocs.AssetA, 0, 0, 5_000_000, ExportTestDocs.Audio());
+        clip.Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks
+        {
+            Volume = [ExportTestDocs.Kf(0, 1), ExportTestDocs.Kf(9_600_000, 0)],
+        };
+        var project = await SeedProjectAsync(timelineJson: ExportTestDocs.ToJson(
+            ExportTestDocs.Doc(clips: clip)));
+
+        var problem = Assert.IsType<ProblemHttpResult>(await CallStartAsync(project.Id));
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, problem.StatusCode);
+        Assert.Contains("outside [0, 5000000]", problem.ProblemDetails.Detail);
+        Assert.Empty(_db.Jobs.ToList());
+        Assert.Equal(0, _jobs.CreateCount);
+    }
+
     [Fact]
     public async Task StartExport_UnknownFontId_Returns422_BeforeQueueing()
     {

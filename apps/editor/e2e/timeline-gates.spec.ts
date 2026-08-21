@@ -192,6 +192,88 @@ test.describe('Orta tuş pan\'i içeriği ekrandan atamaz (bulgu 5)', () => {
   });
 });
 
+test.describe('Ctrl+D / Ctrl+V kare-ızgara disiplini (BG-1)', () => {
+  /**
+   * 30 fps'te ızgara toplama altında kapalı değildir: kare süresi 33_333/33_334
+   * salınır ve kalıntı ancak 3 karede bir kapanır. 140 kare (3'e bölünmez) bir
+   * klibin HAM mikrosaniye ofsetiyle yerleştirilen kopyasının SONU ızgaradan
+   * 1 us sapar; belge kaydedilir ama export 422 ile reddeder. Bu test o klibi
+   * GERÇEK girdiyle üretir (scrub + ok tuşları + 'c' böl + Delete) ve kopyaların
+   * iki ucunun da kare sınırında bittiğini GERÇEK Ctrl+D / Ctrl+C+V ile kanıtlar.
+   */
+  test("3'e bölünmeyen kare sayılı kopya iki ucuyla ızgarada kalır", async ({ editor, seed }) => {
+    await editor.ensureContentVisible(seed.clipAId);
+    const FPS = 30;
+    const usOf = (frame: number) => Math.round((frame * 1_000_000) / FPS);
+    const frameOf = (us: number) => Math.round((us * FPS) / 1_000_000);
+
+    /** Playhead'i TAM kareye götür: kaba gerçek-fare scrub + gerçek ok tuşları. */
+    async function walkPlayheadToFrame(frame: number): Promise<void> {
+      await editor.timeline.scrubTo(usOf(frame));
+      for (let guard = 0; guard < 12; guard++) {
+        const f = frameOf((await editor.state()).playheadUs);
+        if (f === frame) break;
+        await editor.page.keyboard.press(f < frame ? 'ArrowRight' : 'ArrowLeft');
+        await editor.page.waitForTimeout(50);
+      }
+      expect((await editor.state()).playheadUs, `playhead kare ${frame} olmalı`).toBe(usOf(frame));
+    }
+
+    async function clipStartingAt(startUs: number) {
+      const state = await editor.state();
+      const clip = state.tracks.flatMap((t) => t.clips).find((c) => c.timelineStartUs === startUs);
+      expect(clip, `${startUs} us'ta başlayan klip bekleniyordu`).toBeTruthy();
+      return clip!;
+    }
+
+    // 1) clipA'yı (60 sn = kare 1800, 180 kare) kare 1940'ta GERÇEK 'c' ile böl:
+    //    sol parça TAM 140 kare kalır — 3'e bölünmeyen kare sayısı.
+    await walkPlayheadToFrame(1940);
+    await editor.page.keyboard.press('c');
+    await editor.page.waitForTimeout(150);
+    expect((await editor.state()).clipCount).toBe(3);
+
+    // 2) Sağ parçayı GERÇEK tık + Delete ile kaldır (kopyaya yer açılır).
+    const rightPiece = await clipStartingAt(usOf(1940));
+    await editor.timeline.click(await editor.timeline.clipCenter(rightPiece.id));
+    await editor.page.keyboard.press('Delete');
+    await editor.page.waitForTimeout(150);
+    expect((await editor.state()).clipCount).toBe(2);
+
+    // 3) Sol parçayı seç, GERÇEK Ctrl+D.
+    const leftPiece = await clipStartingAt(SEED_TIMES.clipAStartUs);
+    expect(frameOf(leftPiece.timelineDurationUs), 'fikstür 140 kare olmalı').toBe(140);
+    await editor.timeline.click(await editor.timeline.clipCenter(leftPiece.id));
+    await editor.page.keyboard.press('Control+d');
+    await editor.page.waitForTimeout(200);
+
+    expect((await editor.state()).clipCount, 'Ctrl+D kopyayı eklemeli').toBe(3);
+    const dup = await clipStartingAt(usOf(1940)); // kopya seçimin hemen ardında
+    // SONU tam kare 2080 sınırında: 69_333_333. Ham ofset 69_333_334 verirdi
+    // (o belgeyi DEV kapısı fırlatır, üretimde export 422 ile reddederdi).
+    expect(dup.timelineStartUs + dup.timelineDurationUs, 'kopyanın sonu kare sınırında değil').toBe(
+      usOf(2080),
+    );
+    expect(frameOf(dup.timelineDurationUs), 'kare SAYISI korunmalı').toBe(140);
+
+    // 4) Aynı klibi GERÇEK Ctrl+C ile kopyala, playhead'i kare 2138'e (kalıntı
+    //    taşıyan bir başlangıç) götür, GERÇEK Ctrl+V ile yapıştır.
+    await editor.timeline.click(await editor.timeline.clipCenter(leftPiece.id));
+    await editor.page.keyboard.press('Control+c');
+    await walkPlayheadToFrame(2138);
+    await editor.page.keyboard.press('Control+v');
+    await editor.page.waitForTimeout(200);
+
+    expect((await editor.state()).clipCount, 'Ctrl+V yapıştırmayı eklemeli').toBe(4);
+    const pasted = await clipStartingAt(usOf(2138)); // 71_266_667
+    expect(
+      pasted.timelineStartUs + pasted.timelineDurationUs,
+      'yapıştırılanın sonu kare sınırında değil (ham ofset 75_933_334 verirdi)',
+    ).toBe(usOf(2278)); // 75_933_333
+    expect(frameOf(pasted.timelineDurationUs)).toBe(140);
+  });
+});
+
 test.describe('409 çakışma diyaloğu açıkken geçmişte gezinme (bulgu 1)', () => {
   test('Ctrl+Z dokümanı değiştirmez; Geri al ve geçmiş satırları devre dışı', async ({
     editor,

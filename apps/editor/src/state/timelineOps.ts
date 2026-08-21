@@ -2350,10 +2350,10 @@ export function setTransitionDuration(
 // ---------------------------------------------------------------------------
 
 interface ClipboardEntry {
+  /** The copied clip, with its ORIGINAL timelineStartUs — paste re-derives the
+   *  batch's internal offsets from these starts IN FRAMES (see planPasteAt). */
   clip: Clip;
   trackId: Uuid;
-  /** Offset from the earliest copied clip start. */
-  offsetUs: MicroSec;
 }
 
 let clipboard: ClipboardEntry[] | null = null;
@@ -2391,15 +2391,12 @@ export function cutBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string
 export function copyClips(clipIds: readonly Uuid[]): boolean {
   const d = doc();
   const entries: ClipboardEntry[] = [];
-  let minStart = Number.MAX_SAFE_INTEGER;
   for (const id of clipIds) {
     const loc = locateClip(d, id);
     if (!loc) continue;
-    minStart = Math.min(minStart, loc.clip.timelineStartUs);
-    entries.push({ clip: cloneClip(loc.clip), trackId: loc.track.id, offsetUs: 0 });
+    entries.push({ clip: cloneClip(loc.clip), trackId: loc.track.id });
   }
   if (entries.length === 0) return false;
-  for (const e of entries) e.offsetUs = e.clip.timelineStartUs - minStart;
   clipboard = entries;
   return true;
 }
@@ -2480,16 +2477,113 @@ function insertBatch(
   return OK;
 }
 
-/** Where the clipboard would land if pasted at `timeUs` (pure). */
-function pastePlacements(d: TimelineDoc, timeUs: MicroSec): ClipPlacement[] | null {
-  if (!clipboard || clipboard.length === 0) return null;
-  const base = snapUsToFrameGrid(timeUs, d.settings.fps);
-  return clipboard.map((e) => ({
-    trackId: e.trackId,
-    kind: e.clip.kind,
-    startUs: base + e.offsetUs,
-    durationUs: e.clip.timelineDurationUs,
+/**
+ * One landing spot a paste/duplicate wants to fill: the SOURCE clip (not yet
+ * cloned), the destination track, and the grid re-fit at the new start. The
+ * refit fields mirror MovePlan's — the length follows the grid and the source
+ * window follows the length (see refitToGrid); both are usually identity.
+ */
+interface RelocatedClip {
+  clip: Clip;
+  trackId: Uuid;
+  startUs: MicroSec;
+  durationUs: MicroSec;
+  newSourceInUs?: MicroSec;
+  newSourceOutUs?: MicroSec;
+}
+
+type BatchPlanResult = { ok: true; items: RelocatedClip[] } | { ok: false; reason: string };
+
+/**
+ * Re-position a batch of source clips by a uniform whole-FRAME delta — the
+ * moveClips discipline (planMoveClips/rippleFollowers), reused for paste and
+ * duplicate.
+ *
+ * Placing copies at "start + raw microsecond offset" is what this replaces:
+ * outside integer-fps-friendly lengths the grid is not closed under addition,
+ * so a duplicate of a 140-frame clip at 30 fps put at `end = start + duration`
+ * landed its OWN end 1 us off the grid — the document saved fine (PUT 200) and
+ * the export refused it (HTTP 422), i.e. an ordinary Ctrl+D/Ctrl+V produced an
+ * unexportable project. Walking in FRAMES (usToFrame difference -> frameToUs,
+ * via shiftedStartUs) keeps every copy's start on the grid, and refitToGrid
+ * preserves the frame COUNT while deriving the microsecond length from the
+ * grid at the new start. An off-grid legacy clip keeps the raw microsecond
+ * delta instead — exactly the move op's rule for it.
+ */
+function planRelocatedBatch(
+  sources: readonly { clip: Clip; trackId: Uuid }[],
+  frameDelta: number,
+  deltaUs: MicroSec,
+  fps: Rational,
+  assetDurations: ReadonlyMap<string, MicroSec>,
+): BatchPlanResult {
+  const items: RelocatedClip[] = [];
+  for (const s of sources) {
+    const startUs = shiftedStartUs(s.clip, frameDelta, deltaUs, fps);
+    const refit = refitToGrid(s.clip, startUs, fps, assetDurations);
+    if (refit === null) return { ok: false, reason: 'clip cannot keep its frame span here' };
+    items.push({
+      clip: s.clip,
+      trackId: s.trackId,
+      startUs,
+      durationUs: refit.durationUs,
+      newSourceInUs: refit.sourceInUs,
+      newSourceOutUs: refit.sourceOutUs,
+    });
+  }
+  return { ok: true, items };
+}
+
+/** The placement rows (track/overlap rules) a planned batch asks for. */
+function relocatedPlacements(items: readonly RelocatedClip[]): ClipPlacement[] {
+  return items.map((p) => ({
+    trackId: p.trackId,
+    kind: p.clip.kind,
+    startUs: p.startUs,
+    durationUs: p.durationUs,
   }));
+}
+
+/**
+ * Clone a planned source into an insert-ready clip: fresh id, refit applied,
+ * fades re-clamped. The re-fit's +-1 us length wobble can also push a keyframe
+ * sitting EXACTLY on the old end past the new one (invariant rule 4), so a
+ * SHRINK re-runs the right-trim keyframe rule (shift 0, out-of-range dropped).
+ */
+function materializeRelocatedClip(p: RelocatedClip): Clip {
+  const clip = cloneClip(p.clip);
+  clip.id = uuidv7();
+  clip.timelineStartUs = p.startUs;
+  clip.timelineDurationUs = p.durationUs;
+  if (p.newSourceInUs !== undefined && isMediaClip(clip)) {
+    clip.sourceInUs = p.newSourceInUs;
+    clip.sourceOutUs = p.newSourceOutUs!;
+  }
+  if (p.durationUs < p.clip.timelineDurationUs) remapKeyframes(clip, 0, p.durationUs);
+  clampAudioFadesToDuration(clip);
+  return clip;
+}
+
+/**
+ * Where the clipboard would land if pasted at `timeUs`, grid re-fit included
+ * (pure). The batch keeps its internal offsets IN FRAMES from the earliest
+ * copied clip; that clip lands exactly on the (snapped) paste point. SINGLE
+ * plan for Ctrl+V: pasteBlockReason greys the menu with it and pasteAtPlayhead
+ * commits it, so the menu and the op can never disagree.
+ */
+function planPasteAt(d: TimelineDoc, timeUs: MicroSec): BatchPlanResult {
+  if (!clipboard || clipboard.length === 0) return { ok: false, reason: 'clipboard empty' };
+  const fps = d.settings.fps;
+  const baseUs = snapUsToFrameGrid(timeUs, fps);
+  let minStartUs = Number.MAX_SAFE_INTEGER;
+  for (const e of clipboard) minStartUs = Math.min(minStartUs, e.clip.timelineStartUs);
+  return planRelocatedBatch(
+    clipboard.map((e) => ({ clip: e.clip, trackId: e.trackId })),
+    usToFrame(baseUs, fps) - usToFrame(minStartUs, fps),
+    baseUs - minStartUs,
+    fps,
+    knownAssetDurations(),
+  );
 }
 
 /**
@@ -2501,46 +2595,46 @@ function pastePlacements(d: TimelineDoc, timeUs: MicroSec): ClipPlacement[] | nu
  * outside the document.
  */
 export function pasteBlockReason(d: TimelineDoc, timeUs: MicroSec): string | null {
-  const placements = pastePlacements(d, timeUs);
-  if (placements === null) return 'clipboard empty';
-  return placementBlockReason(d, placements);
+  const plan = planPasteAt(d, timeUs);
+  if (!plan.ok) return plan.reason;
+  return placementBlockReason(d, relocatedPlacements(plan.items));
 }
 
-/** Ctrl+V: paste the clipboard at the playhead (original tracks, offsets kept). */
+/** Ctrl+V: paste the clipboard at the playhead (original tracks, frame offsets kept). */
 export function pasteAtPlayhead(timeUs?: MicroSec): OpResult {
-  if (!clipboard || clipboard.length === 0) return fail('clipboard empty');
   const d = doc();
   const at = timeUs ?? useEditorStore.getState().playheadUs;
-  const base = snapUsToFrameGrid(at, d.settings.fps);
-  const batch = clipboard.map((e) => {
-    const clip = cloneClip(e.clip);
-    clip.id = uuidv7();
-    clip.timelineStartUs = base + e.offsetUs;
-    return { clip, trackId: e.trackId };
-  });
+  const plan = planPasteAt(d, at);
+  if (!plan.ok) return fail(plan.reason);
+  const batch = plan.items.map((p) => ({ clip: materializeRelocatedClip(p), trackId: p.trackId }));
   return insertBatch('paste', `${batch.length} klip yapıştırıldı`, batch);
 }
 
-/** Where duplicates of `clipIds` would land (pure) — null when there is nothing to duplicate. */
-function duplicatePlacements(d: TimelineDoc, clipIds: readonly Uuid[]): ClipPlacement[] | null {
-  let minStart = Number.MAX_SAFE_INTEGER;
-  let maxEnd = 0;
+/**
+ * Where duplicates of `clipIds` would land — right after the selection's whole
+ * span, same tracks, the span measured IN FRAMES (pure). Shared by
+ * duplicateBlockReason and duplicateClips for the same reason as planPasteAt.
+ */
+function planDuplicate(d: TimelineDoc, clipIds: readonly Uuid[]): BatchPlanResult {
+  let minStartUs = Number.MAX_SAFE_INTEGER;
+  let maxEndUs = 0;
   const sources: { clip: Clip; trackId: Uuid }[] = [];
   for (const id of clipIds) {
     const loc = locateClip(d, id);
     if (!loc) continue;
-    minStart = Math.min(minStart, loc.clip.timelineStartUs);
-    maxEnd = Math.max(maxEnd, clipEndUs(loc.clip));
+    minStartUs = Math.min(minStartUs, loc.clip.timelineStartUs);
+    maxEndUs = Math.max(maxEndUs, clipEndUs(loc.clip));
     sources.push({ clip: loc.clip, trackId: loc.track.id });
   }
-  if (sources.length === 0) return null;
-  const span = maxEnd - minStart;
-  return sources.map((s) => ({
-    trackId: s.trackId,
-    kind: s.clip.kind,
-    startUs: s.clip.timelineStartUs + span,
-    durationUs: s.clip.timelineDurationUs,
-  }));
+  if (sources.length === 0) return { ok: false, reason: 'nothing to duplicate' };
+  const fps = d.settings.fps;
+  return planRelocatedBatch(
+    sources,
+    usToFrame(maxEndUs, fps) - usToFrame(minStartUs, fps),
+    maxEndUs - minStartUs,
+    fps,
+    knownAssetDurations(),
+  );
 }
 
 /**
@@ -2551,32 +2645,17 @@ function duplicatePlacements(d: TimelineDoc, clipIds: readonly Uuid[]): ClipPlac
  * menu greys "Çoğalt" out instead of showing a warning bubble on click.
  */
 export function duplicateBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string | null {
-  const placements = duplicatePlacements(d, clipIds);
-  if (placements === null) return 'nothing to duplicate';
-  return placementBlockReason(d, placements);
+  const plan = planDuplicate(d, clipIds);
+  if (!plan.ok) return plan.reason;
+  return placementBlockReason(d, relocatedPlacements(plan.items));
 }
 
 /** Ctrl+D: duplicate the selection right after its own span, same tracks. */
 export function duplicateClips(clipIds: readonly Uuid[]): OpResult {
   const d = doc();
-  let minStart = Number.MAX_SAFE_INTEGER;
-  let maxEnd = 0;
-  const sources: { clip: Clip; trackId: Uuid }[] = [];
-  for (const id of clipIds) {
-    const loc = locateClip(d, id);
-    if (!loc) continue;
-    minStart = Math.min(minStart, loc.clip.timelineStartUs);
-    maxEnd = Math.max(maxEnd, clipEndUs(loc.clip));
-    sources.push({ clip: loc.clip, trackId: loc.track.id });
-  }
-  if (sources.length === 0) return fail('nothing to duplicate');
-  const span = maxEnd - minStart;
-  const batch = sources.map((s) => {
-    const clip = cloneClip(s.clip);
-    clip.id = uuidv7();
-    clip.timelineStartUs = s.clip.timelineStartUs + span;
-    return { clip, trackId: s.trackId };
-  });
+  const plan = planDuplicate(d, clipIds);
+  if (!plan.ok) return fail(plan.reason);
+  const batch = plan.items.map((p) => ({ clip: materializeRelocatedClip(p), trackId: p.trackId }));
   return insertBatch('duplicate', `${batch.length} klip çoğaltıldı`, batch);
 }
 

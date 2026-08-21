@@ -387,7 +387,73 @@ public sealed class AssetEndpointsTests : IDisposable
         await Assert.ThrowsAsync<AmazonS3Exception>(() => CallCompleteAsync(asset));
     }
 
+    // ---------- M2 (savunma derinliği): media-urls / list sahiplik filtresi ----------
+    // Değişmez "ProjectAssets asla cross-user satır içermez" tek noktadan (InitUpload)
+    // korunur; bu testler o değişmez delinse bile sorgunun cross-user satırı ELEDİĞİNİ
+    // sabitler. Filtre kaldırılırsa (a.OwnerId == userId düşerse) ikisi de KIRMIZI döner.
+
+    [Fact]
+    public async Task MediaUrls_OmitsCrossUserAssetEvenWhenLinkedToOwnProject()
+    {
+        var project = await SeedProjectAsync();
+        var mine = await SeedReadyAssetAsync(_userId);
+        var foreign = await SeedReadyAssetAsync(Guid.CreateVersion7()); // başka kullanıcı
+        await LinkAssetAsync(project.Id, mine.Id);
+        await LinkAssetAsync(project.Id, foreign.Id); // değişmezi kasten del
+
+        var result = await AssetEndpoints.MediaUrls(
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, CancellationToken.None);
+
+        var ok = Assert.IsType<Ok<MediaUrlsResponse>>(result);
+        var keys = ok.Value!.Assets.Keys;
+        Assert.Contains(mine.Id.ToString("D"), keys);
+        Assert.DoesNotContain(foreign.Id.ToString("D"), keys); // sızıntı yok
+    }
+
+    [Fact]
+    public async Task MediaUrls_ReturnsAllOwnReadyAssets_NoFalseReject()
+    {
+        var project = await SeedProjectAsync();
+        var a = await SeedReadyAssetAsync(_userId);
+        var b = await SeedReadyAssetAsync(_userId);
+        await LinkAssetAsync(project.Id, a.Id);
+        await LinkAssetAsync(project.Id, b.Id);
+
+        var result = await AssetEndpoints.MediaUrls(
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, CancellationToken.None);
+
+        var ok = Assert.IsType<Ok<MediaUrlsResponse>>(result);
+        Assert.Equal(2, ok.Value!.Assets.Count);
+        Assert.Contains(a.Id.ToString("D"), ok.Value.Assets.Keys);
+        Assert.Contains(b.Id.ToString("D"), ok.Value.Assets.Keys);
+    }
+
+    // Not: asset ListForProject'in sahiplik filtresi de aynı turda eklendi ama birim testi
+    // BURADA yok — sorgu AddedAt (DateTimeOffset) ile sıralıyor ve Sqlite test provider'ı bu
+    // sıralamayı çeviremiyor (aynı sınır ExportEndpoints.ListForProject'te Id'ye geçilerek
+    // aşılmıştı). O düzeltme canlı Postgres'te ham API ile ölçüldü (cross-user satır enjekte →
+    // /assets yanıtında görünmüyor).
+
     // ---------- Yardımcılar ----------
+
+    private async Task<Asset> SeedReadyAssetAsync(Guid owner)
+    {
+        var asset = Asset.Create(
+            owner, AssetKind.Video, "clip.mp4", "video/mp4", 1024, DateTimeOffset.UtcNow);
+        asset.Status = AssetStatus.Ready;
+        _db.Assets.Add(asset);
+        await _db.SaveChangesAsync();
+        return asset;
+    }
+
+    private async Task LinkAssetAsync(Guid projectId, Guid assetId)
+    {
+        _db.ProjectAssets.Add(new ProjectAsset
+        {
+            ProjectId = projectId, AssetId = assetId, AddedAt = DateTimeOffset.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+    }
 
     private async Task<Project> SeedProjectAsync()
     {

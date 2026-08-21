@@ -39,12 +39,25 @@ export type PreviewSourceAsset = Pick<
 >;
 
 /**
+ * Which DERIVATIVE an asset's preview decodes — the kind rule above, as data.
+ * The names are the media-urls response field names (`AssetMediaUrls.proxy` /
+ * `.poster`), which is what lets mediaUrls' "is a ready asset still missing
+ * its url" check share THIS rule instead of copying it: a proxy-only check
+ * there counted every ready image as permanently url-less (the worker never
+ * writes a proxy for a still) and re-fetched /media-urls every 5 s for as long
+ * as the tab lived.
+ */
+export function previewDerivative(kind: PreviewSourceAsset['kind']): 'poster' | 'proxy' {
+  return kind === 'image' ? 'poster' : 'proxy';
+}
+
+/**
  * Presigned URL the preview engine should decode for `asset`, or null when
  * there is nothing (yet) to decode. Never returns a URL for an asset that is
  * not `ready`: the derivatives do not exist before then.
  */
 export function previewSourceUrl(asset: PreviewSourceAsset): string | null {
   if (asset.status !== 'ready') return null;
-  if (asset.kind === 'image') return asset.posterUrl ?? null;
-  return asset.proxyUrl ?? null;
+  const url = previewDerivative(asset.kind) === 'poster' ? asset.posterUrl : asset.proxyUrl;
+  return url ?? null;
 }

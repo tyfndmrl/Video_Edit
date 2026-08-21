@@ -46,8 +46,12 @@ import {
   addClipFromAsset,
   addTextClip,
   addTrack,
+  clearClipboardForTests,
+  copyClips,
+  duplicateClips,
   knownAssetDurations,
   moveClips,
+  pasteAtPlayhead,
   setClipSpeed,
   splitClipAt,
   trimClip,
@@ -181,6 +185,37 @@ describe.each(FPS_CASES)('frame-grid cross-boundary @ $label fps', ({ label, fps
     record(`${label}: move selection`, fps);
     expect(moveClips([...all].reverse(), -333_333).ok).toBe(true);
     record(`${label}: move selection back`, fps);
+  });
+
+  /**
+   * DUPLICATE + PASTE (BG-1). Copies used to land at "start + raw microsecond
+   * offset"; outside frame counts divisible by the rate's residue cycle the
+   * copy's far edge fell 1 us off the grid (30 fps, 140 frames: end 9_333_334,
+   * nearest boundary 9_333_333) — saved fine, export 422. The ops now walk in
+   * FRAMES and re-fit each copy, so the corpus carries them to the C# compiler.
+   */
+  it('duplicate and paste keep both gates satisfied', () => {
+    clearClipboardForTests();
+    const trackId = addTrack('video');
+    expect(addClipFromAsset(ASSET_A, { trackId }, 0).ok).toBe(true);
+    const first = firstClip();
+    // An awkward length: trim to ~4.67 s so the frame count is not a multiple
+    // of the residue cycle at any of the four rates (140 @ 30, ...).
+    expect(trimClip(first.id, 'right', 4_666_667).ok).toBe(true);
+    expectGates(`${label}: pre-duplicate trim`);
+
+    expect(duplicateClips([first.id]).ok).toBe(true);
+    record(`${label}: duplicate`, fps);
+
+    // Paste BOTH clips (the multi-clip offset walk) at an off-grid playhead.
+    const ids = currentDoc().tracks[0].clips.map((c) => c.id);
+    expect(copyClips(ids)).toBe(true);
+    expect(pasteAtPlayhead(11_111_111).ok).toBe(true);
+    record(`${label}: paste two clips @11_111_111`, fps);
+
+    // Duplicate the whole selection too (span measured in frames).
+    expect(duplicateClips(currentDoc().tracks[0].clips.map((c) => c.id)).ok).toBe(true);
+    record(`${label}: duplicate selection`, fps);
   });
 
   /**
