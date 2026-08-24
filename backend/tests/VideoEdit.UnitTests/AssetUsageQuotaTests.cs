@@ -258,10 +258,10 @@ public sealed class AssetUsageQuotaTests : IDisposable
         Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<ProblemHttpResult>(rejected).StatusCode);
     }
 
-    // ---------- quota: türevler de sayılır (12. tur borcunun kapanışı) ----------
+    // ---------- quota: türevler de sayılır ----------
 
     /// <summary>
-    /// Kota artık orijinal + TÜREV toplamını konuşur: 12. tur ölçümünde türevler
+    /// Kota artık orijinal + TÜREV toplamını konuşur: ölçümde türevler
     /// (proxy/filmstrip/waveform/poster) orijinalin %7,7'siydi ve hiç sayılmıyordu —
     /// "20 GiB kota" gerçekte ~21,5 GiB nesne deposu demekti. Geriye dönük satır
     /// (DerivedBytes = NULL) 0 sayılır: eski asset'ler bir gecede kota doldurmaz.

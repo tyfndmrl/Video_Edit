@@ -4,7 +4,8 @@
  * sayılır" demektir; bu hook o sözün klavye tarafını TEK desende uygular.
  * ExportDialog, ShortcutsHelpOverlay ve ConflictDialog üçü de bunu kullanır;
  * davranış e2e'de gerçek klavyeyle ölçülür (a11y-smoke.spec.ts "modal odak
- * sözleşmesi" bölümü — M4 dalga 2 denetiminin YÜKSEK bulgusunun kapanışı).
+ * sözleşmesi" bölümü — "aria-modal yazan ama odak yönetmeyen overlay" YÜKSEK
+ * denetim bulgusunun kapanışı).
  *
  * Üç davranış + bir opsiyon:
  *  1. AÇILIŞTA odak diyaloğun içine taşınır (ilk odaklanabilir öğe; hiç

@@ -13,7 +13,7 @@ import { apiFetch } from './apiClient';
 
 /**
  * Wire names of the export profiles — mirror of `ExportProfiles.TryParse` on the
- * server (dalga 2: 720p / 2160p / dikey eklendi). The target geometry of each
+ * server (720p / 2160p / dikey dahil). The target geometry of each
  * profile lives in `exportLogic.PROFILE_TARGETS`, guarded against the server by
  * `ExportGateInventoryTests.TheClientAndServerAgreeOnTheProfileGeometry`.
  */

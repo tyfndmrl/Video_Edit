@@ -1,7 +1,7 @@
 /**
  * ciSkipGuard — CI'da ATLANAN test = KIRMIZI kosum.
  *
- * Neden var (M4 dalga 2 denetimi, YÜKSEK bulgu): E2E'nin en değerli iki testi
+ * Neden var (YÜKSEK denetim bulgusu): E2E'nin en değerli iki testi
  * (media-upload, export-flow) CI'da **her koşuda** atlanıyordu — ffmpeg kurulu
  * değildi ve VideoEdit.Worker hiç başlatılmıyordu. Her iki atlama da
  * `test.skip(...)` üzerinden "yumuşak" gerçekleşiyor, Playwright kırmızı

@@ -6,7 +6,7 @@ using VideoEdit.Media.Text;
 namespace VideoEdit.UnitTests;
 
 /// <summary>
-/// CROSS-LANGUAGE metin yerleşim parity'si (C# yarısı) — M4 dalga-2 denetimi bulgu #2.
+/// CROSS-LANGUAGE metin yerleşim parity'si (C# yarısı) — metin-overlay denetimi bulgu #2.
 /// <para>
 /// <c>packages/timeline-schema/test-vectors/text-layout-vectors.json</c> dosyasını okur;
 /// AYNI dosyayı <c>apps/editor/src/features/text/textLayoutVectors.test.ts</c> de okur.

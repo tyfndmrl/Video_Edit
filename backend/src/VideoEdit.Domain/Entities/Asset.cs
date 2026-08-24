@@ -24,7 +24,7 @@ public class Asset
     /// <summary>
     /// İşleme hattının ürettiği türevlerin (proxy + filmstrip + waveform + poster) toplam
     /// boyutu — işleme Ready ile biterken yazılır ve kota sorguları depolamayı
-    /// SizeBytes + DerivedBytes olarak sayar (12. tur borcu: türevler orijinalin ~%7,7'siydi
+    /// SizeBytes + DerivedBytes olarak sayar (ölçüldü: türevler orijinalin ~%7,7'siydi
     /// ve kotadan kaçıyordu). NULL = "bu asset türev defteri tutulmadan işlendi" (geriye
     /// dönük satırlar) ve kotada 0 sayılır — eski asset'ler geçmişe dönük şişirilmez.
     /// </summary>

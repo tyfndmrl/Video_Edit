@@ -1,6 +1,6 @@
 /**
  * Text layout rules — the CLIENT half of the SINGLE layout rule
- * (rendering-semantics §7; M4 dalga-2 denetimi bulgu #2).
+ * (rendering-semantics §7; metin-overlay denetimi bulgu #2).
  *
  * The measurer is faked so the assertions are about the RULES — line splitting,
  * alignment offsets, what stroke/background add to the box, where the

@@ -16,7 +16,7 @@ namespace VideoEdit.UnitTests;
 /// onu göremediği için bu dosyanın DIŞINDADIR (zod tarafı da assetDurations vermeden koşar).
 /// 'half-frame-ledger-boundary' vakası ailenin var oluş nedenidir: 14 karelik geçişte
 /// derleyici yarımı 233333µs isterken zod eskiden 233334µs istiyordu (naif D/2) — ±1µs'lik
-/// GERÇEK bir kabul/ret ayrışması. docs/backlog.md 14. tur "M3 sınıfı" ailelerinden
+/// GERÇEK bir kabul/ret ayrışması. docs/backlog.md "M3 sınıfı" parite aileleri kaydından
 /// 'geçiş simetrisi'nin kapanışıdır.
 /// </summary>
 public class TransitionSymmetryParityTests

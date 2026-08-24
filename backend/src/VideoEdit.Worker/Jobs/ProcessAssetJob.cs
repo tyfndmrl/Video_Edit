@@ -394,7 +394,7 @@ public sealed class ProcessAssetJob(
         asset.WaveformKey = waveformPath is not null ? keys.Waveform : null;
         asset.ThumbnailKey = keys.Poster;
 
-        // Kota defteri (12. tur borcu): türevler de kullanıcının depolamasıdır. Toplam,
+        // Kota defteri: türevler de kullanıcının depolamasıdır. Toplam,
         // YÜKLENEN yerel dosyaların boyutundan alınır — S3'e giden bayt sayısının kendisi.
         asset.DerivedBytes = SumFileSizes(
             [proxyPath, .. spriteFiles, manifestPath, waveformPath, posterPath]);

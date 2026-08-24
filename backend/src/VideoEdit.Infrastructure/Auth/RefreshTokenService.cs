@@ -102,7 +102,7 @@ public sealed class RefreshTokenService(AppDbContext db) : IRefreshTokenService
         if (existing.RevokedAt is not null)
         {
             // İptal edilmiş token'ın tekrar kullanımı. KİMİN iptal ettiği ayrımı modelde
-            // zaten var (14. tur denetimi BULGU-2):
+            // zaten var (denetim bulgusu — logout'la iptal edilen token halefsizdir):
             //  - ReplacedByTokenId != null → ROTASYONLA iptal: zincirin canlı bir halefi
             //    var ve bu token'ı iki taraf birden kullanmış demektir (çalıntı şüphesi) —
             //    zincirin tamamı tehlikede kabul edilir, kullanıcının tüm token'ları iptal.

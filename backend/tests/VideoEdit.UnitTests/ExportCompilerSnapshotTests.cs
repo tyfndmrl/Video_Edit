@@ -87,7 +87,7 @@ public sealed class ExportCompilerSnapshotTests
                 ExportTestDocs.Audio(volume: 0.5)),
         ]);
 
-    // ---------- M4 dalga 1: çok katman fixture'ları ----------
+    // ---------- Çok katman fixture'ları ----------
 
     /// <summary>İki tam-kare video katmanı: tracks[0] EN ÜST — render sırası sondan başa.</summary>
     private static TimelineDoc TwoVideoLayers() => ExportTestDocs.MultiTrackDoc(
@@ -195,7 +195,7 @@ public sealed class ExportCompilerSnapshotTests
     /// <summary>
     /// Aynı track'te ARDIŞIK iki PiP klibi (aynı yerleşim) + altında tam kare taban katman.
     /// Üst track'in iki klibi TEK concat zincirinde birleşir ve tuvale TEK overlay ile biner —
-    /// klip başına overlay yalnız gerçek katmanlaşmada üretilir (M4 dalga 1 denetimi #1).
+    /// klip başına overlay yalnız gerçek katmanlaşmada üretilir (ölçülen performans bulgusu).
     /// </summary>
     private static TimelineDoc LayerRunConcat() => ExportTestDocs.MultiTrackDoc(
     [
@@ -234,7 +234,7 @@ public sealed class ExportCompilerSnapshotTests
         ]),
     ]);
 
-    // ---------- M4 dalga 2: geçişler (rendering-semantics §5) ----------
+    // ---------- Geçişler (rendering-semantics §5) ----------
 
     /// <summary>
     /// §5.2 sözleşmesinin taşıyıcısı: klipler timeline'da BİTİŞİK (0-2 sn, 2-4 sn), geçiş
@@ -309,7 +309,7 @@ public sealed class ExportCompilerSnapshotTests
         ]);
     }
 
-    // ---------- M4 dalga 2: overlay varlıkları (metin / şekil / çıkartma) ----------
+    // ---------- Overlay varlıkları (metin / şekil / çıkartma) ----------
 
     /// <summary>Metin katmanı video tabanın üstünde: raster PNG -loop 1 -t ile girer, ses ÜRETMEZ.</summary>
     private static TimelineDoc TextOverVideo() => ExportTestDocs.MultiTrackDoc(
@@ -837,7 +837,7 @@ public sealed class ExportCompilerSnapshotTests
         Assert.Contains("adelay=3000|3000", compiled.FilterGraphScript);
     }
 
-    // ---------- M4 dalga 1: çok katman kompozisyonu ----------
+    // ---------- Çok katman kompozisyonu ----------
 
     [Fact]
     public void Compile_MultipleTracks_ComposeBottomToTop_TracksZeroIsTopmost()
@@ -1030,13 +1030,13 @@ public sealed class ExportCompilerSnapshotTests
         Assert.Equal(0, plan.Tracks[1].DocIndex);
     }
 
-    // ---------- Katman run'ları (M4 dalga 1 denetimi: performans regresyonu) ----------
+    // ---------- Katman run'ları (ölçülen performans regresyonu) ----------
 
     [Fact]
     public void Compile_SingleFullCanvasTrack_SkipsTheBaseCanvasAndOverlayEntirely()
     {
-        // Denetim #1 (HIGH). Eski (M3) hat N klibi TEK concat ile birleştiriyordu (kare başına
-        // O(1)); M4 dalga 1 HER KLİP için tam çözünürlükte bir RGBA overlay katı ekledi ve
+        // Denetim bulgusu (HIGH). Eski (M3) hat N klibi TEK concat ile birleştiriyordu (kare
+        // başına O(1)); çok-katman hattı HER KLİP için tam çözünürlükte bir RGBA overlay katı ekledi ve
         // 'enable=' yalnız blend'i kapatıyordu. Sözleşme: tek katmanlı proje M3 davranışına
         // döner — taban tuval YOK, overlay YOK, letterbox pad + tek concat.
         var compiled = ExportCompiler.Compile(MultiClipContiguous(), SdrSources(), ExportProfile.Hd1080p);
@@ -1169,7 +1169,7 @@ public sealed class ExportCompilerSnapshotTests
         // Atıl klip (gizli VE susturulmuş track) hiçbir ffmpeg girişi açmaz — ama eskiden
         // asset'i yine de plan.AssetIds'e giriyordu: worker onu R2'den İNDİRİYOR, probe'luyor ve
         // kaynak-aralığı kapısına sokuyordu. Render EDİLMEYEN bir klip "source-out-of-range" ile
-        // TÜM export'u düşürebiliyordu (M4 dalga 1 denetimi).
+        // TÜM export'u düşürebiliyordu (ölçülen denetim bulgusu).
         var doc = ExportTestDocs.MultiTrackDoc(
         [
             ExportTestDocs.VideoTrack(hidden: true, muted: true, clips:
@@ -1716,7 +1716,7 @@ public sealed class ExportCompilerSnapshotTests
         Assert.Equal(2_000_000, compiled.ExpectedDurationUs);
     }
 
-    // ---------- M4 dalga 2: geçişler (rendering-semantics §5) ----------
+    // ---------- Geçiş derlemesi (rendering-semantics §5) ----------
 
     [Fact]
     public void Compile_SingleTransition_UsesXfadeWithTheNormativeOffset()
@@ -2077,7 +2077,7 @@ public sealed class ExportCompilerSnapshotTests
         Assert.DoesNotContain("scale=962:540", script);
     }
 
-    // ───────────────────── Dejenerelik kapısı (4. tur denetimi) ─────────────────────
+    // ───────────────────── Dejenerelik kapısı ─────────────────────
 
     /// <summary>Afiş kaynak defteri (1920x100 — en-boy 19.2:1, dejenerelik eşiği 0.011).</summary>
     private static Dictionary<Guid, ExportAssetSource> BannerSources(int width = 1920, int height = 100) =>
@@ -2136,7 +2136,7 @@ public sealed class ExportCompilerSnapshotTests
     public void Compile_DegenerateLayer_IsRejectedOnTheTransitionPathToo()
     {
         // Geçişli kesimde run BÖLÜNEMEZ → pad ZORUNLU → bu vaka parite düzeltmesinden sonra
-        // "202 kabul + worker'da ölüm"e dönüşmüştü (4. tur RED'inin S13 vakası). Kapı onu
+        // "202 kabul + worker'da ölüm"e dönüşmüştü (canlı ölçülen RED vakası). Kapı onu
         // yeniden SENKRON hataya çevirir — ama artık DOĞRU gerekçeyle ('degenerate-layer',
         // eskiden 'katman döndürülmüş ve çapası merkezde değil' deniyordu).
         var transform = ExportTestDocs.Transform(scale: 0.010);
@@ -2310,7 +2310,7 @@ public sealed class ExportCompilerSnapshotTests
             plan.Clips, ExportTestDocs.AssetA, probeDurationUs: 3_100_000, plan.FpsNum, plan.FpsDen));
     }
 
-    // ---------- M4 dalga 2: metin / şekil / çıkartma overlay'leri ----------
+    // ---------- Metin / şekil / çıkartma overlay'leri ----------
 
     [Fact]
     public void Compile_TextClip_UsesTheRasterAsALoopedInput_WithBboxSizedBox()
@@ -2892,9 +2892,9 @@ public sealed class ExportCompilerSnapshotTests
         }
     }
 
-    // ---------- Raster (metin/şekil) katman tavanı — 3. tur denetim, blocker 2 ----------
+    // ---------- Raster (metin/şekil) katman tavanı ----------
     //
-    // KÖK NEDEN (3. tur): tavan+taban kuralı raster klipleri için YALNIZ Compile'da
+    // KÖK NEDEN: tavan+taban kuralı raster klipleri için YALNIZ Compile'da
     // (PlacementOf) koşuyordu; ValidateGeometry raster dalında erken dönüyordu. API'nin 422
     // ön kapısı yalnız Validate'i çağırdığı için kural GÖRÜNMÜYORDU: iş kuyruğa giriyor ve
     // dakikalar sonra worker'da düşüyordu (canlı ölçümle doğrulandı).
@@ -3079,9 +3079,9 @@ public sealed class ExportCompilerSnapshotTests
         Assert.Single(ExportCompiler.Validate(fits).RasterClips);
     }
 
-    // ── Ölçek animasyonu: TAVAN en büyük keyframe'den, TABAN en küçüğünden (5. tur, BLOCKER 1) ──
+    // ── Ölçek animasyonu: TAVAN en büyük keyframe'den, TABAN en küçüğünden (canlı ölçülen blocker) ──
     //
-    // ADLANDIRMA (6. tur düzeltmesi): buradaki "taban" KEYFRAME MİNİMUMUDUR, örneklenen eğrinin
+    // ADLANDIRMA: buradaki "taban" KEYFRAME MİNİMUMUDUR, örneklenen eğrinin
     // minimumu değil — kapı AnimationTrack.MinValue okur (bkz. ExportCompiler.MinScaleOf'un
     // KAPSAM NOTU: undershoot'lu serbest bir cubicBezier ara değerleri bu tabanın altına
     // indirebilir; editör böyle bir eğri yazamaz, ham API'den yazılan belgede kapı Compile'da

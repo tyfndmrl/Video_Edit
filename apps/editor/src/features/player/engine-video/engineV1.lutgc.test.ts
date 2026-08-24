@@ -1,5 +1,5 @@
 /**
- * VideoPlaybackEngine — LUT dokusu YAŞAM DÖNGÜSÜ (14. tur triyajı, BG bulgu B3):
+ * VideoPlaybackEngine — LUT dokusu YAŞAM DÖNGÜSÜ (GPU bellek sızıntısı bulgusu):
  *
  * Bir 3D LUT tablosu poster dokularından büyüklük SINIFI olarak farklıdır
  * (129³ RGBA16F ≈ 17 MB). Girdiler yalnız dispose()'ta temizlenseydi LUT

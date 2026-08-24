@@ -704,11 +704,21 @@ Kapatılanlar (kullanıcı anlatımı `poc-bilinen-sinirlar.md` §1.8, §3 tablo
 
 **KAPSAM DIŞI / AÇIK kalanlar (iddia EDİLMİYOR):**
 
-- **[AÇIK] Tur numaralandırması kodda ayrıştı.** 8. turun bıraktığı bazı kod yorumları bu
-  dilimi "6. tur denetimi" ya da "M6 denetimi" diye adlandırıyor
-  (`ExportCompiler.EnsureAssetFacts` yorumu, `e2e/audio-export.spec.ts` başlığı). Dokümanlarda
-  numaralandırma 8. tura göre düzeltildi; kod yorumları DOKUNULMADI (davranış değiştirmemek
-  için) — bir sonraki kod dilimi bunları düzeltmelidir.
+- **[KAPANDI — 2026-08-24, yarim-is #14] Tur numaralandırması kodda ayrıştı.** 8. turun
+  bıraktığı bazı kod yorumları bu dilimi "6. tur denetimi" ya da "M6 denetimi" diye
+  adlandırıyordu (`ExportCompiler.EnsureAssetFacts` yorumu, `e2e/audio-export.spec.ts`
+  başlığı). Kapanış: kaynak koddaki (apps/, packages/, backend/) TÜM tarihsel tur/dalga
+  atıfları (yalnız ayrışanlar değil) yorumlardan çıkarıldı ve yerlerine KALICI gerekçe
+  yazıldı ("N. turda" gitti, "çünkü X ölçüldü" ve ölçülmüş sayılar kaldı); milestone
+  etiketleri (M0–M6, plan/dosya adlarıyla bağlı yapısal adlar) ve denetim-içi bulgu
+  numaraları (#1, #2 — docs/audits arşiv kimliği) korundu. Test ADLARI ve dizge
+  literalleri bilerek DOKUNULMADI (davranış sıfır): `clipInspectorModel.test.ts`
+  describe'ındaki "(M4 dalga 2)", `ExportGateInventoryTests.DocumentStrings` defter
+  dizgesindeki "(10. tur, F3)" ve test-vektör JSON'larının `description` alanları
+  yerinde duruyor — bunlar yorum değil. Diff'in yalnız yorum satırlarına dokunduğu
+  mekanik tarama ile kanıtlandı; build + tüm testler birebir yeşil. Dokümanlar
+  (bu dosya, poc-bilinen-sinirlar, README) tarihçe defteridir, atıfları meşru ve
+  KAPSAM DIŞI kaldı; docs/audits/ dokunulmazdır (review-gate kural 6).
 - **[KAPANDI — 2026-08-24, yarim-is turu] "Sesi ayır" sessiz bir videoda da açıktı.** Yeni
   `asset-clip-type` kapısının "ses klibi + SESSİZ video" hücresi, matrisin editörden
   ULAŞILAMAZ sanılan tek istisnasıydı: ses klibinin üçüncü üretim yolu

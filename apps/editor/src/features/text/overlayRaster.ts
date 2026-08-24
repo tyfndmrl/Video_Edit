@@ -8,7 +8,7 @@
  * server PNG + bbox when the document settles. Export ALWAYS uses the server
  * raster; a canvas raster never reaches an export.
  *
- * WHAT THE M4 dalga-2 DENETİMİ CHANGED HERE (bulgu #2 and #3a):
+ * WHAT THE METİN-OVERLAY DENETİMİ CHANGED HERE (bulgu #2 and #3a):
  * - the layout rule is now the SERVER's, shared through textLayout.ts and
  *   pinned cross-language by test-vectors/text-layout-vectors.json. The bbox is
  *   a union of boxes (not `content + 2*(stroke + padding)`), the background is
@@ -298,7 +298,7 @@ export function rasterizeText(style: TextStyle): OverlayRaster | null {
   if (background && background.color && layout.backgroundRect) {
     // CONTENT ± padding — NOT the bbox. Painting the bbox (what this file used
     // to do) also covered the stroke overhang, which is exactly the divergence
-    // M4 dalga-2 bulgu #2 measured (42x34 here vs 30x22 in the export).
+    // metin-overlay denetimi bulgu #2 measured (42x34 here vs 30x22 in the export).
     const rect = layout.backgroundRect;
     ctx.fillStyle = background.color;
     roundRectPath(

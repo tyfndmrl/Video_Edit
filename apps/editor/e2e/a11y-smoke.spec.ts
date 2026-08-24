@@ -13,7 +13,7 @@
  * Kontrast, odak halkası görünürlüğü ve canvas timeline'ın klavyeyle
  * düzenlenmesi kapsam DIŞI (docs/backlog.md).
  *
- * M4 dalga 2 denetimi (YÜKSEK) 4. maddeyi şöyle bulmuştu: dosya `aria-modal`
+ * Denetim (YÜKSEK bulgu) 4. maddeyi şöyle bulmuştu: dosya `aria-modal`
  * ÖZNİTELİĞİNİ doğruluyor ama o özniteliğin VAAT ETTİĞİ davranışın hiçbirini
  * ölçmüyordu — yani ekran okuyucu sözleşmesi "yeşil" görünürken klavye
  * kullanıcısı diyaloğun arkasına düşebiliyordu. Sahte güven buradan geliyordu.
@@ -215,7 +215,7 @@ test.describe('Erişilebilirlik — klavye ve roller', () => {
 // kullanır ama BURADA ölçülmez: 409 çakışması e2e'de tetiklenmiyor ve o
 // diyalog bilerek Escape almaz (tek güvenli çıkış "Sunucudaki sürümü yükle").
 //
-// TARİHÇE — bulgu kaybolmama deseni ÇALIŞTI: bu bölüm M4 dalga 2 denetiminin
+// TARİHÇE — bulgu kaybolmama deseni ÇALIŞTI: bu bölüm bir denetimin
 // YÜKSEK bulgusu olarak doğdu (üç overlay de aria-modal yazıyor, hiçbirinde
 // odak yönetimi yok) ve testler `test.fail(true, ...)` ile "bugün başarısız
 // olması BEKLENİYOR" diye işaretliydi. Ürün odak yönetimini kazandığı an

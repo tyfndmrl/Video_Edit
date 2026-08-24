@@ -1,7 +1,7 @@
 /**
  * FONT CATALOGUE CONTRACT — the editor's ids against `fonts/manifest.json`.
  *
- * This test exists because of M4 dalga-2 denetimi, KRİTİK bulgu #1: the editor
+ * This test exists because of metin-overlay denetimi, KRİTİK bulgu #1: the editor
  * shipped `inter / roboto / georgia / impact / courier` (default `inter`) while
  * the server manifest held `roboto / open-sans / noto-sans / noto-serif`. The
  * two lists were DISJOINT where it mattered — the default id did not exist on

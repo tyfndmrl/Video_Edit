@@ -1,6 +1,6 @@
 /**
- * Font catalogue loader — the client half of M4 dalga-2 KRİTİK bulgu #1(b) and
- * #3(a).
+ * Font catalogue loader — the client half of metin-overlay denetimi KRİTİK
+ * bulgu #1(b) and #3(a).
  *
  * What matters here and is therefore tested:
  * - a server answer REPLACES the compiled-in list (the whole point: the editor

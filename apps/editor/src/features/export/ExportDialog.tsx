@@ -1,5 +1,5 @@
 /**
- * ExportDialog — start an export (M3; profil seçici dalga 2). Same lightweight
+ * ExportDialog — start an export, with a profile picker. Same lightweight
  * fixed-overlay pattern as timeline/ConflictDialog (no dialog library); modal
  * focus contract (focus-in, Tab trap, Escape close, focus restore) comes from
  * the shared useModalFocus hook and is measured in a11y-smoke e2e.

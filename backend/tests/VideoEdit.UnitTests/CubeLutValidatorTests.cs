@@ -153,7 +153,7 @@ public class CubeLutValidatorTests
     }
 
     // ------------------------------------------------------------------
-    // BAYT DİSİPLİNİ (14. tur denetimi BULGU-1): ffmpeg parse_cube ham bayt okur —
+    // BAYT DİSİPLİNİ (denetim bulgusu): ffmpeg parse_cube ham bayt okur —
     // BOM striplemez, satırı yalnız '\n' ile böler, anahtar kelimeyi 0. bayttan eşler.
     // Buradaki her ret vakası gerçek ffmpeg 8.0 ile ölçüldü (CubeLutFfmpegParityTests
     // aynı korpusu canlı ffmpeg'le çift yönlü sabitler).
@@ -357,7 +357,7 @@ public class CubeLutFfmpegParityTests
             Assert.Equal(c.FfmpegAccepts, ffmpegAccepts);
 
             // SÖZLEŞMENİN ASIL DİŞİ: doğrulayıcı kabul ettiyse ffmpeg de KABUL ETMEK
-            // ZORUNDA (aksi "Ready ama export patlar" sınıfıdır — BULGU-1'in kendisi).
+            // ZORUNDA (aksi "Ready ama export patlar" sınıfıdır — bayt-disiplini bulgusunun kendisi).
             if (validator.Ok)
             {
                 Assert.True(ffmpegAccepts,

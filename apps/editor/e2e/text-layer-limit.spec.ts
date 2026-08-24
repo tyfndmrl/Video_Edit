@@ -1,5 +1,5 @@
 /**
- * Metin katmanı boyut tavanı — GERÇEK klavye ile (3. tur denetim, blocker 2).
+ * Metin katmanı boyut tavanı — GERÇEK klavye ile (canlı ölçülen denetim bulgusu).
  *
  * ÖLÇÜLEN HATA: Inspector'ın "Boyut" alanı sabit 2000 px'e, "Ölçek" alanı ise
  * TUVALDEN türeyen 4.266'ya kadar açıktı. Metin katmanı kareye SIĞDIRILMAZ,

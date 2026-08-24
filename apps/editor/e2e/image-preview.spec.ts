@@ -386,7 +386,7 @@ test.describe('Görsel/çıkartma önizlemesi — gerçek fare, gerçek medya, g
       })
       .toBe(1);
 
-    // BLOCKER 3: doküman kendi değişmezlerinden geçmeli VE yeni klip seçili
+    // Başlıktaki 2. bulgu: doküman kendi değişmezlerinden geçmeli VE yeni klip seçili
     // olmalı. Eskiden mutasyon commit ediliyor, hemen ardından assertDocValidDev
     // fırlıyor ve setSelection'a hiç sıra gelmiyordu.
     const afterFoto = await clipsOf(page);
@@ -414,7 +414,7 @@ test.describe('Görsel/çıkartma önizlemesi — gerçek fare, gerçek medya, g
     expect(await docInvariantIssues(page)).toEqual([]);
 
     // ---------------------------------------------------------------------
-    // ASIL İDDİA (BLOCKER 2): fotoğraf klibinin ÜSTÜNDE piksel var mı?
+    // ASIL İDDİA (başlıktaki 1. bulgu): fotoğraf klibinin ÜSTÜNDE piksel var mı?
     // ---------------------------------------------------------------------
     const settings = await readProjectSettings(page);
     const fotoRect = containRect(settings, foto);

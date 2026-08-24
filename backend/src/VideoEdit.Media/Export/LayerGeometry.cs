@@ -246,7 +246,7 @@ public static class LayerGeometry
     /// canlı ffmpeg'e karşı yeniden koşar): <c>w='3.9' h='2.9'</c> → çıkış 2x2 (kutu 3x2),
     /// <c>w='4.0' h='3.0'</c> → 4x2. Yuvarlama olsaydı ilki de 4x2 verirdi.
     /// <c>w='3.345' h='1.56'</c> → 2x104, yani kutu 3x1 ve YÜKSEKLİK ÇÖKÜYOR — bu tam olarak
-    /// 5. tur denetiminde kapıdan geçip ffmpeg'i öldüren belgedir.
+    /// denetimde kapıdan geçip ffmpeg'i öldürdüğü canlı ölçülen belgedir.
     /// </para>
     /// </summary>
     public static (long Width, long Height) ScaleBoxTruncated(

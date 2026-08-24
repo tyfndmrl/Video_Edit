@@ -137,7 +137,7 @@ public sealed class ProcessAssetPipelineTests : IDisposable
         Assert.NotNull(await _storage.HeadObjectAsync(asset.WaveformKey!));
         Assert.NotNull(await _storage.HeadObjectAsync(asset.ThumbnailKey!));
 
-        // KOTA DEFTERİ (12. tur borcu): DerivedBytes, YÜKLENEN türev objelerinin toplamına
+        // KOTA DEFTERİ: DerivedBytes, YÜKLENEN türev objelerinin toplamına
         // bire bir eşit — iddia DB kolonuna değil, MinIO'daki gerçek bayt sayısına dayanır.
         Assert.Equal(await SumDerivativeObjectBytesAsync(asset), asset.DerivedBytes);
         Assert.True(asset.DerivedBytes > 0);

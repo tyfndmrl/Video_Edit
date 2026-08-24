@@ -7,7 +7,7 @@
  * so what is pinned is the LAYOUT RULE (bbox union, background rect, empty-text
  * minimum width, baseline math), not a particular TTF's metrics.
  *
- * This is the mechanism M4 dalga-2 denetimi bulgu #2 asked for: before it, the
+ * This is the mechanism metin-overlay denetimi bulgu #2 asked for: before it, the
  * client grew the box by `stroke + backgroundPadding` on every side and painted
  * the background over the WHOLE bbox while the server used a union of boxes and
  * painted `content ± padding`. The two could drift silently. Now a change on

@@ -2,7 +2,7 @@
  * Font catalogue — the curated set the editor may write into
  * `TextClip.text.fontId`.
  *
- * WHY THIS FILE WAS REWRITTEN (M4 dalga-2 denetimi, KRİTİK bulgu #1): the
+ * WHY THIS FILE WAS REWRITTEN (metin-overlay denetimi, KRİTİK bulgu #1): the
  * editor used to ship its own hard-coded list — `inter / roboto / georgia /
  * impact / courier`, default `inter` — while `fonts/manifest.json` (the ONLY
  * thing the server can resolve) contains `roboto / open-sans / noto-sans /

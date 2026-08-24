@@ -30,7 +30,7 @@ public sealed record ExportTrackPlan(Track Track, int DocIndex, IReadOnlyList<Ex
 ///    asset duration" ile export düşerdi;
 ///  - ATIL klipler (gizli track + şema gereği ses üretemeyen klip): hiçbir ffmpeg girişi
 ///    açmazlar, dolayısıyla hiçbir kaynak aralığı OKUMAZLAR — render edilmeyen bir klibin
-///    TÜM export'u düşürmesi (M4 dalga 1 denetimi) böylece imkânsızlaşır.
+///    TÜM export'u düşürmesi (ölçülen denetim bulgusu) böylece imkânsızlaşır.
 /// <see cref="AssetIds"/> ise atıl klipleri ve metin/şekil kliplerini (asset'i yoktur) dışlar ama
 /// GÖRSEL ve ÇIKARTMA dosyalarını İÇERİR — dosya indirilmeden render edilemez.
 /// <see cref="RasterClips"/> worker'ın SkiaSharp raster hattına vereceği kliplerdir (metin/şekil);
@@ -108,7 +108,7 @@ public sealed record ExportPlan(
 ///  - segment defteri FRAME SAYISIYLA tutulur: her klip proje fps grid'inde tam frame sayısına
 ///    çözülür ve zincire trim=[start_frame=S:]end_frame=N eklenir — µs-farkı aritmetiğinin
 ///    NTSC'de ürettiği ±1 frame kaymaları biter (rendering-semantics §1.4);
-///  - KATMAN RUN'LARI (M4 dalga 1 denetimi, performans regresyonu): aynı track'te ARDIŞIK
+///  - KATMAN RUN'LARI (ölçülen performans regresyonunun kapanışı): aynı track'te ARDIŞIK
 ///    (frame-bitişik) ve AYNI yerleşime sahip klipler TEK concat zincirinde birleşir ve tuvale
 ///    TEK overlay ile biner. Klip başına overlay yalnız GERÇEK katmanlaşmada (farklı track,
 ///    zaman boşluğu ya da farklı yerleşim) üretilir. GERÇEK ÖLÇÜM (1080p, 12 klip, 12 sn, tek
@@ -132,7 +132,7 @@ public sealed record ExportPlan(
 ///    proje çözünürlüğünde settings.backgroundColor tuvalidir; her run bu tuvale overlay edilir.
 ///    Boşluklar (klipsiz aralıklar) ayrı segment gerektirmez — taban tuval görünür.
 ///    Render sırası tracks dizisinde SONDAN BAŞA'dır (tracks[0] en üst katman, şema §1.2);
-///  - OVERLAY VARLIKLARI (M4 dalga 2, tasarım 04 §3): metin/şekil klibi worker'da SkiaSharp ile
+///  - OVERLAY VARLIKLARI (tasarım 04 §3): metin/şekil klibi worker'da SkiaSharp ile
 ///    TEK şeffaf PNG'ye rasterlenir ve normal katman zincirinden geçer; çıkartma kendi asset
 ///    dosyasıyla girer. Hiçbiri SES ÜRETMEZ. Metin/şekil rasterinin ölçek kutusu TUVAL DEĞİL
 ///    kendi doğal boyutudur (rendering-semantics §7 @2x kuralı) — fit=contain uygulansaydı
@@ -312,7 +312,7 @@ public static class ExportCompiler
     }
 
     /// <summary>
-    /// M4 dalga 2 kapsam + sözleşme doğrulaması. İhlalde ExportCompileException türevi fırlatır.
+    /// Kapsam + sözleşme doğrulaması. İhlalde ExportCompileException türevi fırlatır.
     /// <para>
     /// <paramref name="overlayMeasurer"/> METİN kliplerinin bbox'ını ÖLÇMEK içindir (yalnız
     /// <see cref="ITextRasterService.Measure"/> çağrılır — dosya yazılmaz). Verilirse metin
@@ -755,7 +755,7 @@ public static class ExportCompiler
                         // Bu pad, çapayı DÖNDÜRÜLEN katmanda koruyamaz: §2.5'in çapa telafisi
                         // pad'i gerçek görüntü boyutuna (iw/ih) göre ölçeklenir, normalize
                         // sonrası iw kutu boyutudur → çapa, içeriğin letterbox payı kadar kayar.
-                        // Sessizce kaydırmak yerine görünür hata (M4 dalga 1 denetiminin
+                        // Sessizce kaydırmak yerine görünür hata (çok-katman denetiminin
                         // "1 px sessiz kayma" kararının aynısı).
                         //
                         // GERİYE KALAN TEK GEREKÇE BUDUR: kutu paritesi artık kapı değil (pad
@@ -1051,8 +1051,8 @@ public static class ExportCompiler
     /// <summary>
     /// Aynı track'te ARDIŞIK (frame-bitişik) ve AYNI yerleşimli kliplerin oluşturduğu tek katman
     /// akışı. Segmentler tek concat zincirinde birleşir (geçiş varsa xfade ile) → tuvale TEK
-    /// overlay biner. Klip başına overlay yalnız gerçek katmanlaşmada üretilir (M4 dalga 1
-    /// denetimi: performans regresyonu).
+    /// overlay biner. Klip başına overlay yalnız gerçek katmanlaşmada üretilir (ölçülen
+    /// performans regresyonunun kapanışı).
     /// </summary>
     private sealed record LayerRun(LayerPlacement Placement, long StartFrame)
     {
@@ -1232,7 +1232,7 @@ public static class ExportCompiler
         //      TERMİNALDİR — domain'in durum makinesinde Failed'dan Ready'ye doğrudan geçiş
         //      yoktur; yeniden deneme ancak kullanıcının başlattığı Failed → Processing
         //      geçişiyle olur. Ölçüldü: böyle bir belge 202 alıyor ve iş dakikalar sonra
-        //      'asset-not-ready: ... (Failed)' ile ölüyordu (M6 denetimi, N2).
+        //      'asset-not-ready: ... (Failed)' ile ölüyordu.
         foreach (var assetId in plan.AssetIds.Concat(plan.LutAssetIds).Distinct())
         {
             if (assets[assetId].Readiness != ExportAssetReadiness.Failed)
@@ -1269,7 +1269,7 @@ public static class ExportCompiler
 
         // ── 4) KLİP TÜRÜ ↔ VARLIK TÜRÜ. Sınıfı LUT kapısıyla BİREBİR aynıdır (dosya türü ile
         //      onu kullanan klibin beklentisi çelişiyor) ve o kural zaten senkrondur.
-        //      Ölçüldü (M6 denetimi): (a) ses klibi bir SES varlığını gösterdiğinde export
+        //      Ölçüldü: (a) ses klibi bir SES varlığını gösterdiğinde export
         //      'unsupported-media: ... has no video stream' ile ölüyordu — worker klip türüne
         //      BAKMADAN her varlıkta görüntü akışı arıyordu, yani müzik eklemek export'u
         //      imkânsız kılıyordu (N1); (b) çıkartma klibi bir VİDEO varlığını gösterdiğinde
@@ -1636,7 +1636,7 @@ public static class ExportCompiler
     /// modeli <see cref="LayerGeometry.ScaleBoxTruncated"/>'dır ve TABAN kapısı
     /// (<see cref="EnsureLayerFloor"/>) o modeli kullanmak ZORUNDADIR. Eskiden bu satırın
     /// yorumu "yuvarlamayı force_divisible_by=2 devralır" diyordu; kapı da roundHalfUp
-    /// varsaydığı için kabul ettiği bir belge ffmpeg'de ölüyordu (5. tur, BLOCKER 1).
+    /// varsaydığı için kabul ettiği bir belge ffmpeg'de ölüyordu (canlı ölçüldü).
     /// </para>
     /// </summary>
     private static double ScaleBoxWidth(LayerRun run, ExportPlan plan) =>
@@ -2290,7 +2290,7 @@ public static class ExportCompiler
         // (fit kutusu rasterin KENDİ bbox'ı olduğu için kaynak aspect'i ≈ kutu aspect'i —
         // SweptRasterBboxes_AreNotDegenerate_WhenTheScaleFloorHolds bunu tarar). Ama KUTU ≥ 2
         // ULAŞILABİLİR biçimde ihlal edilir: ölçek animasyonunun tabanı kutuyu 2x1'e ya da
-        // 0x0'a indirebilir (5. tur BLOCKER 1, canlı ölçüm). Kapı bu yüzden burada da KOŞAR
+        // 0x0'a indirebilir (canlı ölçüldü). Kapı bu yüzden burada da KOŞAR
         // ve PNG'nin gerçek boyutuyla tam modeli sorar.
         EnsureLayerFloor(
             clip.Id, clip.KindTr, clip, raster.NaturalWidthPx, raster.NaturalHeightPx,
@@ -2669,7 +2669,7 @@ public static class ExportCompiler
         // Süre pozitifliği keyframe ayrıştırmasından ÖNCE sorulur: KeyframeCompiler.Parse
         // klip süresini keyframe zamanlarının üst sınırı olarak kullanır — süre zaten
         // geçersizken "outside [0, -5]" gibi İKİNCİL bir cümle üretmek yerine asıl kusur
-        // kendi cümlesiyle kalmalı (13. tur, C1).
+        // kendi cümlesiyle kalmalı.
         if (planned.TimelineDurationUs <= 0)
         {
             throw new InvalidTimelineException(
@@ -2789,7 +2789,7 @@ public static class ExportCompiler
     /// METİN/ŞEKİL kliplerinde ölçek kutusu tuvalden değil rasterin KENDİ bbox'ından türer
     /// (§7). Bu yüzden tavan eskiden yalnız Compile'da (PlacementOf) doğrulanıyordu ve
     /// API'nin 422 ön kapısı onu GÖRMÜYORDU: iş kuyruğa giriyor, dakikalar sonra worker'da
-    /// düşüyordu (3. tur denetim, blocker 2 — canlı ölçümle doğrulandı). Kural artık BURADA:
+    /// düşüyordu (canlı ölçümle doğrulandı). Kural artık BURADA:
     /// <see cref="EnsureRasterFits"/> bbox'ı bildiği kadarıyla (şekilde kesin, metinde ölçüm
     /// varsa kesin, yoksa KESİN ALT SINIR) doğrular. Compile'daki tavan KALDIRILMADI — orada
     /// bbox her zaman gerçektir, yani alt sınırın kaçırdığı vaka orada hâlâ yakalanır.
@@ -2801,7 +2801,7 @@ public static class ExportCompiler
         var height = geometry.Height;
 
         // Bu mesajlar 422 ProblemDetails.Detail olarak KULLANICIYA görünür (ExportEndpoints) —
-        // kardeş UnsupportedFeature mesajlarıyla aynı dilde olmalıdır (M4 dalga 1 denetimi).
+        // kardeş UnsupportedFeature mesajlarıyla aynı dilde olmalıdır (denetim bulgusu).
         if (clip.Opacity is < 0 or > 1 || double.IsNaN(clip.Opacity))
         {
             throw new InvalidTimelineException(
@@ -2860,7 +2860,7 @@ public static class ExportCompiler
 
         // TAVAN ve TABAN aynı transform'un ZIT uçlarından sorulur (bkz. PlacementTransform):
         // tavan animasyonun en büyük karesinde, taban en küçük karesinde ihlal edilir. Bunları
-        // tek bir yerleşimden sormak 5. tur denetiminin BLOCKER 1'iydi — tavan MAKSİMUMDAN
+        // tek bir yerleşimden sormak canlı ölçülen bir blocker'dı — tavan MAKSİMUMDAN
         // kurulmuş yerleşime bakarken taban da o yerleşimden soruluyordu, yani animasyonun
         // tabanı hiç görülmüyordu ve belge 202 alıp worker'da ölüyordu.
         var placement = LayerGeometry.Compute(PlacementTransform(clip), width, height);
@@ -3024,7 +3024,7 @@ public static class ExportCompiler
 
         // Kutu GERÇEK (şekilde sözleşme gereği, metinde ölçümle) → taban sorulabilir. Kaynak
         // (PNG'nin kendi piksel boyutu) Validate aşamasında henüz yok; kapı kaynaktan BAĞIMSIZ
-        // yarıyı sorar. Bu yarı 5. tur denetiminin BLOCKER 1'indeki iki varyantı da kapatır:
+        // yarıyı sorar. Bu yarı, canlı ölçülen blocker'ın iki varyantını da kapatır:
         // bbox 223x104 @ölçek 0.010 → kutu 2x1, bbox 6x20 @0.010 → kutu 0x0.
         EnsureLayerFloor(clip.Id, clip.KindTr, clip, box.WidthPx, box.HeightPx, 0, 0);
     }
@@ -3209,7 +3209,7 @@ public static class ExportCompiler
     /// yeniden değerlendirilir (bkz. <see cref="ScaleFilter"/>), yani ölçeğin tabanı dejenere
     /// bir kareye düşerse o karelerde katman bozulur. TAVAN kuralı (<see cref="EnsureLayerCeiling"/>)
     /// simetrik olarak MAKSİMUM ölçekle sorulur — bkz. <see cref="PlacementTransform"/>.
-    /// İkisini aynı uçtan sormak 5. tur denetiminin BLOCKER 1'iydi.
+    /// İkisini aynı uçtan sormak canlı ölçülen bir blocker'dı.
     /// </para>
     /// <para>
     /// KAYNAK BİLİNİYORken tam model (<see cref="LayerGeometry.IsDegenerate"/>), bilinmiyorken
@@ -3518,7 +3518,7 @@ public static class ExportCompiler
     /// Böyle bir klip hiçbir ffmpeg girişi açmaz; asset'i indirmeye (plan.AssetIds), raster
     /// hattına (plan.RasterClips) ve worker'ın kaynak-aralığı kapısına (plan.Clips) sokmaya da
     /// gerek yoktur — render EDİLMEYEN bir klibin tüm export'u "source-out-of-range" ile
-    /// düşürmesi böylece imkânsızlaşır (M4 dalga 1 denetimi).
+    /// düşürmesi böylece imkânsızlaşır (ölçülen denetim bulgusu).
     /// Kaynağa bağlı olmayan (yalnız dokümandan okunan) bir karardır: Validate'te de,
     /// Compile'da da AYNI sonucu verir.
     /// </summary>
@@ -3540,7 +3540,7 @@ public static class ExportCompiler
     ///     sesin varlığı OPSİYONELDİR (sessiz video meşrudur) — bu yüzden defterde yeri yoktur.
     ///     Zaman ekseni olmayan giriş (<c>-loop 1</c>) ile aralık okuyan giriş (<c>-ss/-t</c>)
     ///     AYRI ihtiyaçlardır; ikisini karıştıran belge ffmpeg'i anlamsız bir çıkış koduyla
-    ///     düşürür (M6 denetimi, N3).</item>
+    ///     düşürür (ölçüldü).</item>
     /// </list>
     /// </summary>
     private static ExportSourceNeed? NeedOf(ExportClipPlan clip, Track track)

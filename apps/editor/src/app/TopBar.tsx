@@ -63,7 +63,7 @@ export function TopBar() {
         </IconButton>
       </div>
 
-      {/* Overlay katmanları (M4 dalga 2): metin/şekil ekleme playhead'e çalışır. */}
+      {/* Overlay katmanları: metin/şekil ekleme playhead'e çalışır. */}
       <div className="ml-3">
         <OverlayAddButtons />
       </div>

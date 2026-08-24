@@ -211,7 +211,7 @@ public sealed class RefreshTokenServiceTests : IDisposable
     [Fact]
     public async Task Revoke_ThenReplayToRotate_PlainFailure_OtherDeviceSurvives()
     {
-        // 14. tur denetimi BULGU-2: logout'la iptal edilen token HALEFSİZDİR
+        // Denetim bulgusu: logout'la iptal edilen token HALEFSİZDİR
         // (ReplacedByTokenId == null) — replay'i zincir çatallanması değildir, korunacak
         // canlı halef yoktur. Düz 401 döner ve öteki cihaz AÇIK KALIR; "tek cihazdan çıkış"
         // özelliğinin içinde tüm cihazları düşüren gizli bir kapı bırakılmaz (çok cihaz +

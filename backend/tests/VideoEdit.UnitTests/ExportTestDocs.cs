@@ -167,7 +167,7 @@ internal static class ExportTestDocs
             Content = content,
             // KÜRATÖRLÜ id (fonts/manifest.json). Eskiden 'inter' yazıyordu — manifestte
             // OLMAYAN bir id; editörün varsayılanı da oydu ve metin içeren her export
-            // 'font-missing' ile düşüyordu (M4 dalga-2 denetimi, KRİTİK bulgu #1). Test
+            // 'font-missing' ile düşüyordu (metin-overlay denetimi, KRİTİK bulgu #1). Test
             // dokümanları da gerçek katalogdan seçilir, aksi halde 422 ön kontrolü
             // (ExportEndpoints) kendi test verimizi reddederdi.
             FontId = "roboto",

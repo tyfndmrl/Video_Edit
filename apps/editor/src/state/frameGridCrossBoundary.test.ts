@@ -219,7 +219,7 @@ describe.each(FPS_CASES)('frame-grid cross-boundary @ $label fps', ({ label, fps
   });
 
   /**
-   * SOURCE-BOUND CLAMPS (2nd review round, blocker 1).
+   * SOURCE-BOUND CLAMPS (measured review blocker).
    *
    * Every trim path clamps the edge against the SOURCE — `assetDurationUs` on
    * the right, `sourceInUs >= 0` on the left. Those bounds are raw ffprobe

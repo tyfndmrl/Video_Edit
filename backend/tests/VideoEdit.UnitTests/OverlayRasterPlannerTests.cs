@@ -53,7 +53,7 @@ public sealed class OverlayRasterPlannerTests : IDisposable
     public void Collect_SkipsHiddenTracks()
     {
         // ExportCompiler'ın "atıl klip" kuralıyla aynı: gizli katmandaki metnin eksik fontu
-        // TÜM export'u düşürmemeli (M4 dalga 1 denetimindeki hatanın tekrarı olurdu).
+        // TÜM export'u düşürmemeli (çok-katman denetimindeki hatanın tekrarı olurdu).
         var doc = OverlayTestDocs.Doc([OverlayTestDocs.Text("gizli")], hidden: true);
 
         Assert.Empty(OverlayRasterPlanner.Collect(doc));

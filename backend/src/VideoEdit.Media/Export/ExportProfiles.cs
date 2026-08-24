@@ -142,7 +142,7 @@ public static class ExportProfiles
 
     /// <summary>
     /// Disk rezervasyonu için kaba çıktı bit hızı TABANI (tasarım 04 §4.2). CRF çıktısı içerik
-    /// bağımlıdır — 1080p CRF18 veryfast için ~10 Mbps güvenli üst banttır (12. tur ölçümü);
+    /// bağımlıdır — 1080p CRF18 veryfast için ~10 Mbps güvenli üst banttır (ölçüldü);
     /// diğer profiller o ölçülü bandın PİKSEL ALANI oranıyla türetilir (720p ≈ 0,44x → 5 Mbps'e
     /// yukarı yuvarlanır; 2160p = 4x → 40 Mbps; dikey = 1080p ile aynı alan → 10 Mbps).
     /// Taban tek başına kullanılmaz: worker max(taban, kaynağın ölçülmüş bit hızı) alır

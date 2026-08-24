@@ -12,7 +12,7 @@ namespace VideoEdit.UnitTests;
 /// (önceki klibin bitişi ≤ sonrakinin başlangıcı); boşluk serbesttir. Hakem
 /// <see cref="ExportCompiler.Validate"/>'tir. Vektördeki her kenar 30fps proje ızgarasına
 /// oturur ve süre formülü kurulumdan sağlanır — yalnız yerleşim kuralı ayrıştırır.
-/// docs/backlog.md 14. tur "M3 sınıfı" ailelerinden 'klip yerleşimi'nin kapanışıdır.
+/// docs/backlog.md "M3 sınıfı" parite aileleri kaydından 'klip yerleşimi'nin kapanışıdır.
 /// </summary>
 public class ClipPlacementParityTests
 {

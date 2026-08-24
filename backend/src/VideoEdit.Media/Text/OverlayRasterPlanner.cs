@@ -48,7 +48,7 @@ public sealed record OverlayRasterSet(
 /// ATIL KLİP KURALI ExportCompiler ile AYNIDIR: <c>track.hidden</c> olan track'in klipleri
 /// hiçbir ffmpeg girişi açmaz, dolayısıyla rasterleştirilmez de. (Aksi halde gizli bir
 /// katmandaki eksik fontlu metin, görünmeyen bir klip yüzünden TÜM export'u düşürürdü —
-/// M4 dalga 1 denetimindeki hatanın aynısı.)
+/// çok-katman denetiminde ölçülen "atıl klip" hatasının aynısı.)
 /// </para>
 /// <para>
 /// ÇIKARTMALAR DAHİL DEĞİLDİR: sticker klibi mevcut PNG/WebP asset'ini doğrudan kullanır.

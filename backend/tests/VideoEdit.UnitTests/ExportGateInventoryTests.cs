@@ -438,8 +438,8 @@ public sealed class ExportGateInventoryTests : IDisposable
     /// gerekçeye ulaşan TÜM DURUMLARI kapsayıp kapsamadığını sormuyordu. <c>asset-not-ready</c>
     /// satırının yazılı gerekçesi ("işlenmekte olan asset iş kuyruktan alınana kadar Ready
     /// olabilir") dört durumdan yalnız üçünü kapsıyordu: <c>Failed</c> TERMİNALDİR, o asset
-    /// asla Ready olmaz — ve ölçüldü ki böyle bir belge 202 alıp dakikalar sonra ölüyordu
-    /// (M6 denetimi, N2). Bu defter o SINIFI kapatır: durum enum'ı REFLEKSİYONLA taranır,
+    /// asla Ready olmaz — ve ölçüldü ki böyle bir belge 202 alıp dakikalar sonra ölüyordu.
+    /// Bu defter o SINIFI kapatır: durum enum'ı REFLEKSİYONLA taranır,
     /// her değer bir satır ister ve <see cref="StateOwner.SyncGate"/> satırlar GERÇEKTEN
     /// koşturulur.
     /// </para>
@@ -878,7 +878,7 @@ public sealed class ExportGateInventoryTests : IDisposable
     /// <summary>Serbest biçimli sözlük torbasının defterdeki özellik adı.</summary>
     private const string DictionaryBagProperty = "*";
 
-    // ───────── EFEKT PARAMETRE TORBASININ İHLAL YÜZEYİ (10. tur, F3) ─────────
+    // ───────── EFEKT PARAMETRE TORBASININ İHLAL YÜZEYİ ─────────
 
     /// <summary>
     /// <c>Effect.params</c> torbasının kapıya takılan TÜM ihlal biçimleri.
@@ -960,7 +960,7 @@ public sealed class ExportGateInventoryTests : IDisposable
         return SeedAsync(ExportTestDocs.Doc(clips: clip));
     }
 
-    // ───────── KAYNAK TAVANLARININ İKİ YANI (10. tur, F1 ve F2) ─────────
+    // ───────── KAYNAK TAVANLARININ İKİ YANI ─────────
 
     /// <summary>
     /// <c>settings.fps</c> kabul penceresinin iki yanı.
@@ -1017,21 +1017,21 @@ public sealed class ExportGateInventoryTests : IDisposable
     /// </summary>
     private static readonly (string RepoPath, int Unsupported, int Invalid)[] ThrowSiteCounts =
     [
-        // 20 → 22: 'asset-failed' ve 'asset-clip-type' (M6 denetimi, N1-N3). İkisi de SAF DB
+        // 20 → 22: 'asset-failed' ve 'asset-clip-type'. İkisi de SAF DB
         // aritmetiğidir (Asset.Status / Asset.Kind), ikisi de Validate'te yaşar ve ikisinin de
         // CompilerGates defterinde SyncGate satırı vardır.
         // 22 → 24: 'project-background-color' İKİ noktadan fırlar — Validate'teki kapı ve
         // FfmpegColor'ın sözleşme muhafızı (eskiden sessizce '000000'a düşen dal).
-        // 24 → 26: 'project-fps-out-of-range' ve 'timeline-too-long' (10. tur, F2 ve F1). İkisi
+        // 24 → 26: 'project-fps-out-of-range' ve 'timeline-too-long' (kaynak tavanları). İkisi
         // de SAF DOKÜMAN aritmetiğidir ve ikisinin de CompilerGates'te SyncGate satırı vardır.
         ("backend/src/VideoEdit.Media/Export/ExportCompiler.cs", 26, 33),
-        // 7 → 8 (13. tur, C1): keyframe timeUs üst sınırı — zod'un "outside [0,
+        // 7 → 8: keyframe timeUs üst sınırı — zod'un "outside [0,
         // timelineDurationUs]" invaryantının C# eşi. Saf doküman aritmetiğidir, Validate'te
         // (KeyframeCompiler.Parse → Track) yaşar; HTTP karşılığı ExportEndpointsTests'te,
         // zod paritesi KeyframeBoundsParityTests'te (paylaşılan vektör dosyasıyla) ölçülür.
         ("backend/src/VideoEdit.Media/Export/ClipAnimation.cs", 1, 8),
         ("backend/src/VideoEdit.Media/Export/ClipEffects.cs", 2, 7),
-        // 0 → 1 (dalga 2, export profilleri): 'export-profile-aspect' — profil hedef kutusu
+        // 0 → 1 (export profilleri): 'export-profile-aspect' — profil hedef kutusu
         // tuval oranına uymuyorsa tipli ret. SpecFor'da yaşar (Validate DEĞİL: kural belgenin
         // değil, belge+PROFİL çiftinin kuralıdır ve profil Validate'in girdisi değildir);
         // API senkron kapısı StartExport'ta SpecFor'u doğrudan çağırır, Compile sigortadır.
@@ -1366,7 +1366,7 @@ public sealed class ExportGateInventoryTests : IDisposable
     [Fact]
     public void TheClientAndServerAgreeOnWhichCodesMeanAResourceCeiling()
     {
-        // AYNI DOKTRİN, İKİNCİ SINIF (10. tur, F1/F2): kaynak tavanı bir "desteklenmeyen
+        // AYNI DOKTRİN, İKİNCİ SINIF (kaynak tavanları): kaynak tavanı bir "desteklenmeyen
         // özellik" DEĞİLDİR. Belge geçerli, özellik destekli — proje yalnız pencerenin
         // dışında. Ayrışma çökme değil YANLIŞ CÜMLE üretir, o yüzden iki kaynak TARANIR.
         var server = QuotedStrings(Between(
@@ -1431,7 +1431,7 @@ public sealed class ExportGateInventoryTests : IDisposable
     [Fact]
     public void TheClientAndServerAgreeOnWhichCodesMeanAProfileMismatch()
     {
-        // AYNI DOKTRİN, DÖRDÜNCÜ SINIF (dalga 2, export profilleri): belge sağlam — İSTEĞİN
+        // AYNI DOKTRİN, DÖRDÜNCÜ SINIF (export profilleri): belge sağlam — İSTEĞİN
         // seçtiği profil tuval oranına uymuyor. Öteki üç cümlenin hepsi kullanıcıyı BELGEYE
         // baktırır; buradaki eylem ise SEÇİMİ değiştirmektir (uyumlu profil ya da tuval).
         var server = QuotedStrings(Between(

@@ -19,7 +19,7 @@ using VideoEdit.Worker.Jobs;
 namespace VideoEdit.UnitTests;
 
 /// <summary>
-/// PİS-DOSYA KORPUSU (M4 dalga 3 borcu): gerçek telefonların/araçların ürettiği "tuhaf ama
+/// PİS-DOSYA KORPUSU (backlog borcunun kapanışı): gerçek telefonların/araçların ürettiği "tuhaf ama
 /// meşru" dosya sınıfları GERÇEK ffmpeg ile üretilir ve HEM işleme hattından (ProcessAssetJob)
 /// HEM export hattından (ExportJob) uçtan uca geçirilir. Sözleşme: her dosyanın sonucu
 /// TİPLİDİR — ya Ready/Succeeded ya da anlamlı tipli bir hata kodu; kullanıcıya HAM ffmpeg

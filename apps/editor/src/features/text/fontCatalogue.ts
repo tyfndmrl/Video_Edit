@@ -2,7 +2,7 @@
  * Font catalogue loader — `GET /api/fonts` -> the editor's live font list, and
  * `@font-face` rules that load THE SAME curated TTF the server rasterizes with.
  *
- * M4 dalga-2 denetimi, bulgu #1 (KRİTİK) and bulgu #3(a):
+ * Metin-overlay denetimi, bulgu #1 (KRİTİK) and bulgu #3(a):
  * - #1: the editor's font list was a hard-coded guess that shared ONE id with
  *   `fonts/manifest.json` — and not the default one, so "add text -> export"
  *   died with `font-missing`. The list is now SERVED by the backend from that

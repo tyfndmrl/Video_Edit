@@ -118,7 +118,7 @@ public sealed class ExportEndpointsTests : IDisposable
     }
 
     /// <summary>
-    /// Depodaki GERÇEK <c>fonts/manifest.json</c> — font ön kontrolü (M4 dalga-2 bulgu #1d)
+    /// Depodaki GERÇEK <c>fonts/manifest.json</c> — font ön kontrolü (metin-overlay denetimi bulgu #1d)
     /// gerçek küratörlü id'lerle koşsun diye. Sağlayıcı yükleyemezse kontrol atlanır ve
     /// testler eskisi gibi davranır.
     /// </summary>
@@ -186,7 +186,7 @@ public sealed class ExportEndpointsTests : IDisposable
     public async Task StartExport_LandscapeProfiles_AreAcceptedOnTheDefaultCanvas_AndPersisted(
         string profile)
     {
-        // Dalga 2: yeni profiller varsayılan (1920x1080, 16:9) tuvalde kuyruğa girer ve
+        // Yeni profiller varsayılan (1920x1080, 16:9) tuvalde kuyruğa girer ve
         // İŞ KAYDINA profil ADI yazılır — worker o adı TryParse ile geri çözer.
         var project = await SeedProjectAsync();
 
@@ -267,8 +267,8 @@ public sealed class ExportEndpointsTests : IDisposable
     public async Task StartExport_UnsupportedFeature_Returns422_WithoutQueueingGarbage()
     {
         // Kapsam dışı özellik — compiler ön-doğrulaması API'de koşar, kuyruğa hiç girmez.
-        // (Geçiş + metin/şekil/çıkartma M4 dalga 2'de; hız + renk + transform/opaklık VE SES
-        // SEVİYESİ keyframe'leri M5'te DESTEKLENİR; aşağıdaki *_Accepted testleri onları
+        // (Geçiş + metin/şekil/çıkartma, hız + renk + transform/opaklık VE SES
+        // SEVİYESİ keyframe'leri DESTEKLENİR; aşağıdaki *_Accepted testleri onları
         // sabitler. Burada kalan tipli hata kullanılır: ses klibine GÖRSEL opacity keyframe'i.)
         var clip = ExportTestDocs.AudioClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
         clip.Keyframes = new VideoEdit.Contracts.Timeline.KeyframeTracks
@@ -335,7 +335,7 @@ public sealed class ExportEndpointsTests : IDisposable
     [Fact]
     public async Task StartExport_DegenerateLayer_Returns422_BeforeQueueing()
     {
-        // 4. tur denetiminin ASIL BULGUSU. 1920x100 afiş + ölçek 0.010 → kutu 19x11; ffmpeg'in
+        // Dejenerelik denetiminin ASIL BULGUSU. 1920x100 afiş + ölçek 0.010 → kutu 19x11; ffmpeg'in
         // sığdırdığı yükseklik 0.99 px'e düşer, filtre o ekseni 0 hesaplar ve katmanı 18x100
         // çizer. Kapı olmasaydı: PUT 200 → POST 202 → dakikalar sonra kartta "Başarısız"
         // (ffmpeg -22). Kural artık SENKRON: iş kuyruğa HİÇ girmez.
@@ -659,7 +659,7 @@ public sealed class ExportEndpointsTests : IDisposable
         return ExportTestDocs.Doc(clips: [.. clips]);
     }
 
-    // ---------- Keyframe zamanının klip süresi ÜST SINIRI (13. tur, C1) ----------
+    // ---------- Keyframe zamanının klip süresi ÜST SINIRI ----------
 
     [Fact]
     public async Task StartExport_KeyframeBeyondTheClipDuration_Returns422_BeforeQueueing()
@@ -728,7 +728,7 @@ public sealed class ExportEndpointsTests : IDisposable
     [Fact]
     public async Task StartExport_UnknownFontId_Returns422_BeforeQueueing()
     {
-        // M4 dalga-2 denetimi, bulgu #1(d): manifestte olmayan bir fontId raster aşamasında
+        // Metin-overlay denetimi, bulgu #1(d): manifestte olmayan bir fontId raster aşamasında
         // 'font-missing' ile düşer — dakikalar sonra. Ön kontrol onu KUYRUĞA HİÇ SOKMAZ.
         // ('inter' tam olarak editörün eski varsayılanıydı; sunucuda hiç var olmadı.)
         Assert.NotNull(Fonts.Manifest);
@@ -889,7 +889,7 @@ public sealed class ExportEndpointsTests : IDisposable
     [Fact]
     public async Task StartExport_TransitionsAndOverlayClips_Accepted()
     {
-        // M4 dalga 2: editör artık geçiş + metin/şekil/çıkartma üretiyor — ön-doğrulama
+        // Editör geçiş + metin/şekil/çıkartma üretiyor — ön-doğrulama
         // bunları REDDETMEMELİ (aksi halde kullanıcı emeğini kaybeder).
         var a = ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 1_000_000, 3_000_000);
         var b = ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 2_000_000, 1_000_000, 3_000_000);
@@ -913,7 +913,7 @@ public sealed class ExportEndpointsTests : IDisposable
     [Fact]
     public async Task StartExport_MultipleLayers_Accepted()
     {
-        // M4 dalga 1: editör artık çok katman üretiyor — ön-doğrulama bunu REDDETMEMELİ.
+        // Editör çok katman üretiyor — ön-doğrulama bunu REDDETMEMELİ.
         var doc = ExportTestDocs.MultiTrackDoc(
         [
             ExportTestDocs.VideoTrack(clips:
@@ -960,7 +960,7 @@ public sealed class ExportEndpointsTests : IDisposable
         Assert.Equal(1, _jobs.CreateCount);
     }
 
-    // ---------- Raster katman tavanı (3. tur denetim, blocker 2) ----------
+    // ---------- Raster katman tavanı ----------
 
     [Fact]
     public async Task StartExport_HugeTextLayer_Returns422_BeforeQueueing()
@@ -1016,7 +1016,7 @@ public sealed class ExportEndpointsTests : IDisposable
     [Fact]
     public async Task StartExport_SystemFontMeasurement_DoesNotDecideTheCeiling()
     {
-        // M6 denetimi, N4. Küratörlü TTF kurulu DEĞİLKEN ölçüm bir SİSTEM fontuyla yapılır ve
+        // Ölçülen denetim bulgusu. Küratörlü TTF kurulu DEĞİLKEN ölçüm bir SİSTEM fontuyla yapılır ve
         // o kutu, worker'ın çizeceği küratörlü kutunun ne üst ne alt sınırıdır — ÖLÇÜLDÜ
         // (Windows 11 + SkiaSharp 3.116.1, küratörlü set ↔ Arial/Segoe UI/Times New Roman;
         // 4 fontId × 3 punto × 2 ağırlık × 5 metin): bbox genişliği -21,1% … +7,9%, yüksekliği
@@ -1181,7 +1181,7 @@ public sealed class ExportEndpointsTests : IDisposable
         // KAPININ SINIRI (negatif kontrol). Gizli track'in metni HİÇ rasterlenmez
         // (OverlayRasterPlanner.Collect onu atlar) — dolayısıyla geçersiz rengi de export'u
         // düşürmez. Kapı burada da reddetseydi, GÖRÜNMEYEN bir klip yüzünden geçerli bir
-        // belge geri çevrilirdi (M4 dalga 1 denetimindeki "atıl klip" hatasının aynısı).
+        // belge geri çevrilirdi (çok-katman denetimindeki "atıl klip" hatasının aynısı).
         var hidden = ExportTestDocs.TextClip(0, 1_000_000);
         hidden.Text!.Fill = "rgb(1,2,3)";
         var doc = ExportTestDocs.MultiTrackDoc(

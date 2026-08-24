@@ -8,7 +8,7 @@ using VideoEdit.Media.Probing;
 namespace VideoEdit.UnitTests;
 
 /// <summary>
-/// M4 dalga 2'nin GERÇEK RENDER kanıtları (rendering-semantics §9 golden-frame protokolü):
+/// Geçiş + overlay hattının GERÇEK RENDER kanıtları (rendering-semantics §9 golden-frame protokolü):
 /// geçişler (xfade/acrossfade) ve overlay varlıkları (metin/şekil rasteri + çıkartma) sabit
 /// fixture dokümanlarından derlenip GERÇEK ffmpeg ile render edilir, sonra çıktı karelerinden
 /// piksel okunur. Snapshot testi bu sınıf hataları GÖREMEZ:
@@ -115,7 +115,7 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
     [FfmpegFact]
     public async Task FadeToBlack_OnTheFastPath_MatchesTheYuvModelThePreviewUses()
     {
-        // §5.3 KAPALI FORM KANITI (dalga 2). ffmpeg xfade fadeblack'i (phase 0.2) video
+        // §5.3 KAPALI FORM KANITI. ffmpeg xfade fadeblack'i (phase 0.2) video
         // kaynaklarında YUV DÜZLEMLERİNDE karıştırır ve "siyah"ı (Y=0, U=V=128) —
         // yani yayın aralığının (Y≥16) ALTINDA bir süper-siyah; rgb siyahının afin
         // görüntüsü Y=16 olurdu ve eski önizleme formülünün tüm sapması bu sabitti.
@@ -145,7 +145,7 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
     [FfmpegFact]
     public async Task FadeToBlack_OnTheComposedPath_FollowsTheRgbChannelCurve_Measured()
     {
-        // ÖLÇÜLMÜŞ AYRIŞMA (dalga 2): ffmpeg xfade'in "siyah"ı, xfade'in KOŞTUĞU piksel
+        // ÖLÇÜLMÜŞ AYRIŞMA: ffmpeg xfade'in "siyah"ı, xfade'in KOŞTUĞU piksel
         // ailesine bağlıdır. Kompozisyon yolunda katmanlar format=rgba girer ve xfade
         // KANAL BAŞINA siyah=0 ile karışır (rgb eğrisi); hızlı yol yuv420p'de koşar ve
         // siyah (Y=0, U=V=128) süper-siyahtır. İki eğri uçlarda ve A-düşüşünde ≈ aynı,

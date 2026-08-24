@@ -12,7 +12,7 @@ namespace VideoEdit.UnitTests;
 /// zod "keyframes must be strictly sorted by timeUs", C# eşi KeyframeCompiler.Parse'ın
 /// sıralılık dalı; hakem <see cref="ExportCompiler.Validate"/>'tir. Her vaka hem görsel
 /// (opacity) hem ses (volume) kanalında koşar (keyframe-bounds deseninin aynısı).
-/// docs/backlog.md 14. tur "M3 sınıfı" ailelerinden 'keyframe sıralaması'nın kapanışıdır.
+/// docs/backlog.md "M3 sınıfı" parite aileleri kaydından 'keyframe sıralaması'nın kapanışıdır.
 /// </summary>
 public class KeyframeOrderParityTests
 {

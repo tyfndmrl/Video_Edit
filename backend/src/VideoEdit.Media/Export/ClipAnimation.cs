@@ -91,7 +91,7 @@ public static class KeyframeCompiler
     /// Klibin timeline süresi — keyframe zamanının ÜST SINIRI. zod bu kuralı belge kapısında
     /// kurar (invariants.ts: "keyframe timeUs … is outside [0, timelineDurationUs]"); C# tarafı
     /// kurmayınca ham API'den gelen süre-ötesi rampa 202 + succeeded alıyor ve ffmpeg çıktısında
-    /// animasyon klip sonunda SON ÖRNEKLENEN değerde donuyordu (sessiz yanlış çıktı — 13. tur, C1).
+    /// animasyon klip sonunda SON ÖRNEKLENEN değerde donuyordu (sessiz yanlış çıktı — ölçüldü).
     /// Çağıran süreyi pozitif doğrulamış olmalıdır (ExportCompiler.ValidateClip öyle yapar).
     /// </param>
     public static ClipAnimation Parse(Guid clipId, long timelineDurationUs, KeyframeTracks? tracks)

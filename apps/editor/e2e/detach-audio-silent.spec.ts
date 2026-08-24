@@ -1,7 +1,7 @@
 /**
  * "Sesi ayır" × SESSİZ video — ölçülen 422 tuzağının kapısı (gerçek fare).
  *
- * Ölçülen kusur (backlog 8. tur → bu dilimde Playwright ile ÜRETİLDİ): ses
+ * Ölçülen kusur (backlog "Sesi ayır" kaydı → Playwright ile ÜRETİLDİ): ses
  * akışı olmayan bir videoda sağ tık menüsü "Sesi ayır"ı AÇIK sunuyordu
  * (`disabled=false`), gerçek tık ses klibi doğuruyordu ve POST /exports
  * HTTP 422 `asset-clip-type` ("bu videonun ses akışı yok") ile reddediyordu.

@@ -204,7 +204,7 @@ try
         sp.GetService<Microsoft.Extensions.Options.IOptions<VideoEdit.Media.Text.TextRasterOptions>>()?.Value));
     // ÖLÇÜM-İÇİN raster servisi (POST /exports ön kapısı — hiçbir yerde RenderAsync ÇAĞRILMAZ):
     // metin katmanının bbox'ı ölçülemezse "8192 px katman" kuralı yalnız worker'da görünür,
-    // iş kuyruğa girer ve dakikalar sonra düşer (3. tur denetim, blocker 2). Servis TEMBELDİR:
+    // iş kuyruğa girer ve dakikalar sonra düşer (canlı ölçülen denetim bulgusu). Servis TEMBELDİR:
     // manifest/typeface ilk ölçümde yüklenir, fontlar kurulu değilse doğrulama alt sınıra düşer.
     builder.Services.AddSingleton<VideoEdit.Media.Text.ITextRasterService>(sp =>
         new VideoEdit.Media.Text.SkiaOverlayRasterService(

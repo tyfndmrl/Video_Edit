@@ -18,15 +18,15 @@ using VideoEdit.Worker.Jobs;
 namespace VideoEdit.UnitTests;
 
 /// <summary>
-/// DİSK REZERVASYONU TAHMİNİNİN ÖLÇÜLÜ KANITI (12. tur borcu "[AÇIK — ORTA] Export'un disk
+/// DİSK REZERVASYONU TAHMİNİNİN ÖLÇÜLÜ KANITI (backlog borcu "Export'un disk
 /// rezervasyonu tahmini yüksek bit hızlı kaynakta KISA KALIYOR"):
 /// <list type="bullet">
 ///   <item>YÜKSEK bit hızlı (≥ 20 Mbps, gren/rastgele içerik — kodlayıcı gerçekten yorulur)
 ///     kaynakta GERÇEK export koşulur ve gerçek disk ayak izi (cache'teki kaynak + üretilen
-///     çıktı) ölçülür: ESKİ formül (sabit profil taban varsayımı — dalga 2'den beri 720p
+///     çıktı) ölçülür: ESKİ formül (sabit profil taban varsayımı — 720p
 ///     profili için 5 Mbps) ölçülen kullanımın ALTINDA kalır (negatif kontrol — borç bu
 ///     korpusta gerçekten vardı), YENİ formül (max(profil, ölçülmüş kaynak bit hızı))
-///     kullanımı KAPSAR. Belgeler 1280x720 tuval + "720p" profili kullanır: dalga 2'nin
+///     kullanımı KAPSAR. Belgeler 1280x720 tuval + "720p" profili kullanır: profillerin
 ///     en-boy kapısı 4:3 tuvali reddeder, 720p kutusu tuvale eşit olduğundan ölçek
 ///     aşaması da üretilmez (çıktı ayak izi bu testin yazıldığı günkü rejimle aynı kalır).</item>
 ///   <item>DÜŞÜK bit hızlı kaynakta yeni formül eskisiyle BİRE BİR aynı sayıyı verir

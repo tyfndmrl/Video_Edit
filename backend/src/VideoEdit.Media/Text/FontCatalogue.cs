@@ -6,7 +6,7 @@ namespace VideoEdit.Media.Text;
 /// Manifestin DIŞARI VERİLEBİLİR izdüşümü — <c>GET /api/fonts</c> gövdesi ve
 /// "bilinmeyen fontId" ön kontrolü.
 /// <para>
-/// NEDEN VAR (M4 dalga-2 denetimi, KRİTİK bulgu #1): editör kendi font listesini SABİT
+/// NEDEN VAR (metin-overlay denetimi, KRİTİK bulgu #1): editör kendi font listesini SABİT
 /// KODLUYORDU (<c>inter/roboto/georgia/impact/courier</c>, varsayılan <c>inter</c>) ve bu liste
 /// <c>fonts/manifest.json</c> ile (<c>roboto/open-sans/noto-sans/noto-serif</c>) neredeyse
 /// AYRIK bir kümeydi. Varsayılan id sunucuda YOKTU: her yeni metin klibi

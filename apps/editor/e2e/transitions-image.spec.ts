@@ -4,7 +4,7 @@
  * ---------------------------------------------------------------------------
  * NEYİ KANITLIYOR
  * ---------------------------------------------------------------------------
- * M4 dalga 2 denetim bulgusu (YÜKSEK): editör ve şema D/2 KAYNAK PAYINI her
+ * Denetim bulgusu (YÜKSEK): editör ve şema D/2 KAYNAK PAYINI her
  * medya klibine uyguluyordu. Görsel klip `sourceIn = 0, sourceOut = 4 sn` ile
  * doğar — yani payı DAİMA sıfırdır — dolayısıyla iki fotoğrafın arasına geçiş
  * eklemek "no room for a transition" ile reddediliyordu: rozet düzenleyiciyi

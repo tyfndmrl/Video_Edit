@@ -5,7 +5,7 @@
  * kullanılan medya klip sayısını söyleyen bir UYARIYLA silinir. Sayıların
  * cümleye dönüşmesi saf ve test edilebilir kalsın diye burada durur.
  *
- * Cümle varlık TÜRÜNE göre seçilir (14. tur triyajı, BG bulgu B5): medya klibin
+ * Cümle varlık TÜRÜNE göre seçilir (denetim bulgusu): medya klibin
  * KAYNAĞIDIR — silinince klip gerçekten bozulur; LUT ise klibe uygulanmış bir
  * EFEKTTİR — silinince klip bozulmaz, renk tablosu düşer ve dışa aktarma
  * 'asset-missing' ile reddedilir. Medya diliyle yazılmış tek cümle LUT için

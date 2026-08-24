@@ -2902,7 +2902,7 @@ function splitTextLines(content: string): string[] {
  * canvas: at fontSizePx 2000 a single line is already ~2400 px tall, i.e. the
  * layer tops out around scale 3.4 in ANY project. Deriving the field max from
  * the canvas (as this used to) let the user write scale 4.266, the API queued
- * it and the worker died on it (3. tur denetim, blocker 2).
+ * it and the worker died on it (measured in review).
  *
  * `measuredBoxPx` is the REAL bbox when the caller can measure one (the
  * inspector can — features/text/overlayRaster); without it the font-independent
@@ -3084,7 +3084,7 @@ export function applyClipTransformToDraft(
       // Ceiling is per-CLIP, not a constant and not merely per-project: a text
       // layer is drawn at `bbox * scale`, so a 2000 px font tops out around 3.4
       // even in a project where a video clip may go to 4.266 (see
-      // maxClipScaleFor — 3. tur denetim, blocker 2). Rotation lowers it again
+      // maxClipScaleFor). Rotation lowers it again
       // (intermediate-canvas diagonal).
       const v = clampFinite(patch.scale, SCALE_MIN, maxClipScaleFor(clip, d.settings), SCALE_DECIMALS);
       if (v !== null) t.scale = v;
@@ -3544,7 +3544,7 @@ export const TEXT_SIZE_MIN = 4;
  * and the clip's scale, because those four together decide whether the layer
  * fits in MAX_LAYER_DIMENSION. Bounding the field with this constant alone let
  * a user type 2000 px on a scale-4 clip; the document saved (PUT 200), the API
- * queued the export (202) and the worker died on it (3. tur denetim, blocker 2).
+ * queued the export (202) and the worker died on it (measured in review).
  */
 export const TEXT_SIZE_MAX = 2000;
 /** Precision a font size is stored with (the inspector field shows integers). */

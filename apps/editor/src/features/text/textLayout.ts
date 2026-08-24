@@ -2,7 +2,7 @@
  * Text layout — where every line, the bounding box and the background rect sit,
  * as PURE math.
  *
- * SINGLE RULE (rendering-semantics §7, M4 dalga-2 denetimi bulgu #2). Until this
+ * SINGLE RULE (rendering-semantics §7, metin-overlay denetimi bulgu #2). Until this
  * rewrite the client used `bbox = content + 2*(stroke + backgroundPadding)` and
  * painted the background over the WHOLE bbox, while the server used a union of
  * boxes and painted the background over `content ± padding`. Two rules = two

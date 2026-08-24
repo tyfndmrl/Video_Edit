@@ -161,7 +161,7 @@ public static class TextLayoutEngine
     /// AYNI SABİT İSTEMCİDE DE VARDIR: <c>EMPTY_TEXT_MIN_WIDTH_RATIO</c>
     /// (apps/editor/src/features/text/textLayout.ts). İkisini
     /// <c>packages/timeline-schema/test-vectors/text-layout-vectors.json</c> kilitler —
-    /// biri değişirse ÖTEKİ DİLİN testi kırmızıya döner (M4 dalga-2 denetimi, bulgu #2).
+    /// biri değişirse ÖTEKİ DİLİN testi kırmızıya döner (metin-overlay denetimi, bulgu #2).
     /// </para>
     /// Kural YALNIZ ölçüm 0 iken uygulanır: gerçekten dar bir satır ("I") dar kalmalıdır.
     /// </summary>

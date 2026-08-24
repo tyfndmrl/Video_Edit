@@ -8,7 +8,7 @@ using VideoEdit.Media.Probing;
 namespace VideoEdit.UnitTests;
 
 /// <summary>
-/// EXPORT PROFİLLERİ (dalga 2): profil, BİTMİŞ tuval kompozisyonunu kendi hedef kutusuna
+/// EXPORT PROFİLLERİ: profil, BİTMİŞ tuval kompozisyonunu kendi hedef kutusuna
 /// taşır — bu sınıf o taşımanın GERÇEK RENDER kanıtlarıdır.
 ///
 /// İki iddia ailesi ölçülür:

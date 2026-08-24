@@ -3,7 +3,7 @@
  * aktarma → indirilen dosyada GERÇEK ses).
  *
  * ---------------------------------------------------------------------------
- * NEYİ KANITLIYOR (6. tur denetimi, N1 — KRİTİK)
+ * NEYİ KANITLIYOR (KRİTİK denetim bulgusu)
  * ---------------------------------------------------------------------------
  * Ölçülen kusur: kitaplığa bir `.m4a` yüklemek ("Hazır"), karta çift tıklayıp ses
  * track'ine koymak ve "Dışa Aktar" demek — POST /exports **202** dönüyor, iş

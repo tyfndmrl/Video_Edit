@@ -5,7 +5,7 @@ using VideoEdit.Worker.Jobs;
 namespace VideoEdit.UnitTests;
 
 /// <summary>
-/// LRU SÜPÜRMESİNİN İLK GERÇEK ÖLÇÜMÜ (12. tur borcu "[AÇIK — DÜŞÜK] LRU cache SÜPÜRMESİ
+/// LRU SÜPÜRMESİNİN İLK GERÇEK ÖLÇÜMÜ (backlog borcu "LRU cache SÜPÜRMESİ
 /// ölçülmedi"): tavan test-yerel küçük bir değere indirilir ve süpürmenin
 ///  (1) tavan aşılınca EN ESKİ damgalı girdiyi sildiği,
 ///  (2) yakın zamanda KULLANILAN (cache isabetiyle damgası tazelenen) girdiyi koruduğu,

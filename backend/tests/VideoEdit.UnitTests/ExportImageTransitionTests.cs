@@ -8,7 +8,7 @@ namespace VideoEdit.UnitTests;
 /// GÖRSEL kliplerde geçiş — üç katmanın (invariants.ts / editör timelineOps / bu compiler)
 /// AYNI yorumda olduğunun backend tarafındaki kanıtı.
 /// <para>
-/// M4 dalga 2 denetim bulgusu (YÜKSEK): editör ve şema D/2 kaynak payını HER medya klibine
+/// Denetim bulgusu (YÜKSEK): editör ve şema D/2 kaynak payını HER medya klibine
 /// uyguluyordu. Görsel klip <c>sourceIn = 0, sourceOut = 4 sn</c> ile doğar → payı daima 0 →
 /// iki fotoğraf arasına crossfade (slayt gösterisi) EKLENEMİYORDU. Compiler ise görseli
 /// açıkça muaf tutar: <see cref="ExportClipPlan.IsStillInput"/> girişi <c>-loop 1 -t</c> ile

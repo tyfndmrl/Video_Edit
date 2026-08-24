@@ -11,7 +11,7 @@ namespace VideoEdit.UnitTests;
 /// tarafından koşulur. Kural (şema invaryantı): keyframe timeUs ∈ [0, clip.timelineDurationUs],
 /// iki uç da KAPSAYICI — zod ihlali "keyframe timeUs … is outside [0, dur]" ile reddeder,
 /// C# eşi <see cref="KeyframeCompiler.Parse"/> içindedir ve buradaki hakem
-/// <see cref="ExportCompiler.Validate"/>'tir (13. tur, C1).
+/// <see cref="ExportCompiler.Validate"/>'tir.
 /// <para>
 /// Her vaka hem GÖRSEL (opacity) hem SES (volume) kanalında koşar: iki kanal derleyicide aynı
 /// Track yolundan geçer ve bu test o tekliği vektör düzeyinde sabitler. Kapının HTTP karşılığı

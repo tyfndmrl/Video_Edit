@@ -4,8 +4,8 @@
  * ---------------------------------------------------------------------------
  * BU DOSYA NEYİ KANITLIYOR
  * ---------------------------------------------------------------------------
- * `degenerate-layer.spec.ts` ölçeğin STATİK alandan küçültüldüğü yolu kapatıyordu. 5. tur
- * denetimi kapının ANİMASYONLU yolda hâlâ açık olduğunu GERÇEK fareyle ölçtü: derleyici
+ * `degenerate-layer.spec.ts` ölçeğin STATİK alandan küçültüldüğü yolu kapatıyordu. Sonraki
+ * denetim kapının ANİMASYONLU yolda hâlâ açık olduğunu GERÇEK fareyle ölçtü: derleyici
  * yerleşimi (ve dolayısıyla "kutu en az 2 piksel" kuralını) ölçeğin MAKSİMUMUNDAN kuruyor,
  * dejenerelik kuralını ise MİNİMUMUNDAN soruyordu — yani animasyonun TABANI hiçbir kapıya
  * görünmüyordu. Ölçülen iki varyant:

@@ -1002,7 +1002,7 @@ function TextPropertiesSection({
 }) {
   // The picker lists what the SERVER can resolve (GET /api/fonts). It used to
   // list a hard-coded set whose default ('inter') did not exist server-side, so
-  // every text clip exported with `font-missing` (M4 dalga-2, KRİTİK bulgu #1).
+  // every text clip exported with `font-missing` (metin-overlay denetimi, KRİTİK bulgu #1).
   const { entries: fonts, failed: fontsUnavailable } = useFontCatalogue();
   const weightOptions = weightsFor(section.fontId ?? '').map((w) => ({
     value: String(w),
@@ -1199,7 +1199,7 @@ function TextPropertiesSection({
       )}
 
       {/*
-        Dürüstlük notu (rendering-semantics §7; M4 dalga-2 denetimi bulgu #3c).
+        Dürüstlük notu (rendering-semantics §7; metin-overlay denetimi bulgu #3c).
         ESKİ not "küçük farklar olabilir" diyordu ve YANLIŞTI: kutu kuralları iki
         tarafta farklıydı (kontur 6'da 32×24 / 26×14), üstelik önizleme sistem
         fontuyla ölçüyordu. İkisi de düzeltildi — kural tek (test-vectors/

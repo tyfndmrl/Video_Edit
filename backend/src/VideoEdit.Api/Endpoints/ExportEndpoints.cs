@@ -45,7 +45,7 @@ public static class ExportEndpoints
 
     /// <summary>
     /// KAYNAK TAVANI kodları: belge geçerlidir ve özellik DESTEKLENİR — proje yalnızca dışa
-    /// aktarıcının kaynak penceresinin dışındadır (10. tur, F1/F2).
+    /// aktarıcının kaynak penceresinin dışındadır.
     /// <para>
     /// NEDEN AYRI BAŞLIK: bu iki kod "henüz desteklenmeyen özellik" DEĞİLDİR. Kullanıcı 4
     /// saatten uzun bir çizelge kurduğunda ya da 240 fps üstü bir proje açtığında ona
@@ -128,7 +128,7 @@ public static class ExportEndpoints
     /// Metin bbox'ının ölçüm yolu (yalnız <see cref="ITextRasterService.Measure"/> — dosya
     /// yazılmaz). Ön kapının raster katman tavanını GERÇEK kutuyla doğrulaması için verilir;
     /// kayıtlı değilse (ya da fontlar kurulu değilse) doğrulama font-bağımsız KESİN ALT
-    /// SINIRA düşer — kapı zayıflar ama yanlış 422 üretmez (3. tur denetim, blocker 2).
+    /// SINIRA düşer — kapı zayıflar ama yanlış 422 üretmez.
     /// </param>
     internal static async Task<IResult> StartExport(
         Guid projectId, CreateExportRequest request, ClaimsPrincipal principal, AppDbContext db,
@@ -181,7 +181,7 @@ public static class ExportEndpoints
             // (aksi halde id tahmin ederek başkasının belgesi reddettirilebilirdi) ve silinmiş
             // varlık "yok" sayılır. Tek tek alanların null olması (asset hâlâ işleniyor) yalnız
             // o alanın kapısını atlatır — yanlış 422 üretmez.
-            // Kind ve Status DA OKUNUR (M6 denetimi, N1-N3): kapı zaten bu satırı okuyordu,
+            // Kind ve Status DA OKUNUR (varlık-olgu denetim bulguları): kapı zaten bu satırı okuyordu,
             // iki kolon daha okumak ek sorgu DEĞİLDİR — ama o iki kolon olmadan "ses klibi ses
             // dosyası ister" ve "işlenemeyen dosya dışa aktarılamaz" kuralları senkron
             // sorulamıyor, belge 202 alıp worker'da ölüyordu.
@@ -208,7 +208,7 @@ public static class ExportEndpoints
                     a.Width, a.Height, a.DurationMicros, a.OriginalFileName, a.HasAudio,
                     MediaKindOf(a.Kind), ReadinessOf(a.Status)));
 
-            // FONT ÖN KONTROLÜ (M4 dalga-2 denetimi, bulgu #1d): manifestte olmayan bir
+            // FONT ÖN KONTROLÜ (font denetimi, bulgu #1d): manifestte olmayan bir
             // fontId, raster aşamasında 'font-missing' ile düşer — ama o noktaya gelmek
             // dakikalar sürer. Kuyruğa hiç girmesin. Manifest okunamıyorsa kontrol ATLANIR
             // (yanlış 422 vermektense worker'ın deterministik hatasına bırakılır).

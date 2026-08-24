@@ -18,7 +18,7 @@ public sealed record CubeLutValidation(bool Ok, int Size, string? Error)
 /// ffmpeg'in kabul kümesinin ALT KÜMESİDİR (kabul edilen dosya iki tarafta aynı davranır;
 /// reddedilen dosya hatta hiç girmez — "Ready ama export'ta lut3d patlar" durumu OLAMAZ).
 ///
-/// BAYT DİSİPLİNİ (14. tur denetimi, BULGU-1): ffmpeg <c>parse_cube</c> dosyayı HAM BAYT
+/// BAYT DİSİPLİNİ (denetim bulgusu): ffmpeg <c>parse_cube</c> dosyayı HAM BAYT
 /// olarak okur (fgets) — BOM striplemez, UTF-16 çözmez, satırları yalnız '\n' ile böler ve
 /// anahtar kelimeyi satırın 0. BAYTINDAN eşler. Doğrulayıcı aynı disiplini uygular:
 ///  - baştaki BOM (UTF-8/16/32) AÇIKÇA RET edilir — ffmpeg'te BOM, LUT_3D_SIZE eşleşmesini

@@ -7,9 +7,9 @@
  * koda bakmaya devam eder). Bilinmeyen kod olduğu gibi düşer — yanlış çeviri uydurmaktan
  * iyidir.
  *
- * Kapsam beyanı (14. tur triyajı, BG bulgu B4): bu dalgada yalnız 'invalid-lut' eklendi;
- * dalga öncesinden kalan kodların ('unsupported-media' vb.) ham gösterimi bilinçli olarak
- * korunuyor — tabloya kod eklemek yeterli, çağrı yolu hazır.
+ * Kapsam beyanı: şimdilik yalnız 'invalid-lut' çevriliyor; önceden kalan kodların
+ * ('unsupported-media' vb.) ham gösterimi bilinçli olarak korunuyor — tabloya kod
+ * eklemek yeterli, çağrı yolu hazır.
  */
 const ERROR_LABELS: Record<string, string> = {
   'invalid-lut': 'Geçersiz .cube dosyası',

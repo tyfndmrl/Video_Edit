@@ -78,7 +78,7 @@ public static class AssetEndpoints
         // Failed hariç tutulursa objesi R2'de duran başarısız asset'ler kotadan kaçar (bypass).
         // Değişmez (invariant): objesi R2'den silinen her yol asset'i soft-delete eder
         // (abort, size-mismatch) — soft-delete kotadan düşer, obje sayılmaz, tutarlı.
-        // Toplam = orijinal + TÜREVLER (proxy/filmstrip/waveform/poster; 12. tur borcu —
+        // Toplam = orijinal + TÜREVLER (proxy/filmstrip/waveform/poster —
         // türevler ölçümde orijinalin %7,7'siydi ve sayılmıyordu). DerivedBytes NULL olan
         // geriye dönük satır 0 sayılır (Asset.DerivedBytes sözleşmesi).
         var stats = await db.Assets.AsNoTracking()

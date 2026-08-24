@@ -179,7 +179,7 @@ public sealed class ExportJob(
             Directory.CreateDirectory(tempDir);
 
             // ── 3) Disk rezervasyonu: Σkaynak + süre×max(profil, ölçülmüş kaynak bitrate)
-            // tahmini + %20 pay (12. tur borcu: sabit 10 Mbps grenli kaynakta kısa kalıyordu).
+            // tahmini + %20 pay (ölçüldü: sabit 10 Mbps varsayımı grenli kaynakta kısa kalıyordu).
             var totalSourceBytes = visible.Sum(a => a.SizeBytes);
             if (!await EnsureDiskSpaceAsync(
                     job, tempDir, totalSourceBytes, plan.TotalDurationUs, profile, visible, ct))
@@ -259,7 +259,7 @@ public sealed class ExportJob(
                 // AKIŞ KAPISI, KLİP TÜRÜNE GÖRE. Eskiden burada koşulsuz bir "video stream'i
                 // olmalı" şartı vardı ve MÜZİK EKLEMEK EXPORT'U İMKÂNSIZ KILIYORDU: kitaplığa
                 // yüklenen bir .m4a, ses track'ine konup dışa aktarıldığında iş
-                // 'unsupported-media: ... has no video stream' ile ölüyordu (M6 denetimi, N1).
+                // 'unsupported-media: ... has no video stream' ile ölüyordu (ölçülen denetim bulgusu).
                 // Doğru soru dosyanın ne İÇERDİĞİ değil, o dosyayı okuyan KLİBİN ne İSTEDİĞİdir;
                 // defter (plan.AssetUses) tam olarak bunu taşır ve senkron kapı
                 // ('asset-clip-type') AYNI defteri DB olgularıyla sorar.
@@ -543,7 +543,7 @@ public sealed class ExportJob(
     /// <summary>
     /// Çıktı bit hızı tahmini: profil varsayımı ile kaynakların ÖLÇÜLMÜŞ bit hızının büyüğü.
     /// <para>
-    /// 12. tur ölçümü: CRF çıktısı içerik bağımlıdır ve grenli bir 1080p kaynakta profilin
+    /// Ölçüm: CRF çıktısı içerik bağımlıdır ve grenli bir 1080p kaynakta profilin
     /// 10 Mbps varsayımının ~3 katını üretir (28,85 Mbps ölçüldü) — sabit varsayım gerçek
     /// tepe kullanımı %35 KÜÇÜMSÜYORDU ve dar diskte rezervasyon "yeter" deyip render
     /// ortasında disk bitirebilirdi. Kaynağın bit hızı zaten defterdedir (ffprobe süresi

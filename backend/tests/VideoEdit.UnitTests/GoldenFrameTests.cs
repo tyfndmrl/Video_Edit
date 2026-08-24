@@ -131,7 +131,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         }
     }
 
-    // ───────────────────────── M4 dalga 1: çok katman kompozisyonu ─────────────────────────
+    // ───────────────────────── Çok katman kompozisyonu ─────────────────────────
 
     /// <summary>
     /// Düz renk kaynağın (0x804020) tam hattan geçtikten sonraki ÖLÇÜLMÜŞ rgb24 değeri
@@ -353,7 +353,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         CompareWithGolden(outputPath, 30, "rotated-anchor-f30");
     }
 
-    // ───────────── M4 dalga 1 denetim düzeltmeleri: kompozisyon renk modu + geometri ─────────────
+    // ───────────── Denetim düzeltmeleri: kompozisyon renk modu + geometri ─────────────
 
     [FfmpegFact]
     public async Task OpaqueLayerOnTop_DoesNotDisturbThePixelsItDoesNotCover()
@@ -585,7 +585,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
         Assert.True(MaxVolumeDb(outputPath) > -30d, "miks duyulabilir olmalı");
     }
 
-    // ───── M4 dalga 1 denetim düzeltmeleri: katman run'ları + görsel (still image) klipler ─────
+    // ───── Denetim düzeltmeleri: katman run'ları + görsel (still image) klipler ─────
 
     /// <summary>Görsel fixture'ının (0x2080C0 PNG) hattan geçtikten sonraki rgb24 değeri.</summary>
     private static readonly byte[] ImageLayerRgb = [32, 128, 192];
@@ -1184,7 +1184,7 @@ public sealed class GoldenFrameTests(FfmpegTestMediaFixture media) : IDisposable
     /// </summary>
     public static TheoryData<int, int, string, string, int, int> MeasuredTruncatedBoxes() => new()
     {
-        // 5. tur E2E'sinin ÖLDÜĞÜ vaka: bbox 223x104, taban 0.015 → 3.345 / 1.56.
+        // Canlı ölçümde E2E'nin ÖLDÜĞÜ vaka: bbox 223x104, taban 0.015 → 3.345 / 1.56.
         // Kırpma → kutu 3x1 → yükseklik çöker, çıkış KAYNAĞIN yüksekliği (104).
         { 223, 104, "3.345", "1.56", 2, 104 },
         // KIRPMA/YUVARLAMA AYRIMININ TANIK VAKASI: 3.9/2.9 yuvarlansaydı kutu 4x3 → çıkış 4x2.

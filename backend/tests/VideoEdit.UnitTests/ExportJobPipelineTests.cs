@@ -136,7 +136,7 @@ public sealed class ExportJobPipelineTests : IDisposable
         _db.Assets.Add(asset);
 
         var projectId = Guid.CreateVersion7();
-        // Tuval 1280x720 + profil "720p" (dalga 2): profil artık hedef kutu taşır ve tuval
+        // Tuval 1280x720 + profil "720p": profil hedef kutu taşır ve tuval
         // oranıyla eşleşmek zorundadır ('export-profile-aspect'); 720p kutusu tuvale eşit
         // olduğu için ölçek aşaması üretilmez — render maliyeti küçük kalır. Bilerek
         // BAŞARISIZ biten testlerin belgeleri 320x240 kaldı: onların tipli hataları
@@ -366,7 +366,7 @@ public sealed class ExportJobPipelineTests : IDisposable
     [MinioAndFfmpegFact]
     public async Task Export_MusicOnAnAudioTrack_Succeeds_AndTheOutputReallyCarriesThatSound()
     {
-        // M6 DENETİMİ, N1 (KRİTİK): kullanıcı kitaplığa bir .m4a yükleyip ses track'ine
+        // KRİTİK denetim bulgusu: kullanıcı kitaplığa bir .m4a yükleyip ses track'ine
         // koyduğunda export İMKÂNSIZDI. Worker'ın indirme döngüsü klip TÜRÜNE bakmadan HER
         // varlıkta video stream'i şart koşuyordu; iş 'unsupported-media: ... has no video
         // stream' ile ölüyordu. Bu testin varlık sebebi tam olarak O DÖNGÜDÜR: birim testleri
@@ -513,7 +513,7 @@ public sealed class ExportJobPipelineTests : IDisposable
     [MinioAndFfmpegFact]
     public async Task Export_StickerClipPointingAtAVideoFile_FailsWithATypedError()
     {
-        // M6 DENETİMİ, N3: çıkartma klibi bir VİDEO varlığını gösterdiğinde iş
+        // Ölçülen denetim bulgusu: çıkartma klibi bir VİDEO varlığını gösterdiğinde iş
         // 'ffmpeg-failed: ... exited with code -1414549496' ile ölüyordu — kullanıcıya
         // ANLAMSIZ bir çıkış kodu. Kural artık defterden okunur: çıkartma DURAĞAN giriş ister.
         var videoPath = media.VideoSolid320x240NoAudio();

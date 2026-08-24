@@ -1,5 +1,5 @@
 /**
- * Raster (text) layer ceiling — the editor half of "blocker 2" (3. tur denetim).
+ * Raster (text) layer ceiling — the editor half of the raster-ceiling blocker.
  *
  * MEASURED FAILURE this file pins down: the inspector's scale field capped at
  * `maxClipScale(settings)` (canvas-derived, 4.266 at 1080p) and the font-size

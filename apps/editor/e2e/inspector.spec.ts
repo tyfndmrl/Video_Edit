@@ -610,8 +610,8 @@ test.describe('Inspector — çoklu seçim, kilit ve kapsam', () => {
     // isimleriyle VE hedef milestone'uyla yazılı olmalı.
     //
     // Neden yalnız M5 kalemleri iddia ediliyor: bu not ÖZELLİKLER İNDİKÇE
-    // kısalır (M4 dalga 2 metin/şekil/geçiş satırları teslim edildiklerinde
-    // notttan çıkar — bu koşum sırasında tam olarak bu oldu). Teslim edilmiş
+    // kısalır (metin/şekil/geçiş satırları teslim edildiklerinde
+    // nottan çıktı — tam olarak bu oldu). Teslim edilmiş
     // bir özelliği "hâlâ eksik yazıyor mu?" diye sınamak testi ürünün
     // ilerlemesine düşman yapardı; sabit olan, M5'e itilmiş kalemlerdir.
     await expect(scope).toContainText(/çapa|anchor/i);

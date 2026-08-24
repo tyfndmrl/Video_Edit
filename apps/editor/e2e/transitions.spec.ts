@@ -503,7 +503,7 @@ test.describe('Geçişler — gerçek fare', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ÖNİZLEME (rendering-semantics §5.3) — M4 dalga 2 denetim bulgusu
+// ÖNİZLEME (rendering-semantics §5.3) — denetim bulgusu
 // ---------------------------------------------------------------------------
 //
 // Bulgu (YÜKSEK): geçiş dokümana yazılıyordu ama OYNATICI hiç uygulamıyordu —

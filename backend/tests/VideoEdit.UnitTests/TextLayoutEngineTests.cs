@@ -61,7 +61,7 @@ public sealed class TextLayoutEngineTests
         Assert.Single(layout.Lines);
         Assert.Equal(15, layout.ContentHeightPx); // 10 * 1.5
         // ÖLÇÜMÜ SIFIR olan metin asgari genişliği taşır (fontSizePx * 0.5) — İSTEMCİYLE AYNI
-        // kural (M4 dalga-2 bulgu #2). Kutu 0 olsaydı gizmo kutusu yok olur, kullanıcı yeni
+        // kural (metin-overlay denetimi bulgu #2). Kutu 0 olsaydı gizmo kutusu yok olur, kullanıcı yeni
         // eklediği boş metni seçemezdi.
         Assert.Equal(5, layout.ContentWidthPx);
         // Bbox asla 0 olmaz: en az 1×1 (geçersiz PNG boyutu üretilemez).

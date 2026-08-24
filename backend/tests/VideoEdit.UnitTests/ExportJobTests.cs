@@ -35,7 +35,7 @@ public sealed class ExportJobTests : IDisposable
     /// <summary>
     /// Bu test sınıfının LRU cache kökü — HER ZAMAN test-yerel bir temp dizini.
     /// <para>
-    /// 12. tur ölçümü (docs/backlog.md): burada `new ProcessingOptions()` kullanılıyordu,
+    /// Ölçülen kaza (docs/backlog.md): burada `new ProcessingOptions()` kullanılıyordu,
     /// `CacheDirectory` boş kalınca `OriginalCache.Root` MAKİNE GENELİNDEKİ
     /// `%TEMP%\videoedit-cache`'e düşüyordu ve disk-darlığı testi `TrimAsync(0)` ile oradaki
     /// GERÇEK export cache girdilerini siliyordu (1,51 GiB'lık canlı girdi ölçüm sırasında
@@ -108,8 +108,8 @@ public sealed class ExportJobTests : IDisposable
     [Fact]
     public async Task Run_UnsupportedFeatureSnapshot_FailsWithoutRetry()
     {
-        // Çok katman (M4 dalga 1), metin/şekil/çıkartma ve geçişler (M4 dalga 2), HIZ +
-        // renk düzeltme + transform/opaklık/SES SEVİYESİ keyframe'leri (M5) ARTIK desteklenir.
+        // Çok katman, metin/şekil/çıkartma ve geçişler, HIZ +
+        // renk düzeltme + transform/opaklık/SES SEVİYESİ keyframe'leri ARTIK desteklenir.
         // Kapsam dışı kalan tipli hatalardan biriyle test edilir: SES klibine GÖRSEL (opacity)
         // keyframe'i — ses klibi görüntü üretmez, animasyonun karşılığı yoktur.
         var clip = ExportTestDocs.AudioClip(ExportTestDocs.AssetA, 0, 0, 1_000_000);
@@ -138,7 +138,7 @@ public sealed class ExportJobTests : IDisposable
     [Fact]
     public async Task Run_OverlayClipWithoutTheRasterService_FailsDeterministically()
     {
-        // M4 dalga 2: metin/şekil klibi SkiaSharp rasteri ister. Servis DI'a kayıtlı değilse
+        // Metin/şekil klibi SkiaSharp rasteri ister. Servis DI'a kayıtlı değilse
         // ExportCompiler.Compile "no raster provided" ile ArgumentException atardı ve iş
         // TRANSIENT sayılıp 3 kez retry edilirdi (aynı sonuç, boşuna). Kurulum hatası
         // deterministik olarak kapatılır.
@@ -265,7 +265,7 @@ public sealed class ExportJobTests : IDisposable
     [Fact]
     public void EffectiveOutputBitsPerSecond_UsesTheMeasuredSourceBitrate_WhenItExceedsTheProfile()
     {
-        // 12. tur borcu: sabit 10 Mbps varsayımı 28,85 Mbps'lik gerçek CRF çıktısını
+        // Ölçüldü: sabit 10 Mbps varsayımı 28,85 Mbps'lik gerçek CRF çıktısını
         // KÜÇÜMSÜYORDU. 25 MB / 10 sn = 20 Mbps'lik kaynak artık tahmine girer.
         var highBitrate = SourceAsset(AssetKind.Video, 25_000_000, 10_000_000);
         var bps = ExportJob.EffectiveOutputBitsPerSecond(ExportProfile.Hd1080p, [highBitrate]);
@@ -313,7 +313,7 @@ public sealed class ExportJobTests : IDisposable
     [Fact]
     public void EstimateRequiredDiskBytes_AtTimelineCeiling_StaysWithinReservationBudget()
     {
-        // TAVANIN GEREKÇESİNİN BİRİNCİ AYAĞI (10. tur, F1). ExportCompiler.MaxTimelineDurationUs
+        // TAVANIN GEREKÇESİNİN BİRİNCİ AYAĞI. ExportCompiler.MaxTimelineDurationUs
         // keyfi bir sayı değildir: worker'ın rezervasyonu SÜREYLE doğrusaldır ve tavandaki değeri
         // BURADA KOŞARAK sabitlenir. Sayı değişirse bu test kırmızı olur ve tavanın gerekçesi
         // (docs/poc-bilinen-sinirlar.md) güncellenmeye zorlanır.
@@ -324,7 +324,7 @@ public sealed class ExportJobTests : IDisposable
 
         Assert.Equal(21_600_000_000L, atCeiling);
 
-        // DALGA 2 (profiller): en yüksek taban 2160p'dir (40 Mbps — 1080p bandının piksel
+        // PROFİLLER: en yüksek taban 2160p'dir (40 Mbps — 1080p bandının piksel
         // alanı ölçeklemesi). Tavandaki 4K rezervasyonu 86,4 GB'dir; kullanıcı başına 2
         // eşzamanlı exportla en kötü uç 172,8 GB — bu uç bir GARANTİ değil, worker'ın
         // disk-wait/disk-full hattının görev alanıdır (gerçek darlık orada tipli düşer;
@@ -341,7 +341,7 @@ public sealed class ExportJobTests : IDisposable
     [Fact]
     public void TimelineCeiling_MatchesTheIngestDurationCeiling()
     {
-        // TAVANIN GEREKÇESİNİN İKİNCİ AYAĞI (10. tur, F1) — ve aynı zamanda SÜRÜKLENME
+        // TAVANIN GEREKÇESİNİN İKİNCİ AYAĞI — ve aynı zamanda SÜRÜKLENME
         // MUHAFIZI. Depo zaten TEK KAYNAK için 4 saatlik bir tavan taşıyor
         // (ProcessingOptions.MaxDurationUs: aşan kaynak probe sonrası Failed('too-long')).
         // Çizelge tavanının AYNI sayı olması sistemi tutarlı kılar: "yükleyebileceğin en uzun

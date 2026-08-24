@@ -3,7 +3,7 @@ using VideoEdit.Media.Text;
 namespace VideoEdit.Api.Endpoints;
 
 /// <summary>
-/// Font kataloğu API'si — M4 dalga-2 denetimi, KRİTİK bulgu #1 ve #3(a).
+/// Font kataloğu API'si — metin-overlay denetimi, KRİTİK bulgu #1 ve #3(a).
 /// <list type="bullet">
 ///   <item><c>GET /api/fonts</c> — <c>fonts/manifest.json</c>'ın izdüşümü: fontId, aile,
 ///     ağırlıklar, stiller, sürüm/lisans + sha256 pin durumu. Editörün font listesi ARTIK

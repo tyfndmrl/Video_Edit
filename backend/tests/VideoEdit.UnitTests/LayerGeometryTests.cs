@@ -457,7 +457,7 @@ public sealed class LayerGeometryTests
         // eşitsizliği sağlanmaz; test bunu taramayla sabitler.
         //
         // ESKİ HALİ KUTU < 2 BÖLGESİNİ `continue` İLE ATLIYORDU ve gerekçesi "kapı zaten
-        // reddediyor"du. O gerekçe 5. tur denetiminde ÖLÇÜLEREK yanlışlandı: kutu ≥ 2 kuralı
+        // reddediyor"du. O gerekçe denetimde ÖLÇÜLEREK yanlışlandı: kutu ≥ 2 kuralı
         // ölçek TAVANINDAN sorulduğu için ölçek animasyonlu bir metin klibi tabanda 2x1 (hatta
         // 0x0) kutuya inip kapıdan geçiyordu. Atlama KALDIRILDI; o bölge artık ölçülüyor ve
         // "kaynaktan bağımsız taban" yükleminin ORADA tetiklendiği iddia ediliyor. Yani

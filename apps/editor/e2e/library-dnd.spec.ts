@@ -1,7 +1,7 @@
 /**
  * Kitaplık -> timeline SÜRÜKLE-BIRAK — ürünün ASIL ekleme jesti, gerçek fareyle.
  *
- * Neden ayrı bir dosya (M4 dalga 2 denetimi, YÜKSEK bulgu): bugüne kadar yalnız
+ * Neden ayrı bir dosya (YÜKSEK denetim bulgusu): bugüne kadar yalnız
  * ÇİFT TIK yolu test ediliyordu (media-upload.spec.ts). Çift tık, ürünün kendi
  * kodunda "DnD'nin yedek yolu" diye geçer (LibraryPanel.tsx: "Çift tık: DnD'nin
  * yedek yolu") ve TAMAMEN FARKLI bir kod yolundan gider:

@@ -24,7 +24,7 @@ const SEED_WIDTH_PX = 1920;
 
 /**
  * SUNUCUNUN çözebildiği fontId'ler — testin ELİNDEKİ tek doğruluk kaynağı.
- * Editörün ne yazdığını bu dosyaya karşı doğrularız; M4 dalga-2 KRİTİK bulgu #1
+ * Editörün ne yazdığını bu dosyaya karşı doğrularız; metin-overlay denetiminin KRİTİK bulgu #1'i
  * tam olarak buydu: editör 'inter' yazıyordu, bu dosyada 'inter' YOK.
  */
 const SERVER_FONT_IDS: string[] = (() => {
@@ -397,7 +397,7 @@ test.describe('Metin / şekil katmanları — gerçek fare ve klavye', () => {
   });
 
   /**
-   * M4 dalga-2 denetimi, KRİTİK bulgu #1 — "metin ekle → dışa aktar" ANA YOLU.
+   * Metin-overlay denetimi, KRİTİK bulgu #1 — "metin ekle → dışa aktar" ANA YOLU.
    *
    * Eskiden yeni metin klibi `fontId: 'inter'` ile doğuyordu; 'inter'
    * fonts/manifest.json'da YOKTUR, yani her export 'font-missing' ile düşerdi.
@@ -441,7 +441,7 @@ test.describe('Metin / şekil katmanları — gerçek fare ve klavye', () => {
   });
 
   /**
-   * M4 dalga-2 denetimi, bulgu #2 — TEK kutu kuralı, GERÇEK piksellerde.
+   * Metin-overlay denetimi, bulgu #2 — TEK kutu kuralı, GERÇEK piksellerde.
    *
    * Eski istemci kuralı kutuyu HER KENARDA (kontur + arkaplanPayı) kadar
    * büyütüyordu; sunucu ise mürekkep+kontur/2 ve içerik+pay birleşimini

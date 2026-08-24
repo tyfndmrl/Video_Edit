@@ -7,7 +7,7 @@ using VideoEdit.Media.Text;
 namespace VideoEdit.UnitTests;
 
 /// <summary>
-/// <c>GET /api/fonts</c> + font dosyası ucu — M4 dalga-2 denetimi, KRİTİK bulgu #1(a) ve #3(a).
+/// <c>GET /api/fonts</c> + font dosyası ucu — metin-overlay denetimi, KRİTİK bulgu #1(a) ve #3(a).
 /// <para>
 /// Bu uç OLMADAN editör font listesini TAHMİN ETMEK zorundaydı; tahmin manifestle ayrıştı ve
 /// "metin ekle → dışa aktar" ana yolu <c>font-missing</c> ile düştü. Testler sözleşmenin

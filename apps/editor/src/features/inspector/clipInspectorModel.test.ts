@@ -282,7 +282,7 @@ describe('buildClipInspectorModel — visual section', () => {
 });
 
 /**
- * Derived ceilings (3. tur denetim, blocker 2). The panel used to offer
+ * Derived ceilings (measured review finding). The panel used to offer
  * `maxClipScale(settings)` and the constant TEXT_SIZE_MAX for every clip, so a
  * text layer could be pushed past MAX_LAYER_DIMENSION: the document saved, the
  * API queued the export and the worker died on it. The model derives both
