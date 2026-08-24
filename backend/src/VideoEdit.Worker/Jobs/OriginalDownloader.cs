@@ -10,8 +10,15 @@ namespace VideoEdit.Worker.Jobs;
 /// </summary>
 public static class OriginalDownloader
 {
+    /// <param name="storage">Kaynak depolama soyutlaması — nesne
+    /// <see cref="IStorageService.OpenReadAsync"/> ile stream olarak açılır.</param>
+    /// <param name="key">İndirilecek nesnenin bucket içi depolama anahtarı.</param>
+    /// <param name="destinationPath">Nihai hedef dosya yolu; yazım önce
+    /// <c>&lt;yol&gt;.part</c>'a yapılır, tamamlanınca üzerine atomik rename edilir.</param>
     /// <param name="onBytes">(indirilen, toplam) — her chunk sonrası seri çağrılır; toplam
     /// bilinmiyorsa ≤ 0 gelebilir.</param>
+    /// <param name="ct">İptal — hem depolama okumasını hem dosya yazımını keser; yarım
+    /// <c>.part</c> dosyası nihai ada asla taşınmaz.</param>
     public static async Task DownloadToFileAsync(
         IStorageService storage,
         string key,

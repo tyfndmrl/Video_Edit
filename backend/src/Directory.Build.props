@@ -1,0 +1,44 @@
+<Project>
+
+  <!--
+    XML DOKÜMAN KAPISI (backlog "5. tur denetiminden ertelenenler" kaydının kapanışı).
+
+    Bu depoda XML yorumları gerekçe KAYDININ kendisidir; bayrak kapalıyken derleyici onları
+    hiç doğrulamıyordu ve bir sözleşme metni yanlış üyeye yapışabiliyordu (F-1: `Validate`
+    dokümansız kalmış, komşusu iki `<summary>` taşımıştı — elle bulundu). Bu props, src
+    projelerinin TAMAMINDA (yalnız bu klasörün altı; tests/ ve tools/ kapsam dışı) doküman
+    üretimini açar ve YAPISAL doküman hatalarını her derlemede hataya çevirir.
+
+    - GenerateDocumentationFile=true: derleyici artık cref/param/paramref bağlarını çözer.
+      Ölçülmüş bilinen yan etki (2026-08-24): .NET 10'un Microsoft.AspNetCore.OpenApi
+      source generator'ı XML özetlerini görmeye başlar ve YALNIZ Development'ta map edilen
+      /openapi/v1.json belgesi özet metinleri kazanır. Üretim yüzeyi değişmez (MapOpenApi
+      yalnız dev dalında), hiçbir test o belgeyi okumaz; generator'ın MSBuild kapatma
+      anahtarı yok (paket DLL'i tarandı) — kabul edilip buraya kaydedildi.
+
+    - WarningsAsErrors (yapısal küme): CS0419 (belirsiz cref), CS1570 (bozuk XML),
+      CS1572 (olmayan parametreye param), CS1573 (parametrenin param'ı eksik),
+      CS1574 (çözülemeyen cref), CS1587 (yorum geçersiz öğede). Bu küme -warnaserror
+      beklemeden, CI'daki sade `dotnet build` adımında da KIRMIZI üretir — F-1 sınıfı bir
+      regresyon bir daha sessizce giremez. Ölçüm (2026-08-24, HEAD 307b156, tüm src):
+      32 CS1573 + 7 CS0419 vardı, hepsi aynı dilimde kapatıldı; CS1572/CS1574 = 0.
+
+    - NoWarn CS1591 ("public üyede XML yorumu yok"): BİLİNÇLİ susturma, borç affı değil.
+      Ölçüm aynı gün: src'de 404 benzersiz CS1591 (Api 24, Contracts 68, Domain 99,
+      Infrastructure 48, Media 151, Worker 14). 404 şablon özet yazmak gerekçe kaydına
+      değer katmaz ve gerçek sinyali (yapısal küme) gömer; özet zorunluluğu istenirse bu
+      satır silinerek borç yeniden görünür kılınır.
+
+    - tests/ ve tools/ BİLEREK kapsam dışı (bu dosya src/ altında olduğu için MSBuild
+      onları görmez): test/araç projelerinin tüketicisi yok, doküman dosyasının alıcısı
+      yok. Ölçüm (2026-08-24): orada açmak 24 CS1573 + 1 CS1574 + 2 CS1570 + 2 CS1587 +
+      ~902 CS1591'lik ayrı bir borç açar — test iskelesi yardımcılarında, bu dilimin
+      sınırlı kapsamının dışında (docs/backlog.md kaydında beyan edildi).
+  -->
+  <PropertyGroup>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <WarningsAsErrors>$(WarningsAsErrors);CS0419;CS1570;CS1572;CS1573;CS1574;CS1587</WarningsAsErrors>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>

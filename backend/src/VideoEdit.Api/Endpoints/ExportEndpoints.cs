@@ -124,12 +124,28 @@ public static class ExportEndpoints
 
     // ---------- Handlers (internal: birim testleri doğrudan çağırır) ----------
 
+    /// <param name="projectId">Route'tan gelen proje kimliği; sahiplik + soft-delete
+    /// filtresiyle sorgulanır (eşleşme yoksa 404 — kimlik sızdırılmaz).</param>
+    /// <param name="request">İstek gövdesi; bugün tek alanı profil seçimidir
+    /// (boş/null → varsayılan "1080p").</param>
+    /// <param name="principal">Kimliği doğrulanmış kullanıcı — <c>GetUserId</c> ile
+    /// sahiplik filtrelerine ve işin <c>RequestedBy</c> alanına girer.</param>
+    /// <param name="db">Proje/asset olgu sorguları, eşzamanlılık sayımı ve yeni Job
+    /// satırının yazıldığı bağlam.</param>
+    /// <param name="jobs">Hangfire istemcisi — Job satırı DB'ye yazıldıktan SONRA
+    /// <see cref="IExportJob.Run"/>'ı kuyruğa atar (sıra gerekçesi metodun içinde).</param>
+    /// <param name="clock">Job zaman damgalarının kaynağı (testler sabit saat geçirir).</param>
+    /// <param name="fonts">Font manifesti sağlayıcısı — bilinmeyen <c>fontId</c>'yi kuyruğa
+    /// girmeden 422 <c>font-missing</c> ile reddeden ön kontrolün veri kaynağı; manifest
+    /// okunamıyorsa kontrol atlanır (worker'ın deterministik hatasına bırakılır).</param>
     /// <param name="overlayMeasurer">
     /// Metin bbox'ının ölçüm yolu (yalnız <see cref="ITextRasterService.Measure"/> — dosya
     /// yazılmaz). Ön kapının raster katman tavanını GERÇEK kutuyla doğrulaması için verilir;
     /// kayıtlı değilse (ya da fontlar kurulu değilse) doğrulama font-bağımsız KESİN ALT
     /// SINIRA düşer — kapı zayıflar ama yanlış 422 üretmez.
     /// </param>
+    /// <param name="ct">İstek iptali — kuyruklama sorgularını keser; kuyruğa atılan işin
+    /// kendisi bilerek <see cref="CancellationToken.None"/> ile koşar.</param>
     internal static async Task<IResult> StartExport(
         Guid projectId, CreateExportRequest request, ClaimsPrincipal principal, AppDbContext db,
         IBackgroundJobClient jobs, TimeProvider clock, FontManifestProvider fonts,

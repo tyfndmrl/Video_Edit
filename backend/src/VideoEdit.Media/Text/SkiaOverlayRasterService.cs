@@ -35,6 +35,11 @@ public sealed class SkiaOverlayRasterService : ITextRasterService, IDisposable
     private readonly ConcurrentDictionary<string, Lazy<SKTypeface>> typefaces = new(StringComparer.Ordinal);
     private bool disposed;
 
+    /// <param name="options">Raster seçenekleri (font kökü dahil). Verilmezse varsayılan
+    /// <see cref="TextRasterOptions"/> kullanılır.</param>
+    /// <param name="manifest">Hazır font manifesti (testler geçirir). Verilmezse manifest,
+    /// <c>FontRoot</c>'taki dosyadan İLK ERİŞİMDE yüklenir (Lazy — kurulumsuz makinede
+    /// servis kurmak hata değildir, kullanmak hatadır).</param>
     /// <param name="fontOptions">
     /// Sistem fontu politikası (config section <c>Fonts</c>). Verilmezse ortam
     /// değişkenlerinden okunur (<c>Fonts__SystemFallback__&lt;fontId&gt;</c>).

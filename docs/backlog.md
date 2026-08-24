@@ -573,8 +573,9 @@ ile durur (kusur belgede değil kurulumdadır — 422 yanlış olurdu). Gerekçe
 
 ## 5. tur denetiminden ertelenenler (2026-08-12, doküman/yorum turu)
 
-- **[DÜŞÜK — AÇIK] `GenerateDocumentationFile` kapalı: XML yorumları derleyici tarafından hiç
-  denetlenmiyor.** Bu turda kapatılan F-1 bulgusu (bir `<summary>` bloğu YANLIŞ ÜYEYE yapışmıştı;
+- **[KAPANDI — yarim-is #12, 2026-08-24] `GenerateDocumentationFile` kapalı: XML yorumları
+  derleyici tarafından hiç denetlenmiyor.** *(Kapanış ayrıntısı bu maddenin sonundadır;
+  aradaki ölçümler tarihsel kayıttır.)* Bu turda kapatılan F-1 bulgusu (bir `<summary>` bloğu YANLIŞ ÜYEYE yapışmıştı;
   o üye iki `<summary>` taşıyor ve sahip olmadığı parametrelere `paramref` veriyordu, `Validate`
   ise dokümansız kalmıştı) **derleme uyarısı üretmiyordu**, çünkü bayrak kapalı.
   - *Ölçüm (6. turda YENİDEN alındı; ağacın `git ls-files` kopyası scratchpad'e çıkarılıp orada
@@ -599,10 +600,40 @@ ile durur (kusur belgede değil kurulumdadır — 422 yanlış olurdu). Gerekçe
     eksik `<param>` blokları yazıldı, çözülemeyen `cref`'ler (`Domain.AssetKind`, `Validate`)
     düzeltildi, belirsiz `LayerGeometry.Compute` cref'i imzayla ayrıştırıldı. Yani "export
     geometrisi tarafı temiz" cümlesi ancak ŞİMDİ doğrudur ve ölçümü yukarıdadır.
-  - *Yapılacak:* kalan 14 uyarıyı kapat → `Directory.Build.props`'a
-    `<GenerateDocumentationFile>true</GenerateDocumentationFile>` +
-    `<NoWarn>$(NoWarn);CS1591</NoWarn>` ekle. Bundan sonra F-1 sınıfı bir hata **derlemede**
-    yakalanır, denetimde değil — ve yukarıdaki gibi bir 22 uyarılık regresyon sessizce giremez.
+  - *YAPILDI (yarim-is #12, 2026-08-24, HEAD `307b156` üzerinde).* Önce YENİDEN ölçüldü
+    (tüm 6 src projesi, `-p:GenerateDocumentationFile=true` + ayrı `BaseOutputPath`,
+    benzersiz dosya+satır+sütun+kod): **443** = **404 CS1591** (Api 24, Contracts 68,
+    Domain 99, Infrastructure 48, Media 151, Worker 14) + **32 CS1573** + **7 CS0419**
+    (CS1572 = CS1574 = 0). Eski "14/4 dosya" ve "~21+~230" sayıları TUTMADI — kural bir kez
+    daha doğrulandı: sayı alıntılanmadan önce yeniden ölçülür. CS1573 dağılımı:
+    `ClipAnimation.cs` 10, `ExportEndpoints.cs` 8, `FfmpegRunner.cs` 5,
+    `OriginalDownloader.cs` 4, `Easing.cs` 2, `SkiaOverlayRasterService.cs` 2,
+    `UploadQuota.cs` 1; CS0419'un 7'si de `ExportCompiler.cs`'teki `cref="Compile"`
+    (profil/spec overload'ları arasında belirsiz).
+    - **39 yapısal uyarının tamamı kapatıldı** — tek yolla, tutarlı: eksik parametreler
+      GERÇEKTEN belgelendi (içerik koddan türetildi; `<remarks>`e çevirme yolu bilinçli
+      REDDEDİLDİ çünkü tam da bu dilimin kurduğu denetimi — derleyicinin param-adı bağını —
+      silerdi); belirsiz `Compile` cref'leri imzayla ayrıştırıldı (bağlantı metni `Compile`
+      kaldı, cümleler bozulmadı). Davranış değişikliği SIFIR: diff yalnız XML yorumları +
+      yeni props dosyası.
+    - **Mekanizma: `backend/src/Directory.Build.props`** (kök değil, BİLEREK `src/` altı:
+      tests/tools kapsam dışı — orada açmak ölçüldü, 24 CS1573 + 1 CS1574 + 2 CS1570 +
+      2 CS1587 + ~902 CS1591'lik test-iskelesi borcu açardı; tüketicisi olmayan yüzey, bu
+      dilimin sınırlı kapsamı dışında). İçerik: `GenerateDocumentationFile=true`,
+      `NoWarn CS1591` (404 şablon özet gerekçe kaydına değer katmaz — gerekçesi props
+      yorumunda) ve **yapısal küme `WarningsAsErrors`**: CS0419, CS1570, CS1572, CS1573,
+      CS1574, CS1587. Bu küme sayesinde ihlal `-warnaserror` BEKLEMEDEN, CI'daki sade
+      `dotnet build backend/VideoEdit.sln` adımında da hatadır → **F-1 sınıfı hata artık
+      derlemede yakalanır ve 22'lik regresyon sessizce GİREMEZ** (ci.yml değişmedi; Docker
+      publish de `COPY . .` ile props'u alır).
+    - *Bilinen ve kabul edilen yan etki (ölçüldü):* .NET 10'un
+      `Microsoft.AspNetCore.OpenApi` source generator'ı XML yorumlarını artık görür →
+      YALNIZ dev'de map edilen `/openapi/v1.json` özet metinleri kazanır. Üretim
+      `MapOpenApi` çağırmaz, hiçbir test o belgeyi okumaz, generator'ın MSBuild kapatma
+      anahtarı yok (paket DLL'i tarandı) — kabul edilip props yorumuna yazıldı.
+    - *Negatif kontrol:* `OriginalDownloader.DownloadToFileAsync`'ın `ct` param bloğu
+      geçici silindi → sade `dotnet build` DE `-warnaserror` DE KIRMIZI (error CS1573);
+      geri kondu, md5 birebir (`cbae71dd…`), ardından sln `-warnaserror` 0 uyarı / 0 hata.
 
 ## 6. tur denetiminden — overlay koordinatının TEKLİĞİ (2026-08-12, KAPATILDI + kapsam beyanı)
 

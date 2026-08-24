@@ -87,6 +87,8 @@ public static class KeyframeCompiler
     /// boş olmayan kanal, timeUs artan ve tekrarsız, timeUs ∈ [0, <paramref name="timelineDurationUs"/>]
     /// (iki uç da KAPSAYICI — zod invaryantıyla birebir), cubicBezier x1/x2 ∈ [0..1].
     /// </summary>
+    /// <param name="clipId">Sahip klibin kimliği — yalnız tipli hata cümlelerini adresler
+    /// (her mesaj "'&lt;clipId&gt;' klibinin …" ile başlar), hesaba girmez.</param>
     /// <param name="timelineDurationUs">
     /// Klibin timeline süresi — keyframe zamanının ÜST SINIRI. zod bu kuralı belge kapısında
     /// kurar (invariants.ts: "keyframe timeUs … is outside [0, timelineDurationUs]"); C# tarafı
@@ -94,6 +96,8 @@ public static class KeyframeCompiler
     /// animasyon klip sonunda SON ÖRNEKLENEN değerde donuyordu (sessiz yanlış çıktı — ölçüldü).
     /// Çağıran süreyi pozitif doğrulamış olmalıdır (ExportCompiler.ValidateClip öyle yapar).
     /// </param>
+    /// <param name="tracks">Şemadan gelen ham keyframe defteri; <c>null</c> ya da tüm
+    /// kanalları boşsa sonuç <see cref="ClipAnimation.None"/>'dır.</param>
     public static ClipAnimation Parse(Guid clipId, long timelineDurationUs, KeyframeTracks? tracks)
     {
         if (tracks is null)
@@ -176,6 +180,14 @@ public static class KeyframeCompiler
     /// (formatlanmış literal olarak) atlanır — keyframe aralığının dışındaki sabit baş/kuyruk
     /// tek komuta iner, davranış değişmez.
     /// </summary>
+    /// <param name="track">Örneklenecek DOĞRULANMIŞ kanal (<see cref="Parse"/> çıktısı).</param>
+    /// <param name="clipStartUs">Klibin kompozit eksendeki başlangıcı (timelineStartUs) —
+    /// frame zamanından çıkarılır, çünkü değer örneklemesi klip-göreli zamanla yapılır.</param>
+    /// <param name="firstFrame">Klibin kompozit frame aralığının ilk kare numarası (DAHİL).</param>
+    /// <param name="lastFrame">Aralığın bitiş kare numarası (HARİÇ — döngü <c>n &lt; lastFrame</c>).</param>
+    /// <param name="fpsNum">Proje kare hızının payı (kare numarası → µs çevrimi
+    /// <c>Timecode.FromFrameNumber</c> ile yapılır).</param>
+    /// <param name="fpsDen">Proje kare hızının paydası.</param>
     /// <param name="offsetUs">
     /// Komut zamanının yazılacağı eksen: kompozit için 0 (t_us doğrudan), klip ekseni için
     /// <c>-timelineStartUs</c>. Değer örneklemesi DAİMA klip-göreli zamanla yapılır.
@@ -224,10 +236,15 @@ public static class KeyframeCompiler
     /// Ağaç derinliği <c>log2(N)</c>'dir: ffmpeg'in ifade ayrıştırıcısı ve değerlendiricisi
     /// ÖZYİNELEMELİDİR, N derinliğinde iç içe <c>if</c> uzun kliplerde C yığınını taşırırdı.
     /// </summary>
+    /// <param name="samples"><see cref="Samples"/>'ın ürettiği, zamana göre artan
+    /// (zaman, değer) listesi — en az bir örnek zorunludur.</param>
     /// <param name="halfFrameUs">
     /// Karar sınırı örnek zamanının YARIM FRAME öncesine konur: frame zamanları ızgarada tam
     /// oturduğu için karşılaştırma kayan nokta eşitliğine hiç yaklaşmaz.
     /// </param>
+    /// <param name="map">Örnek değerini ffmpeg filtre birimine çevirir —
+    /// <see cref="LinearExpression"/>'daki <c>map</c> ile aynı sözleşme
+    /// (ör. normalize x → piksel P.x).</param>
     public static string StepExpression(
         IReadOnlyList<(long TimeUs, double Value)> samples, long halfFrameUs,
         Func<double, double> map)

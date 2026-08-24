@@ -25,6 +25,13 @@ public static class UploadQuota
     /// Toplam SizeBytes + DerivedBytes'tır (türevler de depolamadır; NULL türev = 0).
     /// </param>
     /// <param name="activeUploads">Kullanıcının hâlen Uploading durumundaki asset sayısı.</param>
+    /// <param name="options">
+    /// Kota sınırları (config <c>Quotas</c> bölümü). Bu karar yalnız
+    /// <see cref="QuotasOptions.MaxConcurrentUploads"/> ve
+    /// <see cref="QuotasOptions.MaxTotalBytesPerUser"/> alanlarını okur; tek dosya sınırı
+    /// (<see cref="QuotasOptions.MaxFileSizeBytes"/>) init ucundaki ayrı kapının
+    /// (<c>AssetUploadValidation.ValidateInit</c>) işidir.
+    /// </param>
     public static QuotaViolation Evaluate(
         long requestedBytes, long usedBytes, int activeUploads, QuotasOptions options)
     {

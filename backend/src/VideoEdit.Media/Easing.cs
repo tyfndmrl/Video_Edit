@@ -32,6 +32,9 @@ public readonly record struct EasingValue(EasingType Type, double X1, double Y1,
 }
 
 /// <summary>Tek bir keyframe. <see cref="TimeUs"/> klibin timeline başlangıcına görelidir (tamsayı µs).</summary>
+/// <param name="TimeUs">Klip-göreli zaman (tamsayı µs); 0 = klibin timeline başlangıcı.</param>
+/// <param name="Value">Kanalın bu keyframe'deki değeri — birimi kanal tanımlar
+/// (rendering-semantics §3.3; aralık kapıları <c>KeyframeCompiler.Parse</c>'tadır).</param>
 /// <param name="Easing">Bu keyframe'den SONRAKİ segmentin easing'i.</param>
 public readonly record struct Keyframe(long TimeUs, double Value, EasingValue Easing);
 

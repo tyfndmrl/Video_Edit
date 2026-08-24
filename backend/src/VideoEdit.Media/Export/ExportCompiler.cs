@@ -1333,7 +1333,7 @@ public static class ExportCompiler
     /// nesne olmasının sebebi mesajdır: aşımı bildiren cümle "önümde kaç klip ne kadar harcadı"
     /// bilgisini taşımak ZORUNDADIR (aksi halde kullanıcıya, ölçülerek görüldüğü gibi, 60 000'in
     /// yanında hiçbir şey olan 600 örneklik masum bir klip suçlanır ve o klibi kısaltmak sorunu
-    /// çözmez). Aynı nesne <see cref="Validate"/> kapısında ve <see cref="Compile"/> yayınında
+    /// çözmez). Aynı nesne <see cref="Validate"/> kapısında ve <see cref="Compile(TimelineDoc, IReadOnlyDictionary{Guid, ExportAssetSource}, ExportProfile, IReadOnlyDictionary{Guid, ExportRasterSource})">Compile</see> yayınında
     /// kullanılır — iki yol aynı sırayla harcar, aynı cümleyi üretir.
     /// </summary>
     private sealed class SampleBudget
@@ -1409,7 +1409,7 @@ public static class ExportCompiler
     }
 
     /// <summary>
-    /// Bir kanalın üreteceği örnek sayısı — <see cref="Compile"/>'ın çağırdığı
+    /// Bir kanalın üreteceği örnek sayısı — <see cref="Compile(TimelineDoc, IReadOnlyDictionary{Guid, ExportAssetSource}, ExportProfile, IReadOnlyDictionary{Guid, ExportRasterSource})">Compile</see>'ın çağırdığı
     /// <see cref="KeyframeCompiler.Samples"/>'ın AYNISI, yalnız sonucu atılır.
     /// <para>
     /// Frame aralığı olarak KLİBİN kendi aralığı verilir ve bu Compile'daki run aralığıyla
@@ -1427,7 +1427,7 @@ public static class ExportCompiler
             plan.FpsNum, plan.FpsDen, 0).Count;
 
     /// <summary>
-    /// ÖRNEKLEME BÜTÇESİNİN SENKRON KAPISI. Kural eskiden yalnız <see cref="Compile"/>'daydı
+    /// ÖRNEKLEME BÜTÇESİNİN SENKRON KAPISI. Kural eskiden yalnız <see cref="Compile(TimelineDoc, IReadOnlyDictionary{Guid, ExportAssetSource}, ExportProfile, IReadOnlyDictionary{Guid, ExportRasterSource})">Compile</see>'daydı
     /// (<c>BuildAnimationCommands</c> + <c>BuildAudioChain</c>), API'nin ön kapısı onu
     /// görmüyordu ve böyle bir belge 202 alıp worker'da düşüyordu (ham API ile ölçüldü).
     /// Hesap SAF DOKÜMAN ARİTMETİĞİDİR: örnek sayısı yalnız keyframe'lere, klibin frame
@@ -2308,7 +2308,7 @@ public static class ExportCompiler
     /// düzeltilMEZ — editör bu dokümanı üretmemeliydi.
     /// <para>
     /// Yerleşim kuralları (eşitlik + dönmüş/merkez-dışı çapa yasağı) eskiden YALNIZ
-    /// <see cref="Compile"/>'ın run kurma dalındaydı; API'nin ön kapısı yalnız
+    /// <see cref="Compile(TimelineDoc, IReadOnlyDictionary{Guid, ExportAssetSource}, ExportProfile, IReadOnlyDictionary{Guid, ExportRasterSource})">Compile</see>'ın run kurma dalındaydı; API'nin ön kapısı yalnız
     /// <see cref="Validate"/> çağırdığı için onları GÖRMÜYORDU ve böyle bir belge 202 alıp
     /// worker'da düşüyordu (ham API ile ölçüldü). İkisi de SAF DOKÜMAN ARİTMETİĞİDİR —
     /// <see cref="LayerGeometry.Compute(Transform, int, int)"/> yalnız transform + proje tuvali
@@ -2480,7 +2480,7 @@ public static class ExportCompiler
 
     /// <summary>
     /// GÖRÜNEN geçiş kesiminin YERLEŞİM kuralları — <see cref="Validate"/> ve
-    /// <see cref="Compile"/> AYNI iki soruyu sorar, farkları yalnız NE ZAMAN sorduklarıdır.
+    /// <see cref="Compile(TimelineDoc, IReadOnlyDictionary{Guid, ExportAssetSource}, ExportProfile, IReadOnlyDictionary{Guid, ExportRasterSource})">Compile</see> AYNI iki soruyu sorar, farkları yalnız NE ZAMAN sorduklarıdır.
     /// <list type="number">
     ///   <item>iki tarafın yerleşimi EŞİT olmalı: <c>xfade</c> girişlerin aynı boyutta
     ///     olmasını şart koşar, farklı yerleşim katmanı geçiş boyunca sessizce kaydırırdı;</item>
@@ -3529,7 +3529,7 @@ public static class ExportCompiler
     /// KLİP-VARLIK TÜR KURALININ TEK TANIMI: bu klip kaynak dosyadan NEYİ okur (okumuyorsa null)?
     /// <para>
     /// Cevap klip TÜRÜNDEN değil, derleyicinin o klip için kuracağı zincirden çıkar — aşağıdaki
-    /// üç dal <see cref="Compile"/>'ın giriş açma koşullarının birebir aynısıdır:
+    /// üç dal <see cref="Compile(TimelineDoc, IReadOnlyDictionary{Guid, ExportAssetSource}, ExportProfile, IReadOnlyDictionary{Guid, ExportRasterSource})">Compile</see>'ın giriş açma koşullarının birebir aynısıdır:
     /// </para>
     /// <list type="bullet">
     ///   <item>metin/şekil klibi kendi PNG'siyle girer, hiçbir varlık okumaz;</item>
@@ -3778,7 +3778,7 @@ public static class ExportCompiler
     /// <para>
     /// SÖZLEŞME: buraya DOĞRULANMAMIŞ değer gelemez — <see cref="Validate"/> proje arkaplan
     /// rengini aynı dilbilgisinden (<see cref="HexColor.TryParse"/>) geçirir ve
-    /// <see cref="Compile"/> ilk iş olarak Validate'i çağırır. Yine de burada bir SESSİZ
+    /// <see cref="Compile(TimelineDoc, IReadOnlyDictionary{Guid, ExportAssetSource}, ExportProfile, IReadOnlyDictionary{Guid, ExportRasterSource})">Compile</see> ilk iş olarak Validate'i çağırır. Yine de burada bir SESSİZ
     /// VARSAYILAN yoktur: eski <c>_ =&gt; "000000"</c> dalı ayrıştırılamayan her değeri siyaha
     /// düşürüyor, kullanıcı da mavi istediği projeyi siyah arkaplanla ve HATASIZ teslim
     /// alıyordu. Kapı bir gün gevşerse bu satır GÜRÜLTÜ çıkarsın — sessiz yanlış çıktı,

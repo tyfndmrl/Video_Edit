@@ -3,6 +3,12 @@ using System.Diagnostics;
 namespace VideoEdit.Media;
 
 /// <summary>FfmpegRunner sonucu. Success değilse StderrTail teşhis içindir.</summary>
+/// <param name="ExitCode">Sürecin çıkış kodu; <see cref="Success"/> ancak 0 ve hiçbir
+/// bekçi tetiklenmemişse doğrudur.</param>
+/// <param name="StderrTail">stderr'in ring buffer'da tutulan SON ~8 KB'ı — başarısızlık
+/// teşhisinin ham malzemesi (tamamı tutulmaz; uzun render'da baş taraf değersizdir).</param>
+/// <param name="TimedOut">Sessizlik bekçisi süreci öldürdü: watchdog süresi boyunca hiçbir
+/// progress/stderr çıktısı gelmedi ("hiç çıktı üretmiyor" hali).</param>
 /// <param name="Overran">
 /// Süreç, ÇIKTI SAATİNİN tavanını aştığı için öldürüldü (bkz.
 /// <see cref="FfmpegRunner.OutputTimeCeilingUs"/>). <see cref="TimedOut"/>'tan AYRI bir
@@ -83,6 +89,9 @@ public sealed class FfmpegRunner(FfmpegOptions options)
     /// <param name="totalDurationUs">Progress oranı için beklenen çıktı süresi (µs);
     /// null ise callback çağrılmaz.</param>
     /// <param name="onProgress">0..1 aralığında oran — stdout okuma döngüsünden seri çağrılır.</param>
+    /// <param name="watchdogTimeout">Sessizlik bekçisinin eşiği; null →
+    /// <see cref="DefaultWatchdogTimeout"/> (120 sn). Bu süre boyunca hiç progress/stderr
+    /// gelmezse süreç ağacı öldürülür ve sonuç <see cref="FfmpegRunResult.TimedOut"/> olur.</param>
     /// <param name="outputTimeCeilingUs">
     /// Verilirse çıktı saati tavanı (µs) — bkz. <see cref="OutputTimeCeilingUs"/>. AÇIKÇA
     /// İSTENİR, <paramref name="totalDurationUs"/>'ten SESSİZCE TÜRETİLMEZ: pay yalnız EXPORT
@@ -91,6 +100,8 @@ public sealed class FfmpegRunner(FfmpegOptions options)
     /// ölçülmemiş bir yanlış-öldürme riski doğardı; onlar KAPSAM DIŞIDIR ve yalnız sessizlik
     /// bekçisiyle korunur (docs/backlog.md).
     /// </param>
+    /// <param name="ct">İptal — tetiklenince süreç ağacının tamamı öldürülür
+    /// (<c>Kill(entireProcessTree: true)</c>).</param>
     public async Task<FfmpegRunResult> RunAsync(
         IReadOnlyList<string> args,
         long? totalDurationUs = null,
