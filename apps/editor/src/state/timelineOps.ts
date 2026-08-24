@@ -4060,6 +4060,120 @@ export function planClipSpeed(
   return { tracks, targetCount };
 }
 
+/** Free timeline space after `clip` on its track; null when nothing follows. */
+export function gapAfterClip(track: Track, clip: Clip): number | null {
+  const endUs = clip.timelineStartUs + clip.timelineDurationUs;
+  let nearest: number | null = null;
+  for (const other of track.clips) {
+    if (other.id === clip.id) continue;
+    if (other.timelineStartUs < endUs) continue;
+    if (nearest === null || other.timelineStartUs < nearest) nearest = other.timelineStartUs;
+  }
+  return nearest === null ? null : Math.max(0, nearest - endUs);
+}
+
+/** The stored 3-decimal rate grid, as integer steps per 1x. */
+const RATE_GRID = 10 ** SPEED_DECIMALS;
+
+/**
+ * Walk caps for `minSpeedRateWithoutRipple`, measured, not guessed: a sweep of
+ * grid-critical geometries (frames 0..8, clips 1..6 frames, gaps 0..4, stored
+ * rates 0.5..2, tight and unbounded assets) over seven project frame rates
+ * (24/25/30/60 and the 1001-based NTSC rationals) needed at most 36 steps up
+ * (29.97, one-frame clip whose asset is exactly as long) and stayed under the
+ * down cap everywhere a bound is meaningful. Hitting a cap does not lie: the
+ * up cap returns null (no promise), the down cap returns the last rate that
+ * the planner ACCEPTED — merely not the absolute slowest one.
+ */
+const MIN_RATE_WALK_UP_MAX = 64;
+const MIN_RATE_WALK_DOWN_MAX = 250;
+
+/**
+ * The slowest 3-decimal rate `setClipSpeed(clipIds, rate)` ACCEPTS without
+ * ripple, or null when there is no bound to advertise (nothing follows any
+ * selected clip — or nothing nearby is accepted at all, in which case a number
+ * would be a lie). This is what the Inspector's "kaydırmadan en yavaş Nx
+ * olabilir" note shows, so it has exactly one correctness criterion: typing
+ * the advertised rate must succeed.
+ *
+ * The ideal duration formula alone — `(out-in) / (duration+gap)`, then ceil to
+ * the rate grid — does NOT satisfy that criterion, and shipping it did produce
+ * a refused advertisement (backlog, measured at 30 fps: one-frame clip on
+ * frame 0, follower on frame 2 -> the formula says 0.5x, `solveSpeedChange`
+ * finds no integer source span for 2 frames at 0.5 and lands on 3, the op
+ * refuses). Below 1x the admissible source window per frame count is narrower
+ * than a microsecond, so acceptance is decided by the frame ledger, not by the
+ * formula.
+ *
+ * Derivation: the formula's value is kept only as the ANCHOR, and every
+ * candidate is judged by `planClipSpeed` ITSELF — the exact planner the op
+ * commits, including the frame-grid solve, the one-frame floor, the asset
+ * duration cap and the whole-track layout check. No arithmetic is restated
+ * here, so this cannot drift from the op. From the anchor:
+ *  - one step DOWN is probed first when the anchor is refused: `ceil` on an
+ *    exact boundary rate can overshoot by float dust (0.75 -> 0.751) and the
+ *    only acceptable rate then sits just below;
+ *  - otherwise the walk goes UP to the nearest accepted rate (the backlog
+ *    case: 0.5 refused, 0.501 accepted);
+ *  - finally the walk slides DOWN while the next lower rate is still accepted,
+ *    because grid slack usually admits a slightly slower rate than the ideal
+ *    formula claims (half a frame of room is up to a few grid steps of rate).
+ * The result is the bottom edge of the CONTIGUOUS accepted band around the
+ * anchor. Acceptance has holes and lower islands (a much slower rate can be
+ * "accepted" by snapping the duration visibly shorter); those are deliberately
+ * not advertised — the note promises growth into the room, not a lucky snap.
+ *
+ * `assetDurations` must be the same map the op will use (knownAssetDurations
+ * at the call site) or the advertised rate may be judged against different
+ * source bounds than the click.
+ */
+export function minSpeedRateWithoutRipple(
+  d: TimelineDoc,
+  clipIds: readonly Uuid[],
+  assetDurations?: ReadonlyMap<string, MicroSec>,
+): number | null {
+  const ids = new Set(clipIds);
+  let anchor: number | null = null;
+  for (const track of d.tracks) {
+    for (const clip of track.clips) {
+      if (!ids.has(clip.id)) continue;
+      if (!clipSupportsSpeed(clip)) continue;
+      const gap = gapAfterClip(track, clip);
+      if (gap === null) continue;
+      const room = clip.timelineDurationUs + gap;
+      if (room <= 0) continue;
+      // The strictest selected clip anchors the search (one write hits all).
+      const rate = (clip.sourceOutUs - clip.sourceInUs) / room;
+      if (anchor === null || rate > anchor) anchor = rate;
+    }
+  }
+  if (anchor === null) return null;
+
+  const minUnits = Math.round(SPEED_MIN * RATE_GRID);
+  const maxUnits = Math.round(SPEED_MAX * RATE_GRID);
+  const accepts = (units: number): boolean =>
+    !('reason' in planClipSpeed(d, clipIds, units / RATE_GRID, false, assetDurations));
+
+  let units = Math.min(maxUnits, Math.max(minUnits, Math.ceil(anchor * RATE_GRID)));
+  if (!accepts(units)) {
+    if (units - 1 >= minUnits && accepts(units - 1)) {
+      units -= 1;
+    } else {
+      let walked = 0;
+      do {
+        units += 1;
+        walked += 1;
+        if (units > maxUnits || walked > MIN_RATE_WALK_UP_MAX) return null;
+      } while (!accepts(units));
+    }
+  }
+  for (let walked = 0; walked < MIN_RATE_WALK_DOWN_MAX; walked++) {
+    if (units - 1 < minUnits || !accepts(units - 1)) break;
+    units -= 1;
+  }
+  return units / RATE_GRID;
+}
+
 /**
  * Writes a planned speed change into a DRAFT document (inside mutate).
  *

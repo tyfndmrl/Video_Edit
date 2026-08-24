@@ -37,8 +37,10 @@ import {
 import {
   SCALE_MAX,
   SCALE_MIN,
+  gapAfterClip,
   maxClipScaleFor,
   maxTextSizeFor,
+  minSpeedRateWithoutRipple,
 } from '../../state/timelineOps';
 
 /** Shown wherever a multi-selection disagrees. */
@@ -164,7 +166,13 @@ export interface SpeedSection {
   durationUs: CommonNumber;
   /** Free space after the clip on its track, us; null = no clip follows. */
   nextGapUs: CommonNumber;
-  /** Slowest rate that still fits without rippling (null = no bound). */
+  /**
+   * Slowest rate the op ACCEPTS without rippling (null = no bound). Derived
+   * through the op's own planner (`minSpeedRateWithoutRipple`), never from the
+   * ideal duration formula alone: the grid solve can land a whole frame past
+   * the room, so a formula-only bound gets refused by the very click it
+   * promised (backlog, measured at 30 fps).
+   */
   minRateWithoutRipple: number | null;
   /** true when at least one selected clip has a transition on either edge. */
   hasTransition: boolean;
@@ -343,12 +351,20 @@ function textBoxOf(
  * Derives the whole panel from (document, selection). Clips in the selection
  * that no longer exist are ignored — selection is view state and may lag a
  * delete/undo by a render.
+ *
+ * `assetDurations` is the SAME source-bounds map the speed op reads
+ * (`knownAssetDurations()` at the component): the speed section's
+ * `minRateWithoutRipple` is a promise about what `setClipSpeed` will accept,
+ * so it must be judged against the same asset caps. Tests may omit it — the
+ * planner then treats every source as unbounded, exactly like the op does for
+ * an asset whose duration is unknown.
  */
 export function buildClipInspectorModel(
   doc: TimelineDoc,
   selection: ReadonlySet<Uuid>,
   assets?: AssetNameSource,
   measureTextBox?: TextBoxMeasurer,
+  assetDurations?: ReadonlyMap<string, MicroSec>,
 ): ClipInspectorModel {
   const located = locate(doc, selection);
   if (located.length === 0) {
@@ -500,11 +516,12 @@ export function buildClipInspectorModel(
   // from the clip, which is why this section cannot be built from the clip
   // alone — the panel has to be able to say "0.5x will not fit" beforehand.
   const speedClips = located.filter((l) => l.clip.kind === 'video' || l.clip.kind === 'audio');
+  const speedClipIds = speedClips.map((l) => l.clip.id);
   const speed: SpeedSection | null =
     speedClips.length === 0
       ? null
       : {
-          clipIds: speedClips.map((l) => l.clip.id),
+          clipIds: speedClipIds,
           rate: commonNumber(speedClips.map((l) => (l.clip as MediaClip).speed.rate)),
           durationUs: commonNumber(speedClips.map((l) => l.clip.timelineDurationUs)),
           nextGapUs: commonNumber(
@@ -512,7 +529,7 @@ export function buildClipInspectorModel(
               .map((l) => gapAfterClip(l.track, l.clip))
               .filter((v): v is number => v !== null),
           ),
-          minRateWithoutRipple: minRateWithoutRipple(speedClips),
+          minRateWithoutRipple: minSpeedRateWithoutRipple(doc, speedClipIds, assetDurations),
           hasTransition: speedClips.some(
             (l) =>
               (l.clip as MediaClip).transitionIn !== undefined ||
@@ -594,40 +611,6 @@ function canvasCeilingFor(
     SCALE_MIN,
     Math.min(SCALE_MAX, maxScaleForFit(settings.width, settings.height, clip.transform)),
   );
-}
-
-/** Free timeline space after `clip` on its track; null when nothing follows. */
-export function gapAfterClip(track: Track, clip: Clip): number | null {
-  const endUs = clip.timelineStartUs + clip.timelineDurationUs;
-  let nearest: number | null = null;
-  for (const other of track.clips) {
-    if (other.id === clip.id) continue;
-    if (other.timelineStartUs < endUs) continue;
-    if (nearest === null || other.timelineStartUs < nearest) nearest = other.timelineStartUs;
-  }
-  return nearest === null ? null : Math.max(0, nearest - endUs);
-}
-
-/**
- * Slowest rate the selection can take WITHOUT rippling: a clip may grow into
- * its gap only, and `duration = (out-in)/rate` means the bound is
- * `rate >= (out-in) / (duration + gap)`. The strictest selected clip wins.
- * null = nothing follows any of them, so slowing down is unbounded.
- */
-function minRateWithoutRipple(clips: Located[]): number | null {
-  let bound: number | null = null;
-  for (const { clip, track } of clips) {
-    const gap = gapAfterClip(track, clip);
-    if (gap === null) continue;
-    const media = clip as MediaClip;
-    const room = clip.timelineDurationUs + gap;
-    if (room <= 0) continue;
-    const rate = (media.sourceOutUs - media.sourceInUs) / room;
-    if (bound === null || rate > bound) bound = rate;
-  }
-  // Round UP to the stored precision: a rate rounded DOWN would be one
-  // microsecond too slow and the op would refuse the value the panel offered.
-  return bound === null ? null : Math.ceil(bound * 1000) / 1000;
 }
 
 type ColorParamKey = 'brightness' | 'contrast' | 'saturation' | 'temperature' | 'tint' | 'exposure';

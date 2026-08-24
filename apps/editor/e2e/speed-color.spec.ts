@@ -14,10 +14,16 @@
  * piksel ile normatif formül arasındaki fark ±2/255'i geçemez.
  */
 import type { Page } from '@playwright/test';
-import { clipTimelineDurationUs, validateTimelineDoc } from '@videoedit/timeline-schema';
+import {
+  clipTimelineDurationUs,
+  frameToUs,
+  usToFrame,
+  validateTimelineDoc,
+} from '@videoedit/timeline-schema';
 import { applyColorAdjustRef } from '../src/features/player/core/colorAdjustRef';
 import { test, expect } from './fixtures/test';
 import { SECOND_US } from './fixtures/seed';
+import { findClip, readProjectSettings, type AppState } from './support/appBridge';
 
 /** clipA [60s,66s) — playhead klibin ORTASINDA (şekil katmanı oraya düşer). */
 const INSIDE_CLIP_A_US = 63 * SECOND_US;
@@ -395,6 +401,160 @@ test.describe('M5 — klip hızı (gerçek fare)', () => {
       'Ripple sonraki klibi süre farkı kadar öteler (boşluk korunur).',
     ).toBe(clipBBefore.timelineStartUs + 18 * SECOND_US);
     expectDocValid(await readDoc(page), 'ripple hız değişikliği sonrası');
+  });
+});
+
+test.describe('M5 — panelin "en yavaş hız" sınırı (gerçek fare + gerçek klavye)', () => {
+  test.beforeEach(async ({ editor, seed }) => {
+    await editor.ensureContentVisible(seed.clipAId);
+  });
+
+  test('yarım kare vakası: panelin yazdığı sınır değeri klavyeyle girilince op KABUL eder', async ({
+    editor,
+    seed,
+  }) => {
+    test.setTimeout(180_000);
+    const page = editor.page;
+    const settings = await readProjectSettings(page);
+    const fps = settings.fps;
+    // Aşağıdaki faz matematiği (mod 3) 30 fps'in üçlü kare desenidir; seed
+    // projesi bu hızdadır. Desen değişirse test SESSİZCE yanlış geometriyi
+    // ölçmesin diye açıkça iddia edilir.
+    expect(fps, 'Seed projesi 30 fps varsayar (faz-0 kare deseni).').toEqual({ num: 30, den: 1 });
+
+    /** Track 0'ın klipleri, başlangıca göre sıralı. */
+    const clipsOf = (state: AppState) =>
+      [...state.tracks[0].clips].sort((a, b) => a.timelineStartUs - b.timelineStartUs);
+
+    /** Sağ tık menüsünden "Playhead'de böl" — frame-grid.spec'in kanıtlı deseni. */
+    const splitAtPlayhead = async (clipId: string): Promise<void> => {
+      await editor.timeline.click(await editor.timeline.clipCenter(clipId), 'right');
+      await expect(editor.contextMenu).toBeVisible();
+      await editor.contextMenuItem(/playhead.?de b[öo]l/i).click();
+      await page.waitForTimeout(150);
+    };
+
+    // --- 1. GERÇEK girdiyle ölçülmüş backlog geometrisi: bir karelik klip +
+    // bir karelik boşluk. 0.5x'in reddedildiği faz, klibin faz-0 karede
+    // (kare ≡ 0 mod 3, yani 33_333 µs'lik kare) başlamasıdır: oda 66_667 µs
+    // olur ve 2 karelik sürede 0.5 için tam sayılı kaynak aralığı YOKTUR. ---
+    const before = await editor.state();
+    const clipA = findClip(before, seed.clipAId).clip;
+    await editor.timeline.scrubTo(clipA.timelineStartUs + 2 * SECOND_US);
+
+    let st = await editor.state();
+    for (let guard = 0; guard < 4; guard++) {
+      st = await editor.state();
+      if (usToFrame(st.playheadUs, fps) % 3 === 0) break;
+      await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(60);
+    }
+    st = await editor.state();
+    const pFrame = usToFrame(st.playheadUs, fps);
+    expect(pFrame % 3, 'Playhead ok tuşlarıyla faz-0 kareye hizalanamadı.').toBe(0);
+    const pUs = frameToUs(pFrame, fps);
+    const p1Us = frameToUs(pFrame + 1, fps);
+    const p2Us = frameToUs(pFrame + 2, fps);
+
+    // Böl #1 (p): [60s, p) + [p, 66s)
+    await splitAtPlayhead(seed.clipAId);
+    st = await editor.state();
+    expect(st.clipCount).toBe(before.clipCount + 1);
+    const tail1 = clipsOf(st).find((c) => c.timelineStartUs === pUs);
+    expect(tail1, 'İlk bölmenin ikinci yarısı playhead\'de başlamalı.').toBeDefined();
+
+    // Böl #2 (p+1): [p, p+1) + [p+1, 66s)
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(60);
+    await splitAtPlayhead(tail1!.id);
+    st = await editor.state();
+    const tail2 = clipsOf(st).find((c) => c.timelineStartUs === p1Us);
+    expect(tail2, 'İkinci bölmenin ikinci yarısı p+1\'de başlamalı.').toBeDefined();
+
+    // Böl #3 (p+2): [p+1, p+2) + [p+2, 66s)
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(60);
+    await splitAtPlayhead(tail2!.id);
+    st = await editor.state();
+    const middle = clipsOf(st).find(
+      (c) => c.timelineStartUs === p1Us && c.timelineStartUs + c.timelineDurationUs === p2Us,
+    );
+    expect(middle, 'Ortada tam bir karelik klip kalmalı.').toBeDefined();
+    const oneFrame = clipsOf(st).find(
+      (c) => c.timelineStartUs === pUs && c.timelineStartUs + c.timelineDurationUs === p1Us,
+    );
+    expect(oneFrame, 'p\'de tam bir karelik klip kalmalı.').toBeDefined();
+
+    // Bir karelik klipler bu yakınlıkta ~3 px: önce GERÇEK Ctrl+wheel ile
+    // tıklanabilir genişliğe gel (max zoom 0.005 px/µs -> kare 166 px'e kadar).
+    for (let i = 0; i < 24; i++) {
+      if ((await editor.timeline.clipBox(middle!.id)).width >= 14) break;
+      await editor.timeline.ctrlWheel(-120, await editor.timeline.point(p1Us, 0));
+    }
+    expect(
+      (await editor.timeline.clipBox(middle!.id)).width,
+      'Yakınlaşma bir karelik klibi tıklanabilir yapmalı.',
+    ).toBeGreaterThanOrEqual(14);
+
+    // Ortadaki kareyi GERÇEK klavyeyle sil -> bir karelik boşluk.
+    await editor.timeline.click(await editor.timeline.clipCenter(middle!.id));
+    expect((await editor.state()).selection).toEqual([middle!.id]);
+    await page.keyboard.press('Delete');
+    await page.waitForTimeout(150);
+    st = await editor.state();
+    expect(
+      clipsOf(st).some((c) => c.id === middle!.id),
+      'Ortadaki bir karelik klip silinmeliydi.',
+    ).toBe(false);
+
+    // --- 2. Paneldeki sınır: op'un kabul ettiği kenar, ideal formülün 0.5'i değil ---
+    await editor.timeline.click(await editor.timeline.clipCenter(oneFrame!.id));
+    expect((await editor.state()).selection).toEqual([oneFrame!.id]);
+
+    await page.getByTestId('clip-inspector-speed').scrollIntoViewIfNeeded();
+    const minRateEl = page.getByTestId('clip-speed-min-rate');
+    await expect(minRateEl, 'Sınır notu görünmeli (boşluk sınırlı).').toBeVisible();
+    const advertised = Number.parseFloat((await minRateEl.innerText()).replace(/x$/i, ''));
+    expect(
+      advertised,
+      'Panel, ideal formülün reddedilen 0.5\'ini değil op\'un kabul ettiği kenarı yazmalı.',
+    ).toBe(0.498);
+
+    // --- 3. Önce sınırın BİR IZGARA ADIMI yavaşı: GERÇEK klavye, RET ---
+    const speedInput = page.getByTestId('clip-speed');
+    await speedInput.click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.type('0.497');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(150);
+
+    const refusedMessage = page.getByTestId('clip-inspector-message');
+    await expect(refusedMessage, 'Bir adım yavaşı reddedilmeli (gerekçeyle).').toBeVisible();
+    await expect(refusedMessage).toHaveAttribute('data-kind', 'error');
+    expect((await readClip(page, oneFrame!.id)).timelineDurationUs, 'Ret atomik.').toBe(
+      p1Us - pUs,
+    );
+
+    // --- 4. Panelin yazdığı sınır değerini GERÇEK klavyeyle gir: KABUL ---
+    await speedInput.click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.type(String(advertised));
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(150);
+
+    const grown = await readClip(page, oneFrame!.id);
+    expect(grown.speed?.rate, 'Panelin önerdiği oran dokümana yazılmalı.').toBe(advertised);
+    expect(
+      grown.timelineStartUs + grown.timelineDurationUs,
+      'Sınır oranı klibi odanın tamamına büyütür (takip eden klibe tam yaslanır).',
+    ).toBe(p2Us);
+    const follower = clipsOf(await editor.state()).find((c) => c.timelineStartUs === p2Us);
+    expect(follower, 'Takip eden klip yerinden oynamamalı.').toBeDefined();
+    await expect(
+      page.getByTestId('clip-inspector-message'),
+      'Kabulden sonra ret mesajı kalmamalı.',
+    ).toHaveCount(0);
+    expectDocValid(await readDoc(page), 'sınır oranı kabulü sonrası');
   });
 });
 

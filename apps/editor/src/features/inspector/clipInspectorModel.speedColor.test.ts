@@ -13,7 +13,8 @@
 import { describe, expect, it } from 'vitest';
 import type { MediaClip, ShapeClip, TimelineDoc, Track } from '@videoedit/timeline-schema';
 import { createEmptyDoc, defaultProjectSettings } from '../../state/docStore';
-import { buildClipInspectorModel, formatSpeed, gapAfterClip, MIXED_LABEL } from './clipInspectorModel';
+import { gapAfterClip } from '../../state/timelineOps';
+import { buildClipInspectorModel, formatSpeed, MIXED_LABEL } from './clipInspectorModel';
 
 const US = 1_000_000;
 const PROJECT_ID = '01890000-0000-7000-8000-000000000001';
@@ -122,13 +123,34 @@ describe('speed section', () => {
     expect(model.speed!.nextGapUs).toBe(2 * US);
   });
 
-  it('derives the slowest rate that fits without rippling', () => {
-    // 10 s of source + a 2 s gap = 12 s of room -> rate >= 10/12 = 0.834 (ceil).
+  it('derives the slowest rate that fits without rippling — on the GRID, not on the formula', () => {
+    // 10 s of source + a 2 s gap = 12 s of room. The ideal formula says
+    // ceil3(10/12) = 0.834; the frame ledger admits one step more: at 0.833
+    // the solve still lands on 360 frames (source span re-derived to
+    // 9_996_000 us), while 0.832 is refused by the op. The advertised value is
+    // the op's own acceptance edge — see timelineOps.minSpeedRateWithoutRipple.
     const model = build(
       [track(V1, 'video', [videoClip(CLIP_A, 0, 10 * US), videoClip(CLIP_B, 12 * US, 4 * US)])],
       [CLIP_A],
     );
-    expect(model.speed!.minRateWithoutRipple).toBe(0.834);
+    expect(model.speed!.minRateWithoutRipple).toBe(0.833);
+  });
+
+  it('REGRESSION (backlog): a one-frame clip advertises a rate the op takes, not the ideal 0.5', () => {
+    // 30 fps, clip on frame 0 with one frame of source, follower on frame 2:
+    // room 66_667 us. ceil3(33_333/66_667) = 0.5 is an acceptance HOLE (no
+    // integer source span maps onto 2 frames at this start), so the model
+    // walks to the edge of the band the op actually accepts: 0.498.
+    const model = build(
+      [
+        track(V1, 'video', [
+          videoClip(CLIP_A, 0, 33_333, { sourceOutUs: 33_333 }),
+          videoClip(CLIP_B, 66_667, 33_333, { sourceOutUs: 33_333 }),
+        ]),
+      ],
+      [CLIP_A],
+    );
+    expect(model.speed!.minRateWithoutRipple).toBe(0.498);
   });
 
   it('no clip after it = no bound at all (slowing down is free)', () => {
@@ -151,8 +173,10 @@ describe('speed section', () => {
       ],
       [CLIP_A, '01890000-0000-7000-8000-000000000203'],
     );
-    // clipA: 10/(10+2) = 0.834 ; audio clip: 4/(4+1) = 0.8 -> the strictest wins
-    expect(model.speed!.minRateWithoutRipple).toBe(0.834);
+    // clipA anchors at 10/(10+2); the audio clip (4/(4+1)) is looser. The
+    // advertised value is the grid-walked edge from the strictest anchor
+    // (0.833, see the single-clip case above), and it must survive BOTH clips.
+    expect(model.speed!.minRateWithoutRipple).toBe(0.833);
   });
 
   it('flags a transition on either edge (the handle grows with the rate)', () => {

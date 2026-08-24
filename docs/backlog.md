@@ -320,17 +320,30 @@ yazılı ve motorda uygulanıyor. Aşağıdakiler bilerek dışarıda bırakıld
   Kanıt: `e2e/frame-grid.spec.ts` (gerçek fare + ölçülmüş ızgara dışı kaynak → export 202).
   Kullanıcı anlatımı: [`docs/poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) **§1.2**
   (eski metinde yanlışlıkla "§1.1" yazıyordu).
-- **[ORTA — AÇIK] Inspector'ın "ripple'sız en yavaş hız" sınırı yarım kare eksik.**
-  `clipInspectorModel.minRateWithoutRipple` (`clipInspectorModel.ts`) sınırı İDEAL süreden
-  türetiyor (`(sourceOut − sourceIn) / (süre + boşluk)`, sonra 3 ondalığa yukarı yuvarlama);
-  ızgara snap'i yarım kare ekleyebildiği için panelin önerdiği oran reddedilebiliyor. Ölçülen
-  vaka (30 fps): klip frame 2'de (66_667 µs), 1 kare kaynak, sonraki klip frame 4'te
-  (133_333 µs) → oda 66_666 µs, panel 0.5x öneriyor, op "sonraki klibe giriyor" diyor.
-  Ret ATOMİK ve gerekçesi doğru (UI "Sonrakileri kaydır" sunuyor), veri kaybı yok; doğru
-  düzeltme sınırı ızgaraya göre hesaplamaktır — `features/inspector` alanı.
-  Davranış testle SABİTLENDİ (`speedColorOps.test.ts`: *"a slow-down that does NOT fit refuses
-  atomically — it never overlaps, and never quietly shortens"*), böylece sessizce overlap'e
-  dönüşemez.
+- **[ORTA — KAPANDI, 2026-08-24 yarim-is turu] Inspector'ın "ripple'sız en yavaş hız" sınırı
+  yarım kare eksikti.** `clipInspectorModel.minRateWithoutRipple` sınırı İDEAL süreden
+  türetiyordu (`(sourceOut − sourceIn) / (süre + boşluk)`, sonra 3 ondalığa yukarı yuvarlama);
+  ızgara çözümü ideali uygulamadığı için panelin önerdiği oran reddedilebiliyordu.
+  **Ölçüm düzeltmesi:** bu kaydın eski metnindeki frame 2 → frame 4 geometrisi aslında KABUL
+  edilen vakadır (oda 66_666 µs; `speedColorOps.test.ts` *"fills the room ... EXACTLY"* bunu
+  sabitler). Ret, bir faz ötede ÜREDİ ve teste döküldü: klip faz-0 karede (frame 0, 1 kare
+  kaynak = 33_333 µs), sonraki klip frame 2'de (66_667 µs) → oda 66_667 µs; panel 0.5x
+  öneriyordu, 2 karelik sürede 0.5 için tam sayılı kaynak aralığı YOK (pencere
+  [33_333.25, 33_333.75) boş), çözücü 3 kareye (100_000 µs) yürüyor, op "sonraki klibe
+  giriyor" diyordu. **Düzeltme:** sınır artık op'un KENDİ planlayıcısından türetiliyor —
+  `timelineOps.minSpeedRateWithoutRipple`: ideal formül yalnız ÇAPA, her aday
+  `planClipSpeed`'in kendisiyle yargılanıyor (ızgara çözümü + tek-kare tabanı + asset süresi
+  tavanı + yerleşim denetimi; İKİNCİ aritmetik kopyası yok, kâhin op'un fonksiyonu), çapadan
+  yukarı/aşağı sınırlı yürüyüşle BİTİŞİK kabul bandının alt kenarı bulunuyor. Panel modeli
+  op'la aynı `knownAssetDurations()` haritasını alıyor (`buildClipInspectorModel` 5. parametre).
+  Sözleşme iki yönlü testle sabit: önerilen oran KABUL, bir ızgara adımı yavaşı RET — backlog
+  vakası (0.498 kabul / 0.497 ret / formülün 0.5'i delik), asset-tavanlı vaka, çoklu seçim ve
+  30/29.97/24 fps'te 144 ızgara-kritik geometrinin taraması (`speedColorOps.test.ts`
+  "minRateWithoutRipple ↔ setClipSpeed"). Gerçek girdi kanıtı: `e2e/speed-color.spec.ts`
+  "yarım kare vakası" — gerçek fare/klavyeyle kurulan bir karelik klip + bir karelik boşlukta
+  panel 0.498x yazıyor, klavyeyle 0.497 RET (panelde gerekçe), 0.498 KABUL (klip odaya tam
+  yaslanıyor). Negatif kontrol: düzeltme geri alınınca 10 yeni/güncel test kırmızı, geri
+  konunca md5 birebir.
 
 ## POC dokümantasyon turunda kayda geçenler (2026-08-12)
 

@@ -17,6 +17,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   clipTimelineDurationUs,
   exportFrameGridIssues,
+  frameSpanUs,
+  frameToUs,
   snapUsToFrameGrid,
   validateTimelineDoc,
   type Clip,
@@ -27,6 +29,7 @@ import {
 } from '@videoedit/timeline-schema';
 import { createEmptyDoc, defaultProjectSettings, useDocStore } from './docStore';
 import { useAssetStore } from './assetStore';
+import { buildClipInspectorModel } from '../features/inspector/clipInspectorModel';
 import { colorAdjustOf } from '../features/player/core/resolve';
 import {
   COLOR_ADJUST_DEDUPED,
@@ -419,6 +422,227 @@ describe('setClipSpeed — export compiler gates (cross-boundary)', () => {
 
     expect(findMedia(CLIP_B).timelineStartUs).toBe(4_300_000);
     expectClearsBothExportGates();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// minRateWithoutRipple ↔ setClipSpeed — the panel's promise IS the op's acceptance
+//
+// The Inspector note says "kaydırmadan en yavaş X olabilir" and the user types
+// exactly X. That number therefore has ONE correctness criterion: setClipSpeed
+// must accept it. Deriving it from the ideal duration formula alone
+// ((out-in)/(duration+gap), then ceil to 3 decimals) fails that criterion,
+// because the op does not apply the ideal duration — it applies the frame-grid
+// solve (`solveSpeedChange`), and below 1x the admissible source window is
+// narrower than a microsecond, so the solve can land a whole frame PAST the
+// room and the op refuses the very rate the panel advertised.
+// ---------------------------------------------------------------------------
+
+describe('minRateWithoutRipple ↔ setClipSpeed — the advertised bound is applicable', () => {
+  /**
+   * The panel model's bound for the CURRENT store document, judged against the
+   * SAME asset-duration map the op reads — exactly what ClipPropertiesPanel
+   * hands the model.
+   */
+  function advertisedBound(ids: string[]): number | null {
+    return buildClipInspectorModel(currentDoc(), new Set(ids), undefined, undefined, knownAssetDurations())
+      .speed!.minRateWithoutRipple;
+  }
+
+  it('REGRESSION (backlog): the advertised "slowest without ripple" rate is ACCEPTED', () => {
+    // Measured case, 30 fps: a one-frame clip on frame 0 (33_333 us of source),
+    // follower on frame 2 (66_667 us) -> room 66_667 us. The ideal formula says
+    // ceil3(33_333 / 66_667) = 0.5x, but at 0.5 the solver's nearest frame
+    // count (2, from THIS start) holds no integer source span — the window
+    // [33_333.25, 33_333.75) is empty — so the walk lands on 3 frames
+    // (100_000 us) and the op says "speed change overlaps the next clip".
+    // The panel must advertise a rate the op actually takes.
+    load([
+      track(V1, 'video', [
+        videoClip(CLIP_A, 0, 33_333, { sourceOutUs: 33_333 }),
+        videoClip(CLIP_B, 66_667, 33_333, { sourceOutUs: 33_333 }),
+      ]),
+    ]);
+
+    const bound = advertisedBound([CLIP_A]);
+    expect(bound, 'a bounded clip must advertise a bound').not.toBeNull();
+
+    const result = setClipSpeed([CLIP_A], bound!);
+    expect(
+      result,
+      `panel advertised ${String(bound)}x as the slowest rate without ripple, the op must accept it`,
+    ).toEqual({ ok: true });
+
+    const clip = findMedia(CLIP_A);
+    expect(clip.speed.rate).toBe(bound);
+    // The bound is the rate that GROWS the clip into its room — end stays at or
+    // before the follower, and nothing moved.
+    expect(clip.timelineStartUs + clip.timelineDurationUs).toBeLessThanOrEqual(66_667);
+    expect(findMedia(CLIP_B).timelineStartUs).toBe(66_667);
+    expectValid();
+  });
+
+  it('both sides of the bound: the advertised rate FILLS the room, one grid step slower is REFUSED', () => {
+    const layout = (): Track[] => [
+      track(V1, 'video', [
+        videoClip(CLIP_A, 0, 33_333, { sourceOutUs: 33_333 }),
+        videoClip(CLIP_B, 66_667, 33_333, { sourceOutUs: 33_333 }),
+      ]),
+    ];
+    load(layout());
+
+    // 0.498, not the formula's 0.5: at 0.498 the solve reaches 2 frames from
+    // frame 0 (66_667 us) with source span 33_200, so the clip grows to the
+    // follower's edge exactly. 0.5 itself is a hole in the op's acceptance
+    // (window [33_333.25, 33_333.75) holds no integer) — see the next case.
+    expect(advertisedBound([CLIP_A])).toBe(0.498);
+
+    expect(setClipSpeed([CLIP_A], 0.498)).toEqual({ ok: true });
+    const grown = findMedia(CLIP_A);
+    expect(grown.timelineDurationUs, 'the bound grows the clip into the WHOLE room').toBe(66_667);
+    expect(grown.timelineStartUs + grown.timelineDurationUs).toBe(66_667);
+    expect(grown.sourceOutUs, 'the solve re-derives sourceOut for the frame count').toBe(33_200);
+    expectValid();
+
+    // One rate-grid step slower must be the op's refusal, or "en yavaş"
+    // (slowest) would be a lie in the other direction.
+    load(layout());
+    expect(setClipSpeed([CLIP_A], 0.497)).toEqual({
+      ok: false,
+      reason: 'speed change overlaps the next clip',
+    });
+    expect(findMedia(CLIP_A).timelineDurationUs, 'refusal is atomic').toBe(33_333);
+    expect(historyLength()).toBe(0);
+  });
+
+  it('documents WHY the ideal-formula 0.5 cannot be advertised here: the op refuses it', () => {
+    // Same geometry. ceil3((out-in)/room) = ceil3(33_333/66_667) = 0.5, and 0.5
+    // sits in an acceptance HOLE: no integer source span maps onto 2 frames at
+    // this start, the solver walks to 3 frames (100_000 us) and the layout
+    // check refuses. The panel's number must live where the op says yes.
+    load([
+      track(V1, 'video', [
+        videoClip(CLIP_A, 0, 33_333, { sourceOutUs: 33_333 }),
+        videoClip(CLIP_B, 66_667, 33_333, { sourceOutUs: 33_333 }),
+      ]),
+    ]);
+    expect(setClipSpeed([CLIP_A], 0.5)).toEqual({
+      ok: false,
+      reason: 'speed change overlaps the next clip',
+    });
+  });
+
+  it('judges the bound against the asset duration cap the op enforces (same map, same answer)', () => {
+    // One-frame clip whose asset is EXACTLY as long as its source span, with a
+    // two-frame gap. The cap changes which rates the solver can satisfy (a
+    // snap up may not ask for source that does not exist), so the bound must
+    // be derived with the same map `setClipSpeed` reads — here that shifts it
+    // to 0.25 (3 frames, source span 25_000 of the available 33_333).
+    useAssetStore
+      .getState()
+      .setAssets([{ id: ASSET_A, kind: 'video', name: 'a.mp4', status: 'ready', durationUs: 33_333 }]);
+    load([
+      track(V1, 'video', [
+        videoClip(CLIP_A, 0, 33_333, { sourceOutUs: 33_333 }),
+        videoClip(CLIP_B, 100_000, 33_333, { sourceOutUs: 33_333 }),
+      ]),
+    ]);
+
+    const bound = advertisedBound([CLIP_A]);
+    expect(bound).toBe(0.25);
+    // ACCEPTED is the contract. Here it comes with the op's own visible
+    // correction (only every fourth frame count is reachable at 0.25x, so the
+    // solve lands beyond the nearest count and says so) — that notice is the
+    // op being honest, not the panel being wrong.
+    expect(setClipSpeed([CLIP_A], bound!)).toEqual({ ok: true, notice: SPEED_DURATION_SNAPPED });
+    const clip = findMedia(CLIP_A);
+    expect(clip.sourceOutUs, 'never reads past the end of the asset').toBeLessThanOrEqual(33_333);
+    expect(clip.timelineStartUs + clip.timelineDurationUs).toBeLessThanOrEqual(100_000);
+    expectValid();
+  });
+
+  it('a multi-selection advertises ONE rate that every selected clip survives', () => {
+    load([
+      track(V1, 'video', [
+        videoClip(CLIP_A, 0, 10 * US), // 2 s gap -> ideal says 0.834, grid admits 0.833
+        videoClip(CLIP_B, 12 * US, 4 * US),
+      ]),
+      track(A1, 'audio', [
+        videoClip(CLIP_C, 0, 4 * US, { kind: 'audio' }),
+        videoClip('01890000-0000-7000-8000-000000000204', 5 * US, 1 * US, { kind: 'audio' }),
+      ]),
+    ]);
+
+    const bound = advertisedBound([CLIP_A, CLIP_C]);
+    expect(bound, 'the strictest clip anchors the bound').toBe(0.833);
+
+    expect(setClipSpeed([CLIP_A, CLIP_C], bound!)).toEqual({ ok: true });
+    const a = findMedia(CLIP_A);
+    const c = findMedia(CLIP_C);
+    expect(a.timelineStartUs + a.timelineDurationUs).toBeLessThanOrEqual(12 * US);
+    expect(c.timelineStartUs + c.timelineDurationUs).toBeLessThanOrEqual(5 * US);
+    expectValid();
+  });
+
+  /**
+   * Property-style sweep over GRID-CRITICAL geometries (not random): the frame
+   * pattern repeats every 3 frames at 30/24 fps and stays fractional at 29.97,
+   * so start frames 0..5 with 1..2-frame clips and 1..2-frame gaps cover every
+   * phase the ledger produces, tight and unbounded assets both. For every case
+   * the advertised bound must be ACCEPTED by the op's planner and one grid
+   * step slower must be REFUSED — the two-sided contract of "en yavaş".
+   */
+  it('sweep at 30 / 29.97 / 24 fps: bound accepted, one grid step slower refused', () => {
+    const fpsList = [
+      { num: 30, den: 1 },
+      { num: 30000, den: 1001 },
+      { num: 24, den: 1 },
+    ];
+    let checked = 0;
+    for (const fps of fpsList) {
+      for (let startFrame = 0; startFrame <= 5; startFrame++) {
+        for (let durFrames = 1; durFrames <= 2; durFrames++) {
+          for (let gapFrames = 1; gapFrames <= 2; gapFrames++) {
+            const startUs = frameToUs(startFrame, fps);
+            const durationUs = frameSpanUs(startUs, durFrames, fps);
+            const nextStartUs = frameToUs(startFrame + durFrames + gapFrames, fps);
+            const followerDurationUs = frameSpanUs(nextStartUs, 1, fps);
+            const doc: TimelineDoc = {
+              ...createEmptyDoc(PROJECT_ID, { ...defaultProjectSettings, fps }),
+              tracks: [
+                track(V1, 'video', [
+                  videoClip(CLIP_A, startUs, durationUs, { sourceOutUs: durationUs }),
+                  videoClip(CLIP_B, nextStartUs, followerDurationUs, {
+                    sourceOutUs: followerDurationUs,
+                  }),
+                ]),
+              ],
+            };
+            for (const durations of [undefined, new Map([[ASSET_A, durationUs]])]) {
+              const label =
+                `${fps.num}/${fps.den} start=${startFrame} dur=${durFrames} gap=${gapFrames} ` +
+                (durations ? 'tight' : 'unbounded');
+              const bound = buildClipInspectorModel(doc, new Set([CLIP_A]), undefined, undefined, durations)
+                .speed!.minRateWithoutRipple;
+              expect(bound, `${label}: a bounded clip advertises a bound`).not.toBeNull();
+              expect(
+                'reason' in planClipSpeed(doc, [CLIP_A], bound!, false, durations),
+                `${label}: advertised ${bound!} must be ACCEPTED`,
+              ).toBe(false);
+              const oneStepSlower = (Math.round(bound! * 1000) - 1) / 1000;
+              if (oneStepSlower >= SPEED_MIN) {
+                expect(
+                  'reason' in planClipSpeed(doc, [CLIP_A], oneStepSlower, false, durations),
+                  `${label}: ${oneStepSlower} (one grid step slower) must be REFUSED`,
+                ).toBe(true);
+              }
+              checked++;
+            }
+          }
+        }
+      }
+    }
+    expect(checked).toBe(144);
   });
 });
 

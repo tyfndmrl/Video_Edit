@@ -54,6 +54,7 @@ import {
   applyClipShapeToDraft,
   applyClipTextToDraft,
   applyClipTransformToDraft,
+  knownAssetDurations,
   maxClipScale,
   removeClipLut,
   resetClipColorAdjust,
@@ -167,7 +168,10 @@ export function ClipPropertiesPanel() {
     // layout rule (features/text/textLayout), i.e. the same box the export's
     // SkiaSharp produces. It is what turns the scale / font-size ceilings from
     // "safe guess" into "the number the server will actually accept".
-    () => buildClipInspectorModel(doc, selection, assets, measuredTextBox),
+    // knownAssetDurations() reads the same `assets` store state this memo
+    // already depends on; the speed section's min-rate promise is judged
+    // against the same source bounds the op will enforce on the click.
+    () => buildClipInspectorModel(doc, selection, assets, measuredTextBox, knownAssetDurations()),
     [doc, selection, assets],
   );
 
