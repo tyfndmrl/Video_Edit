@@ -72,6 +72,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options)
             e.Property(a => a.WaveformKey).HasMaxLength(500);
             e.Property(a => a.ThumbnailKey).HasMaxLength(500);
             ConfigureNullableJson(e.Property(a => a.Probe), isNpgsql);
+            ConfigureNullableJson(e.Property(a => a.FilmstripManifest), isNpgsql);
             e.HasIndex(a => new { a.OwnerId, a.Status });
         });
 

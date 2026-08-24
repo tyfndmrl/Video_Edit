@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Hangfire;
 using Hangfire.States;
 using Microsoft.Data.Sqlite;
@@ -137,10 +138,29 @@ public sealed class ProcessAssetPipelineTests : IDisposable
         Assert.NotNull(await _storage.HeadObjectAsync(asset.WaveformKey!));
         Assert.NotNull(await _storage.HeadObjectAsync(asset.ThumbnailKey!));
 
+        // Manifest'in jsonb kopyası ready ANINDA yazılmış ve storage'daki manifest.json ile
+        // AYNI içerik olmalı (media-urls sprites[] çözümünü çağrı anında bu kolondan yapar;
+        // iki kopya ayrışırsa istemci var olmayan sprite URL'i alabilirdi).
+        Assert.NotNull(asset.FilmstripManifest);
+        var storedManifest = await ReadObjectTextAsync(asset.FilmstripKey!);
+        Assert.Equal(
+            JsonDocument.Parse(storedManifest).RootElement.GetRawText(),
+            asset.FilmstripManifest!.RootElement.GetRawText());
+        Assert.True(asset.FilmstripManifest.RootElement.TryGetProperty("sprites", out var sprites));
+        Assert.True(sprites.GetArrayLength() >= 1);
+
         // KOTA DEFTERİ: DerivedBytes, YÜKLENEN türev objelerinin toplamına
         // bire bir eşit — iddia DB kolonuna değil, MinIO'daki gerçek bayt sayısına dayanır.
         Assert.Equal(await SumDerivativeObjectBytesAsync(asset), asset.DerivedBytes);
         Assert.True(asset.DerivedBytes > 0);
+    }
+
+    /// <summary>Küçük storage objesini metin olarak okur (manifest.json karşılaştırması).</summary>
+    private async Task<string> ReadObjectTextAsync(string key)
+    {
+        using var download = await _storage.OpenReadAsync(key);
+        using var reader = new StreamReader(download.Content);
+        return await reader.ReadToEndAsync();
     }
 
     /// <summary>Asset'in depodaki TÜM türev objelerinin (proxy/filmstrip+sprite'lar/waveform/poster) toplam boyutu.</summary>
@@ -187,6 +207,7 @@ public sealed class ProcessAssetPipelineTests : IDisposable
         Assert.Null(asset.Width); // audio-only: video metadata yok
         Assert.Null(asset.ThumbnailKey);
         Assert.Null(asset.FilmstripKey);
+        Assert.Null(asset.FilmstripManifest); // filmstrip'siz varlıkta jsonb kopya da yok
 
         var basePrefix = $"u/{asset.OwnerId}/a/{asset.Id}";
         Assert.Equal($"{basePrefix}/proxy/audio.m4a", asset.ProxyKey);
@@ -255,6 +276,7 @@ public sealed class ProcessAssetPipelineTests : IDisposable
         // Türev YOK, medya metadata'sı YOK — LUT bir renk tablosudur.
         Assert.Null(asset.ProxyKey);
         Assert.Null(asset.FilmstripKey);
+        Assert.Null(asset.FilmstripManifest);
         Assert.Null(asset.WaveformKey);
         Assert.Null(asset.ThumbnailKey);
         Assert.Null(asset.DurationMicros);

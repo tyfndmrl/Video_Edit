@@ -434,13 +434,73 @@ public sealed class AssetEndpointsTests : IDisposable
     // aşılmıştı). O düzeltme canlı Postgres'te ham API ile ölçüldü (cross-user satır enjekte →
     // /assets yanıtında görünmüyor).
 
+    // ---------- media-urls manifest kaynağı: DB kolonu + storage yedeği ----------
+    // Asset.FilmstripManifest sözleşmesi: kolon doluysa sprites[] DB'den çözülür ve
+    // storage'a HİÇ gidilmez; kolon NULL (geriye dönük asset) ise manifest.json storage'dan
+    // okunur. İki yol da aynı yanıt şeklini üretir — istemci ayırt edemez.
+
+    private const string TwoSpriteManifest =
+        """{"intervalUs":1000000,"tileW":160,"tileH":90,"cols":30,"rows":10,"frameCount":600,"sprites":["sprite_1.jpg","sprite_2.jpg"]}""";
+
+    [Fact]
+    public async Task MediaUrls_AssetWithDbManifest_ServesSpritesWithoutStorageRead()
+    {
+        var project = await SeedProjectAsync();
+        var asset = await SeedReadyAssetAsync(_userId, withDbManifest: true);
+        await LinkAssetAsync(project.Id, asset.Id);
+
+        var result = await AssetEndpoints.MediaUrls(
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, CancellationToken.None);
+
+        var ok = Assert.IsType<Ok<MediaUrlsResponse>>(result);
+        var urls = ok.Value!.Assets[asset.Id.ToString("D")];
+        Assert.NotNull(urls.Sprites);
+        Assert.Equal(2, urls.Sprites!.Count);
+        var dir = $"u/{_userId}/a/{asset.Id}/filmstrip";
+        Assert.Equal($"https://fake/{dir}/sprite_1.jpg?sig=get", urls.Sprites["sprite_1.jpg"]);
+        Assert.Equal($"https://fake/{dir}/sprite_2.jpg?sig=get", urls.Sprites["sprite_2.jpg"]);
+        Assert.Equal(0, _storage.OpenReadCount); // çağrı anında storage GET YOK
+    }
+
+    [Fact]
+    public async Task MediaUrls_LegacyAssetWithNullDbManifest_FallsBackToStorageManifest()
+    {
+        var project = await SeedProjectAsync();
+        var asset = await SeedReadyAssetAsync(_userId, withDbManifest: false); // kolon NULL
+        await LinkAssetAsync(project.Id, asset.Id);
+        _storage.ManifestJson = TwoSpriteManifest;
+
+        var result = await AssetEndpoints.MediaUrls(
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, CancellationToken.None);
+
+        var ok = Assert.IsType<Ok<MediaUrlsResponse>>(result);
+        var urls = ok.Value!.Assets[asset.Id.ToString("D")];
+        Assert.NotNull(urls.Sprites); // eski asset HÂLÂ tam yanıt alır
+        Assert.Equal(2, urls.Sprites!.Count);
+        Assert.Equal(1, _storage.OpenReadCount); // yedek yol: tek manifest GET
+    }
+
     // ---------- Yardımcılar ----------
 
-    private async Task<Asset> SeedReadyAssetAsync(Guid owner)
+    /// <summary>
+    /// withDbManifest: null = filmstrip'siz asset (varsayılan, eski testler);
+    /// true = FilmstripKey + DB manifest kolonu dolu; false = FilmstripKey var, kolon NULL
+    /// (geriye dönük asset — storage-yedek yolunu tetikler).
+    /// </summary>
+    private async Task<Asset> SeedReadyAssetAsync(Guid owner, bool? withDbManifest = null)
     {
         var asset = Asset.Create(
             owner, AssetKind.Video, "clip.mp4", "video/mp4", 1024, DateTimeOffset.UtcNow);
         asset.Status = AssetStatus.Ready;
+        if (withDbManifest is not null)
+        {
+            asset.FilmstripKey = $"u/{owner}/a/{asset.Id}/filmstrip/manifest.json";
+            if (withDbManifest == true)
+            {
+                asset.FilmstripManifest = JsonDocument.Parse(TwoSpriteManifest);
+            }
+        }
+
         _db.Assets.Add(asset);
         await _db.SaveChangesAsync();
         return asset;
@@ -538,8 +598,22 @@ public sealed class AssetEndpointsTests : IDisposable
             return Task.CompletedTask;
         }
 
-        public Task<StorageDownload> OpenReadAsync(string key, CancellationToken ct = default) =>
-            throw new AmazonS3Exception("not found") { StatusCode = HttpStatusCode.NotFound };
+        /// <summary>OpenReadAsync bu JSON'u döndürür; null ise 404 fırlatır (obje yok).</summary>
+        public string? ManifestJson { get; set; }
+        public int OpenReadCount { get; private set; }
+
+        public Task<StorageDownload> OpenReadAsync(string key, CancellationToken ct = default)
+        {
+            OpenReadCount++;
+            if (ManifestJson is null)
+            {
+                throw new AmazonS3Exception("not found") { StatusCode = HttpStatusCode.NotFound };
+            }
+
+            var bytes = System.Text.Encoding.UTF8.GetBytes(ManifestJson);
+            var stream = new MemoryStream(bytes);
+            return Task.FromResult(new StorageDownload(stream, bytes.Length, stream));
+        }
 
         public Task UploadFileAsync(string key, string filePath, string contentType, CancellationToken ct = default) =>
             Task.CompletedTask;

@@ -356,8 +356,9 @@ public sealed class ProcessAssetJob(
 
         var manifest = FilmstripRecipe.BuildManifest(
             probe, durationUs, spriteFiles.Select(Path.GetFileName).Cast<string>().ToList());
+        var manifestJson = FilmstripRecipe.SerializeManifest(manifest);
         var manifestPath = Path.Combine(tempDir, "manifest.json");
-        await File.WriteAllTextAsync(manifestPath, FilmstripRecipe.SerializeManifest(manifest), ct);
+        await File.WriteAllTextAsync(manifestPath, manifestJson, ct);
         await progress.ReportAsync(85, probe.HasAudio ? "waveform" : "upload", ct);
 
         // Waveform — %85-92 (yalnız sesli kaynakta).
@@ -391,6 +392,12 @@ public sealed class ProcessAssetJob(
 
         asset.ProxyKey = keys.Proxy;
         asset.FilmstripKey = keys.FilmstripManifest;
+        // Manifest'in jsonb kopyası: media-urls sprites[] çözümünü çağrı anında storage
+        // GET'i yapmadan bu kolondan okur (Asset.FilmstripManifest sözleşmesi — NULL olan
+        // geriye dönük asset'te storage-GET yolu yedek olarak çalışmaya devam eder).
+        // Storage'daki manifest.json kalıcı artefakt olarak aynen yazılır; iki kopya da
+        // AYNI serileştirilmiş metinden gelir, ayrışamaz.
+        asset.FilmstripManifest = JsonDocument.Parse(manifestJson);
         asset.WaveformKey = waveformPath is not null ? keys.Waveform : null;
         asset.ThumbnailKey = keys.Poster;
 

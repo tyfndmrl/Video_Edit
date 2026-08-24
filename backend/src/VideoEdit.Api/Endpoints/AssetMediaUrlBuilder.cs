@@ -42,9 +42,13 @@ public static class AssetMediaUrlBuilder
     }
 
     /// <summary>
-    /// Build + çoklu-sprite çözümü: manifest.json storage'dan OKUNUR (tek küçük GetObject,
-    /// &lt;2 KB) ve sprites[] içindeki her dosya adı için presigned GET üretilir — istemcinin
-    /// URL kalıbı tahmin etmesi gerekmez (presign path-bazlı imzadır, kalıp türetme kırılgandır).
+    /// Build + çoklu-sprite çözümü: sprites[] içindeki her dosya adı için presigned GET
+    /// üretilir — istemcinin URL kalıbı tahmin etmesi gerekmez (presign path-bazlı imzadır,
+    /// kalıp türetme kırılgandır). Manifest'in kaynağı iki kademelidir:
+    ///  1. <see cref="Asset.FilmstripManifest"/> (jsonb — işleme hattı yazar): storage'a
+    ///     HİÇ gidilmez; media-urls'ün asset başına GetObject maliyeti sıfırlanır.
+    ///  2. Kolon NULL ise (kolon eklenmeden önce işlenmiş eski asset) manifest.json
+    ///     storage'dan okunur (tek küçük GetObject, &lt;2 KB) — geriye dönük YEDEK yol.
     /// readObjectOrNull: key için obje içeriği, yoksa/okunamazsa null (storage hatasını yutar).
     /// Manifest okunamaz ya da parse edilemezse sprites null kalır — geriye uyumlu.
     /// </summary>
@@ -60,13 +64,22 @@ public static class AssetMediaUrlBuilder
             return dto;
         }
 
-        var bytes = await readObjectOrNull(manifestKey, ct);
-        if (bytes is null || bytes.Length == 0 || bytes.Length > MaxManifestBytes)
+        List<string>? spriteNames;
+        if (asset.FilmstripManifest is not null)
         {
-            return dto;
+            spriteNames = ParseSpriteNamesOrNull(asset.FilmstripManifest.RootElement);
+        }
+        else
+        {
+            var bytes = await readObjectOrNull(manifestKey, ct);
+            if (bytes is null || bytes.Length == 0 || bytes.Length > MaxManifestBytes)
+            {
+                return dto;
+            }
+
+            spriteNames = ParseSpriteNamesOrNull(bytes);
         }
 
-        var spriteNames = ParseSpriteNamesOrNull(bytes);
         if (spriteNames is null || spriteNames.Count == 0)
         {
             return dto;
@@ -97,46 +110,53 @@ public static class AssetMediaUrlBuilder
         return true;
     }
 
-    /// <summary>
-    /// manifest sprites[] alanını okur (FilmstripManifest şeması — VideoEdit.Media.Recipes).
-    /// Bozuk/eksik manifest'te null: media-urls asla manifest yüzünden 500 dönmez.
-    /// Path separator içeren adlar atlanır (key sadece dosya adı bekler — traversal önlemi).
-    /// </summary>
+    /// <summary>Storage'dan okunan ham manifest için parse kabuğu — bozuk JSON'da null.</summary>
     private static List<string>? ParseSpriteNamesOrNull(byte[] manifestJson)
     {
         try
         {
             using var doc = JsonDocument.Parse(manifestJson);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object
-                || !doc.RootElement.TryGetProperty("sprites", out var spritesEl)
-                || spritesEl.ValueKind != JsonValueKind.Array)
-            {
-                return null;
-            }
-
-            var names = new List<string>();
-            foreach (var el in spritesEl.EnumerateArray())
-            {
-                if (el.ValueKind != JsonValueKind.String)
-                {
-                    return null;
-                }
-
-                var name = el.GetString()!;
-                if (name.Length == 0 || name.Contains('/') || name.Contains('\\') || name.Contains(".."))
-                {
-                    continue;
-                }
-
-                names.Add(name);
-            }
-
-            return names;
+            return ParseSpriteNamesOrNull(doc.RootElement);
         }
         catch (JsonException)
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// manifest sprites[] alanını okur (FilmstripManifest şeması — VideoEdit.Media.Recipes).
+    /// DB'deki jsonb kopya ile storage'daki manifest.json AYNI kuraldan geçer: bozuk/eksik
+    /// manifest'te null — media-urls asla manifest yüzünden 500 dönmez.
+    /// Path separator içeren adlar atlanır (key sadece dosya adı bekler — traversal önlemi).
+    /// </summary>
+    private static List<string>? ParseSpriteNamesOrNull(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("sprites", out var spritesEl)
+            || spritesEl.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var names = new List<string>();
+        foreach (var el in spritesEl.EnumerateArray())
+        {
+            if (el.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var name = el.GetString()!;
+            if (name.Length == 0 || name.Contains('/') || name.Contains('\\') || name.Contains(".."))
+            {
+                continue;
+            }
+
+            names.Add(name);
+        }
+
+        return names;
     }
 
     private static string? PresignIfPresent(string? key, Func<string, string> presign) =>

@@ -44,6 +44,19 @@ public class Asset
     /// <summary>Ham ffprobe JSON çıktısı (jsonb) — codec/rotate/HDR kararları için kaynak veri.</summary>
     public JsonDocument? Probe { get; set; }
 
+    /// <summary>
+    /// filmstrip/manifest.json'ın jsonb kopyası — işleme hattı manifest'i storage'a yazarken
+    /// buraya da yazar; media-urls sprites[] çözümünü çağrı anında storage GET'i yerine bu
+    /// kolondan yapar (ölçüldü: asset başına ~0,6 ms MinIO GET, 100+ asset'te çağrıyı
+    /// doğrusal uzatıyordu). NULL = "bu asset kolon eklenmeden önce işlendi" (geriye dönük
+    /// satırlar): media-urls o asset'ler için bugünkü storage-GET yolunu YEDEK olarak korur.
+    /// Backfill bilinçli olarak YOK (DerivedBytes deseni): eski asset yedek yolla zaten
+    /// doğru çalışır, toplu backfill satır başına bir storage GET gerektiren riskli bir veri
+    /// migration'ı olurdu ve tek kazancı çağrı başına ~1 ms'dir; asset yeniden işlenirse
+    /// kolon kendiliğinden dolar.
+    /// </summary>
+    public JsonDocument? FilmstripManifest { get; set; }
+
     public long? DurationMicros { get; set; }
     public int? Width { get; set; }
     public int? Height { get; set; }

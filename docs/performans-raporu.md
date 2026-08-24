@@ -339,6 +339,23 @@ presign'lar + filmstrip'li asset başına storage'dan manifest.json okuması. 10
 kütüphanede çağrı ~170-200 ms'e uzar; bu uç proje açılışında ve 12 saatlik yenilemede çağrılıyor.
 Öneri: manifest'i işleme sırasında Assets satırına (jsonb sütun) yazıp storage GET'ini kaldırmak;
 asset başına URL üretimini `Task.WhenAll` ile paralelleştirmek. Tahmini kazanç: çağrı başına 5-10x.
+**KAPATILDI (2026-08-24 yarim-is #4):** iki adımda. (1) 15. turda 8'lik eşzamanlılık kapağıyla
+paralel döngü girmişti; bu turun ÖNCE ölçümü (aynı yöntem: 5 ısınma + 30 tekrar, ham API'yle
+kurulan 55 assetli proje dahil) o halin ~0,56-0,61 ms/asset'e indiğini ama doğrusal kaldığını
+gösterdi: 1/15/55 asset p50 = 4,24 / 12,82 / 34,72 ms. Pay ayrıştırması ölçümle: MinIO
+manifest.json GET p50 1,07 ms/obje; `GetPreSignedURL` 244,9 µs/çağrı (tek iş parçacığı,
+asset başına ~7 çağrı) — yani baskın pay presign İMZALAMA CPU'suydu. (2) Bu turda manifest,
+işleme sırasında `Assets.FilmstripManifest` jsonb kolonuna da yazılıyor (migration
+`AddAssetFilmstripManifest`; NULL = eski asset → storage-GET yolu YEDEK, backfill bilinçli yok)
+ve döngü `Task.Run` ile gerçek CPU paralelliğine alındı (eşzamanlı presign güvenliği ölçümle:
+16 iş parçacığı × 32 000 çağrı, sıfır istisna, örneklenen imzalı URL'ler MinIO'dan 200; verim
+27,8 µs/çağrı ≈ 8,8×). SONRA (aynı projeler + yeni işlenmiş 1/15/55'lik eşleri): eski asset'ler
+(yedek yol) 3,71 / 7,82 / 17,06 ms; YENİ asset'ler (DB yolu) **2,33 / 3,93 / 9,30 ms** —
+55 asset'te 34,72 → 9,30 ms (**3,7×**), asset başına marjinal 0,56 → **0,13 ms** (rapor dönemi
+1,6-1,9'a göre ~13×). Eğim hâlâ doğrusaldır (presign CPU'su asset başınadır) ama storage
+bağımlılığı tamamen kalktı ve 100+ asset projeksiyonu ~200 ms'ten ~15 ms'e indi. Yanıt şekli
+sözleşmesi ölçümle sabit: eski-55 projesinin alan/null/sprites şeması önce↔sonra BİREBİR aynı,
+istemciye dokunulmadı (`assetSync` testleri + tsc yeşil).
 
 **5. Filmstrip uzun medyada işleme payını büyütüyor (şiddet: DÜŞÜK)**
 Ölçüm: 10 dk video → filmstrip 12.4-14.8 s (complete→ready'nin ~%21'i; proxy 38-40 s ile baskın

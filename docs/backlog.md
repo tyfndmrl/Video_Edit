@@ -1132,10 +1132,25 @@ ve perf listesinden **media-urls paralelleştirmesi** (8'lik eşzamanlılık kap
   concat (dilim sınırları geçişlerin dışında; tahmin 3-5x). Hedef: 1080p bileşimde ≥2x.
   Filtre grafiği ÜRETİMİNE dokunduğu için render-golden korpusuyla birlikte ele alınmalı —
   triyaj turunda bilinçli açılmadı.
-- **[ORTA — M1 iyileştirme] media-urls manifest'i Assets satırına yazmak** (perf §"GET
-  media-urls"): paralelleştirme bu turda yapıldı; kalıcı çözüm filmstrip manifest'ini
-  işleme sırasında `Assets` jsonb kolonuna yazıp çağrı anındaki storage GET'ini tümden
-  kaldırmak (migration ister).
+- **[ORTA — KAPANDI, 2026-08-24 yarim-is turu] media-urls manifest'i Assets satırına yazmak**
+  (perf §"GET media-urls"): paralelleştirme önceki turda yapılmıştı; bu turda kalıcı çözüm
+  teslim edildi. ÖNCE ölçüldü (perf yöntemi; 55 assetli proje ham API'yle kuruldu): mevcut
+  paralel hal 1/15/55 asset p50 4,24/12,82/34,72 ms — hâlâ doğrusal; pay ayrıştırması baskın
+  maliyetin storage GET'i (MinIO manifest.json p50 1,07 ms) değil presign İMZALAMA CPU'su
+  olduğunu gösterdi (`GetPreSignedURL` 244,9 µs/çağrı × ~7/asset). Çözüm: `ProcessAssetJob`
+  filmstrip manifest'ini `Assets.FilmstripManifest` jsonb kolonuna da yazar (migration
+  `AddAssetFilmstripManifest`, DerivedBytes deseni: NULL = eski asset → çağrı anındaki
+  storage-GET yolu YEDEK olarak yaşar, backfill bilinçli YOK — gerekçe `Asset.cs` yorumunda);
+  `AssetMediaUrlBuilder.BuildAsync` iki kademeli okur; media-urls döngüsü `Task.Run` ile
+  gerçek CPU paralelliğinde (eşzamanlı presign güvenliği ÖLÇÜMLE doğrulandı: 16 iş parçacığı ×
+  32 000 çağrı sıfır istisna + imzalı URL'ler MinIO'dan 200). SONRA: yeni işlenmiş 1/15/55
+  asset p50 **2,33/3,93/9,30 ms** (55'te 3,7×; asset başına marjinal 0,56 → 0,13 ms); eski
+  asset'ler yedek yolda 17,06 ms'e indi ve yanıt şekli önce↔sonra birebir. Kanıt: iki yol da
+  testli (`AssetMediaUrlBuilderTests` DB/yedek/parite/traversal, `AssetEndpointsTests`
+  MediaUrls DB'li + NULL-yedekli, `ProcessAssetPipelineTests` MinIO'lu gerçek koşumda jsonb
+  kopya ↔ storage manifest.json eşitliği); negatif kontrol (DB yolu geri alınınca 5 test
+  kırmızı, md5 birebir geri); canlıda demo + yeni projelerde 200 ve sprite GET 200.
+  Ayrıntı: [`performans-raporu.md`](performans-raporu.md) §9-4 KAPATILDI notu.
 - **[ORTA — dev ortamı] Çok-GB ingest'te paylaşılan Docker/WSL2 diski** (perf §"Altyapı"):
   aynı 1,4 GB dosyada part-PUT 14-267 MB/s dalgalanıyor, aynı pencerede Npgsql bağlantı
   zaman aşımı uyarıları (MinIO+Postgres aynı sanal diskte). Dev compose'ta MinIO volümünü

@@ -418,15 +418,20 @@ public static class AssetEndpoints
 
         var expiresAt = clock.GetUtcNow().Add(R2StorageService.GetUrlLifetime);
 
-        // BuildAsync filmstrip'li asset başına tek küçük GetObject yapar (manifest.json,
-        // <2 KB) — manifest okunamazsa sprites null döner. Asset'ler birbirinden bağımsız;
-        // sıralı koşturmak yanıtı asset sayısıyla doğrusal uzatıyordu (perf raporu: 12 asset
-        // p50 ~24 ms, ~1.6-1.9 ms/asset → 100+ asset'te ~200 ms). Sınırlı eşzamanlılıkla
-        // paralel: 8'lik kapak, storage'a istek fırtınası açmadan proje açılışı + 12 saatlik
-        // URL yenileme yolunu asset sayısından koparır. (Döngüde DbContext YOK — paralel
-        // güvenli; S3 istemcisi eşzamanlı kullanım için tasarlanmıştır.)
+        // Asset başına iş: ~6-7 presign + (yalnız FilmstripManifest kolonu NULL olan eski
+        // asset'te) manifest.json için tek küçük GetObject. Sıralı koşturmak yanıtı asset
+        // sayısıyla doğrusal uzatıyordu (perf raporu: 12 asset p50 ~24 ms, ~1.6-1.9 ms/asset
+        // → 100+ asset'te ~200 ms); ölçülen payların büyüğü presign İMZALAMA CPU'suydu
+        // (GetPreSignedURL ~245 µs/çağrı, tek iş parçacığı), kalanı MinIO GET (~0,6 ms).
+        // Task.Run ŞART: presign senkron CPU işidir — Task.Run'sız async lambda'lar ilk
+        // gerçek await'e kadar istek iş parçacığında SIRAYLA koşar ve DB'li (GET'siz) asset'te
+        // hiç await kalmadığı için paralellik tamamen kaybolurdu. 8'lik kapak hem CPU imzalama
+        // hem yedek-yol storage GET'leri için üst sınır (istek fırtınası yok). Eşzamanlı
+        // GetPreSignedURL ölçümle doğrulandı: 16 iş parçacığı × 32 000 çağrı, sıfır istisna,
+        // örneklenen imzalı URL'lerin tamamı MinIO'dan 200 döndü (~8,8× verim). Döngüde
+        // DbContext YOK — paralel güvenli.
         using var gate = new SemaphoreSlim(8);
-        var entries = await Task.WhenAll(assets.Select(async asset =>
+        var entries = await Task.WhenAll(assets.Select(asset => Task.Run(async () =>
         {
             await gate.WaitAsync(ct);
             try
@@ -439,7 +444,7 @@ public static class AssetEndpoints
             {
                 gate.Release();
             }
-        }));
+        }, ct)));
 
         var map = new Dictionary<string, AssetMediaUrlsDto>(assets.Count);
         foreach (var (id, dto) in entries)

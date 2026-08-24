@@ -154,4 +154,100 @@ public class AssetMediaUrlBuilderTests
         Assert.Null(urls.Sprites);
         Assert.Null(urls.Filmstrip);
     }
+
+    // ---------- BuildAsync: manifest DB kolonundan (Asset.FilmstripManifest) ----------
+    // İki kaynak sözleşmesi: kolon doluysa storage'a HİÇ gidilmez; kolon NULL ise
+    // (geriye dönük asset) storage-GET yolu yedek olarak çalışır. İki yol AYNI yanıtı üretir.
+
+    private static Func<string, CancellationToken, Task<byte[]?>> CountingReader(
+        string? json, Action onRead) =>
+        (_, _) =>
+        {
+            onRead();
+            return Task.FromResult(json is null ? null : System.Text.Encoding.UTF8.GetBytes(json));
+        };
+
+    [Fact]
+    public async Task BuildAsync_DbManifest_ResolvesSpritesWithoutStorageRead()
+    {
+        var manifest = """{"intervalUs":1000000,"cols":30,"rows":10,"frameCount":600,"sprites":["sprite_1.jpg","sprite_2.jpg"]}""";
+        var asset = ReadyAsset(filmstrip: "u/x/a/y/filmstrip/manifest.json");
+        asset.FilmstripManifest = System.Text.Json.JsonDocument.Parse(manifest);
+        var reads = 0;
+
+        var urls = await AssetMediaUrlBuilder.BuildAsync(
+            asset, FakePresign, CountingReader(null, () => reads++));
+
+        Assert.Equal(0, reads); // storage'a hiç gidilmedi
+        Assert.NotNull(urls.Sprites);
+        Assert.Equal(2, urls.Sprites!.Count);
+        Assert.Equal("https://signed.example/u/x/a/y/filmstrip/sprite_1.jpg?sig=test", urls.Sprites["sprite_1.jpg"]);
+        Assert.Equal("https://signed.example/u/x/a/y/filmstrip/sprite_2.jpg?sig=test", urls.Sprites["sprite_2.jpg"]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_DbPathAndStoragePath_ProduceIdenticalDto()
+    {
+        // JSON şekli sözleşmesi: aynı manifest içeriği için DB yolu ile storage-yedek yolu
+        // BİREBİR aynı DTO'yu üretmeli (istemci hangi yoldan geldiğini ayırt edemez).
+        var manifest = """{"intervalUs":1000000,"cols":30,"rows":10,"frameCount":600,"sprites":["sprite_1.jpg","sprite_2.jpg","sprite_3.jpg"]}""";
+
+        var dbAsset = ReadyAsset(
+            proxy: "u/x/a/y/proxy/540p.mp4",
+            filmstrip: "u/x/a/y/filmstrip/manifest.json",
+            waveform: "u/x/a/y/waveform/peaks.json",
+            poster: "u/x/a/y/thumb/poster.jpg");
+        dbAsset.FilmstripManifest = System.Text.Json.JsonDocument.Parse(manifest);
+
+        var legacyAsset = ReadyAsset(
+            proxy: "u/x/a/y/proxy/540p.mp4",
+            filmstrip: "u/x/a/y/filmstrip/manifest.json",
+            waveform: "u/x/a/y/waveform/peaks.json",
+            poster: "u/x/a/y/thumb/poster.jpg");
+        // StorageKey asset id içerir — DTO karşılaştırması için eşitlenir.
+        legacyAsset.StorageKey = dbAsset.StorageKey;
+
+        var viaDb = await AssetMediaUrlBuilder.BuildAsync(
+            dbAsset, FakePresign, ManifestReader(null)); // reader null döndürse bile DB yolu kazanır
+        var viaStorage = await AssetMediaUrlBuilder.BuildAsync(
+            legacyAsset, FakePresign, ManifestReader(manifest));
+
+        Assert.Equal(viaStorage.Original, viaDb.Original);
+        Assert.Equal(viaStorage.Proxy, viaDb.Proxy);
+        Assert.Equal(viaStorage.Filmstrip, viaDb.Filmstrip);
+        Assert.Equal(viaStorage.FilmstripManifest, viaDb.FilmstripManifest);
+        Assert.Equal(viaStorage.Waveform, viaDb.Waveform);
+        Assert.Equal(viaStorage.Poster, viaDb.Poster);
+        Assert.Equal(viaStorage.Sprites!.OrderBy(kv => kv.Key), viaDb.Sprites!.OrderBy(kv => kv.Key));
+    }
+
+    [Fact]
+    public async Task BuildAsync_DbManifestWithoutSpritesField_OmitsSprites()
+    {
+        var asset = ReadyAsset(filmstrip: "u/x/a/y/filmstrip/manifest.json");
+        asset.FilmstripManifest = System.Text.Json.JsonDocument.Parse("""{"intervalUs":1000000}""");
+        var reads = 0;
+
+        var urls = await AssetMediaUrlBuilder.BuildAsync(
+            asset, FakePresign, CountingReader(null, () => reads++));
+
+        Assert.Equal(0, reads);
+        Assert.Null(urls.Sprites);
+        Assert.NotNull(urls.Filmstrip); // eski alanlar korunur
+    }
+
+    [Fact]
+    public async Task BuildAsync_DbManifestSpriteNamesWithPathSeparators_AreSkipped()
+    {
+        // Traversal önlemi iki kaynakta da AYNI parser'dan geçer.
+        var asset = ReadyAsset(filmstrip: "u/x/a/y/filmstrip/manifest.json");
+        asset.FilmstripManifest = System.Text.Json.JsonDocument.Parse(
+            """{"sprites":["sprite_1.jpg","../../../etc/passwd","a/b.jpg"]}""");
+
+        var urls = await AssetMediaUrlBuilder.BuildAsync(asset, FakePresign, ManifestReader(null));
+
+        Assert.NotNull(urls.Sprites);
+        Assert.Single(urls.Sprites!);
+        Assert.True(urls.Sprites!.ContainsKey("sprite_1.jpg"));
+    }
 }
