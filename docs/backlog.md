@@ -696,20 +696,26 @@ Kapatılanlar (kullanıcı anlatımı `poc-bilinen-sinirlar.md` §1.8, §3 tablo
   (`ExportCompiler.EnsureAssetFacts` yorumu, `e2e/audio-export.spec.ts` başlığı). Dokümanlarda
   numaralandırma 8. tura göre düzeltildi; kod yorumları DOKUNULMADI (davranış değiştirmemek
   için) — bir sonraki kod dilimi bunları düzeltmelidir.
-- **[AÇIK — 8. turun doküman yüzünde KOD OKUMASIYLA bulundu, ölçülmedi] "Sesi ayır" sessiz bir
-  videoda da açık.** Yeni `asset-clip-type` kapısının "ses klibi + SESSİZ video" hücresi,
-  matrisin editörden ULAŞILAMAZ sanılan tek istisnası olabilir: ses klibinin üçüncü üretim yolu
+- **[KAPANDI — 2026-08-24, yarim-is turu] "Sesi ayır" sessiz bir videoda da açıktı.** Yeni
+  `asset-clip-type` kapısının "ses klibi + SESSİZ video" hücresi, matrisin editörden
+  ULAŞILAMAZ sanılan tek istisnasıydı: ses klibinin üçüncü üretim yolu
   `timelineOps.detachAudio`'dur ve `detachAudioBlockReason` varlığın sesi olup olmadığına
-  bakmaz — editör `hasAudio` olgusunu (API `AssetSummary`'de DÖNER) hiçbir yerde okumaz
-  (`grep hasAudio apps/editor/src` → 0 sonuç) ve `buildClipFromAsset` her video varlığında
-  `audio` alanını dolu doğurur. Sonuç: sessiz bir videoda menü eylemi sunuluyor, belge
-  dışa aktarmada 422 alıyor. **Sessiz bozulma yok** ve bu yol düzeltmeden önce de
-  çalışmıyordu (worker'da ffmpeg hatası) — eksik olan ÖNDEN UYARI.
-  - *Yapılacak:* `AssetSummary`'ye `hasAudio` alanını taşı (API zaten döner) ve
-    `detachAudioBlockReason`'a "kaynağında ses yok" dalını ekle (menü otomatik olarak grileşir,
-    aynı sözleşme). Gerçek fare e2e'si: sessiz video → sağ tık → "Sesi ayır" DEVRE DIŞI.
-  - *Bu turda YAPILMADI:* doküman turu kod davranışı değiştirmez; ayrıca iddia **ölçülmedi**
-    (Playwright koşulmadı), yalnız kod okumasıyla kuruldu — düzeltmeden önce ölçülmelidir.
+  bakmıyordu — editör `hasAudio` olgusunu hiçbir yerde okumuyordu ve `buildClipFromAsset`
+  her video varlığında `audio` alanını dolu doğurur. **Önce ÖLÇÜLDÜ** (gerçek ffmpeg `-an`
+  kaynağı + gerçek yükleme + gerçek fare, Playwright): sessiz videoda menü öğesi AÇIK
+  (`disabled=false`), tıklanınca ses klibi doğdu, POST /exports **HTTP 422
+  `asset-clip-type`** ("bu videonun ses akışı yok") döndü — iddia birebir doğru çıktı.
+  Kapanış: `AssetSummary`'ye `hasAudio` taşındı (tel `null` → `undefined` daraltmasıyla,
+  `durationMicros` ile aynı desen; `assetSync.toHasAudio`) ve `detachAudioBlockReason`'a
+  `hasAudio === false` dalı eklendi (`'source has no audio stream'` → feedback tablosunda
+  Türkçe gerekçe; menü aynı sözleşmeyle griler). Yalnız KESİN `false` engeller: API olguyu
+  yalnız READY satırda döner, bilinmeyeni engellemek export kapısıyla çelişen yanlış ret
+  olurdu. Sürükleme yolu ayrıca kapatılmadı çünkü kapalı doğmuştu: video varlığı yalnız
+  `kind:'video'` klip doğurur ve ses track'ine `track type mismatch` ile zaten giremez.
+  Kanıt: birim (`clipPropertyOps.test.ts` sessiz/sesli/bilinmeyen + `contextMenu.test.ts`)
+  ve gerçek-fare e2e `e2e/detach-audio-silent.spec.ts` (sessiz → öğe GRİ + Türkçe gerekçe;
+  SESLİ → hâlâ çalışıyor). Negatif kontrol: dal geri alınınca 2 birim testi + e2e kırmızı,
+  geri konunca yeşil (md5 birebir).
 - **[AÇIK] `.github/workflows/ci.yml` içinde doğrulanamayan bir sayı duruyor:** bir yorum
   satırı "temiz klonda 139 test bunsuz kırılır" diyor. Bu, paketin büyüklüğü (bugün 143) değil
   "kaç test kırılır" iddiasıdır ve ancak o adım kaldırılıp suite koşturularak ölçülebilir; bu

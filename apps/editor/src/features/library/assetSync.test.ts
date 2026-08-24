@@ -105,6 +105,30 @@ describe('syncServerAssets', () => {
   });
 
   /**
+   * `hasAudio` üç değerlidir ve ÜÇÜNCÜ değer (bilinmiyor) tel üzerinde JSON
+   * `null` gelir: API olguyu yalnız READY satırda doldurur. `false` ise KESİN
+   * bir olgudur (sessiz video) ve `detachAudioBlockReason` yalnız onun üzerine
+   * engel kurar — null'un false'a düşmesi sesli ama işlenmemiş videoda yanlış
+   * ret, false'un kaybolması sessiz videoda 422 tuzağı demek olurdu.
+   */
+  it('hasAudio: null off the wire stays unknown; an explicit false is stored and survives', () => {
+    syncServerAssets([
+      dto({ id: A1, status: 'processing', hasAudio: null as unknown as undefined }),
+    ]);
+    expect(useAssetStore.getState().getAsset(A1)?.hasAudio).toBeUndefined();
+
+    // Probe bitti: sessiz video olgusu (false) yazılır — false, undefined değildir.
+    syncServerAssets([dto({ id: A1, status: 'ready', hasAudio: false })]);
+    expect(useAssetStore.getState().getAsset(A1)?.hasAudio).toBe(false);
+
+    // Sonraki poll'lar olguyu korur; sesli varlıkta true da aynı yoldan akar.
+    syncServerAssets([dto({ id: A1, status: 'ready', hasAudio: false })]);
+    expect(useAssetStore.getState().getAsset(A1)?.hasAudio).toBe(false);
+    syncServerAssets([dto({ id: A2, status: 'ready', hasAudio: true })]);
+    expect(useAssetStore.getState().getAsset(A2)?.hasAudio).toBe(true);
+  });
+
+  /**
    * The server adds DERIVED bytes to the storage quota the moment an asset
    * turns ready (worker-side, no user gesture). The poll observing that flip
    * is the only place that can refresh the header quota indicator — without

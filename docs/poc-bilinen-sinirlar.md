@@ -539,9 +539,10 @@ eklendi. Bu üçü de `MINIO_AVAILABLE=1` ile koşuldu (§5'teki 1232/1232).
 
 - **Sessiz bir videodan ses klibi kurulamaz**: ses klibi SES akışı ister; kaynağında ses olmayan
   bir video için istek **senkron 422** (`asset-clip-type`) alır. Bu bilinçlidir — sessizce boş
-  bir kanal miksletmek "sesim gelmiyor" hatasını sessiz bozulmaya çevirirdi. **Editör bunu
-  önden ENGELLEMİYOR:** "Sesi ayır" sessiz bir videoda da menüde açık görünür (editör `hasAudio`
-  olgusunu okumaz), kullanıcı sınırı ancak dışa aktarmada öğrenir — §3'ün matris notuna bakın.
+  bir kanal miksletmek "sesim gelmiyor" hatasını sessiz bozulmaya çevirirdi. Editör bu sınırı
+  artık **önden de söylüyor** (2026-08-24): "Sesi ayır" sessiz videoda menüde GRİDİR ve
+  gerekçesi asılıdır (`detachAudioBlockReason` varlığın `hasAudio` olgusunu okur) — §3'ün
+  matris notuna bakın.
 - **Ses klibinde görsel keyframe ve renk efekti yasaktır** (`keyframes-audio-clip`,
   `effects-audio-clip`) — §3'ün tablosuna bakın.
 - **Preview ↔ export ses parity'si HÂLÂ ölçülmemiştir** (§2.6): "önizlemede duyduğunuz miks
@@ -798,20 +799,21 @@ içerdiği değil. ✅ = 202 (iş kuyruğa girer), **422** = senkron ret, kod `a
   OLAMAZ — yani beyanla çelişen bir belgenin başarıya giden yolu yoktur.
 - **Matriste OLMAYANLAR:** metin/şekil klipleri hiçbir varlık okumaz (raster hattı); LUT efekti
   bir varlık okur ama akış istemez — onun kapısı ayrıdır ve dosya adına bakar (`lut-asset-type`).
-- Tabloda **8 uyuşmazlık hücresi** var; **editör bunların YEDİSİNİ üretemez** — klip türü
+- Tabloda **8 uyuşmazlık hücresi** var; **editör artık HİÇBİRİNİ üretemez** — klip türü
   varlığın türünden doğar (`timelineOps.buildClipFromAsset`; `addStickerClip` ayrıca
   `asset.kind !== 'image'` ise reddeder); kapı ham API'ye yazan istemci ve
-  kullanıcının kütüphanesiyle belgesinin zamanla ayrışması için vardır. **AMA "ses klibi +
-  SESSİZ video" hücresi bir istisna gibi duruyor** (kod okumasıyla bulundu, 8. turun doküman
-  yüzünde — **gerçek fareyle ÖLÇÜLMEDİ, iddia değil UYARIDIR**): ses klibinin ÜÇÜNCÜ üretim
-  yolu **"Sesi ayır"**dır (`timelineOps.detachAudio`) ve o yol varlığın gerçekten sesi olup
-  olmadığına BAKMAZ — editör `hasAudio` olgusunu (API `AssetSummary`'de döner) hiçbir yerde
-  okumaz, klibin `audio` alanı her video varlığında dolu doğar. Yani sessiz bir videoda
-  "Sesi ayır" menüde AÇIK görünür ve ortaya çıkan belge dışa aktarmada 422 alır. **Sessiz
-  bozulma yoktur** (mesaj tipli ve nedeni doğru: *"ses klibi yalnız ses akışını kullanır, ama
-  bu videonun ses akışı yok"*) ve bu yol **düzeltmeden önce de çalışmıyordu** — worker'da
-  anlamsız bir ffmpeg hatasına dönüyordu (`ExportJobPipelineTests.Export_AudioClipOnASilentVideo_FailsWithATypedError_NotAnFfmpegExitCode`).
-  Eksik olan **önden uyarıdır**: `docs/backlog.md` 8. tur bölümüne açık madde olarak yazıldı.
+  kullanıcının kütüphanesiyle belgesinin zamanla ayrışması için vardır. **"Ses klibi +
+  SESSİZ video" hücresi sekizinci ve editörden ULAŞILABİLİR tek istisnaydı** — 8. turun
+  kod-okuma uyarısı 2026-08-24'te gerçek fareyle **ölçülüp DOĞRULANDI ve kapatıldı**:
+  ses klibinin ÜÇÜNCÜ üretim yolu **"Sesi ayır"**dır (`timelineOps.detachAudio`) ve o yol
+  varlığın gerçekten sesi olup olmadığına bakmıyordu (klibin `audio` alanı her video
+  varlığında dolu doğar); sessiz videoda menü öğesi AÇIK sunuluyor, doğan belge dışa
+  aktarmada 422 alıyordu. Artık `detachAudioBlockReason` varlığın `hasAudio` olgusunu okur
+  (`AssetSummary.hasAudio`, yalnız KESİN `false` engeller) ve öğe menüde Türkçe gerekçeyle
+  grilenir; gerçek-fare kanıtı `e2e/detach-audio-silent.spec.ts`tedir (sessiz → GRİ,
+  sesli → hâlâ çalışır). Sunucu kapısı yerinde durur (ham API'ye yazan istemciye karşı) ve
+  mesajı tipli/doğrudur: *"ses klibi yalnız ses akışını kullanır, ama bu videonun ses
+  akışı yok"* (`ExportJobPipelineTests.Export_AudioClipOnASilentVideo_FailsWithATypedError_NotAnFfmpegExitCode`).
 
 ### 3.1 Emoji font seti YOK
 

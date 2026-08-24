@@ -3219,6 +3219,17 @@ function detachAudioTarget(
  * ("no unlocked audio track with room"). It used to stop at the clip
  * preconditions, so the menu happily offered an action the op then rejected
  * with a warning bubble; a menu must never offer what the op refuses.
+ *
+ * The SOURCE must actually carry an audio stream. `buildClipFromAsset` births
+ * `audio` non-null on EVERY video clip (the mixer settings exist regardless),
+ * so `clip.audio` alone cannot tell a silent video apart — the asset's probe
+ * fact (`AssetSummary.hasAudio`, worker ffprobe) can. Without this branch the
+ * menu offered "Sesi ayır" on a silent video and the detached audio clip made
+ * the export refuse the document with 422 `asset-clip-type` (measured:
+ * ExportCompiler `IsTypeMismatch`, "bu videonun ses akışı yok"). Only an
+ * EXPLICIT `hasAudio === false` blocks: the API reports the fact only on
+ * READY rows, and refusing on "unknown" would contradict the export gate,
+ * which also asks the question only where the answer is certain.
  */
 export function detachAudioBlockReason(d: TimelineDoc, clipId: Uuid): string | null {
   const loc = locateClip(d, clipId);
@@ -3227,6 +3238,9 @@ export function detachAudioBlockReason(d: TimelineDoc, clipId: Uuid): string | n
   const clip = loc.clip;
   if (!isMediaClip(clip) || clip.kind !== 'video') return 'only a video clip has detachable audio';
   if (clip.audio === null) return 'clip has no embedded audio';
+  if (useAssetStore.getState().getAsset(clip.assetId)?.hasAudio === false) {
+    return 'source has no audio stream';
+  }
   const target = detachAudioTarget(d, clip);
   return 'reason' in target ? target.reason : null;
 }

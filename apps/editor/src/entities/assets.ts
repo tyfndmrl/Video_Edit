@@ -23,6 +23,13 @@ export interface AssetDto {
   durationMicros?: number;
   width?: number;
   height?: number;
+  /**
+   * Kaynak dosyada ses akışı var mı. Sunucu bunu yalnız `status === 'ready'`
+   * satırda doldurur (AssetEndpoints: probe'dan önce bilinemez) ve o zamana
+   * kadar tel üzerinde JSON `null` gönderir — durationMicros ile aynı tuzak,
+   * assetSync aynı daraltmayla süzer.
+   */
+  hasAudio?: boolean;
   /** 0..1 processing progress; not in the M1 contract yet (SignalR lands in M1-B) but tolerated. */
   progress?: number;
 }

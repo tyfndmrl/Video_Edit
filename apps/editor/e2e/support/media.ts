@@ -358,6 +358,76 @@ export function ensureBannerVideo(): TestVideo {
   };
 }
 
+// ---------------------------------------------------------------------------
+// SESSİZ video — "ses klibi + sessiz kaynak" sınıfının tek tetikleyicisi
+// ---------------------------------------------------------------------------
+
+/**
+ * SES AKIŞI OLMAYAN gerçek bir MP4.
+ *
+ * Neden ayrı bir fixture: takımdaki bütün videolar sesli üretilir (`sine`
+ * girişi), oysa export'un `asset-clip-type` kapısının "ses klibi + SESSİZ
+ * video" hücresi ancak sessiz bir kaynakla tetiklenebilir — "Sesi ayır"
+ * sessiz videoda ya griler (doğru davranış) ya da 422'lik bir belge doğurur
+ * (ölçülen tuzak). Sesli bir kaynakla bu sınıf test EDİLEMEZ.
+ *
+ * Fixture amacını ffprobe ile DOĞRULAR (diğer fixture'larla aynı desen):
+ * dosyada ses akışı çıkarsa sessizce yeşile dönmek yerine net hatayla düşer.
+ */
+export const SILENT_VIDEO_SPEC = {
+  fileName: 'e2e-sessiz-4s.mp4',
+  width: 640,
+  height: 480,
+  durationSeconds: 4,
+  contentType: 'video/mp4',
+} as const;
+
+export function ensureSilentVideo(): TestVideo {
+  const { fileName, width, height, durationSeconds, contentType } = SILENT_VIDEO_SPEC;
+  const path = join(MEDIA_DIR, fileName);
+
+  if (!existsSync(path)) {
+    if (ffmpegVersion() === null) throw new Error(FFMPEG_SKIP_REASON);
+    mkdirSync(MEDIA_DIR, { recursive: true });
+    const res = spawnSync(
+      'ffmpeg',
+      [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi',
+        '-i', `testsrc2=size=${width}x${height}:rate=30:duration=${durationSeconds}`,
+        // BİLEREK ses girişi yok: -an ile ses akışı hiç yazılmaz.
+        '-an',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+        '-b:v', '2000k', '-movflags', '+faststart',
+        path,
+      ],
+      { encoding: 'utf8', timeout: 120_000 },
+    );
+    if (res.status !== 0 || !existsSync(path)) {
+      throw new Error(`Sessiz test videosu üretilemedi (ffmpeg exit ${res.status}):\n${res.stderr}`);
+    }
+  }
+
+  const kinds = probeStreamKinds(path);
+  if (!kinds.includes('video') || kinds.includes('audio')) {
+    throw new Error(
+      `"${fileName}" akışları [${kinds.join(', ')}] çıktı, beklenen yalnız [video]. Bu fixture'ın ` +
+        'tek amacı SES AKIŞI OLMAYAN bir video sağlamaktı; amacını kaybetmiş demektir. ' +
+        'Dosyayı silip yeniden üretin: e2e/.artifacts/media.',
+    );
+  }
+
+  return {
+    path,
+    fileName,
+    sizeBytes: statSync(path).size,
+    width,
+    height,
+    durationUs: durationSeconds * 1_000_000,
+    contentType,
+  };
+}
+
 export const TEST_AUDIO_SPEC = {
   fileName: 'e2e-muzik-3s.m4a',
   durationSeconds: 3,

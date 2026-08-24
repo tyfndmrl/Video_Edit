@@ -58,6 +58,9 @@ const REASONS: Record<string, string> = {
   // Sesi ayırma ön koşulları.
   'only a video clip has detachable audio': 'Yalnız video klibinin ayrılabilir sesi var',
   'clip has no embedded audio': 'Klipte gömülü ses yok (zaten ayrılmış olabilir)',
+  // Sessiz kaynak: dosyada ses akışı hiç yok — ayrılacak ses de yok. Aynı
+  // gerçeği export'un 'asset-clip-type' kapısı söylerdi; artık menü önden söylüyor.
+  'source has no audio stream': 'Kaynak videoda ses akışı yok (sessiz video) — ayrılacak ses yok',
   // Kütüphaneden ekleme yolu (asset kapıları).
   'asset not found': 'Medya bulunamadı',
   'asset is not ready': 'Medya henüz hazır değil — işlenmesi bitince ekleyin',

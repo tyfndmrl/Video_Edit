@@ -693,4 +693,53 @@ describe('detachAudio', () => {
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.reason).toBe('track is locked');
   });
+
+  /**
+   * SESSİZ kaynak (ölçülen tuzak): buildClipFromAsset her video klibinde
+   * `audio` alanını dolu doğurur, yani `clip.audio` sessiz videoyu AYIRT
+   * EDEMEZ — varlığın probe olgusu (`hasAudio === false`) eder. Bu dal yokken
+   * menü "Sesi ayır"ı sunuyor, doğan ses klibi export'ta 422 `asset-clip-type`
+   * alıyordu (ExportCompiler.IsTypeMismatch: Ready video + HasAudio=false).
+   */
+  it('REFUSES on a video whose SOURCE has no audio stream (silent video)', () => {
+    useAssetStore.getState().setAssets([
+      { id: ASSET_A, kind: 'video', name: 'sessiz.mp4', status: 'ready', durationUs: 60 * US, hasAudio: false },
+    ]);
+    load([track(V1, 'video', [videoClip(CLIP_A, 0, 10 * US)])]);
+    expect(detachAudioBlockReason(currentDoc(), CLIP_A)).toBe('source has no audio stream');
+    const res = detachAudio(CLIP_A);
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.reason).toBe('source has no audio stream');
+    // Yarım iş yok: klip sesini korur, tarih temiz kalır.
+    expect(findClip(CLIP_A).audio).not.toBeNull();
+    expect(historyLength()).toBe(0);
+    expectValid();
+  });
+
+  it('still ALLOWS a video whose source audibly has audio (hasAudio: true)', () => {
+    useAssetStore.getState().setAssets([
+      { id: ASSET_A, kind: 'video', name: 'sesli.mp4', status: 'ready', durationUs: 60 * US, hasAudio: true },
+    ]);
+    load([track(V1, 'video', [videoClip(CLIP_A, 0, 10 * US)])]);
+    expect(detachAudioBlockReason(currentDoc(), CLIP_A)).toBeNull();
+    expect(detachAudio(CLIP_A).ok).toBe(true);
+    expectValid();
+  });
+
+  /**
+   * Bilinmeyen olgu ENGELLEMEZ: API `hasAudio`'yu yalnız READY satırda döner
+   * ve export kapısı da soruyu ancak cevabın kesin olduğu yerde sorar —
+   * bilinmeyeni reddetmek sesli videoda yanlış ret üretirdi. (Varlık kaydı hiç
+   * yokken de aynı: eski belge/başka kullanıcının medyası senaryosu.)
+   */
+  it('does NOT block when the audio fact is unknown (undefined or asset missing)', () => {
+    load([track(V1, 'video', [videoClip(CLIP_A, 0, 10 * US)])]);
+    // beforeEach ASSET_A'yı hasAudio ALANSIZ kurar (undefined = bilinmiyor).
+    expect(detachAudioBlockReason(currentDoc(), CLIP_A)).toBeNull();
+
+    useAssetStore.getState().setAssets([]);
+    expect(detachAudioBlockReason(currentDoc(), CLIP_A)).toBeNull();
+    expect(detachAudio(CLIP_A).ok).toBe(true);
+    expectValid();
+  });
 });

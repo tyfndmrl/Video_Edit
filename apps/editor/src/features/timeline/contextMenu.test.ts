@@ -306,6 +306,25 @@ describe('buildTimelineMenu — klip bağlamı', () => {
     it('stays ENABLED with no audio track at all (the op creates one)', () => {
       expect(find(buildTimelineMenu(ctx()), 'detachAudio').disabled).toBe(false);
     });
+
+    /**
+     * SESSİZ kaynak (ölçülen tuzak): `clip.audio` her video klibinde doludur,
+     * sessizliği ancak varlığın probe olgusu söyler. Bu dal yokken menü öğeyi
+     * sunuyor ve doğan ses klibi export'ta 422 `asset-clip-type` alıyordu.
+     */
+    it('is disabled when the SOURCE video has no audio stream (silent video)', () => {
+      useAssetStore.getState().setAssets([
+        { id: ASSET_A, kind: 'video', name: 'sessiz.mp4', status: 'ready', durationUs: 60 * US, hasAudio: false },
+      ]);
+      const item = find(buildTimelineMenu(ctx()), 'detachAudio');
+      expect(item.disabled).toBe(true);
+      expect(item.blockReason).toBe('source has no audio stream');
+    });
+
+    it('stays ENABLED when the audio fact is unknown (asset not probed yet)', () => {
+      // beforeEach varlığı hasAudio ALANSIZ kurar — bilinmeyen engellemez.
+      expect(find(buildTimelineMenu(ctx()), 'detachAudio').disabled).toBe(false);
+    });
   });
 
   it('greys everything out when document mutation is not allowed (project loading)', () => {

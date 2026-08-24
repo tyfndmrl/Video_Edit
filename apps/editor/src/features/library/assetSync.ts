@@ -35,6 +35,18 @@ function toDurationUs(dto: AssetDto): number | undefined {
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
 }
 
+/**
+ * `hasAudio` aynı daraltmadan geçer: API probe'dan önce JSON `null` gönderir
+ * (AssetDto.HasAudio `bool?`, yalnız READY satırda dolu) ve store üç değerli
+ * okur — false "KESİN ses yok" demektir, null/undefined "bilinmiyor". Null'u
+ * false'a düşürmek "Sesi ayır"ı sesli ama henüz işlenmemiş videoda da yanlış
+ * yere kilitlerdi.
+ */
+function toHasAudio(dto: AssetDto): boolean | undefined {
+  const raw: boolean | null | undefined = dto.hasAudio;
+  return typeof raw === 'boolean' ? raw : undefined;
+}
+
 export function toAssetSummary(dto: AssetDto): AssetSummary {
   return {
     id: dto.id,
@@ -45,6 +57,7 @@ export function toAssetSummary(dto: AssetDto): AssetSummary {
     durationUs: toDurationUs(dto),
     width: dto.width,
     height: dto.height,
+    hasAudio: toHasAudio(dto),
     errorCode: dto.errorCode,
   };
 }

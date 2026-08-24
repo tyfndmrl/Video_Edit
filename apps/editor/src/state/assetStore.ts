@@ -25,6 +25,14 @@ export interface AssetSummary {
   durationUs?: MicroSec;
   width?: number;
   height?: number;
+  /**
+   * Kaynak dosyada ses akışı var mı (worker ffprobe olgusu; API yalnız READY
+   * satırda döner). ÜÇ değerli okunur: true = ses var, false = KESİN yok
+   * (sessiz video), undefined = henüz bilinmiyor. Ret kuralları yalnız kesin
+   * `false` üzerinde engel kurar (`detachAudioBlockReason`) — bilinmeyeni
+   * engellemek export'un kendi kapısıyla çelişen yanlış retler üretirdi.
+   */
+  hasAudio?: boolean;
   /** Presigned URLs (batch media-urls endpoint), present once status === 'ready'. */
   proxyUrl?: string;
   posterUrl?: string;
