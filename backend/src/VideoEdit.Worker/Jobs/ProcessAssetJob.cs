@@ -26,7 +26,10 @@ namespace VideoEdit.Worker.Jobs;
 ///  - ağ/S3/IO → exception FIRLATILIR (Hangfire AutomaticRetry(2); işleme idempotent —
 ///    çıktı key'lerinin üzerine yazılır);
 ///  - deterministik ffmpeg/probe hatası → asset Failed + job Failed işaretlenir ve NORMAL
-///    dönülür (Hangfire retry tetiklenmez — aynı girdi aynı hatayı üretir);
+///    dönülür (Hangfire retry tetiklenmez — aynı girdi aynı hatayı üretir); ffmpeg adımları
+///    İKİ bekçiyle korunur: sessizlik (120 sn, 'ffmpeg-timeout') + beklenen süresi bilinen
+///    adımlarda çıktı saati tavanı ('transcode-overrun' — export'un 'render-overrun' eşi;
+///    ayrıntı RunFfmpegStepAsync);
 ///  - disk yetersiz → Failed DEĞİL: iş ertelenip yeniden kuyruğa atılır, 3. denemede Failed.
 ///
 /// Progress: indirme %0-15, probe %15-20, proxy %20-70 (ffmpeg -progress'ten orantılı),
@@ -241,7 +244,7 @@ public sealed class ProcessAssetJob(
             }
             catch (FfmpegFailedException ex)
             {
-                await FailDeterministicAsync(job, asset, ex.TimedOut ? "ffmpeg-timeout" : "ffmpeg-failed",
+                await FailDeterministicAsync(job, asset, DeterministicFfmpegReason(ex),
                     ex.Message, ex.StderrTail);
                 return;
             }
@@ -327,23 +330,33 @@ public sealed class ProcessAssetJob(
         var keys = new DerivedKeys(asset.OwnerId, asset.Id);
         var durationUs = probe.DurationUs!.Value; // gate garantiler
 
-        // Proxy — %20-70, ffmpeg -progress'ten orantılı.
+        // Proxy — %20-70, ffmpeg -progress'ten orantılı. Çıktı saati tavanı kaynak süresine
+        // bağlanır: proxy'nin out_time'ı kaynak süresini İZLER (ölçüldü — korpusun tamamında
+        // azami out_time beklenene eşit ya da altında; en büyük sapma VFR kaynakta −13,8 ms,
+        // CFR normalizasyonu out_time'ı beklenenin ÜSTÜNE taşımıyor). Süresi beyanından uzun
+        // yalan-başlıklı kaynak da bu tavana takılır — MaxDurationUs kapısı onu göremez,
+        // çünkü o kapı da aynı beyana bakar.
         var proxyPath = Path.Combine(tempDir, "540p.mp4");
         await RunFfmpegStepAsync(
             "proxy",
             ProxyRecipe.BuildVideoArgs(probe, originalPath, proxyPath),
             durationUs,
             (fraction, c) => progress.ReportAsync(20 + (int)(fraction * 50), "proxy", c),
+            FfmpegRunner.OutputTimeCeilingUs(durationUs),
             ct);
         await progress.ReportAsync(70, "filmstrip", ct);
 
-        // Filmstrip — %70-85.
+        // Filmstrip — %70-85. Tavanın "beklenen"i kaynak süresi DEĞİL sprite saatidir
+        // (ExpectedOutputClockUs — ölçülen gerekçesi kendi doc'unda): tile=30x10 muxer
+        // out_time'ını sprite başına 300×interval sn ilerletir, kaynak süresine bağlanan
+        // tavan her filmstrip'i yanlış öldürürdü.
         var spritePattern = Path.Combine(tempDir, "sprite_%d.jpg");
         await RunFfmpegStepAsync(
             "filmstrip",
             FilmstripRecipe.BuildArgs(probe, durationUs, originalPath, spritePattern),
             durationUs,
             (fraction, c) => progress.ReportAsync(70 + (int)(fraction * 15), "filmstrip", c),
+            FfmpegRunner.OutputTimeCeilingUs(FilmstripRecipe.ExpectedOutputClockUs(durationUs)),
             ct);
 
         var spriteFiles = Directory.GetFiles(tempDir, "sprite_*.jpg")
@@ -361,19 +374,25 @@ public sealed class ProcessAssetJob(
         await File.WriteAllTextAsync(manifestPath, manifestJson, ct);
         await progress.ReportAsync(85, probe.HasAudio ? "waveform" : "upload", ct);
 
-        // Waveform — %85-92 (yalnız sesli kaynakta).
+        // Waveform — %85-92 (yalnız sesli kaynakta). Beklenen süre bilindiği için PCM bayt
+        // saati tavanı kurulur (WaveformGenerator.OutputByteCeiling — out_time'ın -progress'siz
+        // eşdeğeri).
         string? waveformPath = null;
         if (probe.HasAudio)
         {
             waveformPath = Path.Combine(tempDir, "peaks.json");
-            await waveformGenerator.GenerateAsync(originalPath, waveformPath, ct);
+            await waveformGenerator.GenerateAsync(originalPath, waveformPath, durationUs, ct);
             await progress.ReportAsync(92, "upload", ct);
         }
 
-        // Poster + upload — %92-100.
+        // Poster + upload — %92-100. Tavan BİLEREK yok: -frames:v 1 çıktı saatini yapısal
+        // olarak tek karede keser (ölçülen azami out_time 33.333 µs — 30 fps'te bir kare);
+        // "durmadan üretme" kaçağı burada kurulamaz, kalan risk (hiç ilerlememe) sessizlik
+        // bekçisinindir.
         var posterPath = Path.Combine(tempDir, "poster.jpg");
         await RunFfmpegStepAsync(
-            "poster", PosterRecipe.BuildVideoArgs(probe, originalPath, posterPath), null, null, ct);
+            "poster", PosterRecipe.BuildVideoArgs(probe, originalPath, posterPath),
+            null, null, outputTimeCeilingUs: null, ct);
 
         await storage.UploadFileAsync(keys.Proxy, proxyPath, "video/mp4", ct);
         foreach (var sprite in spriteFiles)
@@ -413,19 +432,25 @@ public sealed class ProcessAssetJob(
     {
         var keys = new DerivedKeys(asset.OwnerId, asset.Id);
 
-        // AAC proxy — %20-70.
+        // AAC proxy — %20-70. Ses gate'i süre GARANTİLEMEZ (video gate'inin aksine): süre
+        // biliniyorsa çıktı saati tavanı kurulur (ölçüldü — mp3/wav/aac proxy'lerinde azami
+        // out_time beklenene tam eşit), bilinmiyorsa yalnız sessizlik bekçisi kalır (tavan
+        // beklenensiz KURULAMAZ; uydurulmuş bir beklenen yanlış öldürme üretirdi).
         var proxyPath = Path.Combine(tempDir, "audio.m4a");
         await RunFfmpegStepAsync(
             "proxy",
             ProxyRecipe.BuildAudioArgs(originalPath, proxyPath),
             probe.DurationUs,
             (fraction, c) => progress.ReportAsync(20 + (int)(fraction * 50), "proxy", c),
+            probe.DurationUs is { } audioDurationUs
+                ? FfmpegRunner.OutputTimeCeilingUs(audioDurationUs)
+                : null,
             ct);
         await progress.ReportAsync(70, "waveform", ct);
 
-        // Waveform — %70-92.
+        // Waveform — %70-92 (süre biliniyorsa PCM bayt saati tavanıyla — video dalıyla aynı).
         var waveformPath = Path.Combine(tempDir, "peaks.json");
-        await waveformGenerator.GenerateAsync(originalPath, waveformPath, ct);
+        await waveformGenerator.GenerateAsync(originalPath, waveformPath, probe.DurationUs, ct);
         await progress.ReportAsync(92, "upload", ct);
 
         await storage.UploadFileAsync(keys.AudioProxy, proxyPath, "audio/mp4", ct);
@@ -442,10 +467,12 @@ public sealed class ProcessAssetJob(
     {
         var keys = new DerivedKeys(asset.OwnerId, asset.Id);
 
-        // Poster/thumb — %20-80. Image için proxy ÜRETİLMEZ.
+        // Poster/thumb — %20-80. Image için proxy ÜRETİLMEZ. Tavan da yok: video posteriyle
+        // aynı ölçülmüş gerekçe (-frames:v 1 tek karede keser, kaçak hali kurulamaz).
         var posterPath = Path.Combine(tempDir, "poster.jpg");
         await RunFfmpegStepAsync(
-            "poster", PosterRecipe.BuildImageArgs(probe, originalPath, posterPath), null, null, ct);
+            "poster", PosterRecipe.BuildImageArgs(probe, originalPath, posterPath),
+            null, null, outputTimeCeilingUs: null, ct);
         await progress.ReportAsync(80, "upload", ct);
 
         await storage.UploadFileAsync(keys.Poster, posterPath, "image/jpeg", ct);
@@ -472,24 +499,54 @@ public sealed class ProcessAssetJob(
             }, ct);
     }
 
-    /// <summary>Sıfır-dışı exit / watchdog kill → FfmpegFailedException (deterministik).</summary>
+    /// <summary>
+    /// Sıfır-dışı exit / watchdog kill / çıktı-saati tavanı kill'i → FfmpegFailedException
+    /// (deterministik). <paramref name="outputTimeCeilingUs"/> HER çağrı yerinde açıkça
+    /// kararlaştırılır (FfmpegRunner.RunAsync sözleşmesi): reçetelerin çıktı zaman tabanları
+    /// ayrışır — proxy'de kaynak süresi, filmstrip'te sprite saati
+    /// (<see cref="FilmstripRecipe.ExpectedOutputClockUs"/>), poster'da tavan YOK (tek kare,
+    /// ölçülen out_time 33.333 µs — kaçak hali yapısal olarak kurulamaz).
+    /// </summary>
     private async Task RunFfmpegStepAsync(
         string step,
         IReadOnlyList<string> args,
         long? totalDurationUs,
         Func<double, CancellationToken, Task>? onProgress,
+        long? outputTimeCeilingUs,
         CancellationToken ct)
     {
-        var result = await ffmpeg.RunAsync(args, totalDurationUs, onProgress, ct: ct);
+        var result = await ffmpeg.RunAsync(
+            args, totalDurationUs, onProgress, outputTimeCeilingUs: outputTimeCeilingUs, ct: ct);
         if (!result.Success)
         {
             throw new FfmpegFailedException(
-                result.TimedOut
-                    ? $"{step}: ffmpeg made no progress within the watchdog timeout."
-                    : $"{step}: ffmpeg exited with code {result.ExitCode}.",
-                result.ExitCode, result.StderrTail, result.TimedOut);
+                result switch
+                {
+                    { Overran: true } =>
+                        $"{step}: ffmpeg kept writing past the expected output duration "
+                        + $"(ceiling {outputTimeCeilingUs} us) and was stopped.",
+                    { TimedOut: true } =>
+                        $"{step}: ffmpeg made no progress within the watchdog timeout.",
+                    _ => $"{step}: ffmpeg exited with code {result.ExitCode}.",
+                },
+                result.ExitCode, result.StderrTail, result.TimedOut, result.Overran);
         }
     }
+
+    /// <summary>
+    /// Deterministik ffmpeg hatasının tipli gerekçesi (public: birim testleri process'siz
+    /// doğrular — GateByKind deseni). Üç hal ÜÇ AYRI koddur ve ayrı kalmalıdır:
+    /// 'transcode-overrun' bir "çıkış kodu" değildir — süreç kendi kendine ölmedi, BİZ
+    /// öldürdük çünkü çıktı saati beklenen süreyi tavanı aşacak kadar geçti (export'taki
+    /// 'render-overrun'ın işleme hattındaki eşi; sessizlik bekçisi bu hali GÖREMEZ, kaçak
+    /// süreç durmadan çıktı ürettiği için hiç "sessiz" kalmaz).
+    /// </summary>
+    public static string DeterministicFfmpegReason(FfmpegFailedException ex) => ex switch
+    {
+        { Overran: true } => "transcode-overrun",
+        { TimedOut: true } => "ffmpeg-timeout",
+        _ => "ffmpeg-failed",
+    };
 
     /// <summary>
     /// Image beyanlı asset'in "aslında video" sayıldığı süre eşiği: gerçek still image'lerin

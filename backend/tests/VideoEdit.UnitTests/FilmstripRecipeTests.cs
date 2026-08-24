@@ -47,6 +47,36 @@ public class FilmstripRecipeTests
         Assert.Equal(expected, FilmstripRecipe.FrameCount(durationUs));
     }
 
+    // ÇIKTI SAATİ MODELİ ÖLÇÜMLE SABİTLENDİ (ffmpeg 8.0, gerçek reçete argümanları,
+    // -progress out_time): tile=30x10 muxer saatini sprite başına 300×interval sn ilerletir —
+    // kaynak süresi DEĞİL. Dört satır dört gerçek ölçümün birebir eşidir; model değişirse
+    // (ffmpeg sürümü / reçete) bu test ölçüm istemeye devam eder.
+    [Theory]
+    [InlineData(2_933_333L, 300_000_000L)]        // VFR korpus dosyası: 1 sprite → ölçülen 300,000000 sn
+    [InlineData(350_000_000L, 600_000_000L)]      // 350 sn: 2 sprite → ölçülen 600,000000 sn
+    [InlineData(650_000_000L, 900_000_000L)]      // 650 sn: 3 sprite → ölçülen 900,000000 sn
+    [InlineData(3_010_000_000L, 3_600_000_000L)]  // 3010 sn (interval=2): 6 sprite → ölçülen 3600,000000 sn
+    [InlineData(500_000L, 300_000_000L)]          // yarım saniye → yine 1 sprite (t=0 karesi)
+    [InlineData(300_000_000L, 300_000_000L)]      // tam 300 kare sınırı → hâlâ 1 sprite
+    [InlineData(14_400_000_000L, 15_000_000_000L)] // 4 saat tavanı: interval 5, 10 sprite
+    public void ExpectedOutputClockUs_MatchesTheMeasuredSpriteClock(long durationUs, long expected)
+    {
+        Assert.Equal(expected, FilmstripRecipe.ExpectedOutputClockUs(durationUs));
+    }
+
+    [Fact]
+    public void ExpectedOutputClockUs_ShortSource_DwarfsTheSourceDurationCeiling()
+    {
+        // YANLIŞ ÖLDÜRME BELGESİ: kaynak süresine bağlanan tavan (2,93 sn için ~8,2 sn) sprite
+        // saatinin (300 sn) çok altındadır — filmstrip tavanı kaynak süresinden TÜRETİLEMEZ.
+        // ProcessAssetJob bu yüzden tavana ExpectedOutputClockUs'u verir.
+        const long DurationUs = 2_933_333;
+        Assert.True(
+            FilmstripRecipe.ExpectedOutputClockUs(DurationUs)
+                > VideoEdit.Media.FfmpegRunner.OutputTimeCeilingUs(DurationUs),
+            "sprite saati kaynak-süresi tavanının üstünde olmalı — değilse bu belge bayat");
+    }
+
     [Fact]
     public void BuildFilter_Snapshot()
     {

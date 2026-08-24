@@ -58,6 +58,31 @@ public static class FilmstripRecipe
         return (int)Math.Floor((raw / 2) + 0.5) * 2;
     }
 
+    /// <summary>
+    /// Filmstrip reçetesinin <c>-progress out_time</c> SAATİNDE beklenen azami değer (µs) —
+    /// çıktı-saati tavanının (<see cref="FfmpegRunner.OutputTimeCeilingUs"/>) bu reçetedeki
+    /// "beklenen süre" girdisi.
+    /// <para>
+    /// KAYNAK SÜRESİ DEĞİLDİR ve olamaz — ÖLÇÜLDÜ (ffmpeg 8.0, gerçek reçete argümanları):
+    /// <c>tile=30x10</c> 300 kareyi tek çıktı karesine toplar ve image2 muxer'ının out_time'ı
+    /// sprite başına 300×interval saniye ilerler; 2,93 sn'lik kaynakta bile out_time
+    /// 300,000000 sn bildirir. Kaynak süresine bağlanan bir tavan (2,93 sn için 8,2 sn) HER
+    /// filmstrip koşusunu yanlış öldürürdü. Ölçülen model dört noktada TAM eşleşti:
+    /// 2,93 sn → 300 sn (1 sprite), 350 sn → 600 sn (2 sprite), 650 sn → 900 sn (3 sprite),
+    /// 3010 sn (interval=2) → 3600 sn (6 sprite) — hepsi spriteSayısı × 300 × interval.
+    /// </para>
+    /// <para>
+    /// Kaçak (durmadan kare üreten) bir koşu bu saatte de görünür: beklenenin ötesindeki her
+    /// fazladan sprite out_time'ı 300×interval sn sıçratır ve tavanı (%10 + 5 sn payla) en geç
+    /// ikinci fazladan sprite'ta aşar.
+    /// </para>
+    /// </summary>
+    public static long ExpectedOutputClockUs(long durationUs)
+    {
+        var spriteCount = (FrameCount(durationUs) + FramesPerSprite - 1) / FramesPerSprite;
+        return spriteCount * FramesPerSprite * IntervalSec(durationUs) * 1_000_000L;
+    }
+
     public static string BuildFilter(MediaProbe probe, long durationUs)
     {
         var interval = IntervalSec(durationUs).ToString(CultureInfo.InvariantCulture);

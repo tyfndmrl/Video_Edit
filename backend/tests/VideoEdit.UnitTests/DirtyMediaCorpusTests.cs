@@ -276,6 +276,154 @@ public sealed class DirtyMediaCorpusTests : IDisposable
         ],
     ]);
 
+    /// <summary>
+    /// SÜRESİNİ YALAN BEYAN EDEN başlık: 60 sn'lik GERÇEK akış taşıyan m4a'nın
+    /// mvhd/tkhd/mdhd süreleri 2 sn'ye kısaltılır (bozuk kayıt cihazı/editör sınıfı).
+    /// ffprobe beyanı okur (2 sn), ffmpeg ise AKIŞIN TAMAMINI çözer (60 sn) — MaxDurationUs
+    /// kapısı da beyana baktığı için bu sınıfı YALNIZ çıktı-saati tavanı yakalayabilir.
+    /// </summary>
+    private static string LyingDurationAudio()
+    {
+        lock (CorpusLock)
+        {
+            if (CorpusCache.TryGetValue("lying.m4a", out var cached))
+            {
+                return cached;
+            }
+
+            var path = Path.Combine(CorpusDir, "lying.m4a");
+            RunFfmpegStatic(
+            [
+                "-y",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=60",
+                "-c:a", "aac", "-movflags", "+faststart",
+                path,
+            ]);
+            ShortenDeclaredMp4Durations(path, declaredSeconds: 2);
+            CorpusCache["lying.m4a"] = path;
+            return path;
+        }
+    }
+
+    /// <summary><inheritdoc cref="LyingDurationAudio" path="/summary/node()[1]"/> — video eşi
+    /// (60 sn testsrc2, beyan 2 sn): VIDEO proxy tavanını uçtan uca zorlar.</summary>
+    private static string LyingDurationVideo()
+    {
+        lock (CorpusLock)
+        {
+            if (CorpusCache.TryGetValue("lying.mp4", out var cached))
+            {
+                return cached;
+            }
+
+            var path = Path.Combine(CorpusDir, "lying.mp4");
+            RunFfmpegStatic(
+            [
+                "-y",
+                "-f", "lavfi", "-i", "testsrc2=duration=60:size=320x240:rate=30",
+                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                path,
+            ]);
+            ShortenDeclaredMp4Durations(path, declaredSeconds: 2);
+            CorpusCache["lying.mp4"] = path;
+            return path;
+        }
+    }
+
+    /// <summary>
+    /// moov içindeki mvhd/tkhd/mdhd (v0) süre alanlarını <paramref name="declaredSeconds"/>'a
+    /// kısaltır; akış tabloları (stts/stsz) DOKUNULMAZ kalır — dosya "kısa beyan, uzun akış"
+    /// olur. Tarama +faststart sayesinde yalnız mdat ÖNCESİNDE yapılır (medya baytlarındaki
+    /// rastlantısal 4CC eşleşmeleri yapısal olarak dışarıda). Beklenen atom görülmezse
+    /// fırlatır — korpus kendi rejimini kurduğunu kanıtlar.
+    /// </summary>
+    private static void ShortenDeclaredMp4Durations(string path, uint declaredSeconds)
+    {
+        var data = File.ReadAllBytes(path);
+        var limit = FindFourCc(data, "mdat", 0, data.Length);
+        if (limit < 0)
+        {
+            throw new InvalidOperationException("mdat bulunamadı — üretici faststart yazmamış.");
+        }
+
+        var movieTimescale = 0u;
+        foreach (var (name, timescaleOffset, durationOffset) in (ReadOnlySpan<(string, int, int)>)
+                 [
+                     // v0 yerleşimleri: 4CC + ver/flags(4) + ctime(4) + mtime(4) …
+                     ("mvhd", 16, 20),         // … + timescale(4) + duration(4)
+                     ("tkhd", -1, 24),         // … + trackId(4) + reserved(4) + duration(4) — MOVIE timescale
+                     ("mdhd", 16, 20),
+                 ])
+        {
+            var found = 0;
+            var from = 0;
+            while (true)
+            {
+                var i = FindFourCc(data, name, from, limit);
+                if (i < 0)
+                {
+                    break;
+                }
+
+                if (data[i + 4] != 0)
+                {
+                    throw new InvalidOperationException($"{name} v{data[i + 4]} — yama yalnız v0 bilir.");
+                }
+
+                var timescale = timescaleOffset >= 0
+                    ? ReadU32(data, i + timescaleOffset)
+                    : movieTimescale;
+                if (name == "mvhd")
+                {
+                    movieTimescale = timescale;
+                }
+
+                if (timescale == 0)
+                {
+                    throw new InvalidOperationException($"{name}: timescale okunamadı.");
+                }
+
+                WriteU32(data, i + durationOffset, declaredSeconds * timescale);
+                found++;
+                from = i + 4;
+            }
+
+            if (found == 0)
+            {
+                throw new InvalidOperationException($"{name} bulunamadı — beyan kısaltılamadı.");
+            }
+        }
+
+        File.WriteAllBytes(path, data);
+
+        static int FindFourCc(byte[] data, string name, int from, int limit)
+        {
+            for (var i = from; i <= limit - 4; i++)
+            {
+                if (data[i] == name[0] && data[i + 1] == name[1]
+                    && data[i + 2] == name[2] && data[i + 3] == name[3])
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        static uint ReadU32(byte[] data, int offset) =>
+            (uint)((data[offset] << 24) | (data[offset + 1] << 16)
+                   | (data[offset + 2] << 8) | data[offset + 3]);
+
+        static void WriteU32(byte[] data, int offset, uint value)
+        {
+            data[offset] = (byte)(value >> 24);
+            data[offset + 1] = (byte)(value >> 16);
+            data[offset + 2] = (byte)(value >> 8);
+            data[offset + 3] = (byte)value;
+        }
+    }
+
     // ───────────────────────── Hat koşucuları ─────────────────────────
 
     private ProcessAssetJob CreatePipeline() => new(
@@ -464,6 +612,45 @@ public sealed class DirtyMediaCorpusTests : IDisposable
         // kapısıyla garantidir (renk tag gate'i çıktıyı ffprobe'la doğrular; HLG kaynaktan
         // bt709 üretilemeseydi iş 'output-invalid' ile düşerdi).
         AssertExportSucceeded(await ExportVideoClipAsync(asset));
+    }
+
+    [MinioAndFfmpegFact]
+    public async Task LyingDurationAudio_ProxyOverrunsTheCeiling_FailsTyped()
+    {
+        var source = LyingDurationAudio();
+
+        // Ön şart: dosya GERÇEKTEN yalan söylüyor — beyan 2 sn (yama tutmadıysa korpus kendi
+        // rejimini kurmamış demektir; gerçek akışın 60 sn olduğu aşağıdaki overrun'ın kendisiyle
+        // ölçülür: tavan 7,2 sn'dir ve ancak akış beyanı aşarsa aşılabilir).
+        var probe = await new FfprobeService(_ffmpegOptions).ProbeAsync(source, CancellationToken.None);
+        Assert.Equal(2_000_000, probe.DurationUs);
+
+        var (asset, job) = await IngestAsync(source, AssetKind.Audio, "lying.m4a", "audio/mp4");
+
+        // TİPLİ SONUÇ: süreç kendi kendine ölmedi, tavan öldürdü — 'transcode-overrun'
+        // ('ffmpeg-timeout' da 'ffmpeg-failed' da DEĞİL; ham çıkış kodu kullanıcıya sızmaz).
+        Assert.Equal(AssetStatus.Failed, asset.Status);
+        Assert.Equal("transcode-overrun", asset.FailureReason);
+        Assert.Equal(JobStatus.Failed, job.Status);
+        Assert.StartsWith("transcode-overrun", job.ErrorMessage!, StringComparison.Ordinal);
+        Assert.Contains("kept writing past the expected output duration", job.ErrorMessage);
+        Assert.DoesNotContain("exited with code", job.ErrorMessage);
+    }
+
+    [MinioAndFfmpegFact]
+    public async Task LyingDurationVideo_ProxyOverrunsTheCeiling_FailsTyped()
+    {
+        var source = LyingDurationVideo();
+        var probe = await new FfprobeService(_ffmpegOptions).ProbeAsync(source, CancellationToken.None);
+        Assert.Equal(2_000_000, probe.DurationUs);
+
+        var (asset, job) = await IngestAsync(source, AssetKind.Video, "lying.mp4", "video/mp4");
+
+        Assert.Equal(AssetStatus.Failed, asset.Status);
+        Assert.Equal("transcode-overrun", asset.FailureReason);
+        Assert.Equal(JobStatus.Failed, job.Status);
+        Assert.StartsWith("transcode-overrun", job.ErrorMessage!, StringComparison.Ordinal);
+        Assert.DoesNotContain("exited with code", job.ErrorMessage);
     }
 
     [MinioAndFfmpegFact]

@@ -310,6 +310,112 @@ public sealed class FfmpegIntegrationTests(FfmpegTestMediaFixture media) : IDisp
             $"transcode sonuna kadar ilerlemeliydi (en büyük oran {maxFraction})");
     }
 
+    // ───────── İŞLEME REÇETELERİNİN TAVANLARI (görev: bekçi işleme hattına genişledi) ─────────
+
+    [FfmpegFact]
+    public async Task Filmstrip_RunsOnTheSpriteClock_AndTheSpriteClockCeilingDoesNotKillIt()
+    {
+        // İKİ ŞEY BİRDEN ÖLÇÜLÜR. (1) Filmstrip'in out_time'ı SPRITE SAATİDİR: 3 sn'lik
+        // kaynakta bile saat 300 sn'ye koşar — fraction, ExpectedOutputClockUs'a oranla
+        // 1'e ulaşır. (2) ProcessAssetJob'ın geçirdiği tavan (sprite saatinden türetilen)
+        // bu koşuyu ÖLDÜRMEZ. Kaynak süresinden türetilen tavanın öldüreceği ise ayrı
+        // birim testte belgelidir (ExpectedOutputClockUs_ShortSource_Dwarfs…).
+        var source = media.Video320x240WithAudio();
+        var probe = await Ffprobe.ProbeAsync(source);
+        var durationUs = probe.DurationUs!.Value;
+        var spriteClockUs = FilmstripRecipe.ExpectedOutputClockUs(durationUs);
+        var pattern = Path.Combine(_outDir, "clock_sprite_%d.jpg");
+
+        var maxFraction = 0d;
+        var result = await Runner.RunAsync(
+            FilmstripRecipe.BuildArgs(probe, durationUs, source, pattern),
+            spriteClockUs,
+            (fraction, _) =>
+            {
+                maxFraction = Math.Max(maxFraction, fraction);
+                return Task.CompletedTask;
+            },
+            outputTimeCeilingUs: FfmpegRunner.OutputTimeCeilingUs(spriteClockUs));
+
+        Assert.True(result.Success, $"filmstrip sprite saati tavanına takıldı: {result.StderrTail}");
+        Assert.False(result.Overran);
+        // Kurulum ölçülür: saat GERÇEKTEN sprite saatinde koştu (3 sn'lik kaynakta 300 sn'ye
+        // ulaştı) — aksi hâlde "tavan doğru tabana bağlı" iddiası boş kalırdı.
+        Assert.True(maxFraction > 0.99,
+            $"out_time sprite saatine ulaşmalıydı (en büyük oran {maxFraction})");
+    }
+
+    [FfmpegFact]
+    public async Task WaveformCeiling_KillsAProcessThatKeepsProducingPcmPastTheExpectedDuration()
+    {
+        // KAÇAK REJİMİ: durmadan PCM basan süreç 120 sn'lik okuma zaman aşımını ASLA
+        // tetiklemez (hiç sessiz kalmaz). Beklenenden ÇOK daha uzun gerçek bir kaynakla
+        // aynı hal kurulur: 120 sn'lik ses, 2 sn'lik beklenen. Pipe geri-basıncı yazan
+        // tarafı canlı tutar — tavan aşıldığında öldürülen süreç GERÇEKTEN koşmaktadır.
+        var wav120 = Path.Combine(_outDir, "long120.wav");
+        var gen = await Runner.RunAsync(
+            ["-y", "-nostdin", "-f", "lavfi", "-i", "sine=frequency=440:duration=120",
+             "-c:a", "pcm_s16le", wav120]);
+        Assert.True(gen.Success, $"kaynak üretilemedi: {gen.StderrTail}");
+
+        // Emniyet: tavan bir gün geri giderse üretim yine saniyeler içinde biter (120 sn'lik
+        // dosya sınırlı) ve test istisnasızlıkla KIRMIZI düşer — asılma riski yok; süre yine
+        // de ölçülür ki "sessizlik bekçisi kurtardı" yanılsaması doğmasın.
+        var watch = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAsync<FfmpegFailedException>(() =>
+            new WaveformGenerator(_options).GenerateAsync(
+                wav120, Path.Combine(_outDir, "overrun-peaks.json"),
+                expectedDurationUs: 2_000_000));
+        watch.Stop();
+
+        Assert.True(ex.Overran, "PCM saati tavanı Overran olarak sınıflanmalıydı");
+        Assert.False(ex.TimedOut); // AYRI HALLER AYRI KALMALI — bu bir sessizlik vakası değil.
+        Assert.Contains("kept producing PCM", ex.Message, StringComparison.Ordinal);
+        Assert.True(watch.Elapsed < WaveformGenerator.ReadTimeout,
+            $"tavan okuma zaman aşımından ÖNCE tetiklenmeliydi ({watch.Elapsed})");
+    }
+
+    [FfmpegFact]
+    public async Task WaveformCeiling_DoesNotKillANormalRun()
+    {
+        // YANLIŞ ÖLDÜRME ÜRETMEME KANITI: gerçek beklenen süreyle tavan kurulu — üretim
+        // tamamlanır ve JSON şekli yerindedir (AAC codec payı ölçüldü: +8 ms, pay bol).
+        var source = media.Video320x240WithAudio();
+        var probe = await Ffprobe.ProbeAsync(source);
+        var jsonPath = Path.Combine(_outDir, "ceiling-peaks.json");
+
+        await new WaveformGenerator(_options).GenerateAsync(
+            source, jsonPath, expectedDurationUs: probe.DurationUs);
+
+        using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(jsonPath));
+        Assert.InRange(doc.RootElement.GetProperty("length").GetInt32(), 145, 155);
+    }
+
+    [Fact]
+    public void WaveformByteCeiling_IsTheOutputTimeCeilingInPcmBytes()
+    {
+        // Bayt↔süre çevrimi tek formüle sabitlenir: 8000 Hz × 2 B = 16000 B/sn.
+        // 2 sn → tavan 7,2 sn → 115.200 bayt; 3 sn → 8,3 sn → 132.800 bayt.
+        Assert.Equal(115_200, WaveformGenerator.OutputByteCeiling(2_000_000));
+        Assert.Equal(132_800, WaveformGenerator.OutputByteCeiling(3_000_000));
+        Assert.Equal(
+            FfmpegRunner.OutputTimeCeilingUs(3_000_000) * 16_000 / 1_000_000,
+            WaveformGenerator.OutputByteCeiling(3_000_000));
+    }
+
+    [Fact]
+    public void DeterministicFfmpegReason_KeepsTheThreeStatesApart()
+    {
+        // ÜÇ HAL ÜÇ AYRI KOD (export'un render-overrun/ffmpeg-timeout ayrımının işleme eşi):
+        // tek bir 'ffmpeg-failed' cümlesi kaçak teşhisini kullanıcıdan da destekten de saklardı.
+        Assert.Equal("transcode-overrun", ProcessAssetJob.DeterministicFfmpegReason(
+            new FfmpegFailedException("m", -1, "", overran: true)));
+        Assert.Equal("ffmpeg-timeout", ProcessAssetJob.DeterministicFfmpegReason(
+            new FfmpegFailedException("m", -1, "", timedOut: true)));
+        Assert.Equal("ffmpeg-failed", ProcessAssetJob.DeterministicFfmpegReason(
+            new FfmpegFailedException("m", 1, "")));
+    }
+
     [Fact]
     public void OutputTimeCeiling_IsWiderThanTheDurationDeviationTheExportJobAccepts()
     {

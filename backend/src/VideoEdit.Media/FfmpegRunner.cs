@@ -94,11 +94,15 @@ public sealed class FfmpegRunner(FfmpegOptions options)
     /// gelmezse süreç ağacı öldürülür ve sonuç <see cref="FfmpegRunResult.TimedOut"/> olur.</param>
     /// <param name="outputTimeCeilingUs">
     /// Verilirse çıktı saati tavanı (µs) — bkz. <see cref="OutputTimeCeilingUs"/>. AÇIKÇA
-    /// İSTENİR, <paramref name="totalDurationUs"/>'ten SESSİZCE TÜRETİLMEZ: pay yalnız EXPORT
-    /// reçetesi için ölçüldü. Varlık işleme reçeteleri (proxy/filmstrip/poster) farklı çıktı
-    /// zaman tabanları kullanır ve o rejim ÖLÇÜLMEDİ — tavan oraya sessizce sızsaydı
-    /// ölçülmemiş bir yanlış-öldürme riski doğardı; onlar KAPSAM DIŞIDIR ve yalnız sessizlik
-    /// bekçisiyle korunur (docs/backlog.md).
+    /// İSTENİR, <paramref name="totalDurationUs"/>'ten SESSİZCE TÜRETİLMEZ: reçetelerin çıktı
+    /// zaman tabanları AYRIŞIR ve her birinin "beklenen" değeri ayrı ölçüldü. Export ve
+    /// proxy'de out_time ≈ kaynak süresi (ölçülen azami sapmalar: export −66,7 ms, VFR proxy
+    /// −13,8 ms — hep EKSİK yönde); filmstrip'te ise out_time SPRITE SAATİDİR ve kaynak
+    /// süresinin yüz katına çıkabilir (<see cref="Recipes.FilmstripRecipe.ExpectedOutputClockUs"/>
+    /// — kaynak süresine bağlanan tavan HER filmstrip'i yanlış öldürürdü). Poster tavansız
+    /// kalır: <c>-frames:v 1</c> çıktı saatini yapısal olarak tek karede (ölçüldü: 33.333 µs)
+    /// keser, kaçak "durmadan üretme" hali orada kurulamaz — kalan tek risk (hiç ilerlememe)
+    /// sessizlik bekçisinindir.
     /// </param>
     /// <param name="ct">İptal — tetiklenince süreç ağacının tamamı öldürülür
     /// (<c>Kill(entireProcessTree: true)</c>).</param>

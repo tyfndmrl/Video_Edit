@@ -13,10 +13,11 @@ public sealed class UnsupportedMediaException(string message, string? stderrTail
 }
 
 /// <summary>
-/// DETERMİNİSTİK ffmpeg çalıştırma hatası (sıfır-dışı exit ya da watchdog kill).
-/// Aynı girdiyle tekrar koşmak aynı sonucu üretir — retry'sız Failed yolu.
+/// DETERMİNİSTİK ffmpeg çalıştırma hatası (sıfır-dışı exit, watchdog kill ya da çıktı saati
+/// tavanı kill'i). Aynı girdiyle tekrar koşmak aynı sonucu üretir — retry'sız Failed yolu.
 /// </summary>
-public sealed class FfmpegFailedException(string message, int exitCode, string stderrTail, bool timedOut = false)
+public sealed class FfmpegFailedException(
+    string message, int exitCode, string stderrTail, bool timedOut = false, bool overran = false)
     : Exception(message)
 {
     public int ExitCode { get; } = exitCode;
@@ -26,4 +27,13 @@ public sealed class FfmpegFailedException(string message, int exitCode, string s
 
     /// <summary>Watchdog (120 sn progress'siz) süreci öldürdü.</summary>
     public bool TimedOut { get; } = timedOut;
+
+    /// <summary>
+    /// Çıktı saati tavanı süreci öldürdü (bkz. <see cref="FfmpegRunner.OutputTimeCeilingUs"/> ve
+    /// <see cref="Waveform.WaveformGenerator"/>'ın PCM bayt eşdeğeri). <see cref="TimedOut"/>'tan
+    /// AYRI hal: o "hiç çıktı üretmiyor", bu "durmadan üretiyor ama asla bitmeyecek" demektir —
+    /// çağıran ikisini ayrı makine koduna çevirmelidir (export'taki
+    /// <c>render-overrun</c>/<c>ffmpeg-timeout</c> ayrımının işleme hattındaki eşi).
+    /// </summary>
+    public bool Overran { get; } = overran;
 }
