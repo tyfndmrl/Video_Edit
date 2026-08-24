@@ -501,11 +501,22 @@ ile durur (kusur belgede değil kurulumdadır — 422 yanlış olurdu). Gerekçe
 - **apps/editor `tsconfig.node.json` tip-denetimi** build zincirine eklenmeli (denetim #36).
 
 ## M1 denetiminden ertelenenler (2026-08-07, 37 bulgu; kritik+yüksek tümü M1'de düzeltildi)
-- **M2 (KISMEN AÇIK)**: IDOR korumaları kod olarak doğru ama regresyon test paketi **hâlâ
-  eksik**. Bugün yalnız iki sahiplik testi var (`AssetUsageQuotaTests.Usage_OtherUsersAsset_Returns404`
-  ve `Usage_IgnoresOtherUsersAndDeletedProjects`); projects/exports/timeline uçlarında başka
-  kullanıcının `projectId`/`jobId`'siyle çağrı senaryoları **yok**. SignalR progress kanalı
-  gelince `refetchIntervalInBackground` geçici çözümü kaldırılacak.
+- **M2 IDOR regresyon paketi**: ✅ **KAPANDI (2026-08-24, yarım-iş #6)** —
+  `CrossUserAccessTests`: kurban A + saldırgan B kurgusuyla 24 kimlik-doğrulamalı ucun TAMAMI
+  için sahiplik testi (proje CRUD + timeline PUT + revisions/restore, asset upload yaşam
+  döngüsü + media-urls/usage/sil, export başlat/listele/izle/iptal, quota). Her test yalın
+  404 (kaynağın varlığı sızmaz) + kurban durumu değişmedi + depo sahtesi HER çağrıda
+  fırlatarak "reddedilen istek S3'e/presign'a hiç dokunmadı" kanıtı. TAMLIK MUHAFIZI
+  (`CrossUserEndpointInventoryTests`, ExportGateInventoryTests defter deseni): rota tablosu
+  el yazısı liste değil — ürünün `Map*Endpoints` metotları refleksiyonla keşfedilip boş
+  WebApplication'da koşturulur; her uç ya cross-user testinde ([Fact] varlığı refleksiyonla
+  doğrulanır) ya gerekçeli muaf listesinde (id parametreli uç muaf OLAMAZ) ya bilinçli-anonim
+  defterinde. Program.cs kaynak taraması satır-içi rota kaçağını kapatır. Üç negatif kontrol
+  (md5 birebir geri): GetJob sahiplik filtresi gevşetildi → 2 test kırmızı (presign sızıntı
+  imzasıyla); yeni `/steal` ucu eklendi → muhafız kırmızı; quota'dan RequireAuthorization
+  düşürüldü → muhafız anonim dalda kırmızı.
+- **M2 (devam)**: SignalR progress kanalı gelince `refetchIntervalInBackground` geçici
+  çözümü kaldırılacak.
 - **M6**: Kota kontrolü check-then-act (bilinçli MVP kabulü) — eşzamanlı init'lerle sınırlı aşım mümkün; transactional/advisory-lock çözümü. Upload resume sertleştirme: dosya-değişti tespiti (ilk 1 MiB parmak izi), IndexedDB hayalet satırlarının tam yaşam döngüsü, FileSystemFileHandle akışı.
 - **Not (KAPANDI, teslim düzeltme turu 2026-08-12)**: E2E/ölçüm fixture'ı 122 MB ile
   `apps/editor/public/` altında duruyordu ve `vite build` onu `dist/`e kopyalıyordu (üretim

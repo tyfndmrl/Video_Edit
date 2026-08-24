@@ -99,6 +99,27 @@ public class AppDbContext(DbContextOptions<AppDbContext> options)
             e.HasIndex(j => new { j.ProjectId, j.Status });
             e.HasIndex(j => new { j.AssetId, j.Status });
         });
+
+        // Sqlite DateTimeOffset'i TEXT saklar ve üzerinde ORDER BY/karşılaştırma ÇEVİREMEZ
+        // (NotSupportedException — örn. proje listesinin UpdatedAt sıralaması); test
+        // provider'larında tüm DateTimeOffset kolonları long'a (ticks + offset) çevrilir
+        // (JsonDocument converter'ıyla aynı gerekçe). Uygulama bu kolonlara yalnız UTC yazar
+        // (TimeProvider.GetUtcNow) — sabit offset'te sıralama/karşılaştırma birebir aynıdır.
+        // Npgsql yolu DEĞİŞMEZ: üretimde natif timestamptz kalır.
+        if (!isNpgsql)
+        {
+            foreach (var entity in builder.Model.GetEntityTypes())
+            {
+                foreach (var property in entity.GetProperties())
+                {
+                    if (property.ClrType == typeof(DateTimeOffset)
+                        || property.ClrType == typeof(DateTimeOffset?))
+                    {
+                        property.SetValueConverter(new DateTimeOffsetToBinaryConverter());
+                    }
+                }
+            }
+        }
     }
 
     private static void ConfigureJson(

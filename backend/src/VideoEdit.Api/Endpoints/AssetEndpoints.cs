@@ -124,7 +124,7 @@ public static class AssetEndpoints
                 asset.Id, asset.UploadId, UploadRules.PartSizeBytes, UploadRules.PartCount(request.SizeBytes)));
     }
 
-    private static async Task<IResult> PresignParts(
+    internal static async Task<IResult> PresignParts(
         Guid id, PresignPartsRequest request, ClaimsPrincipal principal, AppDbContext db,
         IStorageService storage, CancellationToken ct)
     {
@@ -324,7 +324,7 @@ public static class AssetEndpoints
         return Results.NoContent();
     }
 
-    private static async Task<IResult> UploadStatus(
+    internal static async Task<IResult> UploadStatus(
         Guid id, ClaimsPrincipal principal, AppDbContext db, IStorageService storage, CancellationToken ct)
     {
         var asset = await FindOwnedAssetAsync(db, id, principal.GetUserId(), track: false, ct);
@@ -353,14 +353,14 @@ public static class AssetEndpoints
 
     // ---------- Kütüphane ----------
 
-    private static async Task<IResult> GetById(
+    internal static async Task<IResult> GetById(
         Guid id, ClaimsPrincipal principal, AppDbContext db, CancellationToken ct)
     {
         var asset = await FindOwnedAssetAsync(db, id, principal.GetUserId(), track: false, ct);
         return asset is null ? Results.NotFound() : Results.Ok(ToDto(asset));
     }
 
-    private static async Task<IResult> ListForProject(
+    internal static async Task<IResult> ListForProject(
         Guid projectId, ClaimsPrincipal principal, AppDbContext db, CancellationToken ct,
         int page = 1, int pageSize = 50)
     {

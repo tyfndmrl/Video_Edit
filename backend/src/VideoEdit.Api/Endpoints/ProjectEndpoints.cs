@@ -35,7 +35,9 @@ public static class ProjectEndpoints
 
     // ---------- CRUD ----------
 
-    private static async Task<IResult> List(
+    // Not: handler'lar internal — birim testleri (Sqlite in-memory, AssetEndpoints deseni)
+    // ve CrossUserAccessTests'in IDOR regresyon paketi doğrudan çağırır.
+    internal static async Task<IResult> List(
         ClaimsPrincipal principal, AppDbContext db, CancellationToken ct,
         int page = 1, int pageSize = 20)
     {
@@ -126,14 +128,14 @@ public static class ProjectEndpoints
         return Results.Created($"/api/projects/{project.Id}", ToDetailDto(project));
     }
 
-    private static async Task<IResult> GetById(
+    internal static async Task<IResult> GetById(
         Guid id, ClaimsPrincipal principal, AppDbContext db, CancellationToken ct)
     {
         var project = await FindOwnedAsync(db, id, principal.GetUserId(), track: false, ct);
         return project is null ? Results.NotFound() : Results.Ok(ToDetailDto(project));
     }
 
-    private static async Task<IResult> Rename(
+    internal static async Task<IResult> Rename(
         Guid id, UpdateProjectRequest request, ClaimsPrincipal principal, AppDbContext db,
         TimeProvider clock, CancellationToken ct)
     {
@@ -169,7 +171,7 @@ public static class ProjectEndpoints
             project.AudioSampleRate, project.CreatedAt, project.UpdatedAt));
     }
 
-    private static async Task<IResult> SoftDelete(
+    internal static async Task<IResult> SoftDelete(
         Guid id, ClaimsPrincipal principal, AppDbContext db, TimeProvider clock, CancellationToken ct)
     {
         var userId = principal.GetUserId();
@@ -185,7 +187,7 @@ public static class ProjectEndpoints
 
     // ---------- Autosave ----------
 
-    private static async Task<IResult> SaveTimeline(
+    internal static async Task<IResult> SaveTimeline(
         Guid id, SaveTimelineRequest request, ClaimsPrincipal principal, AppDbContext db,
         ISnapshotPolicy snapshotPolicy, TimeProvider clock, CancellationToken ct)
     {
@@ -262,7 +264,7 @@ public static class ProjectEndpoints
 
     // ---------- Revisions ----------
 
-    private static async Task<IResult> ListRevisions(
+    internal static async Task<IResult> ListRevisions(
         Guid id, ClaimsPrincipal principal, AppDbContext db, CancellationToken ct,
         int page = 1, int pageSize = 50)
     {
@@ -288,7 +290,7 @@ public static class ProjectEndpoints
         return Results.Ok(new PagedResult<RevisionMetaDto>(items, page, pageSize, total));
     }
 
-    private static async Task<IResult> GetRevision(
+    internal static async Task<IResult> GetRevision(
         Guid id, long rev, ClaimsPrincipal principal, AppDbContext db, CancellationToken ct)
     {
         var userId = principal.GetUserId();
@@ -307,7 +309,7 @@ public static class ProjectEndpoints
                 revision.CreatedBy, revision.CreatedAt, revision.Timeline.RootElement.Clone()));
     }
 
-    private static async Task<IResult> CreateCheckpoint(
+    internal static async Task<IResult> CreateCheckpoint(
         Guid id, CreateCheckpointRequest request, ClaimsPrincipal principal, AppDbContext db,
         TimeProvider clock, CancellationToken ct)
     {
@@ -355,7 +357,7 @@ public static class ProjectEndpoints
                 revision.Label, revision.CreatedBy, revision.CreatedAt));
     }
 
-    private static async Task<IResult> Restore(
+    internal static async Task<IResult> Restore(
         Guid id, RestoreRequest request, ClaimsPrincipal principal, AppDbContext db,
         TimeProvider clock, CancellationToken ct)
     {
