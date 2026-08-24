@@ -1,6 +1,7 @@
 using System.Globalization;
 using VideoEdit.Contracts;
 using VideoEdit.Media;
+using VideoEdit.Media.Export;
 using Xunit;
 
 namespace VideoEdit.UnitTests;
@@ -67,6 +68,16 @@ public class CultureInvarianceTests
     public void Dec_ProducesDot_UnderTurkishCulture()
     {
         WithTurkishCulture(() => Assert.Equal("0.5", TimeFormat.Dec(0.5m)));
+    }
+
+    [Fact]
+    public void LutBlendFilter_NativeOpacityLiteral_UsesDot_UnderTurkishCulture()
+    {
+        // §4.2 karışımının yerli biçimi: all_opacity = 1-intensity. 1-0.8 double'da
+        // 0.19999999999999996'dır — Num() 6 kesir hanesine yuvarlar ve TR locale'de bile
+        // nokta yazar; "0,2" ffmpeg'de seçenek ayracı sanılıp patlar.
+        WithTurkishCulture(() => Assert.Equal(
+            "blend=all_mode=normal:all_opacity=0.2", ColorPipeline.LutBlendFilter(0.8)));
     }
 
     [Fact]

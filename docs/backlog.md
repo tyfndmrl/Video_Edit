@@ -1165,15 +1165,43 @@ ve perf listesinden **media-urls paralelleştirmesi** (8'lik eşzamanlılık kap
   okuyucu) + canlı 2160p/1080p/720p exportların kapıdan etkilenmediği koşularak doğrulandı.
   4K işlerine ayrı kuyruk/tek-uçuş kuralı bu kapsamda GEREKMEDİ (WorkerCount=1 zaten tek
   uçuş; eşzamanlılık artırılırsa kapı hazır).
-- **[YÜKSEK — M3/Export performansı] Bileşimli render hızı** (perf §"filtre grafiği"):
-  60 sn bileşim her profilde gerçek zamandan yavaş (720p 0,67x; 1080p 0,66x; 2160p 0,58x;
-  düz kesim 9,38x) ve 2160p'de ffmpeg ~12,3/20 çekirdek kullanıyor. Sıra: (1)
-  `filter_complex_threads`/thread ayarlarını ÖLÇEREK tara, (2) kaynak tuvale eşitken
-  normalize zincirindeki no-op scale/pad/fps adımlarını kısalt, (3) overlay/lut'u yalnız
-  etkin aralığa uygula, (4) en büyük kazanç: timeline'ı dilimlere bölüp N paralel ffmpeg +
-  concat (dilim sınırları geçişlerin dışında; tahmin 3-5x). Hedef: 1080p bileşimde ≥2x.
-  Filtre grafiği ÜRETİMİNE dokunduğu için render-golden korpusuyla birlikte ele alınmalı —
-  triyaj turunda bilinçli açılmadı.
+- **[YÜKSEK — KISMEN KAPANDI, 2026-08-24 filtre-grafiği turu] Bileşimli render hızı**
+  (perf §"filtre grafiği" + §6.1 önce/sonra tablosu): önce maliyet profili çıkarıldı
+  (çıkar-koş-ölç bisect; canlı worker'ın gerçek grafiği + birebir girdiler; ham veri
+  scratchpad `perfcost/`): 1080p'de payların **%46'sı tek başına `blend=all_expr`** (LUT
+  intensity<1 yolunun per-piksel AVExpr yorumlayıcısı), %19 tamamen örtülü metin+şekil
+  zincirleri, %10 colorAdjust, %6 kodlayıcı; süre çözünürlüğe duyarsız (2160p = aynı grafik
+  + tek scale). UYGULANAN (tek net kazanç): `ClipEffects.LutBlendFilter`
+  yerli moda alındı (`blend=all_mode=normal:all_opacity=1-intensity`; §4.2 formülü
+  değişmedi, yalnız yazılışı). Eşdeğerlik İÇERİĞE BAĞLI (2026-08-25 tam (A,B) taraması):
+  dyadik intensity'de bayt-aynı, dyadik olmayanda tamsayı-denk çiftlerde tam ±1 LSB
+  (i=0.8'de 65.536 çiftin 1201'i, i=0.6'da 208'i; zarf + golden sınır testi
+  rendering-semantics §4.2 — bench fixture'ının framemd5 BAYT-AYNI + PSNR=inf ölçümü o
+  içeriğe özgü, genelleme değil); canlı önce/sonra
+  (aynı yöntem, 3'er koşum): **720p 0,89x→1,69x, 1080p 0,87x→1,60x, 2160p 0,76x→1,27x**;
+  düz kesim 11,5x etkilenmedi; aynı belgenin run27/run28 çıktı MP4'leri sha256-aynı, grafik
+  diff'i tek satır. Negatif kontrol (2026-08-25'te TAM pakette yeniden ölçüldü; önceki "3
+  bekçi" beyanı eksikti): yalnız `LutBlendFilter` gövdesi geri alınınca **6 test kırmızı** —
+  `TheGraphNeverInvokesThePerPixelExprInterpreter` + kültür testi + lut-effects snapshot +
+  `Lut3d_AppliesTheCubeFile…` + LSB sınır golden'ı + GateInventory kaynak-token envanteri;
+  geri konunca dosya MD5 birebir. ÖLÇÜMLE KAPANAN eski maddeler: (1) threads taraması —
+  varsayılan zaten optimum (fc_threads 1→450,9 s … auto→68,7 s; encoder -threads etkisiz);
+  (2) no-op scale/pad/fps — pad+fps kazanç 0,0 s, scale'i çıkarmak +1 s yavaş + BT.601
+  kayması + §2.5 doktrin ihlali; (3) enable/etkin-aralık daraltması — ≤2-3 s üst sınır.
+  **AÇIK KALANLAR (sırayla, hepsi sözleşme/golden kararı ister):** (a) örtülen-katman
+  budaması — bu fixtürde −13,2 s ve BAYT-AYNI ölçüldü, ama muhafazakâr kapsama tespiti
+  probe boyutu (aspect==tuval) + alfa bilgisine muhtaç; `ExportAssetSource.SourceWidth`
+  sözleşmesi ("üretilen filtergraph'ı HİÇBİR biçimde etkilemez — geometri kaynaktan
+  bağımsız kalır, §2.5") değiştirilmeden yapılamaz ve yanlış probe'un bedeli sessiz eksik
+  katman olur → baş mimar sözleşme kararı (Ek: Sözleşme Değişiklik Kuralı) + gerçekçi
+  (overlay'leri ÜSTTE) bir fixtürle yeniden ölçüm şart — perf fixtüründe metin/şekil en
+  üst katmanın ALTINDA, gerçek bileşimde kazanç 0'a düşebilir; (b) colorAdjust zincir
+  füzyonu (exposure+2×lutrgb+colorchannelmixer → tek geçiş): pay 7,2 s, füzyon varyantı
+  ÖLÇÜLMEDİ, piksel LSB kayabilir (golden'lar yeniden temellenir); (c) tuval-atlama
+  genişletmesi: −3,1 s + belgeli tuval renk-kaybını da giderir ama ÇIKTI BAYTLARI değişir;
+  (d) zaman-dilimli N-paralel ffmpeg — tek grafik zaten ~13,5/20 çekirdek kullanıyor,
+  kazanç tavanı sınırlı. Hedef (1080p ≥2x) bu turda karşılanmadı (1,60x); (a)+(b)+(c)
+  birlikte bu fixtürde ~2,5x'e taşırdı (bench üst sınırı).
 - **[ORTA — KAPANDI, 2026-08-24 yarim-is turu] media-urls manifest'i Assets satırına yazmak**
   (perf §"GET media-urls"): paralelleştirme önceki turda yapılmıştı; bu turda kalıcı çözüm
   teslim edildi. ÖNCE ölçüldü (perf yöntemi; 55 assetli proje ham API'yle kuruldu): mevcut

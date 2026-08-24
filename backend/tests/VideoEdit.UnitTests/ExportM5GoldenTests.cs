@@ -436,7 +436,9 @@ public sealed class ExportM5GoldenTests : IDisposable
         var halfCompiled = ExportCompiler.Compile(
             EffectDoc(ExportTestDocs.Lut(LutAsset, 0.5)), sources, CanvasSpec);
         Assert.Contains("split", halfCompiled.FilterGraphScript);
-        Assert.Contains("blend=all_expr='A*(1-0.5)+B*0.5'", halfCompiled.FilterGraphScript);
+        // §4.2 karışımı YERLİ blend moduyla yazılır (all_opacity = 1-intensity; all_expr'in
+        // per-piksel yorumlayıcısı ölçümle emekliye ayrıldı — ClipEffects.LutBlendFilter).
+        Assert.Contains("blend=all_mode=normal:all_opacity=0.5", halfCompiled.FilterGraphScript);
         var half = PixelAt(RawFrame(await RenderRawAsync(halfCompiled, "lut-half"), 15), 160, 120);
         byte[] mixed =
         [
@@ -460,6 +462,113 @@ public sealed class ExportM5GoldenTests : IDisposable
         Assert.True(MaxDiff(identity, baseline) <= 2,
             $"kimlik LUT pikseli değiştirmemeli: taban {Describe(baseline)}, "
             + $"ölçülen {Describe(identity)}");
+    }
+
+    [FfmpegFact]
+    public void LutBlend_NativeVsExpr_BoundedByOneLsb_AndByteExactAtDyadicIntensities()
+    {
+        // SINIR TESTİ (2026-08-25 bağımsız doğrulama turu). Yerli
+        // `blend=all_mode=normal:all_opacity=1-i` ile eski `blend=all_expr='A*(1-i)+B*i'`
+        // yazılışının eşdeğerliği İÇERİĞE BAĞLIDIR: mix formülü aynı, iki yazılışın 8-bit
+        // yuvarlaması tam-mix'in tamsayıya denk geldiği (A,B) çiftlerinde ±1 LSB ayrışır
+        // (ör. A=1,B=6,i=0.6: mix=4.0 → expr 3, yerli 4 — bu koşumda ölçüldü). Bu test farkı
+        // GİZLEMEZ, SINIRLAR: kaynak kare R=x, B=y (256×256) + R/B-takas LUT'u, R kanalında
+        // 65.536 tamsayı (A,B) çiftinin TAMAMINI blend'e sokar ve uyuşmazlık üreten çiftlere
+        // BİLEREK düşer. Ölçülen zarf (ffmpeg 8.0, bu fixture, 2026-08-25):
+        //   dyadik i (0.25/0.5/0.75) → 0 fark (bayt-aynı);
+        //   i=0.8 → 1201/65536 R-çifti (%1,8), i=0.6 → 208/65536 (%0,3); TÜMÜ tam ±1 LSB.
+        // Zarf, deponun beyan ettiği tolerans sınıfının içindedir (RGB↔YUV420 gidiş-dönüşü
+        // ±1; §9.3 parite eşikleri kanal ort ≤2.0 / e2e ±3): rendering-semantics §4.2
+        // yazılış notu bu ölçüme atıf verir. Yerli yazılış LutBlendFilter'dan alınır — filtre
+        // eski biçime dönerse iki zincir özdeşleşir ve "fark > 0" iddiası kırmızıya düşer
+        // (bu test aynı zamanda yerli-mod bekçisidir).
+        const int Grid = 256;
+        var cube = SwapRedBlueCube();
+        var pairsPath = Path.Combine(_dir, "lsb-pairs.rgb");
+        var pixels = new byte[Grid * Grid * 3];
+        for (var y = 0; y < Grid; y++)
+        {
+            for (var x = 0; x < Grid; x++)
+            {
+                var o = ((y * Grid) + x) * 3;
+                pixels[o] = (byte)x;     // R: blend'in A girişi (orijinal)
+                pixels[o + 1] = 128;     // G: sabit — LUT dokunmaz, iki yazılışta özdeş kalmalı
+                pixels[o + 2] = (byte)y; // B: takas LUT'u sonrası R'nin B girişi
+            }
+        }
+
+        File.WriteAllBytes(pairsPath, pixels);
+
+        (double Intensity, bool Dyadic)[] cases =
+            [(0.25, true), (0.5, true), (0.75, true), (0.8, false), (0.6, false)];
+        foreach (var (intensity, dyadic) in cases)
+        {
+            var tag = intensity.ToString("0.##", CultureInfo.InvariantCulture);
+            var native = RenderPairFrame(
+                pairsPath, cube, ColorPipeline.LutBlendFilter(intensity), $"lsb-native-{tag}");
+            var expr = RenderPairFrame(
+                pairsPath, cube,
+                FormattableString.Invariant($"blend=all_expr='A*(1-{intensity})+B*{intensity}'"),
+                $"lsb-expr-{tag}");
+
+            var maxAbs = 0;
+            var redPairDiffs = 0;
+            for (var k = 0; k < native.Length; k++)
+            {
+                var d = Math.Abs(native[k] - expr[k]);
+                if (d == 0)
+                {
+                    continue;
+                }
+
+                maxAbs = Math.Max(maxAbs, d);
+                if (k % 3 == 0)
+                {
+                    redPairDiffs++;
+                }
+            }
+
+            if (dyadic)
+            {
+                Assert.True(maxAbs == 0 && redPairDiffs == 0,
+                    $"i={tag} dyadik: iki yazılış BAYT-AYNI olmalı (ölçülen {redPairDiffs} "
+                    + $"R-çifti farklı, max fark {maxAbs.ToString(CultureInfo.InvariantCulture)})");
+                continue;
+            }
+
+            Assert.True(maxAbs <= 1,
+                $"i={tag}: yazılış farkı ±1 LSB'yi AŞTI (max {maxAbs.ToString(CultureInfo.InvariantCulture)}) "
+                + "— §4.2 yazılış notunun ölçülen zarfı geçersiz, karar yeniden değerlendirilmeli");
+            Assert.True(redPairDiffs > 0,
+                $"i={tag}: hiç uyuşmazlık çifti yok — ya iki zincir özdeş (LutBlendFilter eski "
+                + "biçime dönmüş) ya fixture uyuşmazlık bölgesini kaybetmiş; test sınırlama "
+                + "gücünü yitirdi");
+            Assert.True(redPairDiffs <= (int)(Grid * Grid * 0.03),
+                $"i={tag}: farklı R-çifti sayısı {redPairDiffs.ToString(CultureInfo.InvariantCulture)}/65536 "
+                + "— ölçülen zarfın (%1,8 @ i=0.8) çok üstünde, ffmpeg blend yolu değişmiş olabilir");
+        }
+    }
+
+    /// <summary>
+    /// Çift-tarama karesini §4.2 zincirinin blend'e kadar aynısından (format=rgba + split +
+    /// lut3d) verilen blend satırıyla geçirir, ham RGB döner — iki koşum arasındaki TEK fark
+    /// blend satırıdır, dolayısıyla ölçülen fark yalnız blend yuvarlamasıdır.
+    /// </summary>
+    private byte[] RenderPairFrame(string pairsPath, string cubePath, string blendFilter, string name)
+    {
+        var outPath = Path.Combine(_dir, name + ".rgb");
+        RunFfmpeg([
+            "-y", "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-video_size", "256x256",
+            "-framerate", "30", "-i", pairsPath,
+            "-filter_complex",
+            "[0:v]format=rgba,split[o][t];"
+            + $"[t]{ColorPipeline.Lut3dFilter(cubePath)}[l];"
+            + $"[o][l]{blendFilter},format=rgb24[vout]",
+            "-map", "[vout]", "-frames:v", "1",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", outPath,
+        ]);
+        return File.ReadAllBytes(outPath);
     }
 
     // ───────────────────────── KEYFRAME (§3, tasarım 04 §2.5) ─────────────────────────

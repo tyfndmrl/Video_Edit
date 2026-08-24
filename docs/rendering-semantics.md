@@ -825,10 +825,33 @@ c.rgb = mix(c.rgb, lutted, uIntensity);
 ```
 [src]split[o][t];
 [t]lut3d=file=lut.cube:interp=trilinear[l];
-[o][l]blend=all_expr='A*(1-0.75)+B*0.75'[out]      // 0.75 = intensity, InvariantCulture
+[o][l]blend=all_mode=normal:all_opacity=0.25[out]  // 0.25 = 1-intensity, InvariantCulture
 ```
 
 `intensity = 1` ise `split/blend` atlanır, düz `lut3d` uygulanır.
+
+> **YAZILIŞ GÜNCELLEMESİ (2026-08-24 maliyet profili — formül DEĞİŞMEDİ; sayısal sınır
+> 2026-08-25'te ölçüldü).** Aynı karışım eskiden `blend=all_expr='A*(1-0.75)+B*0.75'` ile
+> yazılıyordu; `all_expr` her piksel × kanal için AVExpr yorumlayıcısını çalıştırır ve tek
+> başına 60 sn'lik referans bileşimin **%46'sını** yiyordu (1080p tam kodlama 68,7 → 37,4 s).
+> ffmpeg'in yerli `normal` modu ÜST katmanı (blend'in İLK girişi = orijinal) ağırlıklar:
+> `out = A*opacity + B*(1-opacity)`, yani `all_opacity = 1-intensity` yukarıdaki mix
+> formülünün kendisidir. **Formül aynı; iki yazılışın 8-bit tamsayı yuvarlaması ise İÇERİĞE
+> BAĞLI ayrışır** (256×256 tam (A,B) taramasıyla ölçüldü, ffmpeg 8.0, 2026-08-25): intensity
+> DYADİKSE (0.25/0.5/0.75) çıktı **bayt-aynı**; değilse tam-mix'in tamsayıya denk geldiği
+> çiftlerde **tam ±1 LSB** fark kalır — i=0.8'de 65.536 çiftin 1201'i (%1,8), i=0.6'da 208'i
+> (%0,3); ör. A=1,B=6,i=0.6 → mix=4.0, expr 3, yerli 4. Bu zarf §9.3 parite eşiklerinin
+> (SSIM ≥ 0.98, kanal ort ≤ 2.0, e2e ±3/kanal) ve zincirin zaten beyan ettiği ±1 niceleme
+> paylarının (§4.1 lutrgb ±1/255, RGB↔YUV420 gidiş-dönüşü) içindedir → karar: yazılış kalır,
+> fark GİZLENMEZ, golden sınır testiyle SINIRLANIR. Referans bileşimde framemd5 bayt-aynı +
+> çift-grafik PSNR = inf ölçümü o TEKİL fixture'a aittir (içeriği uyuşmazlık çifti üretmiyor;
+> `docs/performans-raporu.md` §9.1) — genel iddia DEĞİLDİR. Üretici: `ClipEffects.LutBlendFilter`;
+> bekçiler: `ExportCompilerSnapshotTests.TheGraphNeverInvokesThePerPixelExprInterpreter` (tüm
+> fixture grafiklerinde `all_expr`/`geq` yasağı) + `ExportM5GoldenTests.Lut3d_AppliesTheCubeFile…`
+> (canlı ffmpeg'le yarı-karışım pikseli) +
+> `ExportM5GoldenTests.LutBlend_NativeVsExpr_BoundedByOneLsb…` (iki yazılış canlı ffmpeg'de
+> yan yana; uyuşmazlık çiftlerine BİLEREK düşer ve zarfı sınırlar — dyadikte 0, değilse
+> ≤ ±1 LSB).
 
 **Kod eşleri (2026-08-21'den beri bu bölüm kodla örtüşür; öncesinde uniform'lar yalnız
 burada yazılıydı).** WebGL yarısı: `apps/editor/src/features/player/compositor/shaders.ts`

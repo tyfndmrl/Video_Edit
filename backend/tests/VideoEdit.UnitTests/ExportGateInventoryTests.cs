@@ -857,7 +857,7 @@ public sealed class ExportGateInventoryTests : IDisposable
             + "yüzeyi, o yüzden defterde ayrı bir satırı var. ETİKET DÜZELTİLDİ (10. tur, F3): "
             + "satır eskiden Raster yazıyordu, oysa Skia bu torbayı HİÇ görmez — okunan değerler "
             + "FİLTERGRAPH'a girer (ColorPipeline.ColorAdjustFilters → exposure=/lutrgb=/"
-            + "colorchannelmixer=, Lut3dFilter/LutBlendFilter → lut3d=file=…/blend=all_expr=…). "
+            + "colorchannelmixer=, Lut3dFilter/LutBlendFilter → lut3d=file=…/blend=all_mode=…). "
             + "Yanlış etiket satırı EveryStringThatReachesTheFfmpegGraphIsGatedAndProven'in "
             + "dışında bırakıyordu, yani muhafız kapattığını iddia ettiği sınıfın bir üyesini "
             + "atlıyordu. "
@@ -1762,7 +1762,7 @@ public sealed class ExportGateInventoryTests : IDisposable
         var effectSource = File.ReadAllText(
             TestVectorFiles.Resolve("backend/src/VideoEdit.Media/Export/ClipEffects.cs"));
         foreach (var token in new[]
-                 { "exposure=", "lutrgb=", "colorchannelmixer=", "lut3d=file=", "blend=all_expr=" })
+                 { "exposure=", "lutrgb=", "colorchannelmixer=", "lut3d=file=", "blend=all_mode=" })
         {
             Assert.True(effectSource.Contains(token, StringComparison.Ordinal),
                 $"ClipEffects.cs artık '{token}' üretmiyor — efekt yüzeyinin ffmpeg yolu değişmiş "

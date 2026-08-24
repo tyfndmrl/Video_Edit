@@ -234,6 +234,32 @@ scale/pad/fps/format + xfade + lut3d(trilinear) + 3 × overlay; tuval 1920x1080'
 2160p'de sona tek scale). 2160p koşumunda ffmpeg ~12.3/20 mantıksal çekirdek kullandı —
 grafik tam paralelleşemiyor. Öneriler §9 madde 1'de.
 
+### 6.1 Filtre grafiği turu — ÖNCE/SONRA yeniden ölçümü (2026-08-24)
+
+Aynı bileşim + aynı yöntem (`perf20/export-perf.mjs`: ısınma + profil başına 3 tekrar, süre =
+sunucu duvarı), HEAD `dffa484` tabanında AYNI GÜN art arda. ÖNCE = `api/worker-run27`
+(değişiklik öncesi ikili; canlı süreç modül listesiyle doğrulandı), SONRA = `api/worker-run28`;
+iki yayın arasındaki tek üretim-kodu farkı `ClipEffects.LutBlendFilter` (LUT karışımının yerli
+`blend` moduna alınması — §9.1 kapanış notu). Ölçüm bloklarının başında/sonunda kaçak ffmpeg 0.
+
+| Yapılandırma | ÖNCE p50 (min-max) | SONRA p50 (min-max) | x-gerçek-zaman |
+|---|---|---|---|
+| Bileşim 720p | 67,4 s (67,4-67,8) | **35,6 s** (35,4-36,4) | 0,89x → **1,69x** |
+| Bileşim 1080p | 69,3 s (69,3-70,0) | **37,6 s** (37,4-38,1) | 0,87x → **1,60x** |
+| Bileşim 2160p | 78,5 s (78,4-78,7) | **47,4 s** (47,2-47,4) | 0,76x → **1,27x** |
+| Düz kesim 1080p | 5,2 s (5,2-5,3) | 5,2 s (5,1-5,2) | 11,5x → 11,5x (etkilenmedi) |
+
+Çıktı eşdeğerliği canlıda ölçüldü: aynı comp belgesinin run27 ve run28 1080p çıktı MP4'leri
+**SHA256 düzeyinde bayt-aynı** (`C18316BA…EE281B`, 60 050 957 bayt); iki koşumun worker
+loglarından alınan filtergraph'ler satır satır karşılaştırıldı — **tek fark blend satırı**.
+Bu eşitlik BU BELGEYE ÖZGÜDÜR, iki yazılışın genel özdeşliği değildir: dyadik olmayan
+intensity'lerde tamsayı-denk (A,B) çiftleri ±1 LSB ayrışır (ölçülen zarf ve golden sınır
+testi: §9.1 kapanış notu + rendering-semantics §4.2); bu belgenin içeriği o çiftlere
+düşmüyor, sha256 o yüzden tutuyor.
+Not: bu tablonun mutlak ÖNCE değerleri §6'nın 2026-08-21 tablosundan hızlıdır (o oturumun
+ortam yükü farklıydı; LRU sıcak, tarayıcı kapalı) — bu yüzden karşılaştırma aynı gün içinde
+önce/sonra çifti olarak yapıldı; 2026-08-21 satırları tarihsel bağlam olarak yerinde duruyor.
+
 **Validate / senkron 422 kapıları (500 klipli belgede):**
 
 | Yol | n | p50 | p95 |
@@ -307,6 +333,45 @@ uygulamak (enable= var; segment bazlı ayrı grafiklerle kıyas ölçümü); (d)
 timeline'ı zaman dilimlerine bölüp N paralel ffmpeg + concat (dilim sınırlarını geçiş
 aralıklarının dışına koyarak) — 10 çekirdekli makinede tahmini 3-5x; (a)-(c) için tahmini %20-40.
 Kabul ölçütü: bu bileşim 1080p'de ≥ 2x gerçek zaman.
+**KISMEN KAPATILDI (2026-08-24 filtre-grafiği turu):** önce maliyet profili çıkarıldı
+(çıkar-koş-ölç bisect; canlı worker'ın GERÇEK grafiği + birebir girdiler + aynı PATH ffmpeg
+8.0 ikilisi; 24 konfig × 3 tur, ham veri scratchpad `perfcost/`): 1080p tam kodlamada tek
+başına **`blend=all_expr` = toplamın %46'sı** (68,7 → 37,4 s — LUT intensity<1 yolunun
+per-piksel AVExpr yorumlayıcısı), tamamen örtülü metin+şekil katman zincirleri %19,
+colorAdjust zinciri %10, kodlayıcı+mux %6, xfade %5, ses ~%0; süre çözünürlüğe duyarsız
+çünkü 2160p aynı grafik + tek çıkış scale'i. UYGULANAN (tek net kazanç): §4.2
+LUT karışımı yerli moda alındı — `blend=all_mode=normal:all_opacity=1-intensity`
+(`ClipEffects.LutBlendFilter`). Eşdeğerlik İÇERİĞE BAĞLIDIR (2026-08-25'te tam (A,B)
+taramasıyla sınırlandı): dyadik intensity'de bayt-aynı, dyadik olmayanda tamsayı-denk
+çiftlerde tam ±1 LSB (i=0.8'de 65.536 çiftin 1201'i, i=0.6'da 208'i; zarf + golden sınır
+testi rendering-semantics §4.2). Bench fixture'ında framemd5 BAYT-AYNI + çift-grafik
+PSNR=inf ölçüldü (o içerik uyuşmazlık çifti üretmiyor — tekil ölçüm, genelleme değil);
+canlı önce/sonra §6.1: **1080p 0,87x → 1,60x, 720p 1,69x, 2160p 1,27x**, o belgenin çıktı
+MP4'leri sha256-aynı. Bu turun ölçümleriyle KAPANAN öneriler: **(a) İPTAL** —
+filter_complex_threads taraması (1/2/4/8/16/auto = 450,9/235,8/126,8/76,5/69,6/68,7 s)
+varsayılanın zaten optimum olduğunu, encoder `-threads`'in etkisiz olduğunu gösterdi;
+**(b) İPTAL** — pad+fps no-op'ları çıkarınca framemd5 aynı ama kazanç 0,0 s; "no-op" scale'i
+çıkarmak hem +1 s YAVAŞ hem BAYT-FARKLI (ffmpeg'in örtük dönüştürücüsü zincir başındaki
+setparams BT.709 beyanını görmez, BT.601'e düşer — EmitSegmentChain'deki ölçüm) hem §2.5
+"geometri kaynaktan bağımsız" doktrinine aykırı; **(c) İPTAL** — lut/colorAdjust zaten
+trim'le kendi etkin aralığında koşuyor, overlay enable penceresini kapatmak ≤2-3 s üst
+sınır verdi. Kalan yönler (backlog "Bileşimli render hızı" kaydı): örtülen-katman budaması
+(bu fixtürde −13,2 s ve BAYT-AYNI ölçüldü ama karar probe boyutu+alfa bilgisi ister —
+`ExportAssetSource.SourceWidth` sözleşmesi "filtergraph'ı HİÇBİR biçimde etkilemez" dediği
+için baş mimar sözleşme kararı olmadan yapılamaz), colorAdjust zincir füzyonu (payı 7,2 s;
+füzyon varyantı ölçülmedi, piksel LSB riski), tuval-atlama genişletmesi (−3,1 s ama bayt
+değiştirir), (d) N-paralel dilimleme (tek grafik zaten ~13,5/20 çekirdek kullanıyor — tavan
+sanıldığından dar). Kabul ölçütü (≥2x) BU TURDA KARŞILANMADI: 0,87x → 1,60x'e gelindi;
+kalan yol yukarıdaki sözleşme kararlarına bağlı. Regresyon bekçileri:
+`ExportCompilerSnapshotTests.TheGraphNeverInvokesThePerPixelExprInterpreter` (tüm fixture
+grafiklerinde `all_expr`/`geq` yasağı) + `ExportM5GoldenTests`'in iki canlı-ffmpeg golden'ı
+(yarı-karışım pikseli + LSB sınır testi). Negatif kontrol YENİDEN ölçüldü (2026-08-25,
+yalnız `LutBlendFilter` gövdesi eski biçime çevrilerek, TAM paket): **6 test kırmızı** —
+tüm-fixture taraması (lut-effects) + lut-effects snapshot'ı + TR-kültür literal testi +
+`Lut3d_AppliesTheCubeFile…` + LSB sınır golden'ı + GateInventory kaynak-token envanteri;
+geri konunca dosya MD5 birebir, paket yeşil. (Önceki "3 test kırmızı" beyanı EKSİKTİ:
+`Lut3d…` golden'ını saymıyordu; kalan +2 bu turda eklenen LSB golden'ı ile token
+envanterinin düşmesidir.)
 
 **2. 2160p render'da ffmpeg tepe RSS ~4.9 GB (şiddet: YÜKSEK — koşullu)**
 Ölçüm: tepe 4 908 MB (32 GB makinede tek işte sorunsuz). Export eşzamanlılığı bugün 1;
@@ -406,3 +471,10 @@ Betikler (scratchpad, repo dışı): `perf20/seed.mjs` (kullanıcı+projeler+ass
 `perf20/minio-probe.mjs`, `perf20/export-perf.mjs`, `perf20/res-mon.ps1`, `perf20/aggregate.py`.
 Ham çıktılar `perf20/out-*.json|jsonl|log|tsv` dosyalarındadır. Ölçüm kullanıcı hesabı:
 `perf20@videoedit.test` (demo hesabına dokunulmadı).
+
+2026-08-24 filtre-grafiği turunun (§6.1 + §9.1 kapanış notu) ham verisi de scratchpad'dedir:
+`perfcost/capture/` (canlı worker'dan yakalanan gerçek grafik + ffmpeg komut satırı),
+`perfcost/bench/` (24 konfig × 3 tur bisect zamanlamaları + framemd5/PSNR eşdeğerlik
+kanıtları), `perfcost/verify/` (bağımsız doğrulama koşumları, önce/sonra canlı mp4'ler ve
+grafik diff'i); önce/sonra canlı koşum satırları `perf20/out-export.jsonl` içindeki
+"ONCE (run27" / "SONRA (run28" işaretli bloklardadır.

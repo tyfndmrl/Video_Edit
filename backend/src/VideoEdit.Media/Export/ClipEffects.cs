@@ -272,11 +272,29 @@ public static class ColorPipeline
         $"lut3d=file={EscapeFilterArg(cubePath)}:interp=trilinear";
 
     /// <summary>
-    /// §4.2 karışım ifadesi: <c>out = A*(1-intensity) + B*intensity</c> (A = orijinal,
-    /// B = LUT'lanmış). intensity = 1 iken split/blend HİÇ üretilmez, düz lut3d uygulanır.
+    /// §4.2 karışımı: <c>out = A*(1-intensity) + B*intensity</c> (A = orijinal, B = LUT'lanmış).
+    /// intensity = 1 iken split/blend HİÇ üretilmez, düz lut3d uygulanır.
+    /// <para>
+    /// <b>BİÇİM KARARI (2026-08-24 maliyet profili; sınır 2026-08-25'te ölçüldü).</b> Aynı
+    /// matematik eskiden <c>blend=all_expr='A*(1-i)+B*i'</c> ile yazılıyordu; <c>all_expr</c>
+    /// her piksel × kanal için AVExpr YORUMLAYICISINI çalıştırır ve tek başına 60 sn'lik
+    /// referans bileşimin %46'sını yiyordu (1080p tam kodlama 68,7 → 37,4 s;
+    /// docs/performans-raporu.md §9.1). ffmpeg'in YERLİ <c>normal</c> modu ÜST katmanı
+    /// (blend'in İLK girişi = A) ağırlıklar: <c>out = A*opacity + B*(1-opacity)</c> — yani
+    /// <c>all_opacity = 1-intensity</c> AYNI mix formülüdür. Formül aynı, iki yazılışın 8-bit
+    /// TAMSAYI YUVARLAMASI ise İÇERİĞE BAĞLI ayrışır (tam (A,B) taramasıyla ölçüldü):
+    /// intensity DYADİKSE (0.25/0.5/0.75) çıktı bayt-aynı; değilse tam-mix'in tamsayıya denk
+    /// geldiği çiftlerde tam ±1 LSB fark kalır — i=0.8'de 65.536 çiftin 1201'i (%1,8),
+    /// i=0.6'da 208'i (%0,3); ör. A=1,B=6,i=0.6 → mix=4.0, expr 3, yerli 4. Zarf, deponun
+    /// zaten beyan ettiği tolerans sınıfındadır (RGB↔YUV420 gidiş-dönüşü ±1; rendering-semantics
+    /// §9.3 parite eşikleri) ve normatif §4.2 mix formülü DEĞİŞMEDİ — karar: yazılış kalır,
+    /// sınır <c>ExportM5GoldenTests.LutBlend_NativeVsExpr_BoundedByOneLsb_AndByteExactAtDyadicIntensities</c>
+    /// golden'ıyla sabitlenir. Referans bileşim fixture'ında framemd5/sha256 bayt-aynı çıkmıştı;
+    /// o TEKİL içeriğin ölçümüdür (uyuşmazlık çifti barındırmıyor), genelleme değildir.
+    /// </para>
     /// </summary>
     public static string LutBlendFilter(double intensity) =>
-        $"blend=all_expr='A*(1-{Num(intensity)})+B*{Num(intensity)}'";
+        $"blend=all_mode=normal:all_opacity={Num(1 - intensity)}";
 
     /// <summary>
     /// Dosya yolunu filtergraph argümanı olarak güvenli hale getirir. İki kaçış seviyesi

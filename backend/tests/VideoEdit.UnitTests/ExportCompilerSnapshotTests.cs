@@ -668,6 +668,29 @@ public sealed class ExportCompilerSnapshotTests
         Assert.Equal(script.Contains("]overlay=", StringComparison.Ordinal), coordinates >= 2);
     }
 
+    [Theory]
+    [MemberData(nameof(FixtureNames))]
+    public void TheGraphNeverInvokesThePerPixelExprInterpreter(string name)
+    {
+        // PERFORMANS MUHAFIZI (2026-08-24 maliyet profili — docs/performans-raporu.md §9.1):
+        // blend=all_expr her piksel × kanal için AVExpr yorumlayıcısını çalıştırır ve tek
+        // başına 60 sn'lik referans bileşimin %46'sıydı (1080p 68,7 → 37,4 s). §4.2 karışımı
+        // yerli 'normal' moda taşındı (all_opacity = 1-intensity); eşdeğerlik dyadik
+        // yoğunlukta bayt-aynı, dyadik olmayanda <= ±1 LSB'dir (ölçülen zarf ve gerekçe:
+        // ClipEffects.LutBlendFilter yorumu + ExportM5GoldenTests LSB sınır golden'ı). Bu
+        // tarama grafiğin TAMAMINI görür: LutBlendFilter eski biçime dönerse ya da YENİ bir
+        // kod yolu yorumlayıcı tabanlı blend/geq yazarsa burası kırmızıya düşer (geq aynı
+        // yorumlayıcı sınıfıdır — kare başına ifade).
+        var script = Render(CompileFixture(name));
+        Assert.DoesNotContain("all_expr", script);
+        Assert.DoesNotContain("geq=", script);
+        if (name == "lut-effects")
+        {
+            // intensity=0.75'in yerli karşılığı; InvariantCulture (nokta) zorunlu.
+            Assert.Contains("blend=all_mode=normal:all_opacity=0.25", script);
+        }
+    }
+
     [Fact]
     public void Compile_IsDeterministic_AcrossRuns()
     {
