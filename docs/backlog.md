@@ -1098,13 +1098,31 @@ ve perf listesinden **media-urls paralelleştirmesi** (8'lik eşzamanlılık kap
 
 ### AÇIK borçlar (milestone eşlemeli)
 
-- **[YÜKSEK — M3/Export sertleştirme] 2160p bellek kabul kapısı** (baş mimar BULGU-4 = perf
-  raporu §9-2): 2160p bileşim render'ında ffmpeg tepe RSS ~4,9 GB ölçüldü; disk için kabul
-  kapısı var (`EnsureDiskSpaceAsync` + `EffectiveOutputBitsPerSecond`), bellek için YOK.
-  Bugün `WorkerCount=1` ile güvenli; export eşzamanlılığı artırılmadan ÖNCE profil başına
-  kaba bellek tahmini + işe başlamadan kabul kapısı (ExportDiskEstimate'in bellek eşi) ve
-  4K işlerine tek-uçuş/ayrı kuyruk kuralı gerekir. Eşzamanlılık artırılırsa bu madde
-  BLOKER'dır.
+- **[YÜKSEK — KAPANDI, 2026-08-24 yarim-is turu] 2160p bellek kabul kapısı** (baş mimar
+  BULGU-4 = perf raporu §9-2): ÖNCE ÖLÇÜLDÜ — 6 taban + 4 tekrar gerçek render
+  (720p/1080p/2160p × düz kesim/bileşim, perf20 projeleri) `PeakWorkingSet64` ile: tepe
+  RSS'i SÜRE değil, (a) çıktı profili pikselleri (kodlayıcı: düz kesim 461→910→2 921 MB)
+  ve (b) eşzamanlı görsel giriş × TUVAL pikselleri (bileşim grafiği profilden bağımsız
+  ~2,1-2,5 GB ekliyor; comp-720p 3 013 ≈ comp-1080p 3 009-3 306; comp-2160p tepe 5 563 MB —
+  perf turunun 500 ms örneklemli 4 908'i alt sınırmış) sürüyor. Kapı:
+  `ExportJob.EnsureMemoryAsync` — render başlamadan kullanılabilir fiziksel belleğe karşı
+  (`EstimateRequiredMemoryBytes`, ölçülen her noktayı kapsayan üst bant + %20 pay;
+  eşzamanlılık süpürmesi `MemoryEstimateInputs` — ardışık 500 klip 500 çözücü SAYILMAZ,
+  yanlış ret yok); disk kapısının bekle/başarısız deseni: geçici darlıkta `memory-wait` ile
+  2 dk erteleme, son denemede tipli `Failed('insufficient-memory')`. Windows okuyucusu
+  `GlobalMemoryStatusEx`→**`ullAvailPageFile` (commit boşluğu)** — İKİ ÖLÇÜMLE seçildi:
+  ilk sürümün `ullAvailPhys` okuması canlıda 2160p'yi yanlış reddetti (tahmin 7,0 GiB >
+  fiziksel-boş 4,9 GiB), oysa aynı yükte aynı render iki kez başarıyla koşmuştu (Windows
+  talepte diğer süreçlerin çalışma kümelerini kırpar; gerçek OOM sınırı commit'tir — o an
+  commit boşluğu 38,7 GiB ölçüldü). Linux min(`/proc/meminfo MemAvailable`, cgroup
+  limit−kullanım — v2/v1; compose'un 6g limiti konteynerde ancak böyle görülür, dosya
+  yerleşimi limitli konteynerde ölçüldü; sonuç notu `poc-bilinen-sinirlar.md` §4.6);
+  ölçülemezse -1 = kapı atlanır. Kanıt:
+  `ExportMemoryEstimateTests` (canlı korpus sabitli + gerçek render'da `ProcessStarted`
+  kancasıyla tepe ölçümü) + `ExportJobTests` bekle/başarısız/atlama yolları (enjekte
+  okuyucu) + canlı 2160p/1080p/720p exportların kapıdan etkilenmediği koşularak doğrulandı.
+  4K işlerine ayrı kuyruk/tek-uçuş kuralı bu kapsamda GEREKMEDİ (WorkerCount=1 zaten tek
+  uçuş; eşzamanlılık artırılırsa kapı hazır).
 - **[YÜKSEK — M3/Export performansı] Bileşimli render hızı** (perf §"filtre grafiği"):
   60 sn bileşim her profilde gerçek zamandan yavaş (720p 0,67x; 1080p 0,66x; 2160p 0,58x;
   düz kesim 9,38x) ve 2160p'de ffmpeg ~12,3/20 çekirdek kullanıyor. Sıra: (1)

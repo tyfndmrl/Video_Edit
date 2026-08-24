@@ -496,6 +496,96 @@ public sealed class ExportJobTests : IDisposable
         }
     }
 
+    // ---------- Bellek kabul kapısı (disk kapısının bekle/başarısız deseniyle) ----------
+
+    /// <summary>
+    /// GEÇİCİ bellek darlığı: kapı işi Failed ETMEZ, 'memory-wait' ile 2 dk sonraya yeniden
+    /// kuyruklar (disk-wait'in eşi). Okuyucu enjekte edilir — gerçek darlık simülasyonu
+    /// budur: formülün bu belge için istediği tahmin (>1 GB) 512 MB'lik "kullanılabilir"
+    /// değeriyle karşılanamaz.
+    /// </summary>
+    [Fact]
+    public async Task Run_InsufficientMemory_RequeuesWithMemoryWaitStage()
+    {
+        var job = await SeedReadyAssetAndJobAsync();
+        var jobs = new RecordingJobClient();
+        var runner = CreateJobRunner(jobs);
+        runner.AvailableMemoryProbe = () => 512L * 1024 * 1024;
+
+        await runner.Run(job.Id, CancellationToken.None);
+
+        var reloaded = Reload(job.Id);
+        Assert.Equal(JobStatus.Queued, reloaded.Status);
+        Assert.Equal("memory-wait", reloaded.ProgressStage);
+        Assert.Equal(1, jobs.ScheduleCount);
+    }
+
+    /// <summary>KALICI darlık: son denemede tipli Failed('insufficient-memory'), erteleme YOK.</summary>
+    [Fact]
+    public async Task Run_InsufficientMemory_OnFinalAttempt_FailsTyped()
+    {
+        var job = await SeedReadyAssetAndJobAsync();
+        job.AttemptCount = ExportJob.MaxInsufficientMemoryAttempts - 1; // Run bir artıracak
+        await _db.SaveChangesAsync();
+
+        var jobs = new RecordingJobClient();
+        var runner = CreateJobRunner(jobs);
+        runner.AvailableMemoryProbe = () => 512L * 1024 * 1024;
+
+        await runner.Run(job.Id, CancellationToken.None);
+
+        var reloaded = Reload(job.Id);
+        Assert.Equal(JobStatus.Failed, reloaded.Status);
+        Assert.StartsWith("insufficient-memory: ", reloaded.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(0, jobs.ScheduleCount);
+    }
+
+    /// <summary>
+    /// Ölçüm YOKLUĞU yanlış ret üretmez: okuyucu -1 dönerse kapı atlanır ve iş indirme
+    /// aşamasına GEÇER (disk kapısının -1 sözleşmesiyle aynı; devam kanıtı StubStorage'ın
+    /// transient patlaması — Run_TrimFreesEnoughDisk ile aynı teknik).
+    /// </summary>
+    [Fact]
+    public async Task Run_MemoryUnmeasurable_SkipsTheGateAndContinues()
+    {
+        var job = await SeedReadyAssetAndJobAsync();
+        var jobs = new RecordingJobClient();
+        var runner = CreateJobRunner(jobs);
+        runner.AvailableMemoryProbe = () => -1;
+
+        await Assert.ThrowsAsync<NotSupportedException>(
+            () => runner.Run(job.Id, CancellationToken.None));
+
+        Assert.Equal(0, jobs.ScheduleCount);
+        Assert.Equal(JobStatus.Running, Reload(job.Id).Status); // erteleme/fail yazılmadı
+    }
+
+    /// <summary>
+    /// BOL bellek kapıdan geçer: tahminin hemen üstündeki bir değerle bile iş indirmeye
+    /// ilerler — kapı gereğinden geniş bir bant istemiyor (yanlış ret sınıfının birim ucu;
+    /// canlı ucu ExportMemoryEstimateTests + gerçek 2160p koşusudur).
+    /// </summary>
+    [Fact]
+    public async Task Run_AmpleMemory_PassesTheGate()
+    {
+        var job = await SeedReadyAssetAndJobAsync();
+        var jobs = new RecordingJobClient();
+        var runner = CreateJobRunner(jobs);
+
+        // Bu belgenin tahmini (boyutsuz kaynak → tuval varsayımı): birebir formülden.
+        var required = ExportJob.EstimateRequiredMemoryBytes(
+            targetPixels: 1920L * 1080, canvasPixels: 1920L * 1080,
+            graphInputCount: 1, peakConcurrentVisualInputs: 1,
+            peakConcurrentMotionSourcePixels: 1920L * 1080);
+        runner.AvailableMemoryProbe = () => required; // tam sınırda: available >= required
+
+        await Assert.ThrowsAsync<NotSupportedException>(
+            () => runner.Run(job.Id, CancellationToken.None));
+
+        Assert.Equal(0, jobs.ScheduleCount);
+        Assert.Equal(JobStatus.Running, Reload(job.Id).Status);
+    }
+
     /// <summary>
     /// 12. TUR BULGUSUNUN KAPANIŞI (docs/backlog.md "[AÇIK — ORTA] Birim testi MAKİNE
     /// GENELİNDEKİ gerçek export cache'ini SİLİYOR"): disk-darlığı yolu agresif

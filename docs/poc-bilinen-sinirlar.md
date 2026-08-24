@@ -1107,6 +1107,16 @@ edilen kontrol imajı `uid=0(root)` idi). **Kalan borç:** seccomp profili ve ff
 başına CPU/kaynak sınırı hâlâ tanımlı değildir; worker'da bellek limiti var (`compose.yml`:
 6 GB), CPU limiti yok.
 
+**Bellek kabul kapısıyla etkileşim (2026-08-24):** export işleri artık render'dan önce
+kullanılabilir belleğe karşı kapıdan geçer (`ExportJob.EnsureMemoryAsync`; Linux'ta
+min(`MemAvailable`, cgroup limit−kullanım) okunur — v2 `memory.max/current`, v1
+`memory/memory.limit_in_bytes|usage_in_bytes`). SONUÇ: 6 GB limitli bu dağıtımda 2160p
+BİLEŞİM tahmini (~7,5 GB — ölçülen gerçek tepe 5,6 GB + pay) limiti aşar; böyle bir iş
+`memory-wait` ertelemelerinden sonra tipli `insufficient-memory` ile düşer. Bu BİLİNÇLİDİR:
+alternatif, 6 GB sınırında konteynerin OOM-kill'iyle worker'ın komple ölmesiydi (tipli,
+iş-başına, açıklamalı ret > SIGKILL). 4K bileşim export'u bu dağıtımda gerekiyorsa limit
+büyütülmelidir (tek katman 4K ≈ 4,4 GB tahminle geçer).
+
 ### 4.7 Sunucuda tam şema doğrulaması yok
 
 `PUT /api/projects/{id}/timeline` **yüzeysel** doğrular (schemaVersion, projectId, track/klip

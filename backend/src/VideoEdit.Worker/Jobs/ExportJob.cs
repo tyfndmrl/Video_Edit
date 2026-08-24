@@ -20,13 +20,15 @@ namespace VideoEdit.Worker.Jobs;
 /// <summary>
 /// M3 export hattı ('export' kuyruğu, eşzamanlılık 1): Job.TimelineSnapshot → FilterGraph
 /// Compiler → orijinaller LRU cache'e (OriginalDownloader ile — ProcessAssetJob ile ortak
-/// desen) → disk rezervasyonu → graph.txt (job artefaktı, loglanır) → ffmpeg (FfmpegRunner)
-/// → çıktı ffprobe doğrulaması → ExportsBucket'a yükle → Succeeded + OutputKey.
+/// desen) → disk + bellek rezervasyonu → graph.txt (job artefaktı, loglanır) → ffmpeg
+/// (FfmpegRunner) → çıktı ffprobe doğrulaması → ExportsBucket'a yükle → Succeeded + OutputKey.
 ///
 /// Hata sınıflandırması ProcessAssetJob ile AYNIDIR:
 ///  - deterministik (derleme/ffmpeg/probe/S3-4xx) → job Failed, retry YOK (normal dönüş);
 ///  - transient (ağ/S3-5xx/IO) → exception fırlar, AutomaticRetry(2) + JobFailureStateFilter;
-///  - disk yetersiz → 2 dk sonraya yeniden kuyruk, 3. denemede Failed('disk-full').
+///  - disk yetersiz → 2 dk sonraya yeniden kuyruk, 3. denemede Failed('disk-full');
+///  - bellek yetersiz → aynı desen: 'memory-wait' ile yeniden kuyruk, son denemede
+///    Failed('insufficient-memory') (tahmin ExportMemoryEstimateTests ile ölçüme sabitlenmiştir).
 ///
 /// Cancel: API Job.Status=Canceled yazar + Hangfire işini siler. Koşan iş bunu (a) Hangfire
 /// cancellation token'ından, (b) progress sırasındaki DB yoklamasından görür; ffmpeg süreç
@@ -56,6 +58,15 @@ public sealed class ExportJob(
 
     public static readonly TimeSpan DiskFullRetryDelay = TimeSpan.FromMinutes(2);
 
+    /// <summary>
+    /// Bellek yetersizse en fazla bu kadar denemede Failed('insufficient-memory'). Sayaç
+    /// disk kapısıyla AYNI AttemptCount'tur (iş başına tek deneme bütçesi): iki kapı
+    /// arasında sonsuz ping-pong kurulamaz.
+    /// </summary>
+    public const int MaxInsufficientMemoryAttempts = 3;
+
+    public static readonly TimeSpan MemoryWaitRetryDelay = TimeSpan.FromMinutes(2);
+
     /// <summary>Çıktı süresi doğrulama toleransı (görev sözleşmesi: beklenen ±1 sn).</summary>
     public const long OutputDurationToleranceUs = 1_000_000;
 
@@ -67,6 +78,13 @@ public sealed class ExportJob(
     /// DriveInfo kullanılır. Disk-yetersiz yolunun (trim + erteleme) birim testi bunsuz kurulamaz.
     /// </summary>
     internal Func<string, long>? FreeSpaceProbe { get; set; }
+
+    /// <summary>
+    /// Testler için kullanılabilir bellek kancası (bayt; -1 = ölçülemedi). Prod'da null —
+    /// <see cref="AvailableMemory.TryGetAvailableBytes"/> kullanılır (platform semantiği ve
+    /// gerekçesi o sınıfta). Kapının bekle/başarısız yolları bunsuz in-process test edilemez.
+    /// </summary>
+    internal Func<long>? AvailableMemoryProbe { get; set; }
 
     public async Task Run(Guid jobId, CancellationToken ct)
     {
@@ -183,6 +201,15 @@ public sealed class ExportJob(
             var totalSourceBytes = visible.Sum(a => a.SizeBytes);
             if (!await EnsureDiskSpaceAsync(
                     job, tempDir, totalSourceBytes, plan.TotalDurationUs, profile, visible, ct))
+            {
+                return;
+            }
+
+            // ── 3b) Bellek rezervasyonu: ffmpeg tepe RSS tahmini (ölçüme sabitlenmiş formül —
+            // EstimateRequiredMemoryBytes) kullanılabilir belleği (AvailableMemory: Windows'ta
+            // commit boşluğu, Linux'ta min(MemAvailable, cgroup) — gerekçeler o sınıfta)
+            // aşıyorsa render'a HİÇ başlanmaz; disk kapısının bekle/başarısız deseni izlenir.
+            if (!await EnsureMemoryAsync(job, plan, profile, visible, ct))
             {
                 return;
             }
@@ -574,6 +601,189 @@ public sealed class ExportJob(
 
         return bps;
     }
+
+    // ───────────────────── Bellek kabul kapısı (disk kapısının eşi) ─────────────────────
+
+    /// <summary>Tahmin tabanı: ffmpeg çalışma zamanı + demux/AVIO + ses zincirleri (256 MiB).</summary>
+    public const long MemoryBaseBytes = 256L * 1024 * 1024;
+
+    /// <summary>
+    /// Kodlayıcı terimi: ÇIKTI pikseli başına bayt. Ölçüm (2026-08-24, bu makine, 20 mantıksal
+    /// çekirdek → x264 veryfast ~30 iş parçacığı): düz kesim serisinde tepe RSS 461 MB (720p)
+    /// → 910 MB (1080p) → 2 921 MB (2160p); eğim 323-390 B/px. 400 üst banttır.
+    /// </summary>
+    public const long MemoryEncoderBytesPerTargetPixel = 400;
+
+    /// <summary>Giriş başına sabit pay (demuxer + codec bağlamı + paket kuyruğu): 4 MiB.</summary>
+    public const long MemoryDemuxBytesPerInput = 4L * 1024 * 1024;
+
+    /// <summary>
+    /// EŞZAMANLI çözülen kaynak pikseli başına bayt: frame-thread'li H.264 çözücü havuzu
+    /// (≤16 iş parçacığı karesi + referanslar ≈ 32 B/px). 48 üst banttır. TÜM girişler değil,
+    /// aynı anda AKTİF olanlar sayılır: ffmpeg girişleri zaman damgası dengelemesiyle okur,
+    /// sırası gelmemiş girişin kare havuzu dolmaz (500 klilik ardışık belge bu sayede
+    /// 500×havuz DEĞİLDİR — yanlış ret üretmez).
+    /// </summary>
+    public const long MemoryDecodeBytesPerSourcePixel = 48;
+
+    /// <summary>
+    /// Karışım terimi: İLKİ HARİÇ eşzamanlı görsel giriş başına, TUVAL pikseli başına bayt.
+    /// Ölçümün ana bulgusu: bileşim grafiği (xfade + 2 raster overlay) tepe RSS'e profilden
+    /// BAĞIMSIZ ~2,1-2,5 GB ekliyor (comp-720p 3 013 ≈ comp-1080p 3 009-3 306 MB) — filtre
+    /// kuyrukları tuval çözünürlüğünde, eşzamanlı zincir sayısıyla büyüyor. 400 B/px ≈ zincir
+    /// başına ~267 tuval karesi; üç ek zincirli ölçülen belgeyi payla kapsar.
+    /// </summary>
+    public const long MemoryMixBytesPerCanvasPixel = 400;
+
+    /// <summary>
+    /// Gerekli kullanılabilir bellek tahmini — disk kapısındaki
+    /// <see cref="EstimateRequiredDiskBytes"/>'ın eşi; KABA ama ölçülen her noktayı kapsayan
+    /// güvenli üst bant (+%20 pay, ExportMemoryEstimateTests ölçümle sabitler).
+    /// <para>
+    /// ÖLÇÜMLE bulunan sürücüler (6 taban + 4 tekrar gerçek render, ffmpeg tepe RSS
+    /// PeakWorkingSet64 ile): (1) çıktı profili pikselleri — kodlayıcı iş parçacığı havuzu;
+    /// (2) eşzamanlı görsel giriş sayısı × tuval pikselleri — filtre grafiği kuyrukları
+    /// (bileşimde profilden bağımsız ~2,5 GB ölçüldü); (3) eşzamanlı çözülen kaynak
+    /// pikselleri. Süre SÜRÜCÜ DEĞİL (boru hattı akışkan: 60 sn belge boyunca tepe sabit).
+    /// </para>
+    /// </summary>
+    public static long EstimateRequiredMemoryBytes(
+        long targetPixels, long canvasPixels, int graphInputCount,
+        int peakConcurrentVisualInputs, long peakConcurrentMotionSourcePixels)
+    {
+        var bytes = MemoryBaseBytes
+            + MemoryEncoderBytesPerTargetPixel * targetPixels
+            + MemoryDemuxBytesPerInput * graphInputCount
+            + MemoryDecodeBytesPerSourcePixel * peakConcurrentMotionSourcePixels
+            + MemoryMixBytesPerCanvasPixel
+                * Math.Max(0, peakConcurrentVisualInputs - 1) * canvasPixels;
+        return bytes * 12 / 10;
+    }
+
+    /// <summary>
+    /// Plan + DB olgularından tahmin girdileri: ffmpeg giriş sayısı (medya kullanımları +
+    /// rasterler), EŞZAMANLI görsel giriş tepe sayısı ve eşzamanlı çözülen kaynak piksel
+    /// tepe toplamı (süpürme — geçiş payları <c>HeadIn/OutUs</c> aralığı genişletir, çünkü
+    /// xfade penceresinde iki kaynak GERÇEKTEN aynı anda çözülür; ölçülen bileşimin tepe
+    /// dakikası tam o penceredir).
+    /// </summary>
+    public static (int GraphInputCount, int PeakConcurrentVisualInputs, long PeakConcurrentMotionSourcePixels)
+        MemoryEstimateInputs(ExportPlan plan, ExportProfile profile, IReadOnlyCollection<Asset> sources)
+    {
+        var clipsById = plan.Tracks
+            .SelectMany(t => t.Clips)
+            .ToLookup(c => c.Id);
+        var dimsByAsset = sources.ToDictionary(a => a.Id, a => (a.Width, a.Height));
+        var (targetWidth, targetHeight) = ExportProfiles.Target(profile);
+        var canvasPixels = (long)plan.Width * plan.Height;
+        // Boyutu bilinmeyen kaynak (eski satır): tuval/hedefin büyüğü varsayılır — küçümseme
+        // yerine payla kapsama (disk kapısının max(profil, kaynak) yaklaşımıyla aynı yön).
+        var fallbackPixels = Math.Max(canvasPixels, (long)targetWidth * targetHeight);
+
+        // Süpürme olayları: +piksel (görselse +1 giriş) / kapanışta tersi. Yarı açık aralık;
+        // geçiş payları uçları genişletir. Raster klipler görsel giriştir (PNG loop).
+        var events = new List<(long AtUs, int VisualDelta, long MotionPixelDelta)>();
+
+        void AddInterval(ExportClipPlan clip, long motionPixels)
+        {
+            var startUs = clip.TimelineStartUs - clip.HeadInUs;
+            var endUs = clip.TimelineEndUs + clip.HeadOutUs;
+            events.Add((startUs, 1, motionPixels));
+            events.Add((endUs, -1, -motionPixels));
+        }
+
+        var graphInputCount = plan.RasterClips.Count;
+        foreach (var raster in plan.RasterClips)
+        {
+            AddInterval(raster, 0);
+        }
+
+        foreach (var use in plan.AssetUses)
+        {
+            graphInputCount++;
+            if (use.Need == ExportSourceNeed.Audio)
+            {
+                continue; // ses girişinin kare havuzu yok — yalnız giriş sabiti sayılır
+            }
+
+            var motionPixels = 0L;
+            if (use.Need == ExportSourceNeed.Motion)
+            {
+                motionPixels = dimsByAsset.TryGetValue(use.AssetId, out var dims)
+                               && dims is { Width: > 0, Height: > 0 }
+                    ? (long)dims.Width.Value * dims.Height.Value
+                    : fallbackPixels;
+            }
+
+            var clip = clipsById[use.ClipId].FirstOrDefault();
+            if (clip is null)
+            {
+                // Defter satırının klibi bulunamadı (beklenmez): tüm süre boyunca aktif say —
+                // küçümseme yönünde hata yapılmaz.
+                events.Add((0, 1, motionPixels));
+                events.Add((plan.TotalDurationUs, -1, -motionPixels));
+                continue;
+            }
+
+            AddInterval(clip, motionPixels);
+        }
+
+        var peakVisual = 0;
+        var peakMotionPixels = 0L;
+        var visual = 0;
+        var motionPx = 0L;
+        foreach (var (_, visualDelta, motionPixelDelta) in events
+                     .OrderBy(e => e.AtUs).ThenBy(e => e.VisualDelta))
+        {
+            visual += visualDelta;
+            motionPx += motionPixelDelta;
+            peakVisual = Math.Max(peakVisual, visual);
+            peakMotionPixels = Math.Max(peakMotionPixels, motionPx);
+        }
+
+        return (graphInputCount, peakVisual, peakMotionPixels);
+    }
+
+    private async Task<bool> EnsureMemoryAsync(
+        Job job, ExportPlan plan, ExportProfile profile,
+        IReadOnlyCollection<Asset> sources, CancellationToken ct)
+    {
+        var availableBytes = MeasureAvailableMemory();
+        var (inputs, peakVisual, peakMotionPixels) = MemoryEstimateInputs(plan, profile, sources);
+        var (targetWidth, targetHeight) = ExportProfiles.Target(profile);
+        var requiredBytes = EstimateRequiredMemoryBytes(
+            (long)targetWidth * targetHeight, (long)plan.Width * plan.Height,
+            inputs, peakVisual, peakMotionPixels);
+        if (availableBytes < 0 || availableBytes >= requiredBytes)
+        {
+            return true;
+        }
+
+        // Disk kapısındaki trim'in eşi YOKTUR: worker'ın serbest bırakabileceği bellek yok —
+        // darlık başka süreçlerindir (ör. transcode kuyruğundaki ffmpeg) ve beklemek çözer.
+        if (job.AttemptCount >= MaxInsufficientMemoryAttempts)
+        {
+            await FailAsync(job, "insufficient-memory",
+                $"insufficient available memory after {job.AttemptCount} attempts "
+                + $"(need {requiredBytes} bytes, available {availableBytes}).");
+            return false;
+        }
+
+        job.Status = JobStatus.Queued;
+        job.ProgressStage = "memory-wait";
+        await db.SaveChangesAsync(ct);
+        backgroundJobs.Schedule<IExportJob>(
+            j => j.Run(job.Id, CancellationToken.None), MemoryWaitRetryDelay);
+        logger.LogWarning(
+            "ExportJob {JobId}: insufficient memory (need {Required}, available {Available}); "
+            + "re-queued attempt {Attempt}/{Max} in {Delay}.",
+            job.Id, requiredBytes, availableBytes, job.AttemptCount,
+            MaxInsufficientMemoryAttempts, MemoryWaitRetryDelay);
+        return false;
+    }
+
+    private long MeasureAvailableMemory() =>
+        AvailableMemoryProbe?.Invoke() ?? AvailableMemory.TryGetAvailableBytes();
 
     private async Task<bool> EnsureDiskSpaceAsync(
         Job job, string tempDir, long totalSourceBytes, long durationUs,

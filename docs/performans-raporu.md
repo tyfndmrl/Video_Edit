@@ -314,6 +314,14 @@ worker sayısı/eşzamanlılık artarsa iki-üç 4K iş belleği bitirebilir. Di
 var (ExportDiskEstimate), bellek için yok.
 Öneri: profil başına kaba bellek tahmini + işe başlamadan kabul kapısı; 4K işleri ayrı
 kuyruk/tek-uçuş kuralına bağlamak. Tahmini kazanç: ölçek artışında OOM/kasma riskini sıfırlar.
+**KAPATILDI (2026-08-24 yarim-is #3):** kabul kapısı eklendi — `ExportJob.EnsureMemoryAsync`
+(bekle `memory-wait` / tipli `insufficient-memory`, disk kapısının deseni). Tahmin formülü
+YENİ ölçüm turuna sabitli (`ExportMemoryEstimateTests`): `PeakWorkingSet64` ile 10 gerçek
+render — düz kesim 461/910/2 921 MB (720p/1080p/2160p), bileşim 3 013/3 009-3 306/5 063-5 563 MB.
+Not: bu rapordaki 4 908, 500 ms WorkingSet örneklemesinin ALT SINIRIYMIŞ; çekirdek takipli
+gerçek tepe 2160p bileşimde 5 563 MB ölçüldü. Süre sürücü değil; sürücüler çıktı pikselleri
+(kodlayıcı) + eşzamanlı görsel giriş × tuval pikselleri (filtre kuyrukları). Ayrı 4K kuyruğu
+gerekmedi (WorkerCount=1 tek uçuş; eşzamanlılık artarsa kapı hazır).
 
 **3. Çok-GB ingest paylaşılan Docker diskini doyuruyor (şiddet: ORTA — dev altyapısı)**
 Ölçüm: aynı 1.43 GB dosya için part-PUT 14.4 / 36.5 / 266.7 MB/s; sağlıklı durumda prob

@@ -32,7 +32,7 @@ export interface ExportJobDto {
   status: ExportJobStatusDto;
   profile: string | null;
   progressPercent: number;
-  /** Worker stage key: 'download' | 'compile' | 'render' | 'probe' | 'upload' | 'done' | 'disk-wait' | 'canceled' — null before the worker first reports. */
+  /** Worker stage key: 'download' | 'compile' | 'render' | 'probe' | 'upload' | 'done' | 'disk-wait' | 'memory-wait' | 'canceled' — null before the worker first reports. */
   progressStage: string | null;
   /** Failure reason (status === 'failed'); null otherwise. */
   error: string | null;

@@ -356,8 +356,8 @@ export function mapExportError(status: number, body: unknown): ExportStartError 
 /**
  * progressStage -> Turkish label. Stage keys come from the worker
  * (backend/src/VideoEdit.Worker/Jobs/ExportJob.cs): download, compile, render,
- * probe, upload, done, disk-wait. Unknown stages fall through verbatim;
- * null (worker has not reported yet) renders as empty.
+ * probe, upload, done, disk-wait, memory-wait. Unknown stages fall through
+ * verbatim; null (worker has not reported yet) renders as empty.
  */
 export function stageLabel(stage: string | null): string {
   switch (stage) {
@@ -375,6 +375,8 @@ export function stageLabel(stage: string | null): string {
       return 'Yükleniyor';
     case 'disk-wait':
       return 'Disk bekleniyor';
+    case 'memory-wait':
+      return 'Bellek bekleniyor';
     default:
       return stage;
   }

@@ -157,8 +157,8 @@ describe('mapExportError (ExportDialog message)', () => {
 });
 
 describe('stage / status labels', () => {
-  // Stage anahtarları backend/src/VideoEdit.Worker/Jobs/ExportJob.cs ile
-  // senkron tutulmalı (download/compile/render/probe/upload/done/disk-wait).
+  // Stage anahtarları backend/src/VideoEdit.Worker/Jobs/ExportJob.cs ile senkron
+  // tutulmalı (download/compile/render/probe/upload/done/disk-wait/memory-wait).
   it('maps the known worker progress stages to Turkish', () => {
     expect(stageLabel('download')).toBe('İndiriliyor');
     expect(stageLabel('compile')).toBe('Hazırlanıyor');
@@ -166,6 +166,7 @@ describe('stage / status labels', () => {
     expect(stageLabel('probe')).toBe('Doğrulanıyor');
     expect(stageLabel('upload')).toBe('Yükleniyor');
     expect(stageLabel('disk-wait')).toBe('Disk bekleniyor');
+    expect(stageLabel('memory-wait')).toBe('Bellek bekleniyor');
   });
 
   it('passes unknown stages through verbatim (forward compatibility)', () => {

@@ -396,6 +396,13 @@ public sealed class ExportGateInventoryTests : IDisposable
             "Depo yetki/erişim hatası — istek anında bilinemez."),
         ("disk-full", GateOwner.WorkerOnly,
             "Worker diskinin o andaki boş alanı; API sürecinin bilgisi değil."),
+        ("insufficient-memory", GateOwner.WorkerOnly,
+            "Worker makinesinin O ANDAKİ kullanılabilir belleği (Windows'ta commit boşluğu, "
+            + "Linux'ta min(MemAvailable, cgroup) — AvailableMemory.cs) — disk-full ile aynı "
+            + "sınıf: istek anında API sürecinden bilinemez, render anında ölçülür. Geçici "
+            + "darlık 'memory-wait' ile ertelenir (disk-wait deseni); son denemede tipli "
+            + "Failed. Tahmin formülü ölçüme sabitlidir (ExportMemoryEstimateTests), "
+            + "bekle/başarısız yolları ExportJobTests'te enjekte okuyucuyla koşturulur."),
         ("unsupported-media", GateOwner.WorkerOnly,
             "İndirilen DOSYANIN ffprobe sonucu: çözülebiliyor mu ve klibin istediği akışı "
             + "taşıyor mu. Senkron karşılığı 'asset-clip-type'tır (aynı defter, DB olgularıyla); "
@@ -1091,7 +1098,7 @@ public sealed class ExportGateInventoryTests : IDisposable
 
         // Dinamik gerekçeler (ex.Feature / ex.Code / ffmpeg) '*' ile defterdedir; toplam
         // FailAsync sayısını sabitlemek yeni bir dalın sessizce eklenmesini engeller.
-        Assert.Equal(22, Regex.Matches(source, @"FailAsync\(job,").Count);
+        Assert.Equal(23, Regex.Matches(source, @"FailAsync\(job,").Count);
     }
 
     [Fact]

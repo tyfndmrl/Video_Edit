@@ -50,6 +50,14 @@ public sealed class FfmpegRunner(FfmpegOptions options)
     public const long OutputTimeCeilingSlackUs = 5_000_000;
 
     /// <summary>
+    /// Testler için süreç kancası: her ffmpeg süreci başlatıldığında çağrılır. Bellek kapısı
+    /// tahmininin ölçüm testi (ExportMemoryEstimateTests) TAM BU sürecin tepe RSS'ini
+    /// örneklemek zorundadır — ada göre süreç aramak makinedeki canlı worker'ın ffmpeg'ini
+    /// yakalayıp ölçümü kirletirdi. Prod'da null (FreeSpaceProbe deseniyle aynı sınıf).
+    /// </summary>
+    internal Action<Process>? ProcessStarted { get; set; }
+
+    /// <summary>
     /// ÇIKTI SAATİ TAVANI: <c>-progress</c> akışındaki <c>out_time</c> bunu aşarsa süreç
     /// öldürülür. Sessizlik bekçisinin (<see cref="DefaultWatchdogTimeout"/>) GÖREMEDİĞİ hali
     /// yakalar — kaçak grafik durmadan progress bastığı için "sessiz" olmaz ve bekçi asla
@@ -110,6 +118,7 @@ public sealed class FfmpegRunner(FfmpegOptions options)
 
         using var process = new Process { StartInfo = psi };
         process.Start();
+        ProcessStarted?.Invoke(process);
 
         var lastActivityTicks = Environment.TickCount64;
         var timedOut = false;

@@ -7,7 +7,7 @@
  * tutulmalı (camelCase alan adları: id, projectId, status, profile,
  * progressPercent, progressStage, error, downloadUrl, createdAt, startedAt,
  * completedAt; stage anahtarları VideoEdit.Worker/Jobs/ExportJob.cs'ten:
- * download/compile/render/probe/upload/done/disk-wait).
+ * download/compile/render/probe/upload/done/disk-wait/memory-wait).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
