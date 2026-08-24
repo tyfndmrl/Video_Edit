@@ -31,3 +31,21 @@
 - 2026-08-24 (#5 sonrası): servisler `api-run28` / `worker-run28` (Release, blend yerli mod)
   çiftine alındı; yüklü modül yolları + çift-hizalamalı UTF-16 iğne taraması ile doğrulandı
   (`blend=all_mode=normal:all_opacity=` VAR, eski `blend=all_expr='A*(1-` YOK). Migration yok.
+- 2026-08-25 (nihai kapanış doğrulaması): 9 madde tek koşumda yeniden kanıtlandı. Servisler
+  HEAD (384cf6d) `dotnet publish` çıktısı `api-run-final` / `worker-run-final` (Release)
+  çiftine alındı; yüklü modül yolları + çift-hizalamalı UTF-16 iğneyle tazelik doğrulandı
+  (`VideoEdit.Media.dll`'de yeni `blend=all_mode=normal:all_opacity=` VAR, eski
+  `blend=all_expr='A*(1-` YOK; `VideoEdit.Api.dll`'deki tek `all_expr=` vuruşu davranış
+  değil, `ClipEffects.LutBlendFilter` XML doküman yorumunun literalidir). Vite taze
+  başlatıldı; kaçak ffmpeg yok. Kanıtlar: Playwright TAM suite 157/157 yeşil (581 sn, tek
+  kırmızı yok); demo senaryosu gerçek fare/klavyeyle uçtan uca (export tamamlandı, indirilen
+  MP4 ffprobe'da h264+aac 18 sn, müzik 440 Hz imzası içeride 0 dB / dışarıda −86,7 dB);
+  #3 canlı export comp-1080p + comp-2160p bileşim `succeeded`, fiziksel-boş 4,41 GiB iken
+  bile `memory-wait`/`insufficient-memory` ÜRETİLMEDİ (commit-boşluk kapısı doğru);
+  #4 yeni asset media-urls p50 2,55 ms + DB `FilmstripManifest` jsonb DOLU (canlıda 97 hızlı
+  yol / 2069 yedek yol); #5 comp-1080p 60 sn belge 1,58x & 1,52x (yakalanan graph'ta
+  `all_opacity=0.2` + `lut3d`, `all_expr` YOK), LUT'lu export ffprobe'da 1920×1080 h264;
+  #6 cross-user 3 uç (proje + media-urls + asset) 404, kurban durumu değişmedi;
+  #12 kasıtlı CS1573 sade `dotnet build`'i kırdı (exit 1), geri alınınca 0/0;
+  #13 `/health` fonts parmak izi `f8620403…c1f4861d` == worker açılış satırı; #1/#2/#14 suite
+  yeşilliğiyle + izole koşumla sabit. `git status` PROGRESS.md dışında temiz. Migration yok.
