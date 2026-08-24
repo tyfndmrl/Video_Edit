@@ -289,8 +289,7 @@ try
         app.MapOpenApi();
     }
 
-    app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
-
+    app.MapHealthEndpoints();
     app.MapAuthEndpoints();
     app.MapProjectEndpoints();
     app.MapAssetEndpoints();

@@ -140,9 +140,15 @@ EnsureMediaToolAvailable(ffmpegOptions.FfprobePath, "ffprobe");
     try
     {
         var loaded = FontManifest.Load(Path.Combine(fontRoot, TextRasterOptions.ManifestFileName));
+        // Parmak izi API `GET /health` cevabındaki `fonts.fingerprint` ile AYNI türetimdir
+        // (FontRootHealth): iki değer birebir aynı değilse API ile worker FARKLI kök ya da
+        // pin seti görüyordur — karşılaştırma adımı deploy/README.md §5.2 (4. adım).
+        var health = FontRootHealth.Describe(loaded);
         bootLogger.LogInformation(
-            "Font manifesti yüklendi ({Count} fontId): {Fonts} — kök: {Root}",
-            loaded.Fonts.Count, string.Join(", ", loaded.Fonts.Keys.Order()), fontRoot);
+            "Font manifesti yüklendi ({Count} fontId, {Present}/{Declared} dosya, parmak izi {Fingerprint}): "
+            + "{Fonts} — kök: {Root}",
+            loaded.Fonts.Count, health.FilesPresent, health.FilesDeclared, health.Fingerprint,
+            string.Join(", ", loaded.Fonts.Keys.Order()), fontRoot);
     }
     catch (OverlayRasterException ex)
     {

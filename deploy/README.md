@@ -190,11 +190,22 @@ curl -s -o /dev/null -w '%{http_code} %{content_type} %{size_download}\n' \
 
 # 3) Worker acilis logunda manifest yuklendi mi
 docker compose logs worker | grep -i "Font manifesti"
-# beklenen: "Font manifesti yuklendi (4 fontId): ... — kok: /data/fonts"
+# beklenen: "Font manifesti yuklendi (4 fontId, 16/16 dosya, parmak izi <64 hex>): ... — kok: /data/fonts"
+
+# 4) API ile worker AYNI koku mu goruyor? (metin kapilarinin 422/503 kararlari bu varsayima
+#    dayanir — docs/poc-bilinen-sinirlar.md §3.3)
+curl -s https://$DOMAIN/health | jq .fonts
+# beklenen: found:true, fontIds:4, filesPresent == filesDeclared == 16, fingerprint dolu.
+# fingerprint degeri 3. adimdaki worker satirinin "parmak izi" degeriyle BIREBIR ayni olmali:
+# ayni tureyis (manifest + lock pin setinin sha256'si) iki ucta da kullanilir. Degerler
+# ayrisiyorsa iki surec FARKLI kok ya da farkli manifest.lock goruyor — §5.1'deki bind
+# mount'lari esitleyin ve iki servisi yeniden olusturun.
 ```
 
 Font kokunu bulamayan worker **acilista UYARIR, dusmez**; sorunu ilk metin klipli export'ta
-gorursunuz. Yukaridaki 3. komut bunu dagitim aninda yakalar.
+gorursunuz. Yukaridaki 3. komut bunu dagitim aninda yakalar; 4. komut ayrica API'nin de ayni
+kurulumu gordugunu kanitlar (`/health` font eksiginde de **200 doner** — rapor durustur ama
+saglik kapisi degildir; `found:false` + bakilan yol + sebep gosterir).
 
 ## 6. Isletme
 
@@ -224,6 +235,8 @@ kullanici siraya girer. Coklu worker container'i ile yatay olcekleme **denenmedi
 - [ ] `docker compose logs migrator` -> migration basarili
 - [ ] `curl -fsS https://$DOMAIN/api/fonts` -> 200 **ve** `pinned: true` (§5.2)
 - [ ] `docker compose logs worker | grep "Font manifesti"` -> yuklendi
+- [ ] `curl -s https://$DOMAIN/health | jq .fonts` -> `found:true` ve `fingerprint` worker
+      satirindaki "parmak izi" ile ayni (§5.2 adim 4)
 - [ ] R2 CORS: medya bucket (`ExposeHeaders: ETag`) **ve** exports bucket
 - [ ] R2 lifecycle: multipart abort 7 gun, exports 30 gun TTL
 - [ ] Frontend `dist` kopyalandi, `e2e-test-video.mp4` **icinde degil**

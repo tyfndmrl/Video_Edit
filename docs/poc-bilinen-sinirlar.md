@@ -900,6 +900,18 @@ ile worker aynı `TextRasterOptions.FontRoot`/`FontRootLocator`'ı kullanır —
 worker'da olup API'de olmayan bir dağıtımda bu 503 yanlış ret olurdu (o dağıtım metin için
 zaten bozuktur: `/api/fonts` 503 döndüğü için editör font bile listeleyemez).
 
+**NASIL DOĞRULANIR (yarım-iş #13 — varsayım artık ölçülebilir).** İki uç aynı raporu AYNI
+türetimle verir (`FontRootHealth`, `VideoEdit.Media/Text`): `GET /health` cevabının `fonts`
+bölümü (bulundu mu, kaç fontId, kaç dosya tanımlı/mevcut, manifest + lock pin setinin sha256
+**parmak izi**) ile worker açılış logunun `Font manifesti yüklendi (… parmak izi …)` satırı.
+İki parmak izi birebir aynıysa iki süreç aynı manifest + pin setini görüyordur; ayrışıyorsa
+kurulum ayrışmıştır (biri eski `manifest.lock.json`, birinde kök yok). Süreçler arasında RPC
+kurulmadı — karşılaştırmayı işletmeci yapar, adımlar `deploy/README.md` §5.2 (4. adım).
+`/health` font eksiğinde de **200 döner** (metin klibi olmayan projeler fontsuz çalışır;
+rapor dürüsttür, sağlık kapısı değildir: `found:false` + bakılan yol + sebep). Testler:
+`HealthEndpointsTests` (kurulu kök sayıları, köksüz dürüst rapor, parmak izinin
+`manifest.lock` ile tutarlılığı ve sözlük sırasından bağımsızlığı).
+
 **8. TUR EKLEMESİ (N4) — ÖLÇÜM YAPILDI ama PİNLİ DEĞİL (sistem fontu) hali AYRI bir haldir.**
 Küratörlü TTF kurulu değilken üç modlu politikanın 2. modu devreye girer: ölçüm **başarılı**
 olur ama yerel bir sistem fontuyla yapılır. Bu kutu, worker'ın çizeceği küratörlü kutunun ne
