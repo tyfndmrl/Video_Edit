@@ -545,8 +545,9 @@ eklendi. Bu üçü de `MINIO_AVAILABLE=1` ile koşuldu (§5'teki 1232/1232).
   matris notuna bakın.
 - **Ses klibinde görsel keyframe ve renk efekti yasaktır** (`keyframes-audio-clip`,
   `effects-audio-clip`) — §3'ün tablosuna bakın.
-- **Preview ↔ export ses parity'si HÂLÂ ölçülmemiştir** (§2.6): "önizlemede duyduğunuz miks
-  çıktıdakiyle birebir aynı" iddiası test edilmiş değil, tasarımla gerekçelendirilmiştir.
+- **Preview ↔ export ses parity'si ÖLÇÜLDÜ (2026-08-25)** — normatif sınır tablosu ve
+  yöntem §2.6'da; kalıcı muhafız `e2e/audio-parity.spec.ts`. *(Bu satır 2026-08-25'e kadar
+  "HÂLÂ ölçülmemiştir" diyordu.)*
 - Ses tarafının **kendi** e2e'si (`e2e/audio-export.spec.ts`) pakete eklendi; ama bu doküman
   turu Playwright **koşmadı** — §5'teki E2E notu bu satır için de geçerlidir.
 
@@ -652,11 +653,77 @@ satır kırılımı teoride farklı düşebilir. Sunucu ölçüm ucu (`POST /api
 yazılmadı. Inspector bunu kullanıcıya **olduğu gibi** söyler
 (`inspector/ClipPropertiesPanel.tsx`, `data-testid="clip-text-raster-note"`).
 
-### 2.6 Ses parity'si (preview ↔ export RMS) ÖLÇÜLMEDİ
+### 2.6 [KAPANDI — 2026-08-25] Ses parity'si (preview ↔ export) ÖLÇÜLDÜ — normatif sınırlar aşağıda
 
-Kazanç zinciri birim testlerle pinlendi (geçişte toplam kazanç her an 1), ama
-OfflineAudioContext tabanlı sayısal RMS karşılaştırması yazılmadı. Yani "önizlemedeki ses
-export'takiyle aynı" iddiası **test edilmiş değil, tasarımla gerekçelendirilmiş**tir.
+Bu satır açıldığında kanıtlı olan yalnız "çıktıda ses var ve seviyesi sıfır değil"di;
+"önizlemedekiyle aynı" iddiası tasarımla gerekçelendirilmişti, ölçülmemişti. Artık ölçülü:
+**aynı belge için iki bağımsız gerçekleme** — önizleme tarafı gerçek Chromium'da
+`OfflineAudioContext` ile, uygulamanın **kendi** kazanç modülleri koşturularak
+(`buildGainCurve` / `shouldMicroFadeIn/Out` / `clipAudioOf` Vite modül grafiğinden import,
+kopya değil; topoloji `AudioGraph` ile aynı: kaynak → klip GainNode → master → çıkış; kaynak,
+oynatıcının gerçekten çözdüğü **proxy** türevi) — export tarafı gerçek `POST /exports` →
+worker → ffmpeg → indirilen MP4. Karşılaştırma: 10 ms ince zarfta çapraz korelasyonla tepe
+hizalaması + **100 ms pencerelerde RMS farkı**. Kalıcı muhafız: `e2e/audio-parity.spec.ts`.
+
+**Dürüstlük beyanı (yöntemin iki idealizasyonu).** (1) `AudioGraph`'in kendisi offline
+koşturulamaz: `createMediaElementSource` Web Audio sözleşmesinde yalnız gerçek zamanlı
+`AudioContext`'te vardır; gerçek zamanlı kayıt ise ölçüme kayıt kodeği + zamanlayıcı titreşimi
+katardı. Zarf, motorla aynı örnekleme formülü (100 örnek/sn) ve aynı `setValueCurveAtTime`
+çağrısıyla kurulur; gerçek motorun zarfı klip aktifleşince İLK rAF tick'inde kurması (≤1 tick
+≈ 16,7 ms) ölçüme dahil değildir — bu yüzden pencere sınırları klip kenarlarından ≥150 ms
+içeridedir. (2) hız≠1'de gerçek `<video>` perde koruyarak zaman-esnetir (preservesPitch),
+vekil kaynak yeniden örnekler; **RMS zarfı perdeye duyarsızdır**, vaka yine de ayrı
+sınıflandırıldı (export tarafı atempo=WSOLA).
+
+**Ölçüm (2026-08-25, Chromium/Playwright + ffmpeg 8.0; görevin beş vaka sınıfını dokuz
+pencere kümesinde ölçen 17 sn'lik tek belge; Δ = önizleme − export, 100 ms RMS
+pencereleri; "sınır" = testin kırmızı çizgisi = NORMATİF).**
+Üç ardışık koşumda (her biri kendi yüklemesi + kendi export işiyle) tablo iki ondalıkta
+BİREBİR aynı çıktı — boru hattı bu belge için belirlenimci davranıyor:
+
+| Vaka | n | \|Δ\| ort | \|Δ\| max | işaretli ort | Normatif sınır (max) |
+|---|---|---|---|---|---|
+| Düz klip, volume 0.5 | 17 | 0,25 dB | 0,50 dB | −0,16 dB | **0,8 dB** |
+| İki katman TEMİZ miks (amix, limiter şeffaf) | 17 | 0,22 dB | 0,60 dB | −0,15 dB | **0,8 dB** |
+| Fade-in rampası (1 sn) | 9 | 0,23 dB | 0,42 dB | −0,15 dB | **1,2 dB** |
+| Fade platosu | 7 | 0,23 dB | 0,51 dB | −0,19 dB | **0,8 dB** |
+| Fade-out rampası (1 sn) | 9 | 0,31 dB | 0,70 dB | −0,30 dB | **1,2 dB** |
+| İki katman LİMİTER miksi (tepe 1,16) | 7 | 0,47 dB | 1,20 dB | **+0,28 dB** | **4,5 dB** (yön: export gür olamaz, pay +0,3) |
+| Kırpılmış klip (sourceIn=2 sn, boşluk sonrası adelay) | 27 | 0,23 dB | 0,51 dB | −0,18 dB | **0,8 dB** |
+| Hız 2x (atempo ↔ resample vekili) | 27 | 0,65 dB | 1,24 dB | −0,15 dB | **2,5 dB** |
+| Boşluk (klipsiz aralıklar) | 7 | 0 | 0 | 0 (iki taraf −180 dBFS = dijital sıfır) | **≤ −50 dBFS** |
+| **Tepe hizalaması** (ince zarf çapraz korelasyonu) | — | — | rate=1: **3,2 ms**; atempo: **9,4 ms** | — | rate=1: **12 ms**; atempo: **33,4 ms** (§8.3 bir çıkış karesi) |
+
+**Okuma.** En büyük fark her sınıfta duyulurluk eşiğinin (≈1 dB sürekli seviye farkı)
+altında ya da bilinçli asimetrinin kendisi. İki bulgu adlandırılmaya değer:
+
+1. **Sistematik +0,175 dB: export her zaman bir tık daha gür.** İşaretli ortalamalar tüm
+   düz vakalarda −0,15…−0,19 dB (export gür). Kaynağı ölçüldü: `alimiter`'ın **varsayılan
+   `level` (auto-level) davranışı** çıkışı `1/limit = 1/0.98` ile ölçekler — limiter'ın hiç
+   bastırmadığı sinyalde bile. Doğrudan ölçüm (ffmpeg 8.0, limit altı sinüs, astats RMS):
+   limitersiz −9,033 dB → limiterli −8,864 dB = **+0,168 dB** ≈ 20·log10(1/0,98) = 0,175 dB.
+   Duyulmaz (JND ~1 dB); kayıt altında, davranış değiştirilmedi (limit'i 1.0 yapmak ya da
+   `level=0` yazmak tavan davranışını değiştirir ve mevcut snapshot/golden'ları oynatırdı).
+2. **Limiter vakası §8.3 asimetrisinin ölçümüdür, kusur değil:** önizleme float render'da
+   tepe **1,163** (gerçek DAC'ta kırpılırdı — §8.3 bunu bilinçli "kullanıcıya doğru sinyal"
+   sayar), export tepesi **0,950 ≤ 1,0** (alimiter yakaladı); export RMS'i önizlemeden
+   ortalama 0,28 dB kısık. Test tepe kanıtını da iddia eder (önizleme tepesi > 1,02,
+   export tepesi ≤ 1,02).
+
+**Muhafız neden e2e (backend'te belge-türevi zarf değil):** backend testi ffmpeg çıktısını
+aynı matematiğin bir YENİDEN YAZIMIYLA karşılaştırırdı — yalnız export tarafını pinler,
+önizleme tarafındaki bir gerileme (ör. `gain.ts` fade formülü) onu hiç kızartmazdı. Seçilen
+test iki bağımsız gerçeklemeyi karşılaştırır. **Negatif kontrol koşuldu:** `fadeEnvelopeAt`
+eğimi kasıtlı yarıya indirildi → test fade-in vakasında 6,42 dB ile kırmızı → geri alındı
+(md5 birebir: `ea1bc3497f05aa5c464e23bdf4140d21`).
+
+**Bu ölçümün KAPSAMI DIŞI kalanlar:** keyframe'li volume (sözleşmesi §8.1'de ~50 ms komut
+gecikmesi olarak ayrıca ölçülü), geçiş (acrossfade) penceresinin RMS paritesi (kazanç
+matematiği birim testlerle pinli — `gain.test.ts` geçiş rampaları; RMS düzeyinde ölçülmedi),
+`audioSampleRate=44100` önizleme rejimi (§2.7), 2'den fazla eşzamanlı sesli katman ve
+`speed` 2 dışındaki oranlar. Bir de yapısal sınır: önizleme **proxy'nin** (AAC 128k, 2.
+nesil) sesini çalar, export **orijinali** çözer — yukarıdaki farkların bir kısmı bu bilinçli
+mimari farkın kendisidir ve ölçüme dahildir.
 
 ### 2.7 [DÜŞÜK] `audioSampleRate` yalnız önizlemeyi etkiler; export her zaman 48 kHz
 
@@ -980,9 +1047,15 @@ sapmadan (±1 sn) **geniş** olmak zorundadır, yoksa runner işin kabul edeceğ
 düştü ve kaçak süreç kalmadı; 19 sn'lik ve **60 sn'lik** normal projeler tavana çarpmadan
 tamamlandı (6/6 ve 1/1).
 
-**Tavan yalnız EXPORT reçetesinde açıktır** — varlık işleme reçetelerinin (proxy/filmstrip/poster)
-`out_time` davranışı ölçülmedi ve onlar bilerek **kapsam dışıdır** (`docs/backlog.md`); orada
-yalnız sessizlik bekçisi çalışır.
+**Tavan işleme reçetelerinde de açıktır (2026-08-25'te genişledi)** — her reçetenin `out_time`
+tabanı ölçülerek: proxy'de kaynak süresi (korpusta azami sapma VFR'de −13,8 ms), filmstrip'te
+**sprite saati** (`FilmstripRecipe.ExpectedOutputClockUs` — 2,93 sn'lik kaynak bile 300 sn
+bildirir, kaynak süresine bağlanan tavan her filmstrip'i yanlış öldürürdü), waveform'da PCM
+**bayt saati** (`WaveformGenerator.OutputByteCeiling`, 16000 B/sn — `-progress` kanalı yok).
+Poster bilerek tavansızdır: `-frames:v 1` çıktı saatini tek karede keser (ölçüldü: 33.333 µs),
+kaçak hali kurulamaz. Aşım işleme hattında **`transcode-overrun`** ile tipli düşer
+(`render-overrun`'ın eşi); süresini yalan beyan eden başlık (mvhd 2 sn / akış 60 sn) bu yoldan
+yakalanır — `too-long` kapısı beyana baktığı için onu göremez (`DirtyMediaCorpusTests`).
 
 Ek olarak reaper (`AssetReaperJob`) bir iş satırını `stalled` yaparken **koşan render'ı da
 iptal eder** (`RunningRenderRegistry` → `FfmpegRunner`'ın iptal kaydı süreç AĞACINI öldürür);
@@ -1338,8 +1411,8 @@ yanlışlanmazlar**, yani "hâlâ doğru mu" sorusu elle sorulmalıdır.
 > hiçbir pakette yok. Yani ikisi de **koşulmuş ama korunmuyor**: bir regresyon bunları sessizce
 > kırabilir. Borç `docs/backlog.md` 12. turda açık duruyor.
 
-**Test edilmeyen yüzeyler:** önizlemenin tam-kare golden karşılaştırması, preview↔export ses
-RMS parity'si (§2.6), yük/eşzamanlılık testi, güvenlik penetrasyon testi, tarayıcı matrisi
+**Test edilmeyen yüzeyler:** önizlemenin tam-kare golden karşılaştırması, yük/eşzamanlılık
+testi, güvenlik penetrasyon testi, tarayıcı matrisi
 (yalnız Chromium), mobil, **gerçek R2** (§4.2), çoklu worker, uzun süreli (haftalarca ayakta)
 çalışma, gerçek telefon/pis-dosya korpusu (§3.2), **LRU cache süpürmesi ve 2 GB üstü kaynak**
 (§0.1).
@@ -1351,8 +1424,8 @@ RMS parity'si (§2.6), yük/eşzamanlılık testi, güvenlik penetrasyon testi, 
 **Uygun:** akış doğrulama, iç demo, tasarım/UX geri bildirimi, "bu mimari çalışıyor mu"
 sorusuna cevap, tek kullanıcılı gerçek düzenleme işi, **fotoğraf/slayt gösterisi**
 (önizleme + geçişler + export uçtan uca çalışıyor — §1.1), **müzik/ses eklenmiş kurgu**
-(yükleme → ses track'i → dışa aktarılan dosyada gerçekten duyulan ses — §1.8; parity
-ölçülmedi, §2.6), **1-2 GB'lık tek kaynak dosyayla çalışma** (bir kez uçtan uca ölçüldü —
+(yükleme → ses track'i → dışa aktarılan dosyada gerçekten duyulan ses — §1.8; önizleme ↔
+export parity'si ölçülü ve sınır tablolu, §2.6), **1-2 GB'lık tek kaynak dosyayla çalışma** (bir kez uçtan uca ölçüldü —
 §0.1; nesne deposu LOKAL, gerçek R2 değil), **projeyi kapatıp sonradan geri dönme**
 (çıkış → yeniden giriş → aynı belge + aynı medya — §4.2).
 

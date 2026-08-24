@@ -6,6 +6,8 @@
 #   demo-01-gradyan.mp4      10 sn, 1920x1080, 30 fps, sesli (330 Hz)  ~7 MB
 #   demo-02-test-deseni.mp4  10 sn, 1920x1080, 30 fps, sesli (660 Hz)  ~8 MB
 #   demo-03-logo.png         640x640 RGBA (saydam zeminli halka)       ~7 KB
+#   demo-04-muzik.m4a        10 sn, AAC 48 kHz (220+330 Hz akor,
+#                            yavas tremolo) - muzik adimi icin        ~160 KB
 #
 # Icerik SENTETIKTIR (ffmpeg lavfi kaynaklari): telif/gizlilik derdi yok, her
 # makinede birebir ayni. Iki videonun renk imzasi bilerek FARKLIDIR - gecis
@@ -87,18 +89,40 @@ else
   echo "demo-03-logo.png zaten var (atlandi)."
 fi
 
+# Icerik iki sinusun akoru (220 + 330 Hz = tam beslik) + yavas tremolo:
+# dalga formu panelde gorunur bicimde SALINIR ve dinlemesi rahatsiz etmez.
+MUSIC="$OUT_DIR/demo-04-muzik.m4a"
+if [ "$FORCE" = "1" ] || [ ! -f "$MUSIC" ]; then
+  echo "demo-04-muzik.m4a uretiliyor..."
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i "sine=frequency=220:sample_rate=48000:duration=10" \
+    -f lavfi -i "sine=frequency=330:sample_rate=48000:duration=10" \
+    -filter_complex "[0:a][1:a]amix=inputs=2:normalize=0,volume=2.2,tremolo=f=0.5:d=0.4" \
+    -c:a aac -b:a 128k \
+    "$MUSIC"
+else
+  echo "demo-04-muzik.m4a zaten var (atlandi)."
+fi
+
 echo
 echo "Uretilen dosyalar:"
-for f in "$VIDEO1" "$VIDEO2" "$IMAGE"; do
+for f in "$VIDEO1" "$VIDEO2" "$IMAGE" "$MUSIC"; do
   [ -f "$f" ] || { echo "Beklenen dosya olusmadi: $f" >&2; exit 1; }
   size=$(wc -c < "$f" | tr -d ' ')
   if [ "$size" -gt "$MAX_BYTES" ]; then
     echo "$(basename "$f") 20 MB sinirini asti ($size bayt)." >&2
     exit 1
   fi
-  info=$(ffprobe -v error -select_streams v:0 \
-    -show_entries stream=width,height -show_entries format=duration \
-    -of default=nw=1:nk=1 "$f" | tr '\n' ' ')
+  case "$f" in
+    *.m4a)
+      info=$(ffprobe -v error -select_streams a:0 \
+        -show_entries stream=sample_rate,channels -show_entries format=duration \
+        -of default=nw=1:nk=1 "$f" | tr '\n' ' ') ;;
+    *)
+      info=$(ffprobe -v error -select_streams v:0 \
+        -show_entries stream=width,height -show_entries format=duration \
+        -of default=nw=1:nk=1 "$f" | tr '\n' ' ') ;;
+  esac
   printf '%-26s %10s bayt   %s\n' "$(basename "$f")" "$size" "$info"
 done
 

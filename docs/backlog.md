@@ -785,12 +785,17 @@ Kapatılanlar (kullanıcı anlatımı `poc-bilinen-sinirlar.md` §1.8, §3 tablo
   satırı "temiz klonda 139 test bunsuz kırılır" diyor. Bu, paketin büyüklüğü (bugün 143) değil
   "kaç test kırılır" iddiasıdır ve ancak o adım kaldırılıp suite koşturularak ölçülebilir; bu
   doküman turu Playwright koşmadığı için DOKUNULMADI. Ya ölçülmeli ya sayısızlaştırılmalıdır.
-- **[AÇIK] Ses parity'si (preview ↔ export RMS) hâlâ ölçülmedi** (`poc-bilinen-sinirlar.md`
-  §2.6). N1 "ses çıktıda var ve seviyesi sıfır değil"i kanıtlar; "önizlemedekiyle aynı"yı
-  KANITLAMAZ.
-- **[AÇIK] Ses/müzik yolu demo senaryosunun ölçülmüş 41 adımına dâhil değildir.** Kalıcı
-  testleri var, ama `demo-senaryosu.md` §7'nin koşumu bu adımı içermez ve demo medyası bir
-  müzik dosyası üretmez (senaryoya not olarak yazıldı).
+- **[KAPANDI — 2026-08-25, B borçları B1] Ses parity'si (preview ↔ export RMS) ölçüldü.**
+  Yöntem + 9 vakalı normatif sınır tablosu `poc-bilinen-sinirlar.md` §2.6'da; kalıcı muhafız
+  `e2e/audio-parity.spec.ts` (OfflineAudioContext'te uygulamanın KENDİ kazanç modülleri ↔
+  gerçek export; negatif kontrol: fade eğimi kasıtlı bozuldu → 6,42 dB ile kırmızı → md5
+  birebir geri). Ölçülen en büyük fark limiter vakasında 1,20 dB (bilinçli §8.3 asimetrisi);
+  düz vakalarda ≤ 0,60 dB; sistematik +0,175 dB alimiter auto-level olarak adlandırıldı.
+- **[KAPANDI — 2026-08-25, B borçları B1] Ses/müzik yolu artık demo senaryosunun ÖLÇÜLMÜŞ
+  bir adımı.** Demo medya betikleri `demo-04-muzik.m4a` üretir (220+330 Hz akor + tremolo),
+  senaryoya **Adım 4M — Müzik ekle** eklendi ve müziğe dokunan omurga (1→4, 4M, 17) gerçek
+  fare/klavye + gerçek dosya seçiciyle bir kez koşuldu — çıktı MP4'te müziğin 220 Hz bandı
+  −18,6 dBFS ölçüldü. Kayıt: `demo-senaryosu.md` §7 "4M koşum kaydı".
 
 ## 11. tur denetiminden (2026-08-20 — miks asılması, bekçi, cümle sınıfı)
 
@@ -843,12 +848,31 @@ Kapatılanlar:
     yönetimi uygulamıyordu; `test.fail` deseni bulguyu görünür tuttu ve
     öngörüldüğü gibi çalıştı — davranış eklenince Playwright "Expected to fail, but passed"
     ile kırmızı verdi ve satırlar silindi (review-gate kural 4 kaydı kaybolmadı).
-- **[AÇIK] Çıktı saati tavanı YALNIZ export reçetesinde açık.** Pay (%10 + 5 sn) export
-  grafiğinin `out_time` davranışı ÖLÇÜLEREK seçildi (normal render'ın en büyük `out_time`'ı
-  beklenen sürenin 66,7 ms ALTINDA). Varlık işleme reçeteleri (proxy/filmstrip/poster) farklı
-  çıktı zaman tabanları kullanır ve o rejim ÖLÇÜLMEDİ; tavan oraya sessizce sızmasın diye
-  `RunAsync`'te AÇIK parametredir. O reçeteler bugün yalnız sessizlik bekçisiyle korunuyor.
-  - *Yapılacak:* her reçetenin `out_time` davranışını ölçüp kendi payını seçmek.
+- **[✅ KAPANDI, 2026-08-25] Çıktı saati tavanı İŞLEME reçetelerine genişledi — her reçetenin
+  `out_time` tabanı ÖLÇÜLDÜ, pay aynı (%10 + 5 sn), taban reçeteye göre seçildi.**
+  Ölçüm (ffmpeg 8.0, gerçek reçete argümanları + gerçek `FfmpegRunner`, korpusun tamamı):
+  - *Proxy (video+ses):* `out_time` kaynak süresini izler — korpusta azami sapma
+    VFR'de **−13,8 ms** (CFR normalizasyonu beklenenin ÜSTÜNE taşımıyor), diğerlerinde tam 0.
+    Tavan = `OutputTimeCeilingUs(probe.DurationUs)`.
+  - *Filmstrip:* `out_time` SPRITE SAATİDİR, kaynak süresi DEĞİL — `tile=30x10` saati sprite
+    başına 300×interval sn ilerletir: 2,93 sn'lik kaynak **300,000000 sn** bildirdi (350 sn→600,
+    650 sn→900, 3010 sn/interval=2→3600 — dört noktada model TAM eşleşti,
+    `FilmstripRecipe.ExpectedOutputClockUs`). Kaynak süresine bağlanan tavan HER filmstrip'i
+    yanlış öldürürdü; tavan sprite saatinden türetilir.
+  - *Poster:* tavan BİLEREK YOK — `-frames:v 1` çıktı saatini yapısal olarak tek karede keser
+    (ölçülen azami `out_time` **33.333 µs**, tüm korpusta aynı); "durmadan üretme" kaçağı
+    kurulamaz, kalan risk (hiç ilerlememe) sessizlik bekçisinin işi.
+  - *Waveform:* `-progress` kanalı yok (stdout PCM taşır) — çıktı saatinin eşdeğeri PCM BAYT
+    SAYISIDIR (16000 B/sn); ölçülen sapmalar +8 ms (AAC payı) / −10,6 ms (VFR) / 0 (mp3, wav).
+    Tavan `WaveformGenerator.OutputByteCeiling` ile bayta çevrilir; aşımda süreç öldürülür.
+  Aşım TİPLİ düşer: `transcode-overrun` (`ProcessAssetJob.DeterministicFfmpegReason` —
+  `ffmpeg-timeout`/`ffmpeg-failed`'den AYRI; export'un `render-overrun` eşi). Korpusa iki yeni
+  dosya eklendi: **süresini yalan beyan eden** m4a/mp4 (mvhd/tkhd/mdhd 2 sn'ye kısaltılmış,
+  akış 60 sn — `MaxDurationUs` kapısı beyana baktığı için bu sınıfı YALNIZ tavan yakalar);
+  ikisi de uçtan uca `transcode-overrun` ile düşüyor, eski 7 korpus dosyası + pipeline e2e
+  yanlış öldürülmeden Ready (`DirtyMediaCorpusTests` 9/9, `ProcessAssetPipelineTests` 9/9).
+  Negatif kontrol yapıldı: tavan geçici kapatıldı → 3 kaçak testi KIRMIZI (yalancı dosya
+  `Ready` olabildi) → geri alındı (md5 doğrulandı, touch+rebuild) → yeşil.
 - **[AÇIK] Reaper'ın süreç iptali TEK SÜREÇ kapsamındadır.** `RunningRenderRegistry` süreç içi
   bir sözlüktür; başka bir makinedeki worker'ın ffmpeg'i bu yoldan öldürülemez. Bugünkü kurulum
   tek worker olduğu için kapsam yeterli.

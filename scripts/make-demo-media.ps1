@@ -3,11 +3,13 @@
     POC demo medyasini ffmpeg ile URETIR (repoya ikili dosya konmaz).
 
 .DESCRIPTION
-    docs/demo-senaryosu.md akisinin ihtiyac duydugu 3 dosyayi uretir:
+    docs/demo-senaryosu.md akisinin ihtiyac duydugu 4 dosyayi uretir:
 
       demo-01-gradyan.mp4     10 sn, 1920x1080, 30 fps, sesli (330 Hz)  ~7 MB
       demo-02-test-deseni.mp4 10 sn, 1920x1080, 30 fps, sesli (660 Hz)  ~8 MB
       demo-03-logo.png        640x640 RGBA (saydam zeminli halka)       ~7 KB
+      demo-04-muzik.m4a       10 sn, AAC 48 kHz (220+330 Hz akor,
+                              yavas tremolo) - muzik adimi icin        ~160 KB
 
     Icerik SENTETIKTIR (ffmpeg lavfi kaynaklari) - telif/gizlilik derdi yok,
     her makinede birebir ayni. Iki videonun renk imzasi bilerek FARKLIDIR:
@@ -129,18 +131,44 @@ if ($Force -or -not (Test-Path $image)) {
 }
 else { Write-Host 'demo-03-logo.png zaten var (atlandi).' -ForegroundColor DarkGray }
 
+# --- 4) Muzik (m4a, AAC) - senaryonun "Muzik ekle" adimi (Adim 4M) ---------
+# Icerik iki sinusun akoru (220 + 330 Hz = tam beslik) + yavas tremolo:
+# dalga formu panelde gorunur bicimde SALINIR ve dinlemesi rahatsiz etmez.
+# Genlik: sine kaynagi 0.125 tepe uretir; amix normalize=0 ile 0.25,
+# volume=2.2 ile ~0.55 tepe (clipping'e uzak, ama acikca duyulur).
+$music = Join-Path $OutDir 'demo-04-muzik.m4a'
+if ($Force -or -not (Test-Path $music)) {
+    Write-Host 'demo-04-muzik.m4a uretiliyor...'
+    Invoke-Ffmpeg -Label 'demo-04-muzik.m4a' -FfArgs @(
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'sine=frequency=220:sample_rate=48000:duration=10',
+        '-f', 'lavfi', '-i', 'sine=frequency=330:sample_rate=48000:duration=10',
+        '-filter_complex', '[0:a][1:a]amix=inputs=2:normalize=0,volume=2.2,tremolo=f=0.5:d=0.4',
+        '-c:a', 'aac', '-b:a', '128k',
+        $music
+    )
+}
+else { Write-Host 'demo-04-muzik.m4a zaten var (atlandi).' -ForegroundColor DarkGray }
+
 # --- Dogrulama + ozet ------------------------------------------------------
 Write-Host ''
 Write-Host 'Uretilen dosyalar:' -ForegroundColor Green
-foreach ($f in @($video1, $video2, $image)) {
+foreach ($f in @($video1, $video2, $image, $music)) {
     if (-not (Test-Path $f)) { throw "Beklenen dosya olusmadi: $f" }
     $size = (Get-Item $f).Length
     if ($size -gt $maxBytes) {
         throw "$([System.IO.Path]::GetFileName($f)) 20 MB sinirini asti ($size bayt)."
     }
-    $probe = & $ffprobe.Source -v error -select_streams v:0 `
-        -show_entries stream=width,height -show_entries format=duration `
-        -of default=nw=1:nk=1 $f
+    if ([System.IO.Path]::GetExtension($f) -eq '.m4a') {
+        $probe = & $ffprobe.Source -v error -select_streams a:0 `
+            -show_entries stream=sample_rate,channels -show_entries format=duration `
+            -of default=nw=1:nk=1 $f
+    }
+    else {
+        $probe = & $ffprobe.Source -v error -select_streams v:0 `
+            -show_entries stream=width,height -show_entries format=duration `
+            -of default=nw=1:nk=1 $f
+    }
     $info = ($probe -join ' ').Trim()
     '{0,-26} {1,10:N0} bayt   {2}' -f [System.IO.Path]::GetFileName($f), $size, $info | Write-Host
 }

@@ -428,6 +428,117 @@ export function ensureSilentVideo(): TestVideo {
   };
 }
 
+// ---------------------------------------------------------------------------
+// SES PARİTESİ fixture'ları — ZARFI YAPILI (tremolo'lu) kaynaklar
+// ---------------------------------------------------------------------------
+
+/**
+ * Ses paritesi ölçümü (audio-parity.spec.ts) DÜZ bir sinüsle yapılamaz: sabit
+ * genlikli bir tonun RMS zarfı her yerde aynıdır, yani zarf karşılaştırması
+ * zaman hizasını (tepe hizalaması) hiç göremezdi. Bu iki fixture'ın sesi
+ * bilerek GENLİK MODÜLELİDİR (tremolo): zarf 0.2x–1.0x arasında salınır ve
+ * önizleme/export zarflarının çapraz korelasyonu gecikmeyi ölçebilir.
+ *
+ * Genlik matematiği (ffmpeg `sine` kaynağı 1/8 = 0.125 tepe üretir):
+ * volume=6 → 0.75 tepe. Parite belgesindeki klip seviyeleriyle birlikte
+ * (0.5 → 0.375) iki katmanlı temiz mikste toplam 0.75 < 0.98 kalır (limiter
+ * şeffaf), limiter vakasında 0.75 + 0.75 = 1.5 > 0.98 (limiter devrede).
+ */
+export const PARITY_VIDEO_SPEC = {
+  fileName: 'e2e-parite-video-8s.mp4',
+  width: 640,
+  height: 480,
+  durationSeconds: 8,
+  /** 440 Hz ton; zarf 1.5 Hz tremolo (d=0.8) ile modüle, tepe 0.75. */
+  audioFilter: 'volume=6,tremolo=f=1.5:d=0.8',
+  toneHz: 440,
+  contentType: 'video/mp4',
+} as const;
+
+export const PARITY_MUSIC_SPEC = {
+  fileName: 'e2e-parite-muzik-8s.m4a',
+  durationSeconds: 8,
+  /** 880 Hz ton; zarf 2.5 Hz tremolo (d=0.8) ile modüle, tepe 0.75. */
+  audioFilter: 'volume=6,tremolo=f=2.5:d=0.8',
+  toneHz: 880,
+  contentType: 'audio/mp4',
+} as const;
+
+/** 8 sn'lik, tremolo zarflı SESLİ video (bir kez üretilir). */
+export function ensureParityVideo(): TestVideo {
+  const { fileName, width, height, durationSeconds, audioFilter, toneHz, contentType } =
+    PARITY_VIDEO_SPEC;
+  const path = join(MEDIA_DIR, fileName);
+
+  if (!existsSync(path)) {
+    if (ffmpegVersion() === null) throw new Error(FFMPEG_SKIP_REASON);
+    mkdirSync(MEDIA_DIR, { recursive: true });
+    const res = spawnSync(
+      'ffmpeg',
+      [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi',
+        '-i', `testsrc2=size=${width}x${height}:rate=30:duration=${durationSeconds}`,
+        '-f', 'lavfi',
+        '-i', `sine=frequency=${toneHz}:sample_rate=48000:duration=${durationSeconds}`,
+        '-af', audioFilter,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-b:v', '2000k',
+        '-c:a', 'aac', '-b:a', '128k',
+        '-shortest', '-movflags', '+faststart',
+        path,
+      ],
+      { encoding: 'utf8', timeout: 120_000 },
+    );
+    if (res.status !== 0 || !existsSync(path)) {
+      throw new Error(`Parite test videosu üretilemedi (ffmpeg exit ${res.status}):\n${res.stderr}`);
+    }
+  }
+
+  return {
+    path,
+    fileName,
+    sizeBytes: statSync(path).size,
+    width,
+    height,
+    durationUs: durationSeconds * 1_000_000,
+    contentType,
+  };
+}
+
+/** 8 sn'lik, tremolo zarflı GERÇEK bir .m4a (bir kez üretilir). */
+export function ensureParityMusic(): TestAudio {
+  const { fileName, durationSeconds, audioFilter, toneHz, contentType } = PARITY_MUSIC_SPEC;
+  const path = join(MEDIA_DIR, fileName);
+
+  if (!existsSync(path)) {
+    if (ffmpegVersion() === null) throw new Error(FFMPEG_SKIP_REASON);
+    mkdirSync(MEDIA_DIR, { recursive: true });
+    const res = spawnSync(
+      'ffmpeg',
+      [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi',
+        '-i', `sine=frequency=${toneHz}:sample_rate=48000:duration=${durationSeconds}`,
+        '-af', audioFilter,
+        '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
+        path,
+      ],
+      { encoding: 'utf8', timeout: 120_000 },
+    );
+    if (res.status !== 0 || !existsSync(path)) {
+      throw new Error(`Parite test müziği üretilemedi (ffmpeg exit ${res.status}):\n${res.stderr}`);
+    }
+  }
+
+  return {
+    path,
+    fileName,
+    sizeBytes: statSync(path).size,
+    durationUs: durationSeconds * 1_000_000,
+    contentType,
+  };
+}
+
 export const TEST_AUDIO_SPEC = {
   fileName: 'e2e-muzik-3s.m4a',
   durationSeconds: 3,

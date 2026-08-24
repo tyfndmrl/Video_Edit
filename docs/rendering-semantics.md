@@ -1460,6 +1460,12 @@ out.a   = src.a + dst.a * (1 - src.a)
 - Çıkışta `alimiter=limit=0.98`. Preview'de Web Audio zinciri sonuna `DynamicsCompressorNode`
   KONMAZ — limiter yalnız export'ta clipping sigortasıdır; preview'de clipping duyulması
   kullanıcıya doğru sinyaldir (kabul edilmiş asimetri, tek istisna).
+  - **Ölçülmüş yan etki (2026-08-25, ffmpeg 8.0):** `alimiter`'ın varsayılan `level`
+    (auto-level) davranışı çıkışı `1/limit = 1/0.98` ile ölçekler — limiter'ın hiç
+    bastırmadığı sinyalde bile export **+0,175 dB** gür çıkar (astats RMS ile ölçüldü:
+    −9,033 → −8,864 dB). Duyulmaz (JND ~1 dB) ve BİLİNÇLİ olarak düzeltilmedi: `level=0`
+    yazmak ya da limit'i değiştirmek mevcut snapshot/golden sözleşmesini oynatır. Sayısal
+    sınırları `poc-bilinen-sinirlar.md` §2.6 tablosu, muhafızı `e2e/audio-parity.spec.ts`.
 
 ### 8.4 Micro-fade (kesim tıklaması önleme) — 5 ms kuralı
 

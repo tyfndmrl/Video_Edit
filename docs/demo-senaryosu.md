@@ -1,13 +1,14 @@
 # POC Demo Senaryosu
 
 Ürünü canlı gösterirken izlenecek, **adım adım koşulmuş ve doğrulanmış** akış.
-Toplam **~12,5 dakika** (Mod B — proje ve medya hazır — ile **~11,5 dk**); kısa sürümde
-**~10 dk** / **~9,5 dk**. Adım adım döküm §5'te.
+Toplam **~12 dk 50 sn** (Mod B — proje ve medya hazır — ile **~11 dk 55 sn**); kısa
+sürümde **~10 dk 45 sn** / **~9 dk 50 sn**. Adım adım döküm §5'te.
 
 Bu dosyadaki her adım, çalışan uygulamada (Vite 5173 + API 5000 + worker + MinIO)
 **gerçek fare ve gerçek klavye** ile iki kez ardışık koşuldu; ikisinde de 41/41
-adım geçti. Doğrulama kaydı en altta (§7). Doğrulanamayan hiçbir adım burada
-değil; ölçüm sırasında çıkan ürün kısıtları §6'da açıkça yazılı.
+adım geçti. 2026-08-25'te eklenen **Adım 4M (Müzik ekle)** aynı yöntemle ayrıca
+koşuldu (§7'nin 4M kaydı). Doğrulama kaydı en altta (§7). Doğrulanamayan hiçbir
+adım burada değil; ölçüm sırasında çıkan ürün kısıtları §6'da açıkça yazılı.
 
 ---
 
@@ -39,7 +40,7 @@ powershell -ExecutionPolicy Bypass -File scripts\make-demo-media.ps1
 scripts/make-demo-media.sh          # Linux/macOS
 ```
 
-`<repo>/.artifacts/demo-media/` altına üç dosya yazar (repoya ikili dosya
+`<repo>/.artifacts/demo-media/` altına dört dosya yazar (repoya ikili dosya
 konmaz, `.artifacts/` gitignore'da):
 
 | Dosya | İçerik | Boyut |
@@ -47,6 +48,7 @@ konmaz, `.artifacts/` gitignore'da):
 | `demo-01-gradyan.mp4` | 10 sn · 1920×1080 · 30 fps · sesli, sıcak renkli hareketli gradyan | ~7–8 MB |
 | `demo-02-test-deseni.mp4` | 10 sn · 1920×1080 · 30 fps · sesli, renk barları + hareketli ögeler + kare sayacı | ~7,9 MB |
 | `demo-03-logo.png` | 640×640 RGBA, saydam zeminli halka (kütüphane/format çeşitliliği için) | ~7 KB |
+| `demo-04-muzik.m4a` | 10 sn · AAC 48 kHz · 220+330 Hz akoru + yavaş tremolo (Adım 4M'nin müziği; dalga formu panelde görünür biçimde salınır) | ~160 KB |
 
 İki videonun renk imzası bilerek farklıdır: geçiş ve renk düzeltme adımlarında
 ekrandaki değişim gözle görülür.
@@ -55,8 +57,10 @@ ekrandaki değişim gözle görülür.
 
 **Mod A — "her şeyi canlı göster"** (varsayılan, senaryo bunu anlatır)
 Hazırlık yok; §3'ün 1-3. adımlarında proje ve yükleme canlı yapılır.
-Bu makinede 3 dosyanın yüklenip işlenmesi **~9 sn** sürdü — anlatacak kadar
-kısa, sıkacak kadar uzun değil.
+Bu makinede 3 dosyanın yüklenip işlenmesi **~9 sn** sürmüştü; müzik dosyası
+(161 KB, türevleri hafif) bu süreyi gözle görülür değiştirmez — 4M koşumunda
+dört dosyanın dördü de tek seçici açılışından "Hazır"a sorunsuz geçti.
+Anlatacak kadar kısa, sıkacak kadar uzun değil.
 
 **Mod B — "yükleme beklemesi olmasın"**
 Projeyi ve medyayı önceden hazırla:
@@ -67,8 +71,10 @@ powershell -ExecutionPolicy Bypass -File scripts\seed-demo.ps1
 
 Çıktının son satırındaki bağlantıyı aç (`http://localhost:5173/?project=<id>`)
 ve senaryoya **4. adımdan** başla. Betik `demo@videoedit.test` / `demo1234`
-kullanıcısını (yoksa) oluşturur, yeni bir proje açar, üç dosyayı REST üzerinden
-yükler ve hepsi "Hazır" olana kadar bekler. Ölçüldü: **8,6 sn**.
+kullanıcısını (yoksa) oluşturur, yeni bir proje açar, klasördeki dosyaları REST
+üzerinden yükler ve hepsi "Hazır" olana kadar bekler. Ölçüldü: üç dosyayla
+**8,6 sn** (soğuk); müzik eklendikten sonra dört dosyayla **3,9 sn**
+(2026-08-25, ısınmış worker).
 
 ---
 
@@ -106,13 +112,14 @@ ve mevcut projeler listesi.
 ### Adım 3 — Medya yükle (70 sn — Mod B'de atlanır)
 
 **Yap:** Kitaplık panelinde **Dosya seç** → açılan seçicide
-`.artifacts/demo-media` klasöründen **üç dosyayı birden** seç.
+`.artifacts/demo-media` klasöründen **dört dosyayı birden** seç.
 
 **Görülecek (sırayla):**
 1. Her dosya için bir yükleme kartı: `Başlatılıyor… → Yükleniyor %NN`,
 2. sonra sunucu tarafı: `Sırada → İşleniyor`,
 3. sonra yeşil **Hazır** rozeti ve gerçek metadata:
    `0:10 · 1920×1080 · 7.17 MB`, PNG için `0:00 · 640×640 · 6.72 KB`,
+   müzik için `0:10 · 157.49 KB`,
 4. Kitaplık başlığındaki kota göstergesi güncellenir (`… / 20.0 GB · %N`).
 
 **Anlat (yükleme sürerken):** Dosya API'den **geçmez** — istemci imzalı bir URL
@@ -128,17 +135,13 @@ kurgu yapılmaz. Desteklenen formatlar: MP4/MOV/WebM, MP3/M4A/WAV, PNG/JPEG/WebP
 > 41 adımlık koşum bu hat üzerinde ölçüldü. Görseli göstermek isterseniz adım
 > 11'in altındaki nota bakın.
 
-> **MÜZİK — anlatılabilir, ama bu senaryonun ÖLÇÜLMÜŞ adımlarından biri DEĞİL.**
-> Ses dosyası yükleme (MP3/M4A/WAV) → çift tıkla ses track'i → dışa aktarılan
-> MP4'te gerçekten duyulan ses yolu **8. tur denetiminde kapatıldı** ve kalıcı
-> testleri var (`ExportJobPipelineTests.Export_MusicOnAnAudioTrack_…` gerçek
-> ffmpeg + gerçek MinIO ile çıktının ses seviyesini ölçer; `e2e/audio-export.spec.ts`
-> gerçek fareyle aynı yolu koşar). **Ama §7'deki 41 adımlık koşum bu adımı
-> içermez** ve demo medyası bir müzik dosyası üretmez — doğaçlama eklerseniz
-> kendi dosyanızla ve önceden bir kez deneyerek ekleyin. Sınırlar:
-> `poc-bilinen-sinirlar.md` §1.8 (ses klibi SES akışı ister: sessiz bir videoyu
-> gösteren ses klibi senkron 422 alır) ve §2.6 (önizleme ↔ export ses parity'si
-> ölçülmedi).
+> **MÜZİK artık senaryonun ÖLÇÜLMÜŞ bir adımıdır (2026-08-25):** demo medyası
+> bir müzik dosyası üretir (`demo-04-muzik.m4a`) ve **Adım 4M** onu gerçek
+> fare/klavye ile timeline'a alıp dışa aktarır (§7'deki 4M koşum kaydı).
+> Kalıcı testleri: `ExportJobPipelineTests.Export_MusicOnAnAudioTrack_…`
+> (gerçek ffmpeg + MinIO), `e2e/audio-export.spec.ts` (gerçek fare) ve
+> `e2e/audio-parity.spec.ts` (önizleme ↔ export ses paritesi — sınır tablosu
+> `poc-bilinen-sinirlar.md` §2.6'da).
 
 ---
 
@@ -156,6 +159,34 @@ Sağdaki "İşlem Geçmişi" bölümünde `demo-01-gradyan.mp4 eklendi` satırı
 
 **Anlat:** Klibin süresi kaynağın **gerçek** süresinden gelir ve kare ızgarasına
 oturur. Çift tık playhead'e ekler; orası doluysa proje sonuna düşer.
+
+---
+
+### Adım 4M — Müzik ekle (30 sn) *(2026-08-25'te eklendi, gerçek fare/klavye ile ölçüldü)*
+
+**Yap:**
+1. Kitaplıkta `demo-04-muzik.m4a` satırına **çift tık** (playhead adım 4'ten
+   beri baştadır; başka yere taşıdıysanız önce `Home`).
+2. `Home` → `Space` ile birkaç saniye dinle, tekrar `Space`.
+
+**Görülecek:** Video katmanlarının altında ayrı bir **SES track'i** açılır ve
+10 saniyelik müzik klibi playhead'e (0'a) düşer — gövdesinde **dalga formu**
+çizilidir ve tremolo salınımı gözle görülür. Klip **seçili gelir**; sağdaki
+Özellikler panelinde **SES** bölümü (seviye, fade in/out, sessize al) dolar.
+Oynatmada müzik ile videonun kendi sesi **birlikte** duyulur.
+
+**Anlat:** Ses dosyaları (MP3/M4A/WAV) video ile aynı boru hattından geçer:
+imzalı çok parçalı yükleme, worker'da ses proxy'si + dalga formu türevi. Miks
+kuralı basittir: katmanlar toplanır, hiçbir giriş otomatik kısılmaz
+(`normalize=0` — "müzik ekleyince konuşma kısıldı" sınıfı yok). Önizlemede
+duyduğunuz miksin dışa aktarılanla aynı olduğu **ölçülmüştür**
+(`poc-bilinen-sinirlar.md` §2.6: 100 ms RMS pencerelerinde tipik fark
+≤ 0,6 dB; tek bilinçli fark, aşırıda devreye giren limiter'ın yalnız
+export'ta olmasıdır). Fade ve seviye bu panelden klip başına ayarlanır.
+
+> **Sınır (değişmedi):** ses klibi SES AKIŞI ister — sessiz bir videodan ses
+> klibi türetilemez, "Sesi ayır" sessiz videoda gerekçesiyle gridir
+> (`poc-bilinen-sinirlar.md` §1.8).
 
 ---
 
@@ -416,6 +447,7 @@ hız ve renk düzeltmesi vardır — önizleme ile çıktı aynı kurallarla ür
 | 2 Proje oluştur | 25 sn |
 | 3 Medya yükle *(Mod B'de ~15 sn)* | 70 sn |
 | 4 İlk klip + görünüm | 35 sn |
+| 4M Müzik ekle | 30 sn |
 | 5 İkinci klip (sürükle-bırak) | 30 sn |
 | 6 Seçim + Özellikler | 25 sn |
 | 7 Böl + geri al | 35 sn |
@@ -429,15 +461,16 @@ hız ve renk düzeltmesi vardır — önizleme ile çıktı aynı kurallarla ür
 | 15 Oynat | 25 sn |
 | 16 Sürüm kayıt noktası | 30 sn |
 | 17 Export + indir | 85 sn |
-| **Toplam** | **12 dk 20 sn** (Mod B — adım 3 ≈ 15 sn: **11 dk 25 sn**) |
+| **Toplam** | **12 dk 50 sn** (Mod B — adım 3 ≈ 15 sn: **11 dk 55 sn**) |
 
 Kısa sürüm gerekiyorsa **7, 12, 13, 16** numaralı adımlar çıkarılabilir (−2 dk 5 sn):
-Mod A'da **10 dk 15 sn**, Mod B'de **9 dk 20 sn** kalır. §4'teki kapanış cümlesi (15 sn)
+Mod A'da **10 dk 45 sn**, Mod B'de **9 dk 50 sn** kalır. Süreyi daha da kısmak
+gerekirse **4M** de çıkarılabilir (−30 sn). §4'teki kapanış cümlesi (15 sn)
 ve adım 11'in isteğe bağlı görsel notu (~20 sn) bu toplamların dışındadır.
 
 > Bu satırlar sütunun **aritmetiği**dir, ayrı bir ölçüm değil. Önceki sürümde toplam
 > "~11 dk 55 sn" ve kısa sürüm "~8 dk 15 sn" yazıyordu; ikisi de sütunla tutmuyordu ve
-> düzeltildi.
+> düzeltildi. 2026-08-25'te 4M satırı (+30 sn) eklendi, toplamlar yeniden toplandı.
 
 ---
 
@@ -492,6 +525,21 @@ doğrulandı. Uygulama durumu yalnızca **doğrulama için** okundu
 `probePixel` köprüsünden alındı.
 
 **Koşum sonucu: iki ardışık tam koşum, her ikisinde de 41/41 adım geçti.**
+
+> **4M koşum kaydı (2026-08-25, gerçek fare/klavye).** Müzik adımı eklendiğinde
+> senaryonun müziğe DOKUNAN omurgası bir kez uçtan uca koşuldu (Playwright
+> `page.mouse`/`page.keyboard` + gerçek dosya seçici; koşum betiği §7 geleneğince
+> repoya girmedi): **Adım 1** gerçek klavyeyle giriş → **Adım 2** proje oluşturma
+> (`?project=` yazıldı) → **Adım 3** DÖRT dosyanın tek seçici açılışıyla yüklenmesi
+> (dördü de "Hazır") → **Adım 4** çift tık + `Shift+Z` + `-``-` → **Adım 4M** müzik
+> çift tıkla **ses track'ine, 0'a, 10 000 000 µs** olarak düştü ve **seçili geldi**;
+> Özellikler'de SES bölümü göründü; `Home`+`Space` oynatmada playhead 1 066 667 µs'ye
+> ilerledi → **Adım 17** export `Tamamlandı`, indirilen MP4 **2 400 380 B**, ses+video
+> akışlı; müziğin 220 Hz bileşeni çıktıda **−18,6 dBFS** (bant süzgeciyle ölçüldü —
+> videoların tonları 330/660 Hz'dir, yani bu seviye müziğin kendisidir). Adım 5–16'nın
+> metni bu turda değişmedi; onların kaydı yukarıdaki 41/41 koşumudur. Adım 17'nin
+> buradaki çıktısı müzikli PROJEYE aittir; 41/41 koşumundaki 9,8 MB'lık çıktı kaydı
+> o günkü müziksiz projenindir, ikisi farklı belgelerdir.
 
 > **8. tur (2026-08-13) bu dosyada NE değiştirdi:** yalnız adım 3'ün altına bir **müzik notu**
 > eklendi; senaryonun 17 adımının METİNLERİ değişmedi. Koşum kaydı bu yüzden bu turdan da

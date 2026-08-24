@@ -50,6 +50,11 @@ MP4 olarak dışa aktar (1080p / 720p / 4K / dikey). React 19 + .NET 10 + Cloudf
 - Track ve klip düzeyinde **ses seviyesi**, fade in / fade out, sessize alma
 - **Sesi ayır** (detach): video klibinin sesini ayrı bir ses track'ine indirir
 - Waveform çizimi; geçişlerde `acrossfade` ile toplam kazancı 1'de tutan ses rampası
+- **Önizleme ↔ export ses paritesi ÖLÇÜLÜ** (2026-08-25): aynı belgenin iki bağımsız ses
+  yolu (tarayıcı Web Audio ↔ ffmpeg) 100 ms RMS pencerelerinde karşılaştırılır — düz
+  vakalarda fark ≤ 0,6 dB, tepe hizası 3 ms; sınır tablosu
+  [poc-bilinen-sinirlar.md](docs/poc-bilinen-sinirlar.md) §2.6, muhafızı
+  `e2e/audio-parity.spec.ts`
 - Klibin türü ile dosyanın türü **uyuşmak zorundadır** (ses klibi ses okur, çıkartma durağan
   görsel okur…); uyuşmazlık **senkron 422** ile reddedilir — tam matris
   [poc-bilinen-sinirlar.md](docs/poc-bilinen-sinirlar.md) §3'te
