@@ -198,7 +198,7 @@ geçmişe dönük faturalandırılmaz.)*
 kapatıldı. Servisler ölçümden önce güncel ağaçtan yeniden yayınlandı (HEAD 935a73c +
 paralel B6 diliminin worker'daki commit'lenmemiş iptal/reaper-kanalı değişikliği — ölçülen
 mutlu yolda sorgu sayısı/aralığı değişmedi, kendi diff yorumunda da öyle) ve tazelik, koşan
-worker sürecinin YÜKLediği `VideoEdit.Media.dll`'de B5 simgesi (`ExpectedOutputClockUs`)
+worker sürecinin YÜKLEDİĞİ `VideoEdit.Media.dll`'de B5 simgesi (`ExpectedOutputClockUs`)
 aranarak kanıtlandı (eski ikilide YOKTU, yenisinde VAR). Yol §0.1 ile birebir aynı: gerçek
 fareyle "Dosya seç" → tarayıcının kendi dosya seçicisi → ürünün upload motoru → worker →
 kitaplıkta çift tık → gerçek fare/klavyeyle bölme → export diyaloğu. Süreler `Jobs`
