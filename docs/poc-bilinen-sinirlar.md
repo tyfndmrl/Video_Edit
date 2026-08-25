@@ -192,12 +192,99 @@ sayılmaz, 20 GiB aslında ~21,5 GiB" cümlesi ESKİ davranışı anlatıyordu v
 ÖNCE işlenmiş eski asset'lerin türev defteri NULL'dur ve 0 sayılır — onların türevleri
 geçmişe dönük faturalandırılmaz.)*
 
-> **Bu bölümün sınırları — ne İDDİA EDİLMİYOR.** (a) Ölçüm **tek koşumdur** (yalnız 60 sn'lik
-> export üç kez tekrarlandı); (b) nesne deposu **lokal MinIO**'dur, gerçek ağ/gerçek R2 yoktur
-> (§4.2); (c) tek kullanıcı, tek worker, tek eşzamanlı export (§4.1) — **eşzamanlı yük
-> ölçülmedi**; (d) **2 GB'ın üstü ve 4 GiB tavanının kendisi denenmedi**; (e) yarım kalan
-> yüklemenin devamı / ağ koparma senaryosu ölçülmedi (§1.4); (f) bu makine: i9-10850K,
-> 32 GB RAM, NVMe. Başka bir makinede proxy ve render süreleri **doğrudan** değişir.
+### 0.1.1 n=2 — 2,53 GB'lık kaynak + 4 GiB tavanının CANLI denemesi (B2 turu, 2026-08-25)
+
+§0.1'in iki açık borcu ("ölçüm n=1" ve ">2 GB / 4 GiB tavanı hiç denenmedi") bu turda
+kapatıldı. Servisler ölçümden önce güncel ağaçtan yeniden yayınlandı (HEAD 935a73c +
+paralel B6 diliminin worker'daki commit'lenmemiş iptal/reaper-kanalı değişikliği — ölçülen
+mutlu yolda sorgu sayısı/aralığı değişmedi, kendi diff yorumunda da öyle) ve tazelik, koşan
+worker sürecinin YÜKLediği `VideoEdit.Media.dll`'de B5 simgesi (`ExpectedOutputClockUs`)
+aranarak kanıtlandı (eski ikilide YOKTU, yenisinde VAR). Yol §0.1 ile birebir aynı: gerçek
+fareyle "Dosya seç" → tarayıcının kendi dosya seçicisi → ürünün upload motoru → worker →
+kitaplıkta çift tık → gerçek fare/klavyeyle bölme → export diyaloğu. Süreler `Jobs`
+tablosundan (~0,4 sn çözünürlüklü yoklayıcı) ve istemci duvar saatinden.
+
+**Kaynak (ffmpeg ile üretildi):** 2 527 683 977 B = **2,53 GB / 2,35 GiB**; 1000 sn (16:40);
+1920×1080; 30 fps; H.264 **20,0 Mbps** + AAC 196 kbps; §0.1 ile aynı sınıf zamansal gren
+(`noise=alls=18:allf=t+u`) — yani **farklı bir boyut sınıfı, aynı içerik rejimi**.
+
+| Aşama | n=2 ölçümü | n=1 (1,51 GiB) karşılığı | Not |
+|---|---|---|---|
+| Çok parçalı yükleme (**38 parça**: 37 × 64 MiB + 44 656 009 B artık) | **6,73 sn** → ~375 MB/sn | 5,04 sn / ~321 MB/sn (25 parça) | Seçiciden `complete` 200'e; `init` 25 ms, `complete` 325 ms. **LOKAL MinIO** — vaat değil. |
+| Kuyruğa alınma | 0,6 sn | 1,6 sn | iş satırı `CreatedAt`→`StartedAt` |
+| **İşleme (toplam)** | **109,8 sn** | 68,9 sn | 1000 sn kaynak → ~**9,1× hızlı** (n=1: 9,3×) |
+| ├ orijinali indirme (2,53 GB) | ~3,7 sn | ~2,7 sn | MinIO → worker, lokal |
+| ├ 540p CFR proxy | ~64,0 sn (**%58**) | 38,7 sn (%56) | ~15,6× hızlı |
+| ├ filmstrip (**4 sprite**, 1000 kare) | ~38,4 sn (**%35**) | 24,7 sn (%36) | |
+| └ waveform + türev yükleme + poster | ~3,6 sn | ~1,9 sn | |
+| **Dosya seçiciden "Hazır" rozetine** | **117,6 sn** | 75,6 sn | kullanıcının gördüğü toplam |
+| Timeline'a alma (çift tık) | **0,13 sn** | 0,34 sn | klip süresi tam 1 000 000 000 µs |
+| 60 sn'de bölme | kare-kesin | kare-kesin | playhead **tam 60 000 000 µs** (cetvel tıklaması + ok tuşları); kalan klip tam 60 000 000 µs |
+| Export — 60 sn'lik kesim (SOĞUK) | iş **18,1 sn** (render ~12,4 sn → ~4,8× hızlı), duvar saati **23,3 sn** | iş 16,6 sn (render 12,4), duvar 19,5 sn | kuyruk 3,7 sn; indirme ~4,0 sn (cache'te yoktu); çıktı **214 535 418 B** (28,6 Mbps — n=1: 215 311 057 B / 28,5 Mbps, aynı kesim reçetesi) |
+
+Türev toplamı **189 057 029 B = orijinalin %7,48'i** (n=1: %7,7) — `DerivedBytes` defteri
+MinIO'daki gerçek objelerle uyumlu. Kota göstergesi 2 626 304 568 → **5 343 045 574 B**
+(+2 716 741 006 = orijinal + türevler; işleme öncesi hesap boş DEĞİLDİ — n=1'den farkı).
+Çıktı 256 MiB altı olduğundan tek `PutObject` ile yüklendi (multipart export yolu bu
+koşumda tetiklenmedi; o yol n=1'in 2,15 GiB'lik çıktısında ölçülmüştü).
+
+**4 GiB tek-dosya tavanı — İLK KEZ canlı denendi (sınırın İKİ yanı).**
+
+| Deneme | Sonuç |
+|---|---|
+| Ham API, `sizeBytes` = tam 4 GiB (4 294 967 296) | **201 Created**, `partCount` **64**, `partSize` 67 108 864 — sınırın içi kabul; multipart hemen `abort` edildi (204, artık yok) |
+| Ham API, `sizeBytes` = 4 GiB + 1 | **400, İSTEK ANINDA (32 ms)** — tipli `ValidationProblem`: `sizeBytes must be between 1 and 4294967296.` |
+| **GERÇEK dosya** (4 295 098 368 B sparse, gerçek dosya seçiciyle) | init **400, 4,8 ms** — tek bayt yüklenmeden reddedildi. Kullanıcının gördüğü kart: **"Başarısız — Yükleme başlatılamadı: sizeBytes must be between 1 and 4294967296."** + "Tekrar dene" / "Kapat" |
+
+- Ret **istek anında** gelir (upload başlamadan), tipli ve doğru sayılıdır; ama mesaj ham
+  API cümlesidir (İngilizce) — kart Türkçe "Yükleme başlatılamadı" sarmalar, sınırın kendisi
+  Türkçe söylenmez. Kayıt: `docs/backlog.md` (düşük, UI metni).
+- Sınırın iki yanı birim düzeyinde de sabit: `AssetUploadValidationTests`
+  (`ValidateInit_SizeAtLimit_Accepted` + `MaxFileSize + 1` reddi).
+
+**Temizlik (bu ölçümün çok-GB artıkları bırakılmadı, ölçülerek):** asset + iki proje ürün
+yolundan silindi (204; kota 5 343 045 574 → 2 626 304 568 B'ye, koşum öncesi değerine döndü),
+MinIO'da koşumun prefix'leri boşaltıldı (media bucket'ı 30 161 137 528 → 27 444 219 593 B,
+exports 18 217 078 743 → 18 002 524 127 B; iki prefix'te de 0 obje), DB'de koşumun satırları
+0'a indirildi, worker LRU cache'indeki 2,53 GB'lık girdi ve üretilen yerel dosyalar
+(2,53 GB kaynak + 4,3 GB sparse) silindi. İş sonrası `%TEMP%\videoedit-worker` **boş**tu
+(§0.1'deki temizlik iddiası bu boyut sınıfında da doğrulandı).
+
+### 0.1.2 Bu bölümün iddiaları artık NE İLE korunuyor (B2 turu)
+
+12. turun ölçümleri koşulmuş ama KORUNMAYAN ölçümlerdi (bkz. §5.1). Artık 1-2 GB rejimini
+temsil eden **kalıcı bir ölçüm testi** var: `MediaPipelinePerfTests` (MinIO+ffmpeg kapılı,
+CI'da da koşar) her koşumda ~320 MB'lik 1080p30 20 Mbps grenli kaynağı ÜRETİR, ürünün
+yolundan **çok parçalı yükler** (5 parça, 4 eşzamanlı presigned PUT), **işler** ve 30 sn'lik
+kesimi **export eder**; iddiaları donanıma bağlı mutlak saniye değil **ORANDIR** ve
+eşikleri üç ölçüm koşumundan türetilmiştir (gerekçeler test dosyasında sabitlerin yanında).
+
+| §0.1/0.1.1 iddiası | Kalıcı muhafız | Durum |
+|---|---|---|
+| Çok parçalı yükleme yolu (64 MiB parça, `PartCount`, presigned PUT + complete) | `MediaPipelinePerfTests` + `UploadRulesTests` | ✅ her koşumda (hız sayısı LOKAL — tavan yalnız "gerçek zamandan yavaş" felaket sınıfını yakalar) |
+| İşleme gerçek zamandan hızlı (~9-10×) | `MediaPipelinePerfTests` — işleme/kaynak süresi oranı ≤ **0,75** (ölçüm: 0,097/0,107/0,102) | ✅ oransal |
+| Kısa kesim export'u gerçek zamandan hızlı (~4×) | `MediaPipelinePerfTests` — export/çıktı süresi oranı ≤ **2,0** (ölçüm: 0,23/0,25/0,24; soğuk cache) | ✅ oransal |
+| Türev toplamı ≈ orijinalin %7,5'i | `MediaPipelinePerfTests` — tavan %25 (ölçüm: %7,46-7,54; "proxy tam çözünürlüğe kaçtı" sınıfını yakalar) | ✅ oransal |
+| İş bitince worker dizini temiz | `MediaPipelinePerfTests` (iki iş türünün kendi dizinleri) | ✅ |
+| Disk rezervasyonu ölçülen ayak izini kapsar | `ExportDiskEstimateTests` | ✅ (12. tur kapanışı) |
+| LRU süpürme MEKANİZMASI | `OriginalCacheLruTests` | ✅ (ölçek değil) |
+| Kota = orijinal + türev | `AssetUsageQuotaTests`, `ProcessAssetPipelineTests` | ✅ |
+| 4 GiB tavanı (== kabul, +1 ret) | `AssetUploadValidationTests`; canlı davranış §0.1.1 | ✅ |
+| Tarayıcı duvar saatleri (seçici→Hazır, timeline'a alma), Hangfire kuyruk gecikmesi | — | ⚠️ ELLE (Playwright ölçüm betiği; §5.1 gerekçesi geçerli) |
+| >256 MiB çıktının multipart yüklenmesi (GB ölçeği) | eşik/part matematiği `ExportStorageTests` (birim); GB'lık gerçek koşum yalnız n=1 | ⚠️ kısmen |
+| 20 GiB LRU tavanı GB'lık dosyalarla | — | ⚠️ ölçülmedi (bilinçli; backlog) |
+
+> **Bu bölümün sınırları — ne İDDİA EDİLMİYOR.** (a) Uçtan uca tarayıcı ölçümü artık
+> **n=2**'dir (1,51 GiB + 2,53 GB; 60 sn'lik export n=1'de üç kez tekrarlanmıştı) ve boru
+> hattının kendisi kalıcı oransal perf testiyle korunur (§0.1.2) — ama tarayıcı duvar
+> saatleri hâlâ elle ölçülür ve İKİ koşumluk örneklemden varyans iddiası çıkmaz; (b) nesne
+> deposu **lokal MinIO**'dur, gerçek ağ/gerçek R2 yoktur (§4.2); (c) tek kullanıcı, tek
+> worker, tek eşzamanlı export (§4.1) — **eşzamanlı yük ölçülmedi**; (d) **4 GiB tavanının
+> iki yanı canlı denendi (§0.1.1)**; 2,53 GB gerçek koşumla >2 GB sınıfı da ölçüldü — ama
+> 4 GiB'e YAKIN (3,5-4 GiB) gerçek bir yükleme/işleme koşumu hâlâ yok; (e) yarım kalan
+> yüklemenin devamı / ağ koparma senaryosu ölçülmedi (§1.4); (f) ölçüm makinesi: i9-10850K,
+> 32 GB RAM, NVMe. Başka bir makinede proxy ve render süreleri **doğrudan** değişir —
+> kalıcı testin eşikleri tam da bu yüzden orandır.
 
 ---
 
@@ -1058,9 +1145,27 @@ kaçak hali kurulamaz. Aşım işleme hattında **`transcode-overrun`** ile tipl
 yakalanır — `too-long` kapısı beyana baktığı için onu göremez (`DirtyMediaCorpusTests`).
 
 Ek olarak reaper (`AssetReaperJob`) bir iş satırını `stalled` yaparken **koşan render'ı da
-iptal eder** (`RunningRenderRegistry` → `FfmpegRunner`'ın iptal kaydı süreç AĞACINI öldürür);
-eskiden satır "başarısız" derken süreç makineyi meşgul tutmaya devam edebiliyordu. Bu iptal
-**aynı worker süreci** kapsamındadır (çok makineli kurulum kapsam dışı — `docs/backlog.md`).
+öldürtür** ve buna İKİ yolu vardır (2026-08-25'e kadar yalnız birincisi vardı ve iptal tek
+süreç kapsamındaydı):
+
+- **Aynı süreçte ANINDA:** `RunningRenderRegistry` → `FfmpegRunner`'ın iptal kaydı süreç
+  AĞACINI öldürür; eskiden satır "başarısız" derken süreç makineyi meşgul tutmaya devam
+  edebiliyordu.
+- **Süreçler-arası, DB satırı üzerinden:** reaper kararını ÖNCE commit eder; render'ın SAHİBİ
+  süreç, zaten var olan cancel yoklamasında (`ExportJob.CancelPollInterval`, 10 sn'de bir tek
+  satırlık PK SELECT — sorgu sayısı bu genişlemeyle DEĞİŞMEDİ, aynı sorgu artık Canceled'la
+  birlikte her Running-olmayan hâli görür; ölçüldü: PK index'inden 3 buffer, tekil 0,26 ms /
+  ısınmış 5-10 µs) satırın terminale çekildiğini görüp KENDİ ffmpeg ağacını öldürür ve satırı
+  yazanın gerekçesiyle bırakır — Hangfire retry'ına gitmez, yani `stalled` karar dirilmez.
+  Reaper böylece HANGİ worker'da koşarsa koşsun yalnız DB yazarak iptali tetikler; çok-worker
+  dağıtımın birebir kurulumu ölçüldü (`ExportJobPipelineTests` orta-render ailesi: boş
+  registry'li reaper → pid düştü, satır `Failed('stalled')` kaldı; aynı saldırgan yoklama
+  sıklığında dokunulmamış satırla iş Succeeded).
+
+**Kalan sınır (bilinçli):** DB yoklaması ancak süreç PROGRESS ÜRETİYORKEN koşar. Progress
+üretmeyen kaçak aynı süreçteyse registry/sessizlik bekçisi yakalar; BAŞKA süreçteyse ya da
+worker çöküp ffmpeg'i öksüz bıraktıysa süreç-içi hiçbir mekanizma ulaşamaz — o hâl OS düzeyi
+süpürme işidir ve kapsam dışıdır (`docs/backlog.md` 11. tur kaydının kapanış notu).
 
 ### 4.2 Gerçek Cloudflare R2 hiç denenmedi
 
@@ -1400,22 +1505,27 @@ yanlışlanmazlar**, yani "hâlâ doğru mu" sorusu elle sorulmalıdır.
 
 | Ölçüm | Nasıl koşuldu | Sonuç |
 |---|---|---|
-| **1,51 GiB / 10:40 kaynak, uçtan uca** (yükleme → işleme → timeline → kesme → export) | Playwright, GERÇEK fare + tarayıcının kendi dosya seçicisi; ölçüm betiği `e2e/.artifacts/` altında koştu ve repoya **girmedi** | **geçti** — sayılar §0.1'de |
+| **1,51 GiB / 10:40 kaynak, uçtan uca** (yükleme → işleme → timeline → kesme → export) | Playwright, GERÇEK fare + tarayıcının kendi dosya seçicisi; ölçüm betiği `e2e/.artifacts/` altında koştu ve repoya **girmedi** | **geçti** — sayılar §0.1'de. *(B2, 2026-08-25: aynı yol 2,53 GB'lık kaynakla n=2 olarak tekrarlandı — §0.1.1; boru hattının performansı artık kalıcı oransal testle korunuyor — §0.1.2. Elle kalan yalnız tarayıcı tarafının duvar saatleri.)* |
 | **Sonradan tekrar düzenleme** (böl → "Kaydedildi" → Çıkış → yenile → temiz adresten yeniden giriş → proje seçici → aynı proje) | Playwright, GERÇEK fare + GERÇEK klavye; aynı ölçüm paketi | **geçti** — belge birebir geri geldi, filmstrip tuvalinde 3120 farklı renk, `media-urls` 200 (§4.2) |
 
-> **Bu iki ölçüm neden pakette DEĞİL (bilinçli).** Birincisi 1,5 GiB'lık bir dosya üretmeyi
-> (156 sn) ve ~1,7 dakikalık bir koşumu gerektiriyor — tam 10:40'lık export'un ölçümüyle
-> birlikte 5+ dakika; her CI turunda bunu koşmak paketin maliyetini anlamsız büyütürdü.
+> **Bu ölçümler neden pakette DEĞİL(di).** Birincisinin gerekçesi 1,5 GiB'lık dosya üretimi
+> (156 sn) + 5+ dakikalık koşumdu; **B2 turunda gerekçe ölçekle çözüldü**: 1-2 GB rejimini
+> temsil eden ~320 MB'lik deterministik kaynakla aynı boru hattı artık
+> `MediaPipelinePerfTests` olarak HER koşumda ölçülüyor (MinIO+ffmpeg kapılı, CI dahil;
+> iddialar oransal — §0.1.2). Elle kalan kısım tarayıcı tarafının duvar saatleridir (dosya
+> seçici → "Hazır" rozeti, çift tık, diyalog); onlar Playwright betiği ister ve CI maliyeti
+> gerekçesi onlar için geçerliliğini korur.
 > İkincisi paketin `auth.spec.ts`'iyle **kısmen** çakışıyor (çıkış/yeniden
 > giriş orada gerçek girdiyle zaten var), ama "gerçek medyalı proje geri geliyor mu" yarısı
-> hiçbir pakette yok. Yani ikisi de **koşulmuş ama korunmuyor**: bir regresyon bunları sessizce
+> hiçbir pakette yok — **bu yarım hâlâ koşulmuş ama korunmuyor**: bir regresyon onu sessizce
 > kırabilir. Borç `docs/backlog.md` 12. turda açık duruyor.
 
 **Test edilmeyen yüzeyler:** önizlemenin tam-kare golden karşılaştırması, yük/eşzamanlılık
 testi, güvenlik penetrasyon testi, tarayıcı matrisi
 (yalnız Chromium), mobil, **gerçek R2** (§4.2), çoklu worker, uzun süreli (haftalarca ayakta)
-çalışma, gerçek telefon/pis-dosya korpusu (§3.2), **LRU cache süpürmesi ve 2 GB üstü kaynak**
-(§0.1).
+çalışma, gerçek telefon/pis-dosya korpusu (§3.2), **LRU cache'in 20 GiB GERÇEK tavan ÖLÇEĞİ**
+(mekanizması testli — `OriginalCacheLruTests`; 2 GB üstü kaynak da B2'de ölçüldü, §0.1.1 —
+ölçülmeyen yalnız GB'lık dosyalarla gerçek-tavan süpürme koşumu).
 
 ---
 
@@ -1425,8 +1535,9 @@ testi, güvenlik penetrasyon testi, tarayıcı matrisi
 sorusuna cevap, tek kullanıcılı gerçek düzenleme işi, **fotoğraf/slayt gösterisi**
 (önizleme + geçişler + export uçtan uca çalışıyor — §1.1), **müzik/ses eklenmiş kurgu**
 (yükleme → ses track'i → dışa aktarılan dosyada gerçekten duyulan ses — §1.8; önizleme ↔
-export parity'si ölçülü ve sınır tablolu, §2.6), **1-2 GB'lık tek kaynak dosyayla çalışma** (bir kez uçtan uca ölçüldü —
-§0.1; nesne deposu LOKAL, gerçek R2 değil), **projeyi kapatıp sonradan geri dönme**
+export parity'si ölçülü ve sınır tablolu, §2.6), **1-2,5 GB'lık tek kaynak dosyayla çalışma** (iki kez uçtan uca ölçüldü —
+§0.1 + §0.1.1 — ve boru hattı kalıcı oransal perf testiyle korunuyor — §0.1.2; nesne
+deposu LOKAL, gerçek R2 değil), **projeyi kapatıp sonradan geri dönme**
 (çıkış → yeniden giriş → aynı belge + aynı medya — §4.2).
 
 **Uygun değil:** halka açık çok kullanıcılı servis (§4.4, §4.5, §4.6), SLA'lı export

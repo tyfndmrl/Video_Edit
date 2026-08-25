@@ -1,6 +1,7 @@
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using VideoEdit.Domain;
+using VideoEdit.Domain.Entities;
 using VideoEdit.Infrastructure;
 using VideoEdit.Infrastructure.Storage;
 
@@ -85,6 +86,7 @@ public sealed class AssetReaperJob(
         var activeJobs = await db.Jobs
             .Where(j => j.Status == JobStatus.Running || j.Status == JobStatus.Queued)
             .ToListAsync(ct);
+        var stalledJobs = new List<(Job Job, DateTimeOffset LastSeen)>();
         foreach (var job in activeJobs)
         {
             var lastSeen = job.LastProgressAt ?? job.StartedAt ?? job.CreatedAt;
@@ -97,7 +99,23 @@ public sealed class AssetReaperJob(
             job.ErrorMessage = $"stalled: no progress since {lastSeen:O} (reaped at {now:O}).";
             job.CompletedAt = now;
             changed = true;
+            stalledJobs.Add((job, lastSeen));
+        }
 
+        // ÖNCE COMMIT, SONRA ÖLDÜR. DB satırı süreçler-arası iptal kanalıdır: ExportJob render
+        // sırasında satırın güncel durumunu yoklar ve öldürülen işin OperationCanceledException
+        // yolu satırı HEMEN okur. Yazım commit edilmeden öldürseydik o okuma Running görür,
+        // iş Hangfire retry'ına gider ve Failed('stalled') satırı yeniden Running'e çevrilip
+        // DİRİLİRDİ. Bu sırayla reaper HANGİ worker'da koşarsa koşsun iptali tetikler:
+        // aynı süreçteki render'a Abort ANINDA ulaşır, başka süreçteki render satırı en geç
+        // bir yoklama aralığında görür (kapsam sınırları: RunningRenderRegistry xmldoc).
+        if (stalledJobs.Count > 0)
+        {
+            await db.SaveChangesAsync(ct);
+        }
+
+        foreach (var (job, lastSeen) in stalledJobs)
+        {
             // SATIRI DÜZELTMEK YETMEZ, SÜRECİ DE BIRAKMA. Satır 'failed' derken ffmpeg hâlâ
             // koşuyor olabilir; export kuyruğu WorkerCount = 1 olduğu için o süreç herkesin
             // export'unu tutmaya devam eder — yani "ölü" ilan edilen iş makineyi meşgul

@@ -32,7 +32,11 @@ namespace VideoEdit.Worker.Jobs;
 ///
 /// Cancel: API Job.Status=Canceled yazar + Hangfire işini siler. Koşan iş bunu (a) Hangfire
 /// cancellation token'ından, (b) progress sırasındaki DB yoklamasından görür; ffmpeg süreç
-/// ağacı öldürülür ve iş sessizce döner (satır Canceled kalır).
+/// ağacı öldürülür ve iş sessizce döner (satır Canceled kalır). Aynı yoklama satırın
+/// Failed'a çekilmesini de görür (tipik yazar: reaper'ın 'stalled' kararı) — yani DB satırı
+/// SÜREÇLER-ARASI iptal kanalıdır: reaper hangi worker'da koşarsa koşsun yalnız DB yazarak
+/// render'ın SAHİBİ sürece kendi ffmpeg ağacını öldürtür (süreç içi RunningRenderRegistry
+/// aynı-süreç/hiç-progress halleri için ayrıca durur; sınırlar RunningRenderRegistry xmldoc'unda).
 ///
 /// Progress bantları: indirme %0-15, derleme %15, render %15-90 (ffmpeg out_time_us'ten),
 /// doğrulama+upload %90-100.
@@ -70,7 +74,11 @@ public sealed class ExportJob(
     /// <summary>Çıktı süresi doğrulama toleransı (görev sözleşmesi: beklenen ±1 sn).</summary>
     public const long OutputDurationToleranceUs = 1_000_000;
 
-    /// <summary>Render sırasında DB'den cancel bayrağı yoklama aralığı.</summary>
+    /// <summary>
+    /// Render sırasında işin GÜNCEL DB durumunu yoklama aralığı (tek satırlık PK SELECT).
+    /// Yoklama Canceled'ı da Failed'ı da görür — ikincisi reaper'ın 'stalled' kararının
+    /// süreçler-arası ulaşma yoludur (yorum: Run içindeki render bandı).
+    /// </summary>
     public static readonly TimeSpan CancelPollInterval = TimeSpan.FromSeconds(10);
 
     /// <summary>
@@ -420,7 +428,13 @@ public sealed class ExportJob(
                     if (clock.GetUtcNow() - lastCancelCheckAt >= CancelPollInterval)
                     {
                         lastCancelCheckAt = clock.GetUtcNow();
-                        if (await CancelRequestedAsync(job.Id))
+                        // Aynı turda satırın GÜNCEL durumu da okunur — sorgu sayısı DEĞİŞMEDİ
+                        // (eskiden de aynı tek-satır PK SELECT'i vardı, yalnız Canceled'a
+                        // bakıyordu). Satır Running değilse bu koşu sahipliğini kaybetmiştir:
+                        // API Canceled yazmıştır YA DA reaper — HANGİ worker'da koşarsa
+                        // koşsun — Failed('stalled') yazmıştır. Süreç ağacını SAHİBİ süreç
+                        // öldürür; reaper'ın süreç içi Abort'u yalnız aynı-süreç kestirmesidir.
+                        if (await CurrentDbStatusAsync(job.Id) is not JobStatus.Running)
                         {
                             await cancelCts.CancelAsync(); // registration ffmpeg süreç ağacını öldürür
                         }
@@ -530,14 +544,32 @@ public sealed class ExportJob(
         }
         catch (OperationCanceledException)
         {
-            // Kullanıcı iptali (API satırı Canceled yaptı) ise sessizce biter; Hangfire
-            // shutdown iptali ise yeniden fırlatılır (iş yeniden kuyruklanır).
-            if (await CancelRequestedAsync(job.Id))
+            // İptalin ÜÇ ayrı sahibi üç ayrı kapanış kurar; hakem DB satırının güncel hâlidir.
+            var current = await CurrentDbStatusAsync(job.Id);
+
+            // 1) Kullanıcı iptali (API satırı Canceled yaptı): tamamlanma dokunuşu, sessiz dönüş.
+            if (current == JobStatus.Canceled)
             {
                 await MarkCanceledAsync(job.Id);
                 return;
             }
 
+            // 2) Satır DIŞARIDAN terminale çekilmiş — tipik: reaper Failed('stalled') yazdı ve
+            // DB yoklaması süreç ağacını öldürttü (ikiz teslimin bitirdiği ya da silinmiş satır
+            // da aynı sınıftır). Satır, yazanın gerekçesiyle OLDUĞU GİBİ bırakılır ve RETHROW
+            // EDİLMEZ: Hangfire retry'ı işi yeniden koşturup Failed('stalled') satırı Running'e
+            // çevirir, yani reaper'ın öldürdüğü iş DİRİLİRDİ.
+            if (current is null or JobStatus.Failed or JobStatus.Succeeded)
+            {
+                logger.LogWarning(
+                    "ExportJob {JobId}: render aborted because the DB row was finalized externally "
+                    + "({Status}); ffmpeg tree killed, row left as written.",
+                    job.Id, current?.ToString() ?? "deleted");
+                return;
+            }
+
+            // 3) Hangfire shutdown iptali (satır hâlâ Running/Queued): yeniden fırlatılır,
+            // iş yeniden kuyruklanır.
             throw;
         }
         catch (Exception ex)
@@ -857,10 +889,18 @@ public sealed class ExportJob(
 
     /// <summary>API'nin yazdığı cancel bayrağını taze okur (tracked entity'e güvenilmez).</summary>
     private async Task<bool> CancelRequestedAsync(Guid jobId) =>
+        await CurrentDbStatusAsync(jobId) == JobStatus.Canceled;
+
+    /// <summary>
+    /// İşin DB'deki GÜNCEL durumu (null = satır silinmiş) — tek satırlık PK SELECT.
+    /// Tracked entity'e bakılMAZ: satırı bu sürecin dışındaki aktörler de yazar (API cancel,
+    /// reaper stalled) ve DB satırı süreçler-arası tek iptal kanalıdır.
+    /// </summary>
+    private async Task<JobStatus?> CurrentDbStatusAsync(Guid jobId) =>
         await db.Jobs.AsNoTracking()
             .Where(j => j.Id == jobId)
             .Select(j => (JobStatus?)j.Status)
-            .SingleOrDefaultAsync(CancellationToken.None) == JobStatus.Canceled;
+            .SingleOrDefaultAsync(CancellationToken.None);
 
     /// <summary>
     /// İptal edilen işin satırına dokunuş: CompletedAt (yoksa) + stage. Status'e dokunulmaz —

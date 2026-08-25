@@ -172,6 +172,41 @@ public sealed class WorkerReliabilityTests : IDisposable
     }
 
     [Fact]
+    public async Task Reaper_StalledJob_CommitsTheDbVerdictBeforeKillingTheRender()
+    {
+        // DB SATIRI SÜREÇLER-ARASI İPTAL KANALIDIR: başka worker'daki render satırı yoklayarak
+        // ölür (ExportJob render yoklaması), bu süreçteki render ise Abort ile. İkisinin de tek
+        // hakemi DB'deki satırdır — bu yüzden reaper ÖNCE yazmalı (commit), SONRA öldürmelidir.
+        // Ters sırada, öldürülen işin OperationCanceledException yolu satırı Running okur,
+        // Hangfire retry'ına gider ve 'stalled' satır yeniden Running'e çevrilip DİRİLİRDİ.
+        var job = Job.Create(JobType.Export, Guid.NewGuid(), Now - TimeSpan.FromHours(8));
+        job.Status = JobStatus.Running;
+        job.StartedAt = Now - TimeSpan.FromHours(7); // > 6 saatlik eşik
+        _db.Jobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        // Öldürme ANINDA (token callback'i Abort içinde senkron koşar) satırın DB'de ne
+        // dediğini AYRI bir context'ten okuyoruz — ExportJob'ın iptal yolunun yapacağı okuma.
+        JobStatus? statusAtKillTime = null;
+        using var cancellation = new CancellationTokenSource();
+        using var killObserver = cancellation.Token.Register(() =>
+        {
+            using var probe = new AppDbContext(
+                new DbContextOptionsBuilder<AppDbContext>().UseSqlite(_connection).Options);
+            statusAtKillTime = probe.Jobs.AsNoTracking()
+                .Where(j => j.Id == job.Id)
+                .Select(j => (JobStatus?)j.Status)
+                .SingleOrDefault();
+        });
+        using var registration = _renders.Register(job.Id, cancellation);
+
+        await CreateReaper().Run(CancellationToken.None);
+
+        Assert.True(cancellation.IsCancellationRequested, "koşan render iptal edilmeliydi");
+        Assert.Equal(JobStatus.Failed, statusAtKillTime);
+    }
+
+    [Fact]
     public async Task Reaper_LiveJob_DoesNotAbortItsRender()
     {
         // YANLIŞ ÖLDÜRME ÜRETME: eşiğin altındaki (canlı) bir işin render'ına DOKUNULMAZ.

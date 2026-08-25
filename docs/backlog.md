@@ -36,7 +36,7 @@ bilinen sınırlar `⚠︎` dipnotlarıyla ve
 | **Filtreler — LUT (.cube)** | ✅ **tam (2026-08-21)**: `.cube` yükleme türü (`AssetKind.Lut` + `application/x-cube-lut`, worker `CubeLutValidator` doğrulaması, türev/probe YOK) + Inspector LUT bölümü (seçici + yoğunluk + etkin + Kaldır) + §4.2 normatif önizleme shader'ı (`uLut3D/uLutScale/uLutOffset/uIntensity`, trilinear, geçişte taraf başına). Parite ÖLÇÜLDÜ (gerçek fare e2e `lut.spec.ts`): önizleme↔export SSIM(gri) **0,99424**, kanal |fark| ort **1,603** (§9.3 eşikleri ≥0,98 / ≤2,0); bozuk .cube `invalid-lut` tipli düşer. Sınırlar: domain [0,1] dışı ve N>129 KAPSAM DIŞI (yükleme kapısı tipli reddeder); `fx.*` keyframe'i hâlâ yok (ayrı satır) | — |
 | **Hız değiştirme** (slow-mo/timelapse) | ✅ tam (M5) ⚠︎ hız rampası yok | sonraki dilim |
 | **Keyframe animasyonları** | ✅ tam (M5, sınırlarıyla — aşağıya bakınız) ⚠︎ `fx.*` kanalı yok | sonraki dilim |
-| **1-2 GB'lık dosyalarda performans** ("dosya boyutları ortalama 1-2 gb aralıklarında oluyor… performanslı ve hızlı olmalı") | ⚠️ **bir kez uçtan uca ÖLÇÜLDÜ** (12. tur; 1,51 GiB / 10:40 kaynak: seçiciden "Hazır"a **75,6 sn**, 60 sn'lik kesimin export'u **19,5 sn**, tam 10:40'ın export'u **184 sn**) — ama **TEK koşum, TEK makine, LOKAL nesne deposu**; gerçek ağ/R2, eşzamanlı kullanıcı ve >2 GB **ölçülmedi**. LRU süpürme MEKANİZMASI artık entegrasyon testli (küçültülmüş tavanla — `OriginalCacheLruTests`, 2026-08-21); 20 GiB tavan/GB'lık dosya ÖLÇEĞİ hâlâ değil | ölçüm: [`poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §0.1 · açık borçlar: aşağıdaki "12. tur" |
+| **1-2 GB'lık dosyalarda performans** ("dosya boyutları ortalama 1-2 gb aralıklarında oluyor… performanslı ve hızlı olmalı") | ✅ **iki kez uçtan uca ÖLÇÜLDÜ + boru hattı KALICI oransal perf testiyle korunuyor** (B2, 2026-08-25). n=1: 1,51 GiB / 10:40 (seçiciden "Hazır"a 75,6 sn, 60 sn'lik kesim 19,5 sn, tam çizelge 184 sn — 12. tur); n=2: **2,53 GB / 16:40** (seçiciden "Hazır"a **117,6 sn**, 38 parça yükleme 6,7 sn, işleme 109,8 sn ≈ 9,1×, 60 sn'lik kesim 23,3 sn duvar). 4 GiB tavanı canlı denendi (iki yanı — §0.1.1). Rejim muhafızı `MediaPipelinePerfTests` her koşumda (oranlar: işleme ≤ 0,75×, export ≤ 2×, türev ≤ %25). ⚠️ hâlâ: **TEK makine, LOKAL nesne deposu**, eşzamanlı kullanıcı yok; 20 GiB LRU tavanının GB'lık dosya ÖLÇEĞİ değil (mekanizma testli — `OriginalCacheLruTests`) | ölçümler: [`poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §0.1-§0.1.2 · kalanlar: aşağıdaki "12. tur" |
 | **R2'de saklayıp SONRADAN tekrar düzenleme** | ⚠️ İKİ YARI AYRI: "sonradan tekrar düzenleme" ✅ gerçek fare/klavyeyle ölçüldü (düzenle → "Kaydedildi" → çıkış → yenile → yeniden giriş → seçici → aynı belge + aynı medya); "**R2'de saklayıp**" ❌ **gerçek Cloudflare R2 HİÇ denenmedi** — dev de CI da MinIO | R2 doğrulaması: **ilk gerçek dağıtım** ([`poc-bilinen-sinirlar.md`](poc-bilinen-sinirlar.md) §4.2 + [`deploy/README.md`](../deploy/README.md) §4) |
 
 > **M6 KAPSAM KAYDI (review-gate kural 4, 2026-08-12).** M6 planı bu dosyada altı madde
@@ -873,11 +873,37 @@ Kapatılanlar:
   yanlış öldürülmeden Ready (`DirtyMediaCorpusTests` 9/9, `ProcessAssetPipelineTests` 9/9).
   Negatif kontrol yapıldı: tavan geçici kapatıldı → 3 kaçak testi KIRMIZI (yalancı dosya
   `Ready` olabildi) → geri alındı (md5 doğrulandı, touch+rebuild) → yeşil.
-- **[AÇIK] Reaper'ın süreç iptali TEK SÜREÇ kapsamındadır.** `RunningRenderRegistry` süreç içi
-  bir sözlüktür; başka bir makinedeki worker'ın ffmpeg'i bu yoldan öldürülemez. Bugünkü kurulum
-  tek worker olduğu için kapsam yeterli.
-  - *Yapılacak (çok makineli kurulumda):* süreçler-arası bir iptal kanalı (ör. Hangfire iş
-    iptali ya da DB bayrağının worker tarafında yoklanması).
+- **[✅ KAPANDI, 2026-08-25 — B6] Reaper'ın süreç iptali artık tek süreçle sınırlı değil: DB
+  SATIRININ KENDİSİ süreçler-arası iptal kanalı yapıldı.** "Yapılacak" listesindeki ikinci
+  seçenek uygulandı, yeni kanal İCAT EDİLMEDİ: render sırasında zaten var olan cancel
+  yoklaması (`ExportJob.CancelPollInterval`, 10 sn'de bir tek satırlık PK SELECT) artık satırın
+  GÜNCEL durumunu okur — satır Running değilse (API `Canceled` YA DA reaper — hangi worker'da
+  koşarsa koşsun — `Failed('stalled')` yazmıştır) render'ın SAHİBİ süreç kendi ffmpeg ağacını
+  öldürür ve satırı yazanın gerekçesiyle OLDUĞU GİBİ bırakır (rethrow yok: Hangfire retry'ı
+  `stalled` satırı Running'e çevirip işi DİRİLTİRDİ). Reaper de kararını ÖNCE commit eder,
+  SONRA süreç öldürür — ters sıra aynı dirilmeyi üretirdi
+  (`Reaper_StalledJob_CommitsTheDbVerdictBeforeKillingTheRender`). Gerekçe ailesi DEĞİŞMEDİ
+  (`stalled`/`canceled` aynen); süreç içi `RunningRenderRegistry` DURUYOR — aynı süreçte ANINDA
+  ulaşım ve hiç progress üretmeyen asılı işler için (DB yoklaması ancak progress callback'i
+  akarken koşar).
+  - *Kanıt (gerçek MinIO + gerçek ffmpeg, `ExportJobPipelineTests` orta-render ailesi):* reaper
+    BOŞ bir registry ile ("başka worker'da") yalnız DB'ye yazdı → sahibi süreç ffmpeg ağacını
+    öldürdü (pid gerçekten düştü), satır `Failed('stalled')` olarak KALDI, exports bucket'ına
+    obje çıkmadı; yanlış-öldürme avı — aynı saldırgan yoklama sıklığında (her callback'te bir
+    yoklama) dokunulmamış satırla iş Succeeded; orta-render KULLANICI iptali (satır Canceled +
+    'canceled' stage) ve Hangfire shutdown'ı (satır Running → rethrow, requeue) ayrı ayrı ölçüldü.
+  - *Maliyet (ölçüldü 2026-08-25, dev Postgres 17 konteyneri, 3 535 satırlık Jobs):* sorgu
+    SAYISI DEĞİŞMEDİ — aynı yoklama eskiden de aynı tek-satır PK SELECT'ini atıyordu, yalnız
+    Canceled'a bakıyordu. Sorgunun kendisi PK index'inden 3 buffer okur; tekil koşum
+    `EXPLAIN ANALYZE` 0,26 ms, ısınmış döngüde 5-10 µs/sorgu (3×1000 koşum). Frekans: koşan
+    export başına 10 sn'de 1; export kuyruğu WorkerCount=1 → sistem genelinde ≤ 0,1 sorgu/sn.
+  - *Negatif kontrol:* yoklama geçici olarak eski hâline (yalnız Canceled'a bakan) çekildi →
+    çok-worker testi KIRMIZI → geri alındı (md5 birebir, touch+rebuild) → yeşil.
+  - *Kalan sınır (bilinçli — `poc-bilinen-sinirlar.md` §4.1 ve `RunningRenderRegistry`
+    xmldoc'u):* DB yoklaması ancak süreç PROGRESS ÜRETİYORKEN koşar. Progress üretmeyen kaçak
+    aynı süreçteyse registry/sessizlik bekçisi yakalar; BAŞKA süreçteyse ya da worker çöküp
+    ffmpeg'i öksüz bıraktıysa süreç-içi hiçbir mekanizma ulaşamaz — o hâl OS düzeyi süpürme
+    işidir ve kapsam dışıdır.
 
 ## 12. tur denetiminden (2026-08-20 — kullanıcının İLK mesajındaki iki gereksinim kayda geçti)
 
@@ -937,12 +963,26 @@ denenmedi**; MinIO'nun neyi kanıtladığı / neyi kanıtlamadığı §4.2'de ka
   Negatif kontrol: AYNI kurulum pin OLMADAN koşunca en eski girdi gerçekten siliniyor (pin
   korumasının yeşili tesadüf değil). NOT: 20 GiB'lik GERÇEK tavanla, GB'lık dosyalarla ürün
   düzeyi bir koşum hâlâ yapılmadı — mekanizma ölçüldü, ölçek ölçülmedi.
-- **[AÇIK — DÜŞÜK] Ölçüm n=1.** §0.1'in tamamı **tek** koşumdur (yalnız 60 sn'lik export üç
-  kez tekrarlandı ve üçünde de bayt sayısı aynı çıktı). Varyans, ısınma etkisi ve eşzamanlı
-  kullanıcı yükü **ölçülmedi**; §4.1'in "tek eşzamanlı export" sınırı bu rejimde de geçerlidir.
-- **[AÇIK — DÜŞÜK] >2 GB ve 4 GiB tek dosya tavanı denenmedi.** Kullanıcının aralığının üst ucu
-  (2 GB) ölçüldü sayılmaz: ölçülen dosya 1,51 GiB'dir. `QuotasOptions.MaxFileSizeBytes` = 4 GiB
-  ve `UploadRules.PartCount` o boyutta 64 parça üretir — ölçülmedi.
+- **[KAPANDI — 2026-08-25, B borçları B2] Ölçüm n=1'di.** Kapanış: aynı yol (gerçek fare +
+  tarayıcının dosya seçicisi + ürünün upload motoru + gerçek fare/klavye kesme + export
+  diyaloğu) **2,53 GB / 1000 sn'lik** ikinci bir kaynakla uçtan uca tekrarlandı — farklı
+  boyut sınıfı, aynı içerik rejimi. Sayılar `poc-bilinen-sinirlar.md` **§0.1.1**'de (yükleme
+  6,7 sn / 38 parça, işleme 109,8 sn ≈ 9,1×, "Hazır"a 117,6 sn, 60 sn'lik kesimin export'u
+  18,1 sn iş / 23,3 sn duvar); oranlar n=1 ile tutarlı çıktı (9,1× vs 9,3×; %7,48 vs %7,7
+  türev payı). AÇIK KALAN: eşzamanlı kullanıcı yükü ve varyans istatistiği (n=2'den varyans
+  iddiası çıkmaz) — §4.1 sınırı geçerli; tarayıcı duvar saatleri hâlâ elle ölçülüyor.
+- **[KAPANDI — 2026-08-25, B borçları B2] >2 GB ve 4 GiB tek dosya tavanı denenmedi.**
+  Kapanış İKİ bacak: (1) >2 GB sınıfı yukarıdaki 2,53 GB'lık gerçek koşumla ölçüldü;
+  (2) 4 GiB tavanı CANLI denendi, sınırın İKİ yanı: ham API'yle tam 4 GiB → **201** +
+  `partCount` **64** (`UploadRules.PartCount` beklentisi birebir; multipart hemen abort
+  edildi), 4 GiB+1 → **istek anında 400** (32 ms, `sizeBytes must be between 1 and
+  4294967296.`); ayrıca 4 295 098 368 B'lik GERÇEK sparse dosya tarayıcının dosya
+  seçicisinden verildi → init **400 (4,8 ms)**, tek bayt yüklenmedi, kart "Başarısız —
+  Yükleme başlatılamadı: …" gösterdi. Birim düzeyi sınır zaten `AssetUploadValidationTests`'te.
+  KALAN (düşük, yeni kayıt): kartın sınır mesajı ham API cümlesidir (İngilizce) — Türkçe
+  bir "en fazla 4 GiB" cümlesine çevrilebilir; 4 GiB'e YAKIN (ör. 3,5-4 GiB) gerçek bir
+  yükleme+işleme koşumu da yapılmadı (tavanın hemen altındaki bant yalnız init düzeyinde
+  doğrulandı).
 - **[KAPANDI — 2026-08-21, backend borç turu] Birim testi MAKİNE GENELİNDEKİ gerçek export
   cache'ini SİLİYORDU (ölçülmüştü).** Kapanış: `ExportJobTests` artık test-yerel bir
   `CacheDirectory` ile kurulur (sınıf başına temp dizin, Dispose'ta silinir) ve izolasyonun
@@ -962,15 +1002,23 @@ denenmedi**; MinIO'nun neyi kanıtladığı / neyi kanıtlamadığı §4.2'de ka
   iki testi) `CacheDirectory`'yi AÇIKÇA veriyor; kusur yalnız varsayılana düşen yolda.
   CI konteynerinde zararsız (her sürecin kendi `TMPDIR`'i), geliştirici makinesinde **gerçek
   veri siliyordu** ve ölçümleri sessizce bozuyordu. *(Çözüm yukarıdaki kapanış notunda.)*
-- **[AÇIK — ORTA] Bu turun İKİ ölçümü de KOŞULDU ama KORUNMUYOR.** İkisi de
-  `e2e/.artifacts/` altında koşan, repoya girmeyen betiklerdi (`poc-bilinen-sinirlar.md` §5.1):
-  otomatik pakette karşılıkları YOK, yani bir regresyon ikisini de sessizce kırar ve
-  bir sonraki turda kimse fark etmez. Gerekçesi bilinçli (1,5 GiB'lık kaynak + 5+ dakikalık
-  koşum her CI turuna sığmaz), ama borç borçtur.
-  - *Yapılacak:* (a) "sonradan tekrar düzenleme" senaryosunun **gerçek medyalı** yarısı
-    pakete alınabilir — mevcut `e2e/support/media.ts` fixture'ı (4 sn / ~2 MB) yeter, dosya
-    boyutuyla ilgisi yok; (b) 1-2 GB rejimi için ayrı, ELLE tetiklenen bir "perf" projesi
-    (Playwright `project`/tag) tanımlanıp CI'da nightly koşturulabilir.
+- **[YARISI KAPANDI — 2026-08-25, B borçları B2] Bu turun İKİ ölçümü de KOŞULDU ama
+  KORUNMUYOR(du).** İkisi de `e2e/.artifacts/` altında koşan, repoya girmeyen betiklerdi
+  (`poc-bilinen-sinirlar.md` §5.1).
+  - **(b) 1-2 GB perf rejimi → KAPANDI.** Eski öneri "elle tetiklenen Playwright perf
+    projesi"ydi; uygulanan çözüm daha iyisi: rejimi temsil eden **her koşumda koşan** backend
+    ölçüm testi `MediaPipelinePerfTests` (MinIO+ffmpeg kapılı — CI'da da koşar). ~320 MB'lik
+    1080p30 20 Mbps grenli kaynağı üretir, 64 MiB'lık 5 parçayla 4-eşzamanlı presigned
+    PUT'larla yükler, `ProcessAssetJob` + 30 sn'lik `ExportJob` koşar; iddialar ORANSAL
+    (işleme/kaynak ≤ 0,75; export/çıktı ≤ 2,0; türev/orijinal ≤ %25; yükleme ≤ kaynak
+    süresi) ve eşikler üç ölçüm koşumundan türetilip gerekçesiyle test dosyasına yazıldı.
+    Negatif kontrol: işleme tavanı 0,001'e çekildi → test kırmızı ("işleme oranı 0.183 >
+    tavan 0.001"), dosya md5 birebir geri. Kapsam tablosu: `poc-bilinen-sinirlar.md` §0.1.2.
+  - **(a) "sonradan tekrar düzenleme"nin gerçek medyalı yarısı → AÇIK duruyor** (B2 kapsamı
+    dışıydı): mevcut `e2e/support/media.ts` fixture'ı (4 sn / ~2 MB) ile pakete alınabilir,
+    dosya boyutuyla ilgisi yok.
+  - *Elle kalan öteki parça:* tarayıcı tarafının duvar saatleri (dosya seçici → "Hazır",
+    çift tık, diyalog) — Playwright betiği ister, CI maliyeti gerekçesi geçerli (§5.1).
 - **[KAYIT] `EditorApp.fitButton` locator'ı BAYAT (test altyapısı, ürün değil).**
   `e2e/support/editor.ts` "Sığdır" adlı bir düğme arıyor; üründe düğmenin adı **"Fit"**
   (`TimelinePanel`). Bugüne kadar yakalanmadı çünkü `ensureContentVisible` yalnız klip ekranda

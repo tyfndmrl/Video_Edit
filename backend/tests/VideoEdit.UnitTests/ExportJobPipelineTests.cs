@@ -106,15 +106,16 @@ public sealed class ExportJobPipelineTests : IDisposable
         _connection.Dispose();
     }
 
-    private ExportJob CreateRunner(OriginalCache cache) => new(
+    private ExportJob CreateRunner(
+        OriginalCache cache, TimeProvider? clock = null, FfmpegRunner? ffmpeg = null) => new(
         _db,
         _storage,
         new FfprobeService(_ffmpegOptions),
-        new FfmpegRunner(_ffmpegOptions),
+        ffmpeg ?? new FfmpegRunner(_ffmpegOptions),
         cache,
         new NoOpJobClient(),
         NullLogger<ExportJob>.Instance,
-        TimeProvider.System,
+        clock ?? TimeProvider.System,
         new RunningRenderRegistry());
 
     private OriginalCache CreateCache() => new(_storage, new ProcessingOptions
@@ -612,6 +613,244 @@ public sealed class ExportJobPipelineTests : IDisposable
 
         Assert.Equal(JobStatus.Canceled, job.Status);
         Assert.Equal(0, job.AttemptCount);
+    }
+
+    // ───────────── Orta-render iptal ailesi: DB satırı SÜREÇLER-ARASI iptal kanalıdır ─────────────
+    //
+    // Dört test aynı mekaniği paylaşır: saat her progress callback'inde bir DB durum yoklaması
+    // tetikler (EveryCallbackPollsClock — gerçek 10 sn'lik CancelPollInterval beklenmez) ve
+    // ffmpeg GERÇEKTEN koşarken satıra kim ne yazarsa ONUN kapanışı ölçülür. Üçlü sahiplik
+    // (ExportJob.Run içindeki OperationCanceledException yorumu): API Canceled → sessiz Canceled
+    // kapanışı; dışarıdan terminale çekilmiş satır (reaper stalled) → satır olduğu gibi, rethrow
+    // YOK; Hangfire shutdown (satır hâlâ Running) → rethrow, iş yeniden kuyruklanır.
+
+    /// <summary>9,5 sn'lik gerçek render'lı export işi: yoklamanın öldürme/öldürmeme kararına
+    /// callback penceresi açacak kadar uzun (progress ~0,5 sn'de bir gelir), suite'i şişirmeyecek
+    /// kadar kısa (bu sınıf donanımda duvar saati birkaç saniyedir).</summary>
+    private async Task<(Job Job, Guid ProjectId)> SeedRunnableExportAsync()
+    {
+        var sourcePath = media.Video320x240Tone330_10sWithAudio();
+        var now = DateTimeOffset.UtcNow;
+        var asset = Asset.Create(_userId, AssetKind.Video, "long.mp4", "video/mp4",
+            new FileInfo(sourcePath).Length, now);
+        MarkReady(asset, now);
+        _db.Assets.Add(asset);
+
+        var projectId = Guid.CreateVersion7();
+        // sourceOut 9,5 sn: kaynak 10 sn'dir ama container süresi codec dolgusuyla oynayabilir;
+        // kaynak-aralığı kapısına yaslanmayan bir kesim seçilir (bu testlerin konusu o kapı değil).
+        var doc = ExportTestDocs.Doc(
+            projectId: projectId, width: 1280, height: 720,
+            clips: ExportTestDocs.VideoClip(asset.Id, 0, 0, 9_500_000, ExportTestDocs.Audio()));
+        var job = Job.Create(JobType.Export, _userId, now,
+            projectId: projectId,
+            timelineSnapshot: JsonDocument.Parse(ExportTestDocs.ToJson(doc)),
+            exportProfile: "720p");
+        _db.Jobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        _cleanupPrefixes.Add($"u/{_userId}");
+        await _storage.EnsureBucketsExistAsync();
+        await _storage.UploadFileAsync(asset.StorageKey, sourcePath, "video/mp4");
+        return (job, projectId);
+    }
+
+    /// <summary>Satırın DB'deki güncel hâli — koşucunun tracked entity'sinden BAĞIMSIZ okuma
+    /// (iddialar "DB'de ne yazıyor" üzerinedir, bellekteki kopya üzerine değil).</summary>
+    private async Task<Job> FreshRowAsync(Guid jobId)
+    {
+        using var probe = new AppDbContext(
+            new DbContextOptionsBuilder<AppDbContext>().UseSqlite(_connection).Options);
+        return await probe.Jobs.AsNoTracking().SingleAsync(j => j.Id == jobId);
+    }
+
+    /// <summary>
+    /// Süreç ağacının GERÇEKTEN öldüğü kanıtı. Kill kaydı thread pool'dan koşabildiği için
+    /// kısa bir pencere beklenir; pencere sonunda pid hâlâ bir ffmpeg ise bu, satır düzeltilirken
+    /// makinenin meşgul bırakıldığı gerçek sızıntı sınıfıdır ve test KIRMIZI olur.
+    /// </summary>
+    private static void AssertFfmpegProcessGone(int pid)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                using var process = System.Diagnostics.Process.GetProcessById(pid);
+                if (process.HasExited
+                    || !process.ProcessName.Contains("ffmpeg", StringComparison.OrdinalIgnoreCase))
+                {
+                    return; // öldü ya da pid başka bir sürece geri verildi
+                }
+            }
+            catch (ArgumentException)
+            {
+                return; // süreç yok — istenen sonuç
+            }
+
+            Thread.Sleep(100);
+        }
+
+        Assert.Fail($"ffmpeg süreci ({pid}) iptalden sonra hâlâ koşuyor — süreç ağacı öldürülmedi");
+    }
+
+    [MinioAndFfmpegFact]
+    public async Task Export_ReaperOnAnotherWorkerStallsTheRow_OwnerProcessKillsItsOwnFfmpegTree()
+    {
+        // ÇOK-WORKER DAĞITIMININ BİREBİR KURULUMU: reaper BOŞ bir RunningRenderRegistry ile
+        // koşar (render'ın kaydı "başka süreçte", Abort'un ulaşamayacağı yerde) ve yalnız DB'ye
+        // yazar. Render'ın SAHİBİ süreç, satırın Failed('stalled')a çekildiğini progress
+        // yolundaki durum yoklamasında görür, KENDİ ffmpeg ağacını öldürür ve reaper'ın tipli
+        // kararını OLDUĞU GİBİ bırakır — rethrow etmez, çünkü Hangfire retry'ı 'stalled' satırı
+        // yeniden Running'e çevirip işi DİRİLTİRDİ.
+        var (job, projectId) = await SeedRunnableExportAsync();
+
+        var ffmpegPid = 0;
+        var runner = new FfmpegRunner(_ffmpegOptions)
+        {
+            ProcessStarted = process =>
+            {
+                ffmpegPid = process.Id;
+                // Render başladı; reaper "başka bir worker'da": kendi context'i, kendi (boş)
+                // registry'si, satırı stalled eşiğinin ötesinde gören kendi saati. Saat,
+                // yoklama saatinin tabanından BİR YIL sonradır — LastProgressAt o tabandan
+                // dakikalar mertebesinde ilerlediği için 6 saatlik eşik her koşulda aşılır.
+                using var reaperDb = new AppDbContext(
+                    new DbContextOptionsBuilder<AppDbContext>().UseSqlite(_connection).Options);
+                new AssetReaperJob(reaperDb, _storage, NullLogger<AssetReaperJob>.Instance,
+                        new FixedClock(EveryCallbackPollsClock.Start.AddYears(1)),
+                        new RunningRenderRegistry())
+                    .Run(CancellationToken.None).GetAwaiter().GetResult();
+            },
+        };
+
+        // Fırlatmadan dönmelidir (rethrow = Hangfire retry = dirilme).
+        await CreateRunner(CreateCache(), new EveryCallbackPollsClock(), runner)
+            .Run(job.Id, CancellationToken.None);
+
+        var row = await FreshRowAsync(job.Id);
+        Assert.Equal(JobStatus.Failed, row.Status);
+        Assert.StartsWith("stalled:", row.ErrorMessage);
+        Assert.Null(row.OutputKey);
+
+        Assert.NotEqual(0, ffmpegPid);
+        AssertFfmpegProcessGone(ffmpegPid);
+
+        // Render tamamlanmadı: exports bucket'ına çıktı objesi HİÇ yüklenmedi.
+        Assert.Null(await _exportsBucketProbe.HeadObjectAsync($"exports/{projectId:D}/{job.Id:D}.mp4"));
+    }
+
+    [MinioAndFfmpegFact]
+    public async Task Export_HealthyRender_IsNeverKilledByTheDbStatusPoll()
+    {
+        // YANLIŞ ÖLDÜRME AVI: yoklama yalnız SAHİPLİĞİ KAYBEDİLMİŞ (Running olmayan) satırda
+        // öldürür. Bu koşu üstteki testle AYNI saldırgan yoklama mekaniğini kullanır — tek fark
+        // satıra kimsenin dokunmaması — ve iş sonuna kadar gidip Succeeded yazar: yoklamanın
+        // kendisi sağlıklı bir render'ı asla kesmez.
+        var (job, _) = await SeedRunnableExportAsync();
+
+        await CreateRunner(CreateCache(), new EveryCallbackPollsClock())
+            .Run(job.Id, CancellationToken.None);
+
+        var row = await FreshRowAsync(job.Id);
+        Assert.True(row.Status == JobStatus.Succeeded,
+            $"expected Succeeded, got {row.Status}: {row.ErrorMessage}");
+        Assert.Equal(100, row.ProgressPercent);
+        Assert.Equal("done", row.ProgressStage);
+        Assert.NotNull(row.OutputKey);
+        Assert.NotNull(await _exportsBucketProbe.HeadObjectAsync(row.OutputKey!));
+    }
+
+    [MinioAndFfmpegFact]
+    public async Task Export_UserCancelMidRender_KillsTheTreeAndClosesTheRowCanceled()
+    {
+        // Orta-render KULLANICI iptalinin ürün-yolu kanıtı (daha önce yalnız koşu-ÖNCESİ iptal
+        // ölçülüyordu): API'nin durum-korumalı yazımı render sürerken gelir; yoklama Canceled'ı
+        // görür, ffmpeg ağacı ölür, iş sessizce döner ve satır Canceled + 'canceled' stage'iyle
+        // kapanır (MarkCanceledAsync dokunuşu).
+        var (job, projectId) = await SeedRunnableExportAsync();
+
+        var ffmpegPid = 0;
+        var runner = new FfmpegRunner(_ffmpegOptions)
+        {
+            ProcessStarted = process =>
+            {
+                ffmpegPid = process.Id;
+                // ExportEndpoints.CancelJob'un yazdığı satırın birebir eşi.
+                using var api = new AppDbContext(
+                    new DbContextOptionsBuilder<AppDbContext>().UseSqlite(_connection).Options);
+                var now = DateTimeOffset.UtcNow;
+                api.Jobs
+                    .Where(j => j.Id == job.Id
+                                && (j.Status == JobStatus.Queued || j.Status == JobStatus.Running))
+                    .ExecuteUpdate(s => s
+                        .SetProperty(j => j.Status, JobStatus.Canceled)
+                        .SetProperty(j => j.ProgressStage, "canceled")
+                        .SetProperty(j => j.CompletedAt, now));
+            },
+        };
+
+        await CreateRunner(CreateCache(), new EveryCallbackPollsClock(), runner)
+            .Run(job.Id, CancellationToken.None);
+
+        var row = await FreshRowAsync(job.Id);
+        Assert.Equal(JobStatus.Canceled, row.Status);
+        Assert.Equal("canceled", row.ProgressStage);
+        Assert.NotNull(row.CompletedAt);
+        Assert.Null(row.OutputKey);
+        AssertFfmpegProcessGone(ffmpegPid);
+        Assert.Null(await _exportsBucketProbe.HeadObjectAsync($"exports/{projectId:D}/{job.Id:D}.mp4"));
+    }
+
+    [MinioAndFfmpegFact]
+    public async Task Export_HostShutdownMidRender_RethrowsSoHangfireRequeues()
+    {
+        // İptalin ÜÇÜNCÜ sahibi: Hangfire shutdown token'ı. Satır hâlâ Running olduğu için
+        // OperationCanceledException YENİDEN FIRLATILIR (iş kaybolmaz, yeniden kuyruklanır) —
+        // dışarıdan bitirilmiş satır halleriyle (yutulan sınıf) karışmadığının kanıtı.
+        var (job, _) = await SeedRunnableExportAsync();
+
+        using var shutdown = new CancellationTokenSource();
+        var ffmpegPid = 0;
+        var runner = new FfmpegRunner(_ffmpegOptions)
+        {
+            ProcessStarted = process =>
+            {
+                ffmpegPid = process.Id;
+                shutdown.Cancel();
+            },
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateRunner(CreateCache(), new EveryCallbackPollsClock(), runner)
+                .Run(job.Id, shutdown.Token));
+
+        var row = await FreshRowAsync(job.Id);
+        Assert.Equal(JobStatus.Running, row.Status); // satıra dokunulmaz — requeue devralır
+        Assert.Null(row.OutputKey);
+        AssertFfmpegProcessGone(ffmpegPid);
+    }
+
+    /// <summary>
+    /// Her <c>GetUtcNow</c> çağrısında yoklama aralığından büyük bir adım ilerleyen saat:
+    /// ExportJob'ın render yoklaması HER progress callback'inde tetiklenir — "satırı en geç bir
+    /// yoklama aralığında görür" iddiası gerçek 10 sn'lik aralık beklenmeden, en saldırgan
+    /// yoklama sıklığında ölçülür (yanlış-öldürme avı için de en sert rejim budur).
+    /// </summary>
+    private sealed class EveryCallbackPollsClock : TimeProvider
+    {
+        public static readonly DateTimeOffset Start = new(2030, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        private long _calls;
+
+        public override DateTimeOffset GetUtcNow() =>
+            Start + Interlocked.Increment(ref _calls)
+                  * (ExportJob.CancelPollInterval + TimeSpan.FromSeconds(1));
+    }
+
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed class NoOpJobClient : IBackgroundJobClient

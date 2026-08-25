@@ -11,11 +11,20 @@ namespace VideoEdit.Worker.Jobs;
 /// makine "meşgul" kalır. Kayıt, o iki gerçeği tekrar aynı hizaya getirir.
 /// </para>
 /// <para>
-/// KAPSAM AÇIKÇA DARDIR: sözlük süreç içidir, dolayısıyla yalnız AYNI worker sürecinde koşan
-/// render öldürülebilir. Başka bir makinedeki worker'ın süreci bu yoldan öldürülemez ve bu
-/// KAPSAM DIŞIDIR (bugünkü kurulum tek worker'dır; çok makineli kurulumda gereken şey
-/// süreçler-arası bir iptal kanalıdır — docs/backlog.md). Kayıt YOKSA reaper eskisi gibi
+/// KAPSAM: sözlük süreç içidir — yalnız AYNI worker sürecinde koşan render'a ANINDA ulaşır.
+/// Süreçler-arası iptal kanalı DB SATIRININ KENDİSİDİR: reaper 'stalled'/API 'canceled'
+/// yazınca render'ın SAHİBİ süreç bunu progress yolundaki durum yoklamasında görür ve kendi
+/// ffmpeg ağacını öldürür (ExportJob.CancelPollInterval — reaper hangi worker'da koşarsa
+/// koşsun çalışır). Bu sözlük yine de gereklidir, çünkü DB yoklaması ancak süreç PROGRESS
+/// ÜRETİYORKEN koşar: hiç çıktı üretmeyen asılı bir render'ı aynı süreçte yalnız bu kayıt
+/// (reaper Abort'u) ya da sessizlik bekçisi öldürebilir. Kayıt YOKSA reaper eskisi gibi
 /// yalnız satırı düzeltir; hiçbir şey kötüleşmez.
+/// </para>
+/// <para>
+/// KALAN SINIR (bilinçli, docs/poc-bilinen-sinirlar.md §4.1): stderr gevezeliğiyle sessizlik
+/// bekçisini besleyip progress üretmeyen bir kaçak BAŞKA süreçteyse, ve worker süreci çöküp
+/// ffmpeg'i öksüz bıraktıysa, hiçbir süreç-içi mekanizma ona ulaşamaz — bu OS düzeyi bir
+/// süpürme işidir ve kapsam dışıdır.
 /// </para>
 /// </summary>
 public sealed class RunningRenderRegistry
