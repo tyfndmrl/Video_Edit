@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using VideoEdit.Api.Assets;
 using VideoEdit.Api.Endpoints;
@@ -402,7 +403,8 @@ public sealed class AssetEndpointsTests : IDisposable
         await LinkAssetAsync(project.Id, foreign.Id); // değişmezi kasten del
 
         var result = await AssetEndpoints.MediaUrls(
-            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, CancellationToken.None);
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System,
+            NullLoggerFactory.Instance, CancellationToken.None);
 
         var ok = Assert.IsType<Ok<MediaUrlsResponse>>(result);
         var keys = ok.Value!.Assets.Keys;
@@ -420,7 +422,8 @@ public sealed class AssetEndpointsTests : IDisposable
         await LinkAssetAsync(project.Id, b.Id);
 
         var result = await AssetEndpoints.MediaUrls(
-            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, CancellationToken.None);
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System,
+            NullLoggerFactory.Instance, CancellationToken.None);
 
         var ok = Assert.IsType<Ok<MediaUrlsResponse>>(result);
         Assert.Equal(2, ok.Value!.Assets.Count);
@@ -450,7 +453,8 @@ public sealed class AssetEndpointsTests : IDisposable
         await LinkAssetAsync(project.Id, asset.Id);
 
         var result = await AssetEndpoints.MediaUrls(
-            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, CancellationToken.None);
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System,
+            NullLoggerFactory.Instance, CancellationToken.None);
 
         var ok = Assert.IsType<Ok<MediaUrlsResponse>>(result);
         var urls = ok.Value!.Assets[asset.Id.ToString("D")];
@@ -471,13 +475,113 @@ public sealed class AssetEndpointsTests : IDisposable
         _storage.ManifestJson = TwoSpriteManifest;
 
         var result = await AssetEndpoints.MediaUrls(
-            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, CancellationToken.None);
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System,
+            NullLoggerFactory.Instance, CancellationToken.None);
 
         var ok = Assert.IsType<Ok<MediaUrlsResponse>>(result);
         var urls = ok.Value!.Assets[asset.Id.ToString("D")];
         Assert.NotNull(urls.Sprites); // eski asset HÂLÂ tam yanıt alır
         Assert.Equal(2, urls.Sprites!.Count);
         Assert.Equal(1, _storage.OpenReadCount); // yedek yol: tek manifest GET
+    }
+
+    // ---------- B8: tembel backfill — yedek yol kendi kendini iyileştirir ----------
+
+    /// <summary>
+    /// ASIL İDDİA (B8): yedek yol manifest'i storage'dan okuduğunda içerik
+    /// Assets.FilmstripManifest kolonuna da yazılır → aynı asset'in İKİNCİ media-urls
+    /// çağrısı DB kademesinden çözülür. Kanıt OpenReadCount: ilk çağrıda 1, ikincide HÂLÂ 1.
+    /// </summary>
+    [Fact]
+    public async Task MediaUrls_FallbackRead_BackfillsTheColumn_SecondCallServesFromDb()
+    {
+        var project = await SeedProjectAsync();
+        var asset = await SeedReadyAssetAsync(_userId, withDbManifest: false); // kolon NULL
+        await LinkAssetAsync(project.Id, asset.Id);
+        _storage.ManifestJson = TwoSpriteManifest;
+
+        var first = await AssetEndpoints.MediaUrls(
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System,
+            NullLoggerFactory.Instance, CancellationToken.None);
+        var firstOk = Assert.IsType<Ok<MediaUrlsResponse>>(first);
+        Assert.Equal(1, _storage.OpenReadCount);
+
+        // Kolon dolduruldu ve içerik storage'daki manifest'in TA KENDİSİ.
+        var reloaded = Reload(asset.Id);
+        Assert.NotNull(reloaded.FilmstripManifest);
+        Assert.Equal(TwoSpriteManifest, reloaded.FilmstripManifest!.RootElement.GetRawText());
+
+        // İkinci çağrı: storage GET YOK, yanıt şekli birebir aynı (istemci ayırt edemez).
+        var second = await AssetEndpoints.MediaUrls(
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System,
+            NullLoggerFactory.Instance, CancellationToken.None);
+        var secondOk = Assert.IsType<Ok<MediaUrlsResponse>>(second);
+        Assert.Equal(1, _storage.OpenReadCount); // hâlâ 1 — DB kademesi
+
+        var firstUrls = firstOk.Value!.Assets[asset.Id.ToString("D")];
+        var secondUrls = secondOk.Value!.Assets[asset.Id.ToString("D")];
+        Assert.Equal(firstUrls.Sprites!.Count, secondUrls.Sprites!.Count);
+        Assert.Equal(firstUrls.Sprites["sprite_1.jpg"], secondUrls.Sprites["sprite_1.jpg"]);
+        Assert.Equal(firstUrls.FilmstripManifest, secondUrls.FilmstripManifest);
+    }
+
+    /// <summary>
+    /// BEST-EFFORT yarısı: backfill yazımı başarısız olursa (bozuk JSON — JsonDocument.Parse
+    /// backfill'de patlar) yanıt DÜŞMEZ, kolon NULL kalır ve yedek yol sonraki çağrıda da
+    /// çalışmaya devam eder (OpenReadCount büyümeye devam eder). Bugünkü davranışla aynı:
+    /// bozuk manifest'te sprites zaten üretilmiyordu.
+    /// </summary>
+    [Fact]
+    public async Task MediaUrls_BackfillFailure_DoesNotBreakTheFallbackResponse()
+    {
+        var project = await SeedProjectAsync();
+        var asset = await SeedReadyAssetAsync(_userId, withDbManifest: false);
+        await LinkAssetAsync(project.Id, asset.Id);
+        _storage.ManifestJson = "bu-json-degil{{{"; // GET başarılı, parse başarısız
+
+        var first = await AssetEndpoints.MediaUrls(
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System,
+            NullLoggerFactory.Instance, CancellationToken.None);
+
+        var ok = Assert.IsType<Ok<MediaUrlsResponse>>(first); // yanıt 200 — backfill hatası yutuldu
+        Assert.Null(ok.Value!.Assets[asset.Id.ToString("D")].Sprites); // bugünkü davranış
+        Assert.Null(Reload(asset.Id).FilmstripManifest); // çöp yazılmadı
+
+        var second = await AssetEndpoints.MediaUrls(
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System,
+            NullLoggerFactory.Instance, CancellationToken.None);
+        Assert.IsType<Ok<MediaUrlsResponse>>(second);
+        Assert.Equal(2, _storage.OpenReadCount); // yedek yol bozulmadı: yine storage'a gitti
+    }
+
+    /// <summary>
+    /// YARIŞ KORUMASI: yedek yol manifest'i okurken işleme hattı (ör. yeniden işleme) kolona
+    /// KENDİ kopyasını yazarsa backfill onu EZMEZ — yazım "kolon hâlâ NULL" şartlıdır.
+    /// FakeStorage'ın OnOpenRead kancası tam okuma anında kolonu doldurarak yarışı kurar.
+    /// </summary>
+    [Fact]
+    public async Task MediaUrls_Backfill_DoesNotClobberAConcurrentPipelineWrite()
+    {
+        var project = await SeedProjectAsync();
+        var asset = await SeedReadyAssetAsync(_userId, withDbManifest: false);
+        await LinkAssetAsync(project.Id, asset.Id);
+        const string pipelineManifest = """{"sprites":["sprite_9.jpg"]}""";
+        _storage.ManifestJson = TwoSpriteManifest;
+        _storage.OnOpenRead = () =>
+        {
+            using var ctx = NewContext();
+            var row = ctx.Assets.Single(a => a.Id == asset.Id);
+            row.FilmstripManifest = JsonDocument.Parse(pipelineManifest);
+            ctx.SaveChanges();
+        };
+
+        var result = await AssetEndpoints.MediaUrls(
+            project.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System,
+            NullLoggerFactory.Instance, CancellationToken.None);
+
+        Assert.IsType<Ok<MediaUrlsResponse>>(result);
+        // İşleme hattının yazdığı kopya DURUYOR — backfill eski okumasıyla üzerine yazmadı.
+        Assert.Equal(pipelineManifest, Reload(asset.Id).FilmstripManifest!.RootElement.GetRawText());
     }
 
     // ---------- Yardımcılar ----------
@@ -602,9 +706,13 @@ public sealed class AssetEndpointsTests : IDisposable
         public string? ManifestJson { get; set; }
         public int OpenReadCount { get; private set; }
 
+        /// <summary>Okuma ANINDA koşturulan kanca — backfill yarış testinin enjeksiyon noktası.</summary>
+        public Action? OnOpenRead { get; set; }
+
         public Task<StorageDownload> OpenReadAsync(string key, CancellationToken ct = default)
         {
             OpenReadCount++;
+            OnOpenRead?.Invoke();
             if (ManifestJson is null)
             {
                 throw new AmazonS3Exception("not found") { StatusCode = HttpStatusCode.NotFound };

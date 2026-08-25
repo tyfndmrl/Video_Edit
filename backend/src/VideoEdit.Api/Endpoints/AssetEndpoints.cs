@@ -396,7 +396,7 @@ public static class AssetEndpoints
 
     internal static async Task<IResult> MediaUrls(
         Guid projectId, ClaimsPrincipal principal, AppDbContext db, IStorageService storage,
-        TimeProvider clock, CancellationToken ct)
+        TimeProvider clock, ILoggerFactory loggerFactory, CancellationToken ct)
     {
         var userId = principal.GetUserId();
         if (!await OwnsProjectAsync(db, projectId, userId, ct))
@@ -430,6 +430,12 @@ public static class AssetEndpoints
         // GetPreSignedURL ölçümle doğrulandı: 16 iş parçacığı × 32 000 çağrı, sıfır istisna,
         // örneklenen imzalı URL'lerin tamamı MinIO'dan 200 döndü (~8,8× verim). Döngüde
         // DbContext YOK — paralel güvenli.
+        // YEDEK yoldan okunan manifest'ler tembel backfill için biriktirilir (B8): builder
+        // readObjectOrNull'u YALNIZ FilmstripManifest kolonu NULL olan eski asset'in
+        // manifest.json'ı için çağırır, yani buraya düşen her kayıt "yedek yol koştu" demektir.
+        // Sözlük eşzamanlı doldurulur ama DB'ye yazım paralel bölgenin DIŞINDADIR (aşağıda) —
+        // "döngüde DbContext YOK" kuralı bozulmaz.
+        var fallbackManifests = new System.Collections.Concurrent.ConcurrentDictionary<Guid, byte[]>();
         using var gate = new SemaphoreSlim(8);
         var entries = await Task.WhenAll(assets.Select(asset => Task.Run(async () =>
         {
@@ -437,7 +443,17 @@ public static class AssetEndpoints
             try
             {
                 var dto = await AssetMediaUrlBuilder.BuildAsync(
-                    asset, storage.PresignGet, (key, token) => ReadObjectOrNullAsync(storage, key, token), ct);
+                    asset, storage.PresignGet,
+                    async (key, token) =>
+                    {
+                        var bytes = await ReadObjectOrNullAsync(storage, key, token);
+                        if (bytes is { Length: > 0 })
+                        {
+                            fallbackManifests[asset.Id] = bytes;
+                        }
+
+                        return bytes;
+                    }, ct);
                 return (Id: asset.Id.ToString("D"), Dto: dto);
             }
             finally
@@ -446,6 +462,9 @@ public static class AssetEndpoints
             }
         }, ct)));
 
+        await BackfillFilmstripManifestsAsync(
+            db, fallbackManifests, loggerFactory.CreateLogger(nameof(AssetEndpoints)), ct);
+
         var map = new Dictionary<string, AssetMediaUrlsDto>(assets.Count);
         foreach (var (id, dto) in entries)
         {
@@ -453,6 +472,48 @@ public static class AssetEndpoints
         }
 
         return Results.Ok(new MediaUrlsResponse(expiresAt, map));
+    }
+
+    /// <summary>
+    /// B8 tembel backfill — kendi kendini iyileştiren yedek yol: manifest.json bu istekte
+    /// storage'dan OKUNDUYSA aynı içerik <c>Assets.FilmstripManifest</c> jsonb kolonuna da
+    /// yazılır; aynı asset'in SONRAKİ media-urls çağrısı DB kademesinden çözülür ve storage
+    /// GET'i biter (toplu migration bilinçli YOK — <c>Asset.FilmstripManifest</c> sözleşmesi;
+    /// eski asset'ler ancak GERÇEKTEN istendiklerinde, istek başına ≤2 KB maliyetle iyileşir).
+    /// <para>
+    /// Yazım BEST-EFFORT'tur: yanıt bu noktada zaten yedek yol içeriğiyle kurulmuştur ve
+    /// backfill'in hiçbir hatası (bozuk manifest JSON'ı, DB kesintisi) yanıtı düşüremez —
+    /// hata YUTULUR ama LOGLANIR: sessiz catch değil, "bu asset neden hâlâ yedek yolda"
+    /// sorusunun izi log'da kalır. İstek iptali yutulMAZ (yanıt zaten ölü). Yarış korumalı:
+    /// yalnız kolon HÂLÂ NULL ise yazılır — işleme hattı (ProcessAssetJob) arada kendi
+    /// kopyasını yazdıysa ezilmez.
+    /// </para>
+    /// </summary>
+    private static async Task BackfillFilmstripManifestsAsync(
+        AppDbContext db, IReadOnlyDictionary<Guid, byte[]> manifests, ILogger logger,
+        CancellationToken ct)
+    {
+        foreach (var (assetId, bytes) in manifests)
+        {
+            try
+            {
+                using var manifest = JsonDocument.Parse(bytes);
+                await db.Assets
+                    .Where(a => a.Id == assetId && a.FilmstripManifest == null)
+                    .ExecuteUpdateAsync(s => s.SetProperty(a => a.FilmstripManifest, manifest), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "media-urls backfill: asset {AssetId} manifest'i FilmstripManifest kolonuna "
+                    + "yazılamadı; yedek yol etkilenmez (sonraki çağrı yine storage'dan okur).",
+                    assetId);
+            }
+        }
     }
 
     /// <summary>Küçük objeyi RAM'e okur; yoksa/okunamazsa null (media-urls manifest okuması best-effort).</summary>

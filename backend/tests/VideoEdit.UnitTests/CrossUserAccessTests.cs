@@ -259,7 +259,8 @@ public sealed class CrossUserAccessTests : IDisposable
         await SeedVictimAssetAsync(status: AssetStatus.Ready, linkTo: project);
 
         var result = await AssetEndpoints.MediaUrls(
-            project.Id, Attacker, _db, _storage, TimeProvider.System, CancellationToken.None);
+            project.Id, Attacker, _db, _storage, TimeProvider.System,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance, CancellationToken.None);
 
         // İmzalı URL'nin tek üreticisi presign'dır ve TrappedStorage'ta patlar —
         // yalın 404, tek bir URL bile imzalanmadan reddedildiğini kanıtlar.

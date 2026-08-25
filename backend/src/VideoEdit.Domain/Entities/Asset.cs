@@ -50,10 +50,12 @@ public class Asset
     /// kolondan yapar (ölçüldü: asset başına ~0,6 ms MinIO GET, 100+ asset'te çağrıyı
     /// doğrusal uzatıyordu). NULL = "bu asset kolon eklenmeden önce işlendi" (geriye dönük
     /// satırlar): media-urls o asset'ler için bugünkü storage-GET yolunu YEDEK olarak korur.
-    /// Backfill bilinçli olarak YOK (DerivedBytes deseni): eski asset yedek yolla zaten
-    /// doğru çalışır, toplu backfill satır başına bir storage GET gerektiren riskli bir veri
-    /// migration'ı olurdu ve tek kazancı çağrı başına ~1 ms'dir; asset yeniden işlenirse
-    /// kolon kendiliğinden dolar.
+    /// TOPLU backfill bilinçli olarak YOK (DerivedBytes deseni): satır başına bir storage GET
+    /// gerektiren riskli bir veri migration'ı olurdu ve tek kazancı çağrı başına ~1 ms'dir.
+    /// Onun yerine yedek yol KENDİ KENDİNİ İYİLEŞTİRİR (B8 tembel backfill —
+    /// AssetEndpoints.BackfillFilmstripManifestsAsync): media-urls manifest'i storage'dan
+    /// okuduğunda aynı içeriği best-effort bu kolona da yazar; eski asset ilk gerçek
+    /// kullanımında DB kademesine terfi eder, asset yeniden işlenirse kolon zaten dolar.
     /// </summary>
     public JsonDocument? FilmstripManifest { get; set; }
 
