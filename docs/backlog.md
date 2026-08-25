@@ -1324,3 +1324,16 @@ ve perf listesinden **media-urls paralelleştirmesi** (8'lik eşzamanlılık kap
 ## Kayda geçen doğrulamalar (aksiyon gerekmez)
 - Restore'da "PreRestore satırı görünmüyor" davranışı veri kaybı DEĞİL — aynı revision'da zaten snapshot varsa terfi ediliyor; invaryant korunuyor (denetim #32).
 - `.gitignore` üretilen-artefakt-commit'lenir kararıyla tutarlı (denetim #37).
+
+## B borçları kapanış doğrulamasından (2026-08-25, 90d5f9f) — iki yeni düşük kayıt
+
+- **[DÜŞÜK — işletim prosedürü] Bayat dist tuzağı:** editör paketi (Vite dev dahil) timeline-schema'yı
+  `dist`'ten çözer; "backend yayını + Vite restart" tek başına schema paketini TAZELEMEZ —
+  `pnpm --filter @videoedit/timeline-schema build` adımı gerekir (CI'da var; canlı ortam
+  prosedüründe yazılı değildi, kapanış doğrulaması bunu tazelik iğnesiyle yakaladı: bezier
+  commit'i sonrası dist 21.08'den kalmaydı ve editör TS yarısını hiç görmeyecekti).
+- **[DÜŞÜK — sözleşme adayı] Export tamamlanma yazımı son-yazan-kazanır:** terminal duruma
+  (Failed/stalled) çekilmiş bir satırın üstüne tamamlanma yolu Succeeded+OutputKey yazabiliyor
+  (ölçüldü: satır flip'inden sonra render 10 sn'lik yoklamadan önce doğal bitince). Üretimde
+  reaper yalnız 6 saat kalp-atışsız satırı çevirdiğinden pencere pratikte açılmaz; yine de
+  tamamlanma UPDATE'ine durum-koşulu eklemek ayrı bir sözleşme kararı olarak durur.
