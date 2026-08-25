@@ -69,6 +69,13 @@ builder.Services.AddSingleton<ITextRasterService>(sp =>
 builder.Services.Configure<ProcessingOptions>(builder.Configuration.GetSection(ProcessingOptions.SectionName));
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ProcessingOptions>>().Value);
 
+// Export tahmin sabitleri: varsayılanlar bu makinede ölçülmüş değerlerdir (ExportJob const'ları
+// + ExportProfiles.EstimatedBitsPerSecond); farklı donanımdaki worker onları ExportEstimates
+// section'ından (env: ExportEstimates__*) ezebilir. Formüller değişmez — yalnız sabitler.
+builder.Services.Configure<ExportEstimateOptions>(
+    builder.Configuration.GetSection(ExportEstimateOptions.SectionName));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ExportEstimateOptions>>().Value);
+
 // İş sınıfları — Hangfire DI (AspNetCoreJobActivator) scope başına çözer.
 builder.Services.AddScoped<IProcessAssetJob, ProcessAssetJob>();
 builder.Services.AddScoped<IExportJob, ExportJob>();
@@ -157,6 +164,17 @@ EnsureMediaToolAvailable(ffmpegOptions.FfprobePath, "ffprobe");
             + "'font-missing' ile başarısız olacaktır — kurulum için fonts/README.md.",
             fontRoot, ex.Message);
     }
+}
+
+// Export tahmin sabitleri AÇILIŞTA görünür kılınır (FontRootHealth görünürlük deseninin log
+// yarısı): kapı kararları bu sayılardan doğar ve farklı donanımdaki bir worker'ın hangi
+// sabitlerle koştuğu ancak buradan okunur. Pozitif olmayan override açılışta düşürür —
+// bozuk sabit ilk export'ta sessiz yanlış karar verdirmemeli.
+{
+    var estimates = host.Services.GetRequiredService<ExportEstimateOptions>();
+    estimates.Validate();
+    host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ExportEstimates")
+        .LogInformation("Export tahmin sabitleri (etkin): {Effective}", estimates.DescribeEffective());
 }
 
 // Reaper: 15 dk'da bir (kuyruk seçimi AssetReaperJob.Run üzerindeki [Queue] attribute'undan).

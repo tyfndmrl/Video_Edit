@@ -68,7 +68,8 @@ public sealed class ExportJobTests : IDisposable
         }
     }
 
-    private ExportJob CreateJobRunner(IBackgroundJobClient? jobClient = null)
+    private ExportJob CreateJobRunner(
+        IBackgroundJobClient? jobClient = null, ExportEstimateOptions? estimates = null)
     {
         var ffmpegOptions = new FfmpegOptions();
         var storage = new StubStorage();
@@ -81,7 +82,8 @@ public sealed class ExportJobTests : IDisposable
             jobClient ?? new NoOpJobClient(),
             NullLogger<ExportJob>.Instance,
             TimeProvider.System,
-            Renders);
+            Renders,
+            estimates: estimates);
     }
 
     private async Task<Job> SeedExportJobAsync(string timelineJson, JobStatus status = JobStatus.Queued)
@@ -584,6 +586,59 @@ public sealed class ExportJobTests : IDisposable
 
         Assert.Equal(0, jobs.ScheduleCount);
         Assert.Equal(JobStatus.Running, Reload(job.Id).Status);
+    }
+
+    /// <summary>
+    /// B7: bellek kapısı SABİTLERİ config'ten okur (ExportEstimateOptions DI ile ExportJob'a
+    /// iner). Yön 1 — küçültme: varsayılan sabitlerle 512 MB'lik probe'da 'memory-wait'e
+    /// düşen AYNI belge, sabitler 1'e ezilince kapıdan geçer ve indirmeye ilerler
+    /// (StubStorage'ın transient patlaması = devam kanıtı, Run_MemoryUnmeasurable ile aynı).
+    /// </summary>
+    [Fact]
+    public async Task Run_MemoryGate_TinyConfiguredConstants_LetTheSameJobPass()
+    {
+        var job = await SeedReadyAssetAndJobAsync();
+        var jobs = new RecordingJobClient();
+        var runner = CreateJobRunner(jobs, new ExportEstimateOptions
+        {
+            MemoryBaseBytes = 1,
+            MemoryEncoderBytesPerTargetPixel = 1,
+            MemoryDemuxBytesPerInput = 1,
+            MemoryDecodeBytesPerSourcePixel = 1,
+            MemoryMixBytesPerCanvasPixel = 1,
+        });
+        runner.AvailableMemoryProbe = () => 512L * 1024 * 1024; // varsayılanla memory-wait olurdu
+
+        await Assert.ThrowsAsync<NotSupportedException>(
+            () => runner.Run(job.Id, CancellationToken.None));
+
+        Assert.Equal(0, jobs.ScheduleCount);
+        Assert.Equal(JobStatus.Running, Reload(job.Id).Status); // erteleme/fail yazılmadı
+    }
+
+    /// <summary>
+    /// B7 yön 2 — büyütme: bol (64 GiB) bellekte varsayılanla geçen belge, kodlayıcı terimi
+    /// 1 MB/px'e ezilince 'memory-wait'e düşer — enjekte edilen sabitin kapı KARARINI
+    /// değiştirdiğinin doğrudan kanıtı (iki yön birlikte "options hiç okunmuyor" ve
+    /// "options her zaman kazanıyor" bozulmalarının ikisini de yakalar).
+    /// </summary>
+    [Fact]
+    public async Task Run_MemoryGate_InflatedConfiguredConstant_RequeuesDespiteAmpleMemory()
+    {
+        var job = await SeedReadyAssetAndJobAsync();
+        var jobs = new RecordingJobClient();
+        var runner = CreateJobRunner(jobs, new ExportEstimateOptions
+        {
+            MemoryEncoderBytesPerTargetPixel = 1_000_000, // ~2,3 TiB tahmine şişirir
+        });
+        runner.AvailableMemoryProbe = () => 64L * 1024 * 1024 * 1024;
+
+        await runner.Run(job.Id, CancellationToken.None);
+
+        var reloaded = Reload(job.Id);
+        Assert.Equal(JobStatus.Queued, reloaded.Status);
+        Assert.Equal("memory-wait", reloaded.ProgressStage);
+        Assert.Equal(1, jobs.ScheduleCount);
     }
 
     /// <summary>

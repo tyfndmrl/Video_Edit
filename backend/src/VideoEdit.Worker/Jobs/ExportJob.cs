@@ -55,7 +55,8 @@ public sealed class ExportJob(
     ILogger<ExportJob> logger,
     TimeProvider clock,
     RunningRenderRegistry renders,
-    ITextRasterService? textRaster = null) : IExportJob
+    ITextRasterService? textRaster = null,
+    ExportEstimateOptions? estimates = null) : IExportJob
 {
     /// <summary>Disk yetersizse en fazla bu kadar denemede Failed('disk-full').</summary>
     public const int MaxDiskFullAttempts = 3;
@@ -616,9 +617,16 @@ public sealed class ExportJob(
     /// üretirdi.
     /// </para>
     /// </summary>
-    public static long EffectiveOutputBitsPerSecond(ExportProfile profile, IEnumerable<Asset> sources)
+    /// <param name="profile">Çıktı profili — taban bit hızının okunacağı satır.</param>
+    /// <param name="sources">İşin kaynak asset satırları (bit hızı defteri).</param>
+    /// <param name="options">Sabit override'ları; <c>null</c> = ölçülen varsayılanlar
+    /// (<see cref="ExportProfiles.EstimatedBitsPerSecond"/>). Formül değişmez, yalnız
+    /// profil TABANI worker config'inden ezilebilir (ExportEstimateOptions xmldoc'u).</param>
+    public static long EffectiveOutputBitsPerSecond(
+        ExportProfile profile, IEnumerable<Asset> sources, ExportEstimateOptions? options = null)
     {
-        var bps = ExportProfiles.EstimatedBitsPerSecond(profile);
+        var bps = options?.EffectiveOutputBitsPerSecondFloor(profile)
+                  ?? ExportProfiles.EstimatedBitsPerSecond(profile);
         foreach (var asset in sources)
         {
             if (asset.Kind is not (AssetKind.Video or AssetKind.Audio)
@@ -679,15 +687,27 @@ public sealed class ExportJob(
     /// pikselleri. Süre SÜRÜCÜ DEĞİL (boru hattı akışkan: 60 sn belge boyunca tepe sabit).
     /// </para>
     /// </summary>
+    /// <param name="targetPixels">Çıktı profilinin piksel sayısı (kodlayıcı terimi).</param>
+    /// <param name="canvasPixels">Proje tuvalinin piksel sayısı (karışım terimi).</param>
+    /// <param name="graphInputCount">ffmpeg giriş sayısı (demux terimi).</param>
+    /// <param name="peakConcurrentVisualInputs">Eşzamanlı görsel giriş tepe sayısı.</param>
+    /// <param name="peakConcurrentMotionSourcePixels">Eşzamanlı çözülen kaynak piksel tepe toplamı.</param>
+    /// <param name="options">Sabit override'ları; <c>null</c> = bu sınıftaki ölçülen
+    /// <c>Memory*</c> const varsayılanları. FORMÜL DEĞİŞMEZ — yalnız sabitler worker
+    /// config'inden ezilebilir (ExportEstimateOptions xmldoc'u).</param>
     public static long EstimateRequiredMemoryBytes(
         long targetPixels, long canvasPixels, int graphInputCount,
-        int peakConcurrentVisualInputs, long peakConcurrentMotionSourcePixels)
+        int peakConcurrentVisualInputs, long peakConcurrentMotionSourcePixels,
+        ExportEstimateOptions? options = null)
     {
-        var bytes = MemoryBaseBytes
-            + MemoryEncoderBytesPerTargetPixel * targetPixels
-            + MemoryDemuxBytesPerInput * graphInputCount
-            + MemoryDecodeBytesPerSourcePixel * peakConcurrentMotionSourcePixels
-            + MemoryMixBytesPerCanvasPixel
+        var bytes = (options?.EffectiveMemoryBaseBytes ?? MemoryBaseBytes)
+            + (options?.EffectiveMemoryEncoderBytesPerTargetPixel ?? MemoryEncoderBytesPerTargetPixel)
+                * targetPixels
+            + (options?.EffectiveMemoryDemuxBytesPerInput ?? MemoryDemuxBytesPerInput)
+                * graphInputCount
+            + (options?.EffectiveMemoryDecodeBytesPerSourcePixel ?? MemoryDecodeBytesPerSourcePixel)
+                * peakConcurrentMotionSourcePixels
+            + (options?.EffectiveMemoryMixBytesPerCanvasPixel ?? MemoryMixBytesPerCanvasPixel)
                 * Math.Max(0, peakConcurrentVisualInputs - 1) * canvasPixels;
         return bytes * 12 / 10;
     }
@@ -785,7 +805,7 @@ public sealed class ExportJob(
         var (targetWidth, targetHeight) = ExportProfiles.Target(profile);
         var requiredBytes = EstimateRequiredMemoryBytes(
             (long)targetWidth * targetHeight, (long)plan.Width * plan.Height,
-            inputs, peakVisual, peakMotionPixels);
+            inputs, peakVisual, peakMotionPixels, estimates);
         if (availableBytes < 0 || availableBytes >= requiredBytes)
         {
             return true;
@@ -823,7 +843,7 @@ public sealed class ExportJob(
     {
         var freeBytes = MeasureFreeSpace(tempDir);
         var requiredBytes = EstimateRequiredDiskBytes(
-            totalSourceBytes, durationUs, EffectiveOutputBitsPerSecond(profile, sources));
+            totalSourceBytes, durationUs, EffectiveOutputBitsPerSecond(profile, sources, estimates));
         if (freeBytes < 0 || freeBytes >= requiredBytes)
         {
             return true;
