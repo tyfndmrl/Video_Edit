@@ -2881,26 +2881,27 @@ public static class ExportCompiler
 
     /// <summary>
     /// Taban kapısının baktığı EN KÜÇÜK ölçek: statikte <c>transform.scale</c>, ölçek
-    /// animasyonunda KEYFRAME MİNİMUMU.
+    /// animasyonunda ÖRNEKLENEN EĞRİNİN MİNİMUMU (<see cref="AnimationTrack.CurveMin"/> —
+    /// kapalı-form bezier ekstremumu, Easing.BezierValueExtrema).
     /// <para>
     /// Animasyonlu dalda statik alan HESABA KATILMAZ çünkü üretilen filtergraph onu hiç
     /// okumaz: ifade yalnız keyframe'lerden örneklenir ve ilk/son keyframe'in dışında
     /// uçlara sabitlenir (bkz. <see cref="ScaleFilter"/>). Statik alanı da hesaba katmak
     /// kapıyı derlenmeyecek bir değerden ötürü ret verebilir hale getirirdi.
     /// (TAVAN kuralı simetrik değildir ve bilerek öyledir: <see cref="PlacementTransform"/>
-    /// bellek tavanını <c>max(statik, keyframe max)</c> ile kurar — orada fazladan güvenlik
+    /// bellek tavanını <c>max(statik, eğri max)</c> ile kurar — orada fazladan güvenlik
     /// payı yanlış ret değil, yalnız daha erken bir ret üretir.)
     /// </para>
     /// <para>
-    /// KAPSAM NOTU: "keyframe minimumu" örneklenen eğrinin minimumu DEĞİLDİR — undershoot'lu
-    /// bir <c>cubicBezier</c> (y1 ya da y2 &lt; 0) ara değerleri keyframe tabanının altına
-    /// indirebilir. Editör böyle bir eğri YAZAMAZ (<c>keyframeModel</c> yalnız hazır easing
-    /// tiplerini sunar, serbest bezier'i dışarıda bırakır); ham API'den yazılan bir belgede
-    /// ise kapı Compile aşamasında ffprobe/PNG boyutuyla yeniden koşar.
+    /// Eskiden burada keyframe minimumu okunur ve KAPSAM NOTU "undershoot'lu serbest bir
+    /// cubicBezier ara değerleri bu tabanın altına indirebilir" derdi — o boşluk ölçüldü
+    /// (0.02→1.0 + (0.3,-4,0.6,1): kare örneklemi −1,499; kapı 0.02 görüyordu) ve eğri
+    /// ekstremumuyla KAPANDI. Preset/linear track'lerde CurveMin == keyframe minimumu
+    /// (preset ekstremumları tam {0,1}), yani editör belgelerinde davranış değişmez.
     /// </para>
     /// </summary>
     private static double MinScaleOf(ExportClipPlan clip) =>
-        clip.Animation.Scale is { } animated ? animated.MinValue : clip.Transform?.Scale ?? 1d;
+        clip.Animation.Scale is { } animated ? animated.CurveMin : clip.Transform?.Scale ?? 1d;
 
     /// <summary>
     /// Rasterlenecek klibin, ÇİZİM BAŞLAMADAN karar verilebilen sözleşmesi: renk alanları
@@ -3167,8 +3168,11 @@ public static class ExportCompiler
 
     /// <summary>
     /// Yerleşim hesabına giren transform: keyframe'li kanallar statik alanı EZER (§3.3).
-    ///  - ölçek animasyonluysa kutu ve BELLEK TAVANI en büyük keyframe değerinden hesaplanır
-    ///    (ara tuval en büyük karede en büyüktür — denetim #2'nin aynı gerekçesi);
+    ///  - ölçek animasyonluysa kutu ve BELLEK TAVANI örneklenen eğrinin EN BÜYÜK değerinden
+    ///    hesaplanır (<see cref="AnimationTrack.CurveMax"/>; ara tuval en büyük karede en
+    ///    büyüktür — denetim #2'nin aynı gerekçesi. Keyframe maksimumu yetmez: overshoot'lu
+    ///    bir cubicBezier ara karede onun da üstüne çıkar — ölçüldü, 1.0→2.0 + (0.3,0,0.6,6)
+    ///    kare örneklemi 3,99'a tırmanıyordu; preset/linear'da iki sayı birebir aynıdır);
     ///  - dönme animasyonluysa katman "dönüyor" sayılır: rotate filtresi üretilir, overlay
     ///    çapa çarpanı 0.5'e düşer, gereken yerde çapa pad'i kurulur;
     ///  - x/y animasyonu geometriyi DEĞİL yalnız overlay konumunu etkiler → burada rol almaz.
@@ -3186,7 +3190,7 @@ public static class ExportCompiler
         {
             X = transform.X,
             Y = transform.Y,
-            Scale = animation.Scale is { } scale ? Math.Max(transform.Scale, scale.MaxValue) : transform.Scale,
+            Scale = animation.Scale is { } scale ? Math.Max(transform.Scale, scale.CurveMax) : transform.Scale,
             RotationDeg = animation.Rotation is null ? transform.RotationDeg : RotationSentinelDeg,
             AnchorX = transform.AnchorX,
             AnchorY = transform.AnchorY,
@@ -3251,12 +3255,20 @@ public static class ExportCompiler
         var suggestion = LayerGeometry.MinScaleFor(fitWidth, fitHeight, srcWidth, srcHeight, truncated);
         var box = $"{boxWidth.ToString(CultureInfo.InvariantCulture)}x"
                   + $"{boxHeight.ToString(CultureInfo.InvariantCulture)}";
-        // Animasyonlu klipte ret STATİK alandan değil KEYFRAME'den doğar; kullanıcı hangi
-        // sayıyı düzelteceğini bilmeli (statik alan 1.0 iken "ölçeğiniz çok küçük" demek,
-        // canlı ölçümde tam olarak yaşandığı gibi, panelde karşılığı olmayan bir mesajdır).
-        var animated = clip.Animation.Scale is not null
-            ? $" (ölçek animasyonlu; en küçük keyframe değeri {Num(minScale)})"
-            : "";
+        // Animasyonlu klipte ret STATİK alandan değil EĞRİDEN doğar; kullanıcı hangi sayıyı
+        // düzelteceğini bilmeli (statik alan 1.0 iken "ölçeğiniz çok küçük" demek, canlı
+        // ölçümde tam olarak yaşandığı gibi, panelde karşılığı olmayan bir mesajdır).
+        // Taban keyframe'in KENDİSİNDEN geliyorsa eski cümle aynen kalır; easing eğrisi
+        // keyframe tabanının ALTINA indiriyorsa (serbest cubicBezier) mesaj iki sayıyı da
+        // söyler — "en küçük keyframe X" demek eğri tabanı için yalan olurdu.
+        var animated = clip.Animation.Scale switch
+        {
+            null => "",
+            { } track when track.CurveMin < track.MinValue =>
+                $" (ölçek animasyonlu; easing eğrisinin örneklenen en küçük değeri {Num(minScale)}, "
+                + $"en küçük keyframe {Num(track.MinValue)})",
+            _ => $" (ölçek animasyonlu; en küçük keyframe değeri {Num(minScale)})",
+        };
 
         // Hangi eksen ve NE KADAR altına düşüyor — kullanıcı "ölçeği küçülttüm, neden
         // reddedildi" sorusunun cevabını sayıyla görmeli (EnsureLayerCeiling'in kardeş dili).

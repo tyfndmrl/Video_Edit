@@ -1309,6 +1309,17 @@ ve perf listesinden **media-urls paralelleştirmesi** (8'lik eşzamanlılık kap
   klipte 3,1 ms p50 — bugün taban çizgisinden ayrışmıyor; 1000+ klipte sürükleme
   commit'lerinde hissedilmeden büyük belgelerde örnekleyerek (her N. commit) ya da yalnız
   değişen track'i doğrulayan artımlı yolla koşulmalı. Şimdilik aksiyon YOK (izleme kaydı).
+- **[DÜŞÜK — bilinçli kapsam dışı, 2026-08-25 B-kenar/bezier dilimi] Opacity/volume aralık
+  kapıları hâlâ keyframe DEĞERLERİNİ okur, eğriyi değil:** ölçek kapıları örneklenen eğrinin
+  kapalı-form ekstremumuna taşındı (rendering-semantics §3.1 serbest-`y` notu), ama
+  `KeyframeCompiler.Parse`'ın opacity `[0..1]` / volume `[0..2]` kapıları bilerek keyframe
+  değerlerinde bırakıldı. Overshoot'lu serbest `cubicBezier` (yalnız ham API) örneklenen
+  opacity/volume'u aralık dışına taşıyabilir; sonuç ölçekteki gibi kırık geometri/ffmpeg
+  hatası DEĞİL — opacity `colorchannelmixer aa=` içinde piksel düzeyinde kırpılır, volume
+  ffmpeg/WebAudio'da aynı katsayıyla uygulanır (önizleme↔export paritesi bozulmaz; negatif
+  volume faz çevirir). Eğri-ekstremum altyapısı hazır (`AnimationTrack.CurveMin/CurveMax`);
+  kapıları eğriye taşımak bugün kabul edilen belgeleri reddedeceğinden sözleşme kararı ister
+  — ihtiyaç doğarsa baş mimara.
 
 ## Kayda geçen doğrulamalar (aksiyon gerekmez)
 - Restore'da "PreRestore satırı görünmüyor" davranışı veri kaybı DEĞİL — aynı revision'da zaten snapshot varsa terfi ediliyor; invaryant korunuyor (denetim #32).

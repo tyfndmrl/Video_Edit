@@ -1036,7 +1036,14 @@ public sealed class ExportGateInventoryTests : IDisposable
         // timelineDurationUs]" invaryantının C# eşi. Saf doküman aritmetiğidir, Validate'te
         // (KeyframeCompiler.Parse → Track) yaşar; HTTP karşılığı ExportEndpointsTests'te,
         // zod paritesi KeyframeBoundsParityTests'te (paylaşılan vektör dosyasıyla) ölçülür.
-        ("backend/src/VideoEdit.Media/Export/ClipAnimation.cs", 1, 8),
+        // 8 → 9: ölçek EĞRİSİ pozitiflik kapısı — keyframe değerleri pozitifken undershoot'lu
+        // serbest cubicBezier'in örneklenen ölçeği ≤ 0'a indirmesi (ölçüldü: 0.02→1.0 +
+        // (0.3,-4,0.6,1) → −1,5). Saf doküman aritmetiğidir (AnimationTrack.CurveMin —
+        // kapalı-form bezier ekstremumu) ve Validate'te (KeyframeCompiler.Parse) yaşar; HTTP
+        // karşılığı öteki Parse retleri gibi tipsiz 'invalid-timeline' 422'sidir, davranış
+        // testi ExportCompilerSnapshotTests.Validate_UndershootingScaleBezier_*'ta, dil
+        // paritesi BezierExtremaParityTests'te (paylaşılan easing-extrema-vectors.json).
+        ("backend/src/VideoEdit.Media/Export/ClipAnimation.cs", 1, 9),
         ("backend/src/VideoEdit.Media/Export/ClipEffects.cs", 2, 7),
         // 0 → 1 (export profilleri): 'export-profile-aspect' — profil hedef kutusu
         // tuval oranına uymuyorsa tipli ret. SpecFor'da yaşar (Validate DEĞİL: kural belgenin

@@ -22,9 +22,26 @@ public sealed record AnimationTrack(IReadOnlyList<MediaKeyframe> Keys)
     public bool AllLinear { get; } =
         Keys.Take(Math.Max(0, Keys.Count - 1)).All(k => k.Easing.Type == EasingType.Linear);
 
+    /// <summary>
+    /// ÖRNEKLENEN eğrinin ekstremumu (<see cref="Easing.KeyframeCurveExtrema"/> — kapalı
+    /// form). Aralık kapıları (ölçek taban/tavan) BUNU okur, <see cref="MinValue"/>/<see
+    /// cref="MaxValue"/>'yu değil: [0,1] dışına taşan y'li bir cubicBezier (şema-yasal)
+    /// örneklenen değeri keyframe zarfının dışına çıkarır; preset/linear track'lerde ikisi
+    /// birebir aynıdır (preset ekstremumları tam {0,1} — ölçüldü ve testli).
+    /// </summary>
+    public CurveExtrema CurveExtrema { get; } = Easing.KeyframeCurveExtrema(Keys);
+
+    /// <summary>En küçük KEYFRAME DEĞERİ — eğri tabanı için <see cref="CurveMin"/>'e bak.</summary>
     public double MinValue => Keys.Min(k => k.Value);
 
+    /// <summary>En büyük KEYFRAME DEĞERİ — eğri tavanı için <see cref="CurveMax"/>'a bak.</summary>
     public double MaxValue => Keys.Max(k => k.Value);
+
+    /// <summary>Örneklenen eğrinin tabanı (≤ <see cref="MinValue"/>).</summary>
+    public double CurveMin => CurveExtrema.Min;
+
+    /// <summary>Örneklenen eğrinin tavanı (≥ <see cref="MaxValue"/>).</summary>
+    public double CurveMax => CurveExtrema.Max;
 
     /// <summary>Klip-göreli <paramref name="timeUs"/> anındaki değer (§3.3).</summary>
     public double Sample(long timeUs) => Easing.SampleKeyframes(Keys, timeUs);
@@ -117,6 +134,21 @@ public static class KeyframeCompiler
             throw new InvalidTimelineException(
                 $"'{clipId}' klibinin ölçek keyframe'lerinden biri pozitif değil "
                 + $"(en küçük değer {Num(scale.MinValue)}).");
+        }
+
+        // Pozitiflik sözleşmesi EĞRİNİN TAMAMI içindir, yalnız keyframe değerleri için değil:
+        // undershoot'lu serbest bir cubicBezier (y1/y2 < 0 sınıfı; şema y'yi serbest bırakır,
+        // §3.1) keyframe'ler pozitifken örneklenen ölçeği 0'ın altına indirir — ölçüldü:
+        // 0.02→1.0 + (0.3,-4,0.6,1) kare örneklemi −1,499'a iniyordu ve ffmpeg'e negatif
+        // genişlik ifadesi yazılıyordu. Editör preset'leri [0,1] içinde kaldığından
+        // (ekstremumları tam {0,1}) bu kapı editör belgelerinde ASLA tetiklenmez.
+        if (scale is not null && scale.CurveMin <= 0)
+        {
+            throw new InvalidTimelineException(
+                $"'{clipId}' klibinin ölçek animasyonu easing eğrisiyle pozitif bölgeden çıkıyor: "
+                + $"örneklenen eğrinin en küçük değeri {Num(scale.CurveMin)} (keyframe aralığı "
+                + $"{Num(scale.MinValue)}..{Num(scale.MaxValue)}). cubicBezier y katsayılarını "
+                + "yumuşatın ya da keyframe tabanını yükseltin.");
         }
 
         if (opacity is not null && (opacity.MinValue < 0 || opacity.MaxValue > 1))

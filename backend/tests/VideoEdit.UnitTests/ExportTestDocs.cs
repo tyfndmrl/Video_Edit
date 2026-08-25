@@ -398,6 +398,10 @@ internal static class ExportTestDocs
 
     public static Easing EaseIn() => new EasingEaseIn { Type = "easeIn" };
 
+    /// <summary>Serbest cubicBezier (şema y'yi serbest bırakır — overshoot/undershoot yasal).</summary>
+    public static Easing Bezier(double x1, double y1, double x2, double y2) =>
+        new EasingCubicBezier { Type = "cubicBezier", X1 = x1, Y1 = y1, X2 = x2, Y2 = y2 };
+
     public static Transform DefaultTransform() => new()
     {
         X = 0,

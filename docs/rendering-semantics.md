@@ -267,7 +267,10 @@ yukarıdaki eşitsizliktir.
 > hata (`LayerGeometry.IsDegenerate` / `ExportCompiler.EnsureLayerFloor`). Kaynak boyutu hiç
 > bilinmiyorsa tam model yerine kaynaktan bağımsız yarısı (`LayerGeometry.IsBelowScaleFloor`:
 > kutu her eksende ≥ 2) sorulur — ölçüm yokluğu yanlış ret üretmez, yalnız kapının gördüğü
-> kümeyi daraltır.
+> kümeyi daraltır. Ölçek ANİMASYONLU klipte taban (ve simetrik `transform-scale` tavanı)
+> keyframe min/max'ından değil **örneklenen eğrinin ekstremumundan** sorulur
+> (`AnimationTrack.CurveMin/CurveMax` — §3.1'deki serbest-`y` notu): preset/linear'da iki
+> sayı özdeştir, [0,1] dışına taşan `y`'li serbest `cubicBezier`'de eğri esas alınır.
 >
 > > **METİN KLİBİNDE "ÖLÇÜM YOKSA KAPI ATLANIR" ARTIK TEK BAŞINA DOĞRU DEĞİL.** Metin katmanının
 > > kutusu rasterin kendi bbox'ından türer; bbox ölçülemiyorsa TABAN kapısı gerçekten sorulamaz
@@ -630,6 +633,21 @@ Cubic-bezier `P0=(0,0)`, `P1=(x1,y1)`, `P2=(x2,y2)`, `P3=(1,1)` (CSS eşdeğerle
 
 Şemadaki `{ type: 'cubicBezier', x1, y1, x2, y2 }` serbest katsayıya izin verir;
 `x1, x2 ∈ [0..1]` zorunludur (zod + compiler doğrular), `y` serbesttir.
+
+> **SERBEST `y` VE ARALIK KAPILARI (NORMATİF).** `y` [0,1] dışına taşabildiği için örneklenen
+> değer, keyframe değerlerinin zarfının DIŞINA çıkabilir (overshoot/undershoot — ölçüldü:
+> scale `0.02→1.0` + `(0.3,-4,0.6,1)` kare örneklemi −1,499'a iner). Değer aralığı okuyan
+> ölçek kapıları (dejenerelik tabanı §2.2, `transform-scale` tavanı) bu yüzden keyframe
+> min/max'ını değil **örneklenen eğrinin kapalı-form ekstremumunu** okur: referans
+> `easing.ts bezierValueExtrema` / `keyframeCurveExtrema`, C# portu
+> `Easing.BezierValueExtrema` + `AnimationTrack.CurveMin/CurveMax`, çapraz-dil vektörleri
+> `test-vectors/easing-extrema-vectors.json`. Ölçek eğrisinin pozitiflik sözleşmesi de
+> eğrinin tamamı içindir (keyframe'ler pozitifken eğri ≤ 0'a inen belge tipli reddedilir).
+> Dört preset'in ekstremumu tam `{0,1}`'dir (ölçüldü) — preset/linear'lı her belgede eğri
+> ekstremumu keyframe zarfıyla özdeştir, yani editör belgelerinde davranış farkı yoktur.
+> `y`'yi şemada kelepçelemek bilinçli REDDEDİLDİ: serbestlik normatiftir, elle yazılmış
+> "Özel eğri" belgeleri bugün yasaldır ve overshoot/back/elastic preset sınıfının önü
+> kapanmaz.
 
 ### 3.2 Değerlendirme algoritması (NORMATİF — iki dilde aynı)
 

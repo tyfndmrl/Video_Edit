@@ -3102,13 +3102,15 @@ public sealed class ExportCompilerSnapshotTests
         Assert.Single(ExportCompiler.Validate(fits).RasterClips);
     }
 
-    // ── Ölçek animasyonu: TAVAN en büyük keyframe'den, TABAN en küçüğünden (canlı ölçülen blocker) ──
+    // ── Ölçek animasyonu: TAVAN eğrinin en büyüğünden, TABAN en küçüğünden (canlı ölçülen blocker) ──
     //
-    // ADLANDIRMA: buradaki "taban" KEYFRAME MİNİMUMUDUR, örneklenen eğrinin
-    // minimumu değil — kapı AnimationTrack.MinValue okur (bkz. ExportCompiler.MinScaleOf'un
-    // KAPSAM NOTU: undershoot'lu serbest bir cubicBezier ara değerleri bu tabanın altına
-    // indirebilir; editör böyle bir eğri yazamaz, ham API'den yazılan belgede kapı Compile'da
-    // gerçek boyutla yeniden koşar).
+    // ADLANDIRMA: buradaki "taban/tavan" artık ÖRNEKLENEN EĞRİNİN ekstremumudur
+    // (AnimationTrack.CurveMin/CurveMax — kapalı-form bezier ekstremumu). Preset/linear
+    // easing'lerde bu sayılar keyframe min/max ile BİREBİR aynıdır (preset ekstremumları tam
+    // {0,1} — BezierExtremaParityTests), dolayısıyla bu bölümdeki linear-easing'li testlerin
+    // mesajları ve eşikleri değişmeden geçer. [0,1] dışına taşan y'li serbest cubicBezier
+    // (yalnız ham API yazabilir; editör sözlüğü preset'lerle sınırlı) eğriyi keyframe
+    // zarfının dışına çıkarır — o sınıfın kapı testleri bölümün sonundadır.
     //
     // ÖLÇÜLEN HATA: yerleşim (dolayısıyla tavan) PlacementTransform ile ölçeğin MAKSİMUMUNDAN
     // kuruluyordu; kutu ≥ 2 kuralı da o yerleşimden soruluyordu. Yani en küçük keyframe hiçbir
@@ -3215,6 +3217,103 @@ public sealed class ExportCompilerSnapshotTests
         Assert.Throws<UnsupportedFeatureException>(
             () => ExportCompiler.Validate(
                 TextDoc(AnimatedScaleTextClip(1.0, 0.010)), new StubMeasurer(223, 104)));
+    }
+
+    // ── Serbest cubicBezier: kapılar keyframe zarfını değil EĞRİYİ okur (B-kenar) ──
+    //
+    // ÖNCE ÖLÇÜLDÜ (2026-08-25, karar betiği + easing referansı): editörün DÖRT easing
+    // preset'i de y'yi [0,1] içinde tutuyor (ekstremumları tam {0,1}) — yani bu kapılar
+    // editör belgelerinde asla tetiklenmez; ama şema §3.1 y'yi SERBEST bırakır ve ham
+    // API'den yazılan (0.3,-4,0.6,1) sınıfı bir eğri, keyframe'ler pozitifken örneklenen
+    // ölçeği −1,499'a indiriyordu (kapı 0.02 görüyordu), (0.3,0,0.6,6) da 2.0'lık keyframe
+    // tavanını 3,99'a taşıyordu. Şema kelepçesi BİLİNÇLİ REDDEDİLDİ: y-serbestlik normatif
+    // (§3.1) + "Özel eğri" belgeleri bugün yasal + overshoot/back/elastic preset sınıfının
+    // önünü keserdi; onun yerine kapılar eğrinin kapalı-form ekstremumunu okuyor
+    // (Easing.BezierValueExtrema; ölçümle seçildi — BezierExtremaParityTests).
+
+    [Fact]
+    public void Validate_UndershootingScaleBezier_PositiveKeyframes_IsRejectedAtParse()
+    {
+        // Keyframe'ler POZİTİF (0.02 ve 1.0) ama eğri tabanı −1,5: pozitiflik sözleşmesi
+        // eğrinin tamamına uygulanır — ffmpeg'e negatif genişlik ifadesi yazılmadan,
+        // Validate'te tipli ret.
+        var clip = AnimatedScaleTextClip(1.0, 1.0);
+        clip.Keyframes = new KeyframeTracks
+        {
+            Scale =
+            [
+                ExportTestDocs.Kf(0, 0.02, ExportTestDocs.Bezier(0.3, -4, 0.6, 1)),
+                ExportTestDocs.Kf(1_000_000, 1.0),
+            ],
+        };
+
+        var ex = Assert.Throws<InvalidTimelineException>(
+            () => ExportCompiler.Validate(TextDoc(clip)));
+        Assert.Contains("pozitif bölgeden çıkıyor", ex.Message);
+        Assert.Contains("-1.5", ex.Message);       // örneklenen eğri tabanı
+        Assert.Contains("0.02..1", ex.Message);    // keyframe aralığı — kullanıcı farkı görmeli
+    }
+
+    [Fact]
+    public void Validate_UndershootingScaleBezier_PositiveCurve_FloorGateReadsTheCurveMinimum()
+    {
+        // Eğri pozitif kalır ama keyframe tabanının ALTINA iner: 1.0 → 0.02 segmentinde
+        // (0.3,0,0.6,1.05) overshoot'u değeri 0.0183'e taşır (keyframe min 0.02 — 0.020'nin
+        // kendisi kabul eşiğinin üstünde, sınır testi yukarıda). Kapı artık eğriyi okur:
+        // kutu 4x1'e iner ve degenerate-layer ile SENKRON reddedilir; mesaj iki sayıyı da
+        // söyler (eğri tabanı + keyframe tabanı) — "en küçük keyframe 0.02" tek başına
+        // panelde karşılığı olmayan bir cümle olurdu.
+        var clip = AnimatedScaleTextClip(1.0, 1.0);
+        clip.Keyframes = new KeyframeTracks
+        {
+            Scale =
+            [
+                ExportTestDocs.Kf(0, 1.0, ExportTestDocs.Bezier(0.3, 0, 0.6, 1.05)),
+                ExportTestDocs.Kf(1_000_000, 0.02),
+            ],
+        };
+
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(TextDoc(clip), new StubMeasurer(223, 104)));
+        Assert.Equal("degenerate-layer", ex.Feature);
+        Assert.Contains("easing eğrisinin örneklenen en küçük değeri 0.018304", ex.Message);
+        Assert.Contains("en küçük keyframe 0.02", ex.Message);
+
+        // KONTROL GRUBU: aynı keyframe'ler LINEAR easing'le kabul edilir (0.020 sınır testi) —
+        // ret gerçekten eğriden doğuyor, keyframe'lerden değil.
+        var linear = AnimatedScaleTextClip(1.0, 0.02);
+        Assert.Single(ExportCompiler.Validate(
+            TextDoc(linear), new StubMeasurer(223, 104)).RasterClips);
+    }
+
+    [Fact]
+    public void Validate_OvershootingScaleBezier_CeilingGateReadsTheCurveMaximum()
+    {
+        // 0.5 → 2.0 keyframe'leri 4000x200 bbox'ta sığar (kutu 8000x400 ≤ 8192); overshoot'lu
+        // (0.3,0,0.6,6) eğri tepeyi 4,984'e taşır → ara tuval 19938x997 → transform-scale.
+        var clip = AnimatedScaleTextClip(0.5, 0.5);
+        clip.Keyframes = new KeyframeTracks
+        {
+            Scale =
+            [
+                ExportTestDocs.Kf(0, 0.5, ExportTestDocs.Bezier(0.3, 0, 0.6, 6)),
+                ExportTestDocs.Kf(1_000_000, 2.0),
+            ],
+        };
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => ExportCompiler.Validate(TextDoc(clip), new StubMeasurer(4000, 200)));
+        Assert.Equal("transform-scale", ex.Feature);
+        Assert.Contains("19938x997", ex.Message);
+
+        // KONTROL GRUBU: aynı keyframe'ler linear easing'le kabul edilir — tavan ihlali
+        // yalnız eğriden.
+        var linear = AnimatedScaleTextClip(0.5, 0.5);
+        linear.Keyframes = new KeyframeTracks
+        {
+            Scale = [ExportTestDocs.Kf(0, 0.5), ExportTestDocs.Kf(1_000_000, 2.0)],
+        };
+        Assert.Single(ExportCompiler.Validate(
+            TextDoc(linear), new StubMeasurer(4000, 200)).RasterClips);
     }
 
     [Fact]

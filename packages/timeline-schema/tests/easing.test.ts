@@ -2,10 +2,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  bezierValueExtrema,
   cubicBezierAt,
   EASING_PRESETS,
   easingProgress,
   easingToBezier,
+  keyframeCurveExtrema,
   sampleKeyframes,
   type Keyframe,
 } from '../src/easing.js';
@@ -17,6 +19,15 @@ interface EasingVectors {
 
 const easingVectors: EasingVectors = JSON.parse(
   readFileSync(fileURLToPath(new URL('../test-vectors/easing-vectors.json', import.meta.url)), 'utf8'),
+);
+
+interface ExtremaVectors {
+  tolerance: number;
+  cases: Array<{ name: string; x1: number; y1: number; x2: number; y2: number; min: number; max: number }>;
+}
+
+const extremaVectors: ExtremaVectors = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../test-vectors/easing-extrema-vectors.json', import.meta.url)), 'utf8'),
 );
 
 describe('easing cross-language vectors', () => {
@@ -110,6 +121,128 @@ describe('easingToBezier / easingProgress', () => {
 
   it('presets resolve to the preset coefficients', () => {
     expect(easingToBezier({ type: 'easeInOut' })).toBe(EASING_PRESETS.easeInOut);
+  });
+});
+
+describe('bezierValueExtrema', () => {
+  it('matches all easing-extrema-vectors.json cases within tolerance', () => {
+    expect(extremaVectors.cases.length).toBeGreaterThanOrEqual(15);
+    for (const c of extremaVectors.cases) {
+      const { min, max } = bezierValueExtrema(c.y1, c.y2);
+      expect(Math.abs(min - c.min), `${c.name} min`).toBeLessThanOrEqual(extremaVectors.tolerance);
+      expect(Math.abs(max - c.max), `${c.name} max`).toBeLessThanOrEqual(extremaVectors.tolerance);
+    }
+  });
+
+  it('every editor preset stays exactly inside [0,1] (the measured no-overshoot fact)', () => {
+    // Bu, "kapılar keyframe min/max okusun" varsayımını bugüne kadar ayakta tutan ölçümün
+    // kalıcı hali: preset katalogu değişir de overshoot'lu bir preset eklenirse bu test
+    // GÜNCELLENİR (yasak değildir) — kapılar zaten gerçek ekstremumu okuduğundan ürün
+    // davranışı hazırdır.
+    for (const { y1, y2 } of Object.values(EASING_PRESETS)) {
+      expect(bezierValueExtrema(y1, y2)).toEqual({ min: 0, max: 1 });
+    }
+  });
+
+  it('COVERS a dense scan of the operational curve (the closed form is never narrower)', () => {
+    // Ölçüm kurumsallaştı: kapalı form, bisection'lı gerçek örnekleme fonksiyonunun 20k
+    // noktalık taramasını her vektör vakasında kapsamalı ve tepe noktasında ~1e-6'dan
+    // fazla sapmamalı (tarama çözünürlüğü sınırı; karar ölçümünde aynı yoğunlukta 3.1e-8
+    // görüldü — 2k noktalı tarama ±10'luk uç vakada 1.5e-6 açık bırakıyordu).
+    for (const c of extremaVectors.cases) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 0; i <= 20000; i++) {
+        const v = cubicBezierAt(c.x1, c.y1, c.x2, c.y2, i / 20000);
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      const { min, max } = bezierValueExtrema(c.y1, c.y2);
+      expect(min, `${c.name}: closed min covers scan`).toBeLessThanOrEqual(lo + 1e-12);
+      expect(max, `${c.name}: closed max covers scan`).toBeGreaterThanOrEqual(hi - 1e-12);
+      expect(lo - min, `${c.name}: closed min is tight`).toBeLessThanOrEqual(1e-6);
+      expect(max - hi, `${c.name}: closed max is tight`).toBeLessThanOrEqual(1e-6);
+    }
+  });
+});
+
+describe('keyframeCurveExtrema', () => {
+  const bez = (y1: number, y2: number) =>
+    ({ type: 'cubicBezier', x1: 0.3, y1, x2: 0.6, y2 }) as const;
+
+  it('equals the keyframe hull for linear and preset tracks (editor-produced documents)', () => {
+    const track: Keyframe[] = [
+      { timeUs: 0, value: 0.5, easing: { type: 'easeInOut' } },
+      { timeUs: 1000, value: 2, easing: { type: 'linear' } },
+      { timeUs: 2000, value: 1, easing: { type: 'easeOut' } },
+      { timeUs: 3000, value: 1.5, easing: { type: 'easeIn' } },
+    ];
+    expect(keyframeCurveExtrema(track)).toEqual({ min: 0.5, max: 2 });
+  });
+
+  it('a single keyframe is a constant', () => {
+    expect(keyframeCurveExtrema([{ timeUs: 0, value: 7, easing: { type: 'linear' } }])).toEqual({
+      min: 7,
+      max: 7,
+    });
+  });
+
+  it('an undershooting bezier widens the floor below the keyframe minimum (the measured hole)', () => {
+    // Karar ölçümünün vakası: scale 0.02 -> 1.0, (0.3,-4,0.6,1). 30fps kare örneklemi
+    // -1.499'a inmişti; eğri tabanı 0.02 + 0.98*(-1.5510204081632655).
+    const track: Keyframe[] = [
+      { timeUs: 0, value: 0.02, easing: bez(-4, 1) },
+      { timeUs: 1_000_000, value: 1, easing: { type: 'linear' } },
+    ];
+    const { min, max } = keyframeCurveExtrema(track);
+    expect(min).toBeCloseTo(0.02 + 0.98 * -1.5510204081632655, 12);
+    expect(max).toBe(1);
+  });
+
+  it('an overshooting bezier widens the ceiling above the keyframe maximum', () => {
+    const track: Keyframe[] = [
+      { timeUs: 0, value: 1, easing: bez(0, 6) },
+      { timeUs: 1_000_000, value: 2, easing: { type: 'linear' } },
+    ];
+    const { min, max } = keyframeCurveExtrema(track);
+    expect(min).toBe(1);
+    expect(max).toBeCloseTo(1 + 2.9896193771626294, 12);
+  });
+
+  it('a zero-delta segment is constant no matter how wild its easing is', () => {
+    const track: Keyframe[] = [
+      { timeUs: 0, value: 1, easing: bez(-10, 10) },
+      { timeUs: 1000, value: 1, easing: { type: 'linear' } },
+    ];
+    expect(keyframeCurveExtrema(track)).toEqual({ min: 1, max: 1 });
+  });
+
+  it('COVERS dense integer-µs sampling of sampleKeyframes itself', () => {
+    // Kapalı formun kapsadığı şey OPERASYONEL eğridir: 2001 gerçek örnek (tamsayı µs,
+    // sampleKeyframes'in kendisi) hull'un dışına asla çıkmamalı.
+    const track: Keyframe[] = [
+      { timeUs: 0, value: 0.4, easing: bez(-2, 3) },
+      { timeUs: 400_000, value: 1.6, easing: { type: 'easeInOut' } },
+      { timeUs: 1_000_000, value: 0.9, easing: bez(1.8, -0.9) },
+      { timeUs: 1_500_000, value: 1.1, easing: { type: 'linear' } },
+    ];
+    const { min, max } = keyframeCurveExtrema(track);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i <= 2000; i++) {
+      const v = sampleKeyframes(track, Math.round((i / 2000) * 1_500_000));
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    expect(min).toBeLessThanOrEqual(lo + 1e-12);
+    expect(max).toBeGreaterThanOrEqual(hi - 1e-12);
+    // Ve hull gevşek de değil: yoğun tarama tepelere 1e-3 bandında yaklaşır.
+    expect(lo - min).toBeLessThanOrEqual(1e-3);
+    expect(max - hi).toBeLessThanOrEqual(1e-3);
+  });
+
+  it('rejects empty tracks', () => {
+    expect(() => keyframeCurveExtrema([])).toThrow();
   });
 });
 
