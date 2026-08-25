@@ -23,8 +23,15 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # dist/ gitignore'lu; editor paketi dist uzerinden import eder.
-      # prepare script'i install'da build eder ama frozen-lockfile/CI kosullarina
-      # karsi acik adim emniyet kemeridir (temiz klonda 139 test bunsuz kirilir).
+      # prepare script'i install'da build eder (frozen-lockfile'li temiz klonda
+      # dogrulandi); bu acik adim, prepare'in kosmadigi kosullara (ignore-scripts,
+      # cache/tooling degisikligi, elle temizlenmis dist) karsi emniyet kemeridir.
+      # dist YOKKEN editor paketinin vitest'i daha import/toplama asamasinda topluca
+      # kirilir (sema paketi kendi testlerini src'den kostugu icin ayakta kalir).
+      # Kirilan test SAYISI yorumda bilerek yok: sayi paketle birlikte buyur ve
+      # dogrulanamadan bayatlar; ustelik vitest toplanamayan dosyanin testlerini
+      # sayamaz, yani "N test kirilir" aracin ciktisinda tanimli bir buyukluk bile
+      # degildir (olcum kaydi: "borc B4" commit mesaji).
       - name: Build timeline-schema
         run: pnpm --filter @videoedit/timeline-schema build
 
