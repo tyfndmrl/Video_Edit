@@ -81,3 +81,46 @@
   (Release) çiftine alındı ve tazelik aynı iğnenin VARLIĞIYLA kanıtlandı. Not: yayın anındaki
   ağaç HEAD (935a73c) + B6 diliminin commit'lenmemiş worker iptal-kanalı değişikliğiydi
   (mutlu-yol perf davranışını değiştirmiyor; B2'nin §0.1.1 kaydında beyanlı). Migration yok.
+- 2026-08-25 (B borçları KAPANIŞ doğrulaması): dokuz borç tek koşumda canlı/kendi-koşum
+  kanıtlarıyla yeniden doğrulandı. Servisler HEAD (780791f) `dotnet publish` çıktısı
+  `api-run-bfinal` / `worker-run-bfinal` (Release) çiftine alındı (eski b4lut çifti 3 commit
+  geriydi: B7/B8/bezier canlıda değildi); tazelik yüklü modül yolları + iğnelerle:
+  Worker.dll'de `ExportEstimateOptions` (UTF-8, B7) ve Media.dll'de `BezierValueExtrema`
+  (UTF-8, bezier) VAR — b4lut ikilisinde İKİSİ DE YOKTU — Media.dll'de
+  `blend=all_mode=normal:all_opacity=` (UTF-16) VAR. timeline-schema dist'i 21.08'den
+  BAYATTI (dist/easing.js'te bezier iğnesi yoktu; editör paketi dist'ten çözer) → `pnpm
+  --filter @videoedit/timeline-schema build` + Vite taze başlatıldı; Vite'ın /@fs ile servis
+  ettiği easing.js'te `bezierValueExtrema` doğrulandı. Suite'ler (tümü kendi koşumum):
+  build -warnaserror 0/0; backend TAM **1557/1557 skip 0** (MinIO+ffmpeg, 2 dk 13 sn); şema
+  222/222; editör 1313/1313; `tsc -b` temiz; Playwright TAM **159/159** (10,6 dk; tek kırmızı
+  yok — B1 audio-parity, lut.spec 3/3 ve Ctrl+D/V grid bu koşumun içinde). Borç kanıtları:
+  B5 yalan-süre m4a (beyan 2 sn / gerçek akış 60 sn, mvhd/tkhd/mdhd yamalı) canlı yükleme
+  akışından geçti → asset 2,0 sn'de failed, `errorCode: transcode-overrun`; B6 canlı 2160p
+  render %20'deyken satır psql'den (süreç-dışı kanal) Failed('stalled')'a çekildi → ffmpeg
+  flip+5,5 sn'de öldü (yoklama ≤10 sn), satır YAZANIN gerekçesiyle kaldı (OutputKey boş,
+  AttemptCount 1, 25 sn'de dirilme yok; worker logu "finalized externally… row left as
+  written"), dokunulmamış satırlı normal render'lar kesintisiz succeeded; B2
+  MediaPipelinePerfTests izole 46 sn yeşil + canlı init tam 4 GiB → 201/partCount 64 (abort
+  edildi), 4 GiB+1 → 400 (10 ms, "sizeBytes must be between 1 and 4294967296"); B4 ci.yml
+  yorumu sayısız hâliyle yerinde (mekanizma + sayının bilinçli yokluğu, satır 25-34); B7
+  worker açılış satırı varsayılanlarla "…taban=268435456 B… ezilen: yok",
+  `ExportEstimates__MemoryBaseBytes=536870912` ile yeniden başlatınca "taban=536870912 B…
+  ezilen: MemoryBaseBytes" (yalnız o terim değişti), temiz yeniden başlatışta varsayılanlara
+  döndü; B8 eski (kolon NULL) asset'li 21.08 projesinde 1. media-urls 69,7 ms → İKİ video
+  asset'inin kolonu 121 B jsonb DOLDU (audio bilinçli NULL kaldı), 2..6. çağrılar p50 5,2 ms
+  — yedek yol yalnız kolon NULL iken koştuğundan ikinci çağrı DB'den, yanıt şekli birebir;
+  B-kenar/bezier ham API undershoot belgesi (cubicBezier 0.3,-4,0.6,1; keyframe'ler POZİTİF
+  0.02..1) → SENKRON 422 (194 ms) "örneklenen eğrinin en küçük değeri -1.5", kuyruğa iş
+  düşmedi; eski (linear/preset) ADV10 belgesi yeniden export → succeeded 5,8 sn (davranış
+  değişmedi). Önceki tur örneklemi (3): miks-asılması belgesi (19 sn, klip B kaynağın
+  SONUNA demirli çift sesli grup) canlı succeeded 5,05 sn + kaçak ffmpeg 0; render-overrun
+  OutputTimeCeiling ailesi 4/4 (gerçek kaçak süreç 617 ms'de öldürüldü + normal transcode
+  yanlış öldürülmedi); Ctrl+D/V grid (timeline-gates "3'e bölünmeyen kare sayılı kopya")
+  Playwright TAM koşumda yeşil. B6 metod notu: 1080p'lik İLK deneme yarışı ölçtü — 80 sn'lik
+  belge ~13 sn'de render olunca flip'ten sonra render 10 sn'lik yoklamadan ÖNCE doğal bitti
+  ve satırı Succeeded ile ezdi; bu pencere üretimde reaper'la açılamaz (reaper yalnız 6 saat
+  kalp atışsız satırı çevirir — canlı progress'li satıra hiç dokunmaz), kanıt geniş
+  pencereli 2160p ile kuruldu. Prob artıkları ürün yolundan temizlendi (3 asset + 6 proje
+  DELETE 204; 2 prob export objesi mc rm; prob Jobs satırları silindi; ADV10'un yeniden-koşum
+  çıktısı canlı projenin gerçek geçmişi olarak bırakıldı). Kaçak ffmpeg yok; worktree tek;
+  `git status` PROGRESS.md dışında temiz. Migration yok.
