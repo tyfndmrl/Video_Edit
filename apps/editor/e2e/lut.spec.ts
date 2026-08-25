@@ -12,11 +12,17 @@
  *  - export: indirilen MP4'ün İLK karesi (ffmpeg rawvideo) ↔ önizlemenin AYNI
  *    karesi (probeFrameBase64) — §9.3 eşikleri: SSIM(gri, global) ≥ 0.98 +
  *    kanal başına fark raporu.
+ *
+ * Export İKİ bacaktır ve ikisi bilinçli olarak FARKLI ffmpeg yollarına düşer
+ * (ClipEffects.LutBlendFilter xmldoc'u): intensity=1 bacağı düz lut3d üretir
+ * (split/blend HİÇ kurulmaz), dyadik olmayan ~0.8 bacağı ise yerli blend'in
+ * (all_mode=normal) canlı yolunu zorlar — o yol yalnız intensity<1'de var olur
+ * ve ±1 LSB yuvarlama sınıfı tam da dyadik olmayan yoğunluklarda tetiklenir.
  */
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Page } from '@playwright/test';
+import type { APIRequestContext, Page } from '@playwright/test';
 import { validateTimelineDoc } from '@videoedit/timeline-schema';
 import { parseCubeLut, sampleCubeLut, type CubeLut } from '../src/features/player/lut/cubeLut';
 import { test, expect } from './fixtures/test';
@@ -37,6 +43,41 @@ const ARTIFACTS = join(fileURLToPath(new URL('.', import.meta.url)), '.artifacts
 
 /** Kanal toleransı: 8-bit niceleme + JPEG poster + GPU float (±3 kod değeri). */
 const CHANNEL_TOLERANCE = 3;
+
+/**
+ * Kısmî-yoğunluk bacağının yama yarı-boyu: 16×16 piksel — çift boyut yuv420'nin
+ * 2×2 kroma bloklarıyla hizalıdır; ortalama, tek pikselde ±4-5 koda çıkabilen
+ * kodlama gürültüsünü ~1 kodun altına indirir (degrade düz olduğundan yama
+ * içeriği ortalamayı bozmaz).
+ */
+const PATCH_HALF = 8;
+/**
+ * Yama ORTALAMASI toleransı (kod değeri). ÖLÇÜLDÜ (2026-08-25, ilk koşum; sayılar
+ * her koşumda [LUT KISMI] satırlarına yazılır): |ölçülen − kısmî-ref| iki yama ×
+ * RGB'de 0,99-2,95 kod, tümü aynı yönde — kaynak x264'ün düz bölgelerdeki DC
+ * nicemleme kayması; BLOK-korelasyonlu olduğundan yama ortalaması onu süzemez
+ * (JPEG poster + yuv420 + ±1 LSB blend alt kümesi bunun içinde kalır). Ölçülen
+ * 2,95'e ~1 kod koşumlar-arası pay.
+ */
+const PATCH_MEAN_TOLERANCE = 4.0;
+/**
+ * Kodlama yanlılığının üst bandı (yukarıdaki ölçümün zarfı): kısmîlik iddiasının
+ * ayrıştırma-gücü muhafızında kullanılır — tam↔kısmî referans aralığı en az
+ * PARTIAL_MARGIN + bu band olmalı ki "tam LUT" bir kodlama kayması ile kısmî
+ * taklidi yapamasın (ve tersi: meşru kısmî kare tam'a yapışmış görünmesin).
+ */
+const ENCODE_BIAS_BOUND = 3.0;
+/**
+ * Kısmîlik payı: ölçülen yama ortalaması hem ham'dan hem tam LUT'tan en az bu
+ * kadar uzak olmalı — "yoğunluk yok sayıldı" (tam) ve "LUT hiç inmedi" (ham)
+ * gerilemelerinin ikisini de kırmızıya çevirir. YALNIZ B kanalında iddia edilir:
+ * fixture'ın en güçlü kanalı odur (tealMap 0.3r+0.7b → |ΔB| ≈ 34-36 kod; R'de
+ * ~23-24 kod, 0.8 yoğunlukta tam'a mesafe ~4,3 kod kalır ve ölçülen kodlama
+ * yanlılığıyla ayırt edilemez). B'nin işareti iki yamada AYNALIDIR (sağda +,
+ * solda −), dolayısıyla tek yönlü bir kodlama kayması kısmîliği iki yamada
+ * birden taklit edemez; R ve G'yi oturma + zarf iddiaları sınırlamaya devam eder.
+ */
+const PARTIAL_MARGIN = 2.5;
 
 type Rgba = [number, number, number, number];
 
@@ -111,6 +152,48 @@ async function dragSlider(page: Page, testId: string, toRatio: number): Promise<
   await page.waitForTimeout(150);
 }
 
+/**
+ * Export akışı (export-flow ile aynı sözleşme): dialog -> 202 -> "Tamamlandı" ->
+ * İndir -> MP4'ü artefakt klasörüne yaz. İki export bacağının ortak gövdesi;
+ * adımlar bacaklar arasında bire bir aynıdır ki fark YALNIZ yoğunluk olsun.
+ */
+async function exportAndDownload(
+  page: Page,
+  request: APIRequestContext,
+  mp4Name: string,
+): Promise<string> {
+  const openExport = page.getByRole('button', { name: 'Dışa Aktar', exact: true });
+  await expect(openExport).toBeEnabled();
+  await openExport.click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Dışa aktar' }).click();
+  await expect(dialog).toBeHidden({ timeout: 30_000 });
+
+  const exportsSection = page
+    .locator('section')
+    .filter({ has: page.getByRole('heading', { name: 'Dışa Aktarmalar' }) })
+    .first();
+  const jobRow = exportsSection.locator('li').first();
+  await expect(jobRow).toBeVisible({ timeout: 20_000 });
+  await expect(
+    jobRow.getByText('Tamamlandı', { exact: true }),
+    'Export işi tamamlanmadı. Worker + ffmpeg ayakta mı?',
+  ).toBeVisible({ timeout: 300_000 });
+  await expect(jobRow.locator('p.text-danger')).toHaveCount(0);
+
+  const download = jobRow.getByRole('link', { name: 'İndir' });
+  const href = await download.getAttribute('href');
+  expect(href).toBeTruthy();
+  const res = await request.get(href!);
+  expect(res.status()).toBe(200);
+  const body = await res.body();
+  mkdirSync(ARTIFACTS, { recursive: true });
+  const mp4Path = join(ARTIFACTS, mp4Name);
+  writeFileSync(mp4Path, body);
+  return mp4Path;
+}
+
 interface LutEffectProbe {
   type: string;
   enabled: boolean;
@@ -166,6 +249,59 @@ function referencePixel(lut: CubeLut, base: Rgba, intensity: number): [number, n
   const out = sampleCubeLut(lut, { r: base[0] / 255, g: base[1] / 255, b: base[2] / 255 }, intensity);
   const to8 = (v: number): number => Math.round(Math.min(1, Math.max(0, v)) * 255);
   return [to8(out.r), to8(out.g), to8(out.b)];
+}
+
+/** (cx,cy) merkezli 2H×2H yamanın kanal ortalamaları (alfa hariç). */
+function patchMean(
+  frame: { width: number; height: number; pixels: Uint8Array },
+  cx: number,
+  cy: number,
+): [number, number, number] {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (let y = cy - PATCH_HALF; y < cy + PATCH_HALF; y++) {
+    for (let x = cx - PATCH_HALF; x < cx + PATCH_HALF; x++) {
+      const i = (y * frame.width + x) * 4;
+      r += frame.pixels[i];
+      g += frame.pixels[i + 1];
+      b += frame.pixels[i + 2];
+    }
+  }
+  const n = 2 * PATCH_HALF * (2 * PATCH_HALF);
+  return [r / n, g / n, b / n];
+}
+
+/**
+ * Yamanın §4.2 CPU referans ortalaması: LUT'suz BASE karesinin her pikseli formülden
+ * geçirilir (önce piksel başına 8-bit niceleme, sonra ortalama — ölçülen export
+ * yamasına uygulanan sırayla aynı).
+ */
+function referencePatchMean(
+  lut: CubeLut,
+  baseFrame: { width: number; height: number; pixels: Uint8Array },
+  cx: number,
+  cy: number,
+  intensity: number,
+): [number, number, number] {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (let y = cy - PATCH_HALF; y < cy + PATCH_HALF; y++) {
+    for (let x = cx - PATCH_HALF; x < cx + PATCH_HALF; x++) {
+      const i = (y * baseFrame.width + x) * 4;
+      const [rr, gg, bb] = referencePixel(
+        lut,
+        [baseFrame.pixels[i], baseFrame.pixels[i + 1], baseFrame.pixels[i + 2], 255],
+        intensity,
+      );
+      r += rr;
+      g += gg;
+      b += bb;
+    }
+  }
+  const n = 2 * PATCH_HALF * (2 * PATCH_HALF);
+  return [r / n, g / n, b / n];
 }
 
 test.describe('LUT (.cube) — kitaplık + Inspector + önizleme + export', () => {
@@ -341,35 +477,7 @@ test.describe('LUT (.cube) — kitaplık + Inspector + önizleme + export', () =
     expect(previewFrame.height).toBe(1080);
 
     // ── 6) EXPORT: 202 -> Tamamlandı -> indir (export-flow ile aynı sözleşme).
-    const openExport = page.getByRole('button', { name: 'Dışa Aktar', exact: true });
-    await expect(openExport).toBeEnabled();
-    await openExport.click();
-    const dialog = page.getByRole('dialog');
-    await expect(dialog).toBeVisible();
-    await dialog.getByRole('button', { name: 'Dışa aktar' }).click();
-    await expect(dialog).toBeHidden({ timeout: 30_000 });
-
-    const exportsSection = page
-      .locator('section')
-      .filter({ has: page.getByRole('heading', { name: 'Dışa Aktarmalar' }) })
-      .first();
-    const jobRow = exportsSection.locator('li').first();
-    await expect(jobRow).toBeVisible({ timeout: 20_000 });
-    await expect(
-      jobRow.getByText('Tamamlandı', { exact: true }),
-      'Export işi tamamlanmadı. Worker + ffmpeg ayakta mı?',
-    ).toBeVisible({ timeout: 300_000 });
-    await expect(jobRow.locator('p.text-danger')).toHaveCount(0);
-
-    const download = jobRow.getByRole('link', { name: 'İndir' });
-    const href = await download.getAttribute('href');
-    expect(href).toBeTruthy();
-    const res = await account.context.request.get(href!);
-    expect(res.status()).toBe(200);
-    const body = await res.body();
-    mkdirSync(ARTIFACTS, { recursive: true });
-    const mp4Path = join(ARTIFACTS, 'lut-export.mp4');
-    writeFileSync(mp4Path, body);
+    const mp4Path = await exportAndDownload(page, account.context.request, 'lut-export.mp4');
 
     // ── 7) İNDİRİLEN DOSYADA LUT GERÇEKTEN VAR: ilk karenin merkezi §4.2
     //      referansındadır ve base'ten uzaktır (kanal takas değil, ölç!).
@@ -410,6 +518,224 @@ test.describe('LUT (.cube) — kitaplık + Inspector + önizleme + export', () =
       stats.meanAbs,
       `Ortalama kanal farkı ${stats.meanAbs.toFixed(3)} > 2.0 kod değeri`,
     ).toBeLessThanOrEqual(2.0);
+  });
+
+  test('yoğunluk ~0.8 (dyadik DEĞİL) -> export karesi KISMÎ LUT taşır: ham ile tam arasında, §4.2 karışımına oturur', async ({
+    page,
+    account,
+  }) => {
+    test.skip(ffmpegVersion() === null, FFMPEG_SKIP_REASON);
+    test.setTimeout(420_000);
+
+    // İlk bacaktan farkı SADECE yoğunluktur ve bu fark başka bir ffmpeg yoludur:
+    // intensity=1 export'u düz lut3d üretir (split/blend hiç kurulmaz), dyadik
+    // olmayan ~0.8 ise worker'ın YERLİ blend yolunu (ClipEffects.LutBlendFilter,
+    // all_opacity=1-I) gerçekten kurdurur. Bu bacak olmadan o canlı yol hiçbir
+    // e2e'de koşmuyordu.
+    const gradientPath = ensureGradientImage();
+    const cubePath = ensureTealCube();
+    const parsedCube = parseCubeLut(readFileSync(cubePath, 'utf8'));
+    expect(parsedCube.ok, 'e2e .cube fixture kendi ayrıştırıcımızdan geçmeli').toBe(true);
+    const lut = (parsedCube as { ok: true; lut: CubeLut }).lut;
+
+    const project = await createEmptyProject(
+      account.context.request,
+      account.accessToken,
+      'E2E LUT yoğunluk',
+    );
+    const app = new EditorApp(page);
+    await app.open(project.projectId, { email: account.email, password: account.password });
+    const library = new LibraryPanelHarness(page);
+
+    await library.pickFiles([gradientPath, cubePath]);
+    await library.waitForReady('e2e-lut-gradient.png');
+    await library.waitForReady('e2e-teal-17.cube');
+    const assets = await listProjectAssets(
+      account.context.request,
+      account.accessToken,
+      project.projectId,
+    );
+    const cubeAsset = assets.find((a) => a.fileName === 'e2e-teal-17.cube');
+    expect(cubeAsset, 'cube asset listede yok').toBeTruthy();
+
+    await library.doubleClickAsset('e2e-lut-gradient.png');
+    await expect
+      .poll(async () => (await app.state()).clipCount, { timeout: 15_000 })
+      .toBe(1);
+    const stateAfterAdd = await app.state();
+    const clipId = stateAfterAdd.tracks.flatMap((t) => t.clips)[0]!.id;
+    if (stateAfterAdd.selection[0] !== clipId) {
+      await app.ensureContentVisible(clipId);
+      await app.timeline.click(await app.timeline.clipCenter(clipId));
+    }
+    expect((await app.state()).selection).toEqual([clipId]);
+
+    // ÖLÇÜM NOKTALARI: degrade yatayda r'yi tarar; tealMap'in deltası kenarlara
+    // doğru büyür (ΔR=0.2(b−r), ΔB=0.3(r−b); b sabit ≈0.502). Sağ yamada ΔB≈+36,
+    // solda ≈−34 kod — bandın üst ucunda bile "tam LUT'tan uzaklık" (1−I)·|ΔB| ≥
+    // ~6,5 kod, ölçülen kodlama yanlılığı bandının (≤3 kod, PATCH_MEAN_TOLERANCE
+    // başlığı) güvenle üzerinde. y=54 bilinçli üst satır: g≈0.05 → ΔG≈+11 kod,
+    // G kanalının zarf kontrolü de anlamlı kalır (merkez satırda ΔG ≈ +6 koddu).
+    const RIGHT: [number, number] = [1872, 54];
+    const LEFT: [number, number] = [96, 54];
+
+    await expect
+      .poll(
+        async () => {
+          const px = await probePixel(page, RIGHT[0], RIGHT[1]);
+          return px[0] > 200;
+        },
+        {
+          timeout: 15_000,
+          message: 'Önizleme görsel klibi çizmedi (sağ yama noktası koyu kaldı).',
+        },
+      )
+      .toBe(true);
+
+    // LUT'suz TAM taban karesi: ham/tam/kısmî yama referanslarının tek kaynağı.
+    const baseFrame = await probeFrame(page);
+    expect(baseFrame.width).toBe(1920);
+    expect(baseFrame.height).toBe(1080);
+    const baseAt = (x: number, y: number): Rgba => {
+      const i = (y * baseFrame.width + x) * 4;
+      return [
+        baseFrame.pixels[i],
+        baseFrame.pixels[i + 1],
+        baseFrame.pixels[i + 2],
+        baseFrame.pixels[i + 3],
+      ];
+    };
+    const basePx = baseAt(RIGHT[0], RIGHT[1]);
+
+    // LUT'u seç (gerçek <select>) ve önizleme TAM LUT'a otursun — yoğunluk jesti
+    // bilinen bir durumdan başlasın.
+    await page.getByTestId('clip-lut-select').selectOption(cubeAsset!.id);
+    const expectedFull = referencePixel(lut, basePx, 1);
+    await expect
+      .poll(
+        async () =>
+          channelsClose(await probePixel(page, RIGHT[0], RIGHT[1]), expectedFull, CHANNEL_TOLERANCE),
+        {
+          timeout: 15_000,
+          message: `Önizleme tam LUT'a oturmadı (beklenen ${expectedFull.join(',')}).`,
+        },
+      )
+      .toBe(true);
+
+    // ── YOĞUNLUK: gerçek fareyle ~0.8'e sürükle. Thumb yarım-genişliği inişi
+    // ±0.02 kaydırabildiğinden [0.77, 0.81] bandına gerçek KLAVYE oklarıyla
+    // (adım 0.01; ok tuşları da ürün yoludur — PropertyFields: jest açmadan düz
+    // op'a düşerler) çekilir. Banttaki 0.01 adımlı hiçbir değer dyadik değildir.
+    // Üst sınır 0.81 bilinçli (ilk koşum 0.82'ye indi ve ölçtürdü): tam'a mesafe
+    // (1−I)·|Δ| kodlama yanlılığı bandını yeterince aşacak kadar kalmalı.
+    await dragSlider(page, 'clip-lut-intensity', 0.8);
+    const readIntensity = async (): Promise<number> =>
+      (await readClipEffects(page, clipId)).find((e) => e.type === 'lut')!.params.intensity!;
+    let intensity = await readIntensity();
+    for (let i = 0; i < 8 && (intensity < 0.77 || intensity > 0.81); i++) {
+      await page
+        .getByTestId('clip-lut-intensity')
+        .press(intensity < 0.77 ? 'ArrowRight' : 'ArrowLeft');
+      await page.waitForTimeout(80);
+      intensity = await readIntensity();
+    }
+    expect(intensity, 'yoğunluk yazımı hedef banda inmedi').toBeGreaterThanOrEqual(0.77);
+    expect(intensity, 'yoğunluk yazımı hedef banda inmedi').toBeLessThanOrEqual(0.81);
+    // Dyadik muhafızı: I·64 tam sayı olsaydı (0.75, 0.8125…) yerli blend'in ±1 LSB
+    // yuvarlama sınıfı hiç tetiklenmez, bacak amacını kaybederdi — slider adımı ya
+    // da band ileride değişirse sessizce dyadiğe düşmeyelim.
+    expect(
+      Number.isInteger(intensity * 64),
+      `yoğunluk ${intensity} dyadik — dyadik olmayan bacak anlamını yitirir`,
+    ).toBe(false);
+    expectDocValid(await readDoc(page), 'yoğunluk yazımı sonrası');
+
+    // Önizleme kısmî karışıma oturuyor (mix'in canlı GPU yolu).
+    const expectedMid = referencePixel(lut, basePx, intensity);
+    await expect
+      .poll(
+        async () =>
+          channelsClose(await probePixel(page, RIGHT[0], RIGHT[1]), expectedMid, CHANNEL_TOLERANCE),
+        {
+          timeout: 10_000,
+          message: `Önizleme ${intensity} karışımına oturmadı (beklenen ${expectedMid.join(',')}).`,
+        },
+      )
+      .toBe(true);
+
+    // ── EXPORT: aynı sözleşme, farklı dosya adı (ilk bacağın artefaktını ezmesin).
+    const mp4Path = await exportAndDownload(
+      page,
+      account.context.request,
+      'lut-export-int08.mp4',
+    );
+    const exportFrame = extractFirstFrameRgba(mp4Path, 'lut-export-int08-frame.rgba');
+    expect(exportFrame.width).toBe(1920);
+    expect(exportFrame.height).toBe(1080);
+
+    // ── KISMÎ UYGULAMA — yama ortalamalarıyla üç iddia: (1) her kanal §4.2'nin
+    // öngördüğü karışım değerine oturur, (2) her kanal ham ile tam LUT zarfının
+    // içindedir (±1 LSB payı), (3) aynalı güçlü kanal B ne ham ne tam'dır
+    // (gerçek kısmîlik; kanal seçiminin gerekçesi PARTIAL_MARGIN başlığında).
+    for (const [label, [cx, cy]] of [
+      ['sağ', RIGHT],
+      ['sol', LEFT],
+    ] as const) {
+      const measured = patchMean(exportFrame, cx, cy);
+      const refBase = patchMean(baseFrame, cx, cy);
+      const refFull = referencePatchMean(lut, baseFrame, cx, cy, 1);
+      const refMid = referencePatchMean(lut, baseFrame, cx, cy, intensity);
+      const fmt = (v: readonly number[]): string => v.map((c) => c.toFixed(2)).join(',');
+      // Rapor daima yazılır — eşik geçse de sayılar görünür kalsın (parite deseni).
+      console.log(
+        `[LUT KISMI ${label}] I=${intensity} ölçülen=${fmt(measured)} ham=${fmt(refBase)} ` +
+          `kısmî-ref=${fmt(refMid)} tam-ref=${fmt(refFull)}`,
+      );
+
+      for (const c of [0, 1, 2] as const) {
+        const ch = 'RGB'[c];
+        expect(
+          Math.abs(measured[c] - refMid[c]),
+          `${label} yama ${ch}: ölçülen ${measured[c].toFixed(2)} kısmî referansa oturmadı ` +
+            `(beklenen ${refMid[c].toFixed(2)} ±${PATCH_MEAN_TOLERANCE})`,
+        ).toBeLessThanOrEqual(PATCH_MEAN_TOLERANCE);
+
+        const lo = Math.min(refBase[c], refFull[c]) - 1;
+        const hi = Math.max(refBase[c], refFull[c]) + 1;
+        expect(
+          measured[c] >= lo && measured[c] <= hi,
+          `${label} yama ${ch}: ölçülen ${measured[c].toFixed(2)} ham↔tam zarfının dışında ` +
+            `[${lo.toFixed(2)}, ${hi.toFixed(2)}]`,
+        ).toBe(true);
+      }
+
+      // Kısmîlik yalnız B'de iddia edilir — gerekçe PARTIAL_MARGIN başlığında
+      // (en güçlü ve iki yamada aynalı kanal; R/G'yi oturma + zarf sınırlar).
+      const B = 2;
+      // Ayrıştırma gücü muhafızı: fixture/nokta/band ileride değişir de kanal
+      // deltası küçülürse kısmîlik iddiası sessizce boşalmasın — önce referans
+      // aralıklarının kendisi denetlenir. Tam tarafında eşik, payın üstüne
+      // ölçülen kodlama yanlılığı bandını da koyar: tam-LUT'a inmiş bir kare
+      // salt kodlama kaymasıyla "kısmî" sayılamaz (ve meşru kısmî kare kaymayla
+      // tam'a yapışmış görünemez).
+      expect(
+        Math.abs(refFull[B] - refMid[B]),
+        `${label} yama B: tam↔kısmî referans aralığı ayrıştırıcı değil`,
+      ).toBeGreaterThanOrEqual(PARTIAL_MARGIN + ENCODE_BIAS_BOUND);
+      expect(
+        Math.abs(refBase[B] - refMid[B]),
+        `${label} yama B: ham↔kısmî referans aralığı ayrıştırıcı değil`,
+      ).toBeGreaterThanOrEqual(10);
+
+      expect(
+        Math.abs(measured[B] - refBase[B]),
+        `${label} yama B: export HAM görünüyor (LUT hiç uygulanmamış)`,
+      ).toBeGreaterThanOrEqual(PARTIAL_MARGIN);
+      expect(
+        Math.abs(measured[B] - refFull[B]),
+        `${label} yama B: export TAM LUT görünüyor (yoğunluk yok sayılmış)`,
+      ).toBeGreaterThanOrEqual(PARTIAL_MARGIN);
+    }
   });
 
   test('bozuk .cube "Başarısız" düşer (invalid-lut) — worker doğrulama kapısı', async ({
