@@ -224,22 +224,23 @@ klipleri **sistem fontuyla** çizilir; o zaman render **belirlenimci değildir**
 
 ## Testler
 
-Aşağıdaki sayılar **2026-08-31**'de, `ae700cf` + küçükler dilimi (409 birim pini +
-`relogin-reopen` e2e'si) üzerinde bizzat koşuldu — **E2E dahil** (API/Worker ikilisi
-ölçümden önce yeniden yayımlandı, koşan sürecin YÜKLEDİĞİ modül yolu + DLL iğne
-taramasıyla tazeliği doğrulandı ve ortamın tek sahibi bu koşumdu).
+Aşağıdaki sayılar **2026-08-31**'de (yarım-iş turu 2 kapanışı) bizzat koşuldu — **E2E
+dahil** (API/Worker ikilisi ölçümden önce yeniden yayımlandı, koşan sürecin YÜKLEDİĞİ
+modül yolu + DLL iğne taramasıyla tazeliği doğrulandı ve ortamın tek sahibi bu koşumdu).
+Sayılar paketle birlikte BÜYÜR; her zaman güncel olan tek kaynak
+[docs/STATE.md](docs/STATE.md) "Son yeşil sayılar" satırıdır.
 
 ```bash
 # Derleme
 dotnet build backend/VideoEdit.sln -warnaserror              # 0 uyarı, 0 hata ✓
 
-# Backend — 1560 test.  MinIO ayaktaysa env değişkenini VERİN; MinIO'suz koşumda
-#   MinIO+ffmpeg kapılı sınıflar atlanır (pipeline/export/perf/korpus aileleri).
-MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 1560/1560 ✓ (0 atlandı, 2 dk 16 sn)
-dotnet test backend/VideoEdit.sln                            # 1519 ✓ + 41 atlandı
+# Backend — 1579 test (2026-08-31).  MinIO ayaktaysa env değişkenini VERİN;
+#   MinIO'suz koşumda MinIO+ffmpeg kapılı sınıflar atlanır
+#   (pipeline/export/perf/korpus aileleri — 2026-08-31 ölçümü: 41 atlanan).
+MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 1579/1579 ✓ (0 atlandı)
 
 # Editör + şema paketi birlikte
-pnpm -r test                                                 # editor 1313 ✓ · schema 222 ✓
+pnpm -r test                                                 # editor 1339 ✓ · schema 222 ✓
 
 # Tip denetimi
 pnpm --filter @videoedit/editor exec tsc -b                  # temiz ✓
@@ -251,11 +252,11 @@ pnpm --filter @videoedit/editor build                        # ✓
 # E2E — GERÇEK tarayıcıda GERÇEK fare/klavye ile (page.mouse / page.keyboard).
 # API (5000), worker ve Vite (5173) AYAKTA olmalı; Playwright hiçbir süreci
 # başlatmaz/öldürmez, ayakta olanlara bağlanır.
-pnpm --filter @videoedit/editor test:e2e                     # 160/160 ✓ (10,7 dk)
-#   ^ 160'ın TAMAMI gerçek geçiştir (test.fail yok, skip yok). Pakete en son
-#     eklenen: e2e/relogin-reopen.spec.ts — gerçek medyalı projede böl →
-#     "Kaydedildi" → çıkış → yeniden giriş → proje seçici → AYNI belge +
-#     medya URL'leri gerçekten servis ediliyor (proxy Range GET 206).
+pnpm --filter @videoedit/editor test:e2e                     # 163/163 ✓ (41 spec, 10,4 dk)
+#   ^ 163'ün TAMAMI gerçek geçiştir (test.fail yok, skip yok). Pakete en son
+#     eklenen: e2e/library-crosstab-sync.spec.ts — PASİF sekme açıkken başka
+#     bir istemci (ham API) medya yükler; satır, odak/yenileme olmadan SignalR
+#     user-feed'inden kendiliğinden belirir ("Hazır" + kota göstergesi dahil).
 ```
 
 > **Neden gerçek fare?** Teslim edilen ilk sürümde "E2E" testleri store'u doğrudan
@@ -297,7 +298,7 @@ backend/
   src/VideoEdit.Infrastructure/  EF Core, R2/S3 istemcisi, JWT
   src/VideoEdit.Media/           ffmpeg reçeteleri, probe, Export/ (FilterGraph compiler), Text/ (SkiaSharp)
   src/VideoEdit.Worker/          Hangfire: ProcessAssetJob, ExportJob, AssetReaperJob
-  tests/VideoEdit.UnitTests/     1560 test (2026-08-31) + ExportSnapshots/ (filtre grafiği metin snapshot'ları)
+  tests/VideoEdit.UnitTests/     birim/entegrasyon testleri (güncel sayılar: docs/STATE.md) + ExportSnapshots/ (filtre grafiği metin snapshot'ları)
   tests/GoldenFrames/            export karesi piksel golden'ları (11 PNG)
   tests/RasterGoldens/           SkiaSharp şekil rasteri golden'ları (4 PNG)
   tools/SchemaGen/               JSON Schema → C# DTO üretici

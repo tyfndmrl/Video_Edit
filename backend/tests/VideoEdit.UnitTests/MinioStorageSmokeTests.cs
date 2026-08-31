@@ -4,8 +4,10 @@ using VideoEdit.Infrastructure.Storage;
 namespace VideoEdit.UnitTests;
 
 /// <summary>
-/// MINIO_AVAILABLE env değişkeni set DEĞİLSE atlanır — CI'da koşmaz, lokalde
-/// `compose.dev.yml` MinIO'su ayaktayken `MINIO_AVAILABLE=1 dotnet test` ile koşar.
+/// MINIO_AVAILABLE env değişkeni set DEĞİLSE atlanır. CI'ın dotnet job'u gerçek bir
+/// MinIO konteyneri kaldırıp bu değişkeni set eder (ci.yml "Start MinIO" + Test adımı),
+/// yani bu testler CI'DA DA KOŞAR; lokalde `compose.dev.yml` MinIO'su ayaktayken
+/// `MINIO_AVAILABLE=1 dotnet test` ile koşar.
 /// </summary>
 public sealed class MinioFactAttribute : FactAttribute
 {

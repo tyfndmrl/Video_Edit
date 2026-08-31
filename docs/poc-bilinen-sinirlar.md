@@ -985,13 +985,22 @@ raster sonucu `HasMissingGlyphs = true` döner ve worker etkilenen klipleri **lo
 tofu'lu bir video alır. Çözüm ayrı bir `fontId` (ör. Noto Color Emoji) + glif düzeyinde
 fallback zinciri gerektirir.
 
-### 3.2 Pis-dosya korpusu test edilmedi
+### 3.2 Pis-dosya korpusu SENTETİK olarak test edildi; gerçek telefon dosyası denenmedi
 
-iPhone HLG/HDR, VFR (OBS kayıtları), döndürme metadata'lı dikey MOV, WhatsApp re-encode gibi
-gerçek dünya dosyaları için **uçtan uca korpus testi yok**. Motorda karşılıkları var (HDR→SDR
-zinciri, VFR→CFR sabitleme, autorotate) ve birim/snapshot testleri var
-(`ExportSnapshots/hdr-source.txt`, `ntsc-fps.txt`, `MediaProbeParserTests`), ama gerçek
-telefon dosyalarıyla doğrulanmadı. **POC'ta beklenmedik kaynak dosyalarla sorun yaşayabilirsiniz.**
+Bu başlık uzun süre "korpus testi yok" dedi; 2026-08-21'den beri doğru değil. Sentetik bir
+pis-dosya korpusu artık **uçtan uca** koşuyor (`DirtyMediaCorpusTests` — gerçek ffmpeg'le
+üretilen dosyalar gerçek MinIO üstünde HEM işleme `ProcessAssetJob` HEM export `ExportJob`
+hattından geçirilir; sözleşme: sonuç ya Ready/Succeeded ya anlamlı TİPLİ hata, ham ffmpeg
+çıkış kodu asla): VFR video, display-matrix ile döndürülmüş video, tek/garip çözünürlük
+(319×241), kapak resimli ses (attached_pic), yanlış uzantılı dosya (WAV baytları .mp4
+adında), HLG/HDR etiketli kaynak, dikey (720×1280) video; B5 turunda yalan-süre beyanlı
+dosya sınıfı da eklendi. İşleme hattının kendi entegrasyon paketi de var
+(`ProcessAssetPipelineTests`).
+
+**Kalan nüans:** korpus ffmpeg'in KENDİ ürettiği sentetik dosyalardan oluşur. Gerçek bir
+iPhone HDR kaydı, gerçek bir OBS VFR yakalaması ya da gerçek bir WhatsApp re-encode'u ile
+hiç denenmedi — o cihaz/araç zincirlerinin ürettiği kap/metadata tuhaflıkları sentetik
+eşdeğerin dışına düşebilir. **Gerçek telefon dosyalarıyla üretim kullanımı hâlâ kapsam dışı.**
 
 ---
 

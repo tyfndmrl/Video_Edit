@@ -217,7 +217,10 @@ export function PlayerPanel() {
       if (seq !== undefined) {
         if (seq === readUserSeekSeq(prev)) return;
       } else if (state.playheadUs === prev.playheadUs) {
-        return; // transitional fallback until the store carries userSeekSeq
+        // Defensive-only branch: editorStore HAS carried userSeekSeq since the
+        // intersection contract landed, so `seq` is never undefined against the
+        // real store. Kept for state objects without the slice (bridge contract).
+        return;
       }
       flushPendingLoad();
       void engine.seek(state.playheadUs, { precise: false });

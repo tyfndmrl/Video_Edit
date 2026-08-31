@@ -2,6 +2,26 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-08-31
+- gelistirme-3 #1 — Defter/doküman senkronu (bayatlık sınıfı; DAVRANIŞ SIFIR — yalnız doküman
+  metinleri + kod yorumları): README test sayıları/anlatısı güncel yeşile eşitlendi (1560→1579,
+  1313→1339, 160→163; "pakete en son eklenen" relogin-reopen→library-crosstab-sync; UnitTests
+  satırı STATE işaretine çevrildi — B4/CLAUDE.md deseni); backlog'da 4 bayat kayıt KAPANDI
+  (ci.yml doğrulanamayan-sayı→B4 `3a1c256`; fitButton bayat-locator→`37a11b1`'de uygulanmış;
+  bayat-dist prosedürü→SKILLS "schema-dist-tazeleme"; refetchIntervalInBackground kaydı
+  "kaldırılMAYACAK — polling bilinçli yedek" kararıyla) + 503 font-kökü kaydı FontRootHealth
+  gerçeğine daraltıldı (kalan iş: işletmeci karşılaştırması, deploy/README §5.2 adım 4);
+  poc §3.2 başlığı gerçeğe döndü (sentetik korpus TEST EDİLDİ — `DirtyMediaCorpusTests`;
+  gerçek telefon dosyası nüansı korundu); ci.yml "~9 dk (94 test)" yorumu sayısızlaştırıldı
+  (timeout değeri DOKUNULMADI) ve e2e job'unun "backend'de Redis tüketicisi yok" yorumu
+  düzeltildi (SignalR sonrası YANLIŞTI; job'un redis başlatmayışı AÇIK SORU olarak STATE'e
+  yazıldı — davranış değişikliği bu dilimin dışı); MinioStorageSmokeTests "CI'da koşmaz"
+  xmldoc'u düzeltildi (CI dotnet job'u MINIO_AVAILABLE=1 set eder); PlayerPanel/editorBridge
+  "transitional/until the store carries userSeekSeq" yorumları savunma-dalı gerçeğine çevrildi
+  (editorStore userSeekSeq'i tanımlar+0'la ilkler; KOD değişmedi); deploy/README durum notu
+  damgası 2026-08-31 teyidiyle tazelendi. Kapılar: build -warnaserror 0/0 · backend 1579/1579
+  skip 0 (MinIO+ffmpeg) · editör 1339 + şema 222 · tsc -b + e2e tsc temiz. Playwright
+  GEREKMEDİ, negatif kontrol UYGULANAMAZ (davranış yok) — her düzeltmenin "önce yanlıştı"
+  kanıtı PROGRESS satırında eski↔gerçek çiftleriyle.
 - yarim-is-2 #5 — B6 çapraz-sekme kitaplık senkronu KAPANDI (user-feed grubu): worker'ın her
   progress publish'i artık `ownerId` (Jobs.RequestedBy) taşır; forwarder mesajı sahibinin
   `user:{id}` feed grubuna DA yollar (eski, alansız payload'da feed atlanır); hub'a

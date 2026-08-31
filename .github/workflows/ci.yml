@@ -140,9 +140,11 @@ jobs:
     # "kirpma/tasima/sag tik calismiyor" sikayetini yakalayan tek katman bu.
     runs-on: ubuntu-latest
     # 25 -> 55: artik GERCEK medya uretiliyor (ffmpeg), Worker derlenip
-    # calisiyor ve iki test uctan uca transcode + export render yapiyor.
-    # Olculen yerel sure ~9 dk (94 test); CI runner'i yavas + Worker/API
-    # derlemesi + `playwright install` payi ile 55 dk rahat pay birakir.
+    # calisiyor ve testler uctan uca transcode + export render yapiyor.
+    # Yerel suite suresi/test sayisi yorumda bilerek YOK: paketle birlikte
+    # buyur ve dogrulanamadan bayatlar (borc B4 deseni); guncel olcum
+    # docs/SKILLS.md "playwright-tam-suite" girdisinde. CI runner'i yavas +
+    # Worker/API derlemesi + `playwright install` payi ile 55 dk pay birakir.
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
@@ -187,12 +189,16 @@ jobs:
       #             (presigned URL; compose.dev.yml'deki MINIO_API_CORS_ALLOW_ORIGIN
       #             = http://localhost:5173 tam da bunun icin) ve Worker orijinali
       #             oradan indirip proxy/filmstrip/export ciktisini oraya yazar.
-      # - redis   : BASLATILMIYOR. Kod tabaninda TEK bir tuketicisi yok — dogrulama:
-      #             `grep -ri "redis\|StackExchange" backend/` yalnizca
-      #             appsettings*.json icindeki (kullanilmayan) ConnectionStrings:Redis
-      #             girdilerini ve yorum satirlarini bulur; ne API ne Worker bir
-      #             Redis istemcisi kaydeder (Hangfire storage = PostgreSQL).
-      #             Bu satir, "eksik mi unutuldu?" sorusuna kalici cevaptir.
+      # - redis   : BU JOB'DA BASLATILMIYOR — ve bu artik bir ACIK SORUDUR.
+      #             Yorumun eski hali "kod tabaninda tek tuketicisi yok" diyordu;
+      #             2026-08-31 SignalR ilerleme kanalindan beri YANLIS: worker
+      #             Redis `job-progress` kanalina publish eder, API'deki
+      #             RedisProgressForwarder dinler. Redis'siz API/Worker yine
+      #             acilir ve polling yedegi tasir (Hangfire storage = PostgreSQL),
+      #             AMA hub'i olcen spec'ler (or. export-progress-hub) Redis'in
+      #             ayakta olmasini bekler. Bu adima redis eklemek bir CI davranis
+      #             degisikligidir ve dokuman-senkron diliminde bilerek yapilmadi;
+      #             kayit: docs/STATE.md "Bilinen sorunlar".
       - name: Altyapi servisleri (postgres + minio)
         run: docker compose -f compose.dev.yml up -d postgres minio
 

@@ -1,5 +1,6 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-08-31, yarim-is-2 #5 (B6 user-feed) dilimiyle (öncesi #6 catch envanteri `a038bbf`, main).
+Son güncelleme: 2026-08-31, gelistirme-3 #1 (defter/doküman senkronu) dilimiyle (öncesi
+yarim-is-2 #5 B6 user-feed, main).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
@@ -37,7 +38,15 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   noticed seti). Kanıt: `e2e/library-crosstab-sync.spec.ts` (pasif sekme + ham-API yükleme,
   satır 2,85 sn'de odak/yenilemesiz) + publish gecikmesi n=3 (p50 0,74 s → worker-publish
   yeterli, DECISIONS). Defter: `PROGRESS.md` §Yarım-iş turu 2.
-- Son yeşil sayılar (2026-08-31, yarim-is-2 #5 sonunda bizzat koşuldu): backend
+- **Geliştirme turu 3 #1 — defter/doküman senkronu** (2026-08-31, davranış SIFIR):
+  README sayıları/anlatısı güncel yeşile eşitlendi; backlog'da 4 bayat kayıt KAPANDI +
+  503 font-kökü kaydı FontRootHealth gerçeğine daraltıldı; poc §3.2 "korpus test edilmedi"
+  başlığı sentetik-korpus gerçeğine döndü; ci.yml/MinioSmoke/PlayerPanel/editorBridge bayat
+  yorumları düzeltildi; deploy/README damgası tazelendi. Eski↔gerçek çiftleri:
+  `PROGRESS.md` §Geliştirme turu 3 #1.
+- Son yeşil sayılar (2026-08-31, yarim-is-2 #5 sonunda bizzat koşuldu; dört kapı —
+  build/backend/vitest/tsc — gelistirme-3 #1 kapanışında yeniden koşulup aynı sayılarla
+  yeşil, Playwright o dilimde gerekmedi): backend
   **1579/1579** (0 skip) · editör 1339 · şema 222 · Playwright **163/163** ·
   build -warnaserror 0 uyarı · tsc + e2e tsc + prod build temiz.
 
@@ -47,9 +56,13 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
-1. `git push` — **kullanıcı onayı bekliyor** (origin 25+ commit geride).
-2. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
-3. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
+1. **Geliştirme turu 3 devamı (kullanıcı onaylı):** #2 silme senkronu + revision retention +
+   e2e hesap temizliği, sonra #3 export perf 2. tur (`PROGRESS.md` §Geliştirme turu 3; #1
+   2026-08-31'de KAPANDI).
+2. `git push` — **kullanıcı onayı bekliyor** (origin 25+ commit geride; öncesinde ci.yml e2e
+   redis boşluğu kapatılmalı — bkz. Bilinen sorunlar).
+3. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
+4. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
   #11 upload resume sertleştirme. (SignalR maddesi 2026-08-31'de KAPANDI; komşusu backlog B6 —
   çapraz-sekme kitaplık senkronu — da AYNI GÜN user-feed grubuyla KAPANDI, yarim-is-2 #5.)
 
@@ -64,6 +77,12 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   `devWarn` izli (üretimde bilinçli sessiz); muhafız `silentCatchInventory.test.ts` yorumsuz
   sessiz catch eklenmesini kırmızıya düşürür. Defter: `PROGRESS.md` §Yarım-iş turu 2.
 - Dev bağımlılığı: nanoid <3.3.18 high (yalnız vite zinciri, prod'a girmez).
+- **ci.yml e2e job'u redis BAŞLATMIYOR** (SignalR-öncesi kalıntı; gelistirme-3 #1'de tespit):
+  backend'in artık Redis tüketicisi var ve `export-progress-hub.spec.ts` Redis'in ayakta
+  olmasını bekler — CI, SignalR sonrası hiç koşmadı (push beklemede), ilk koşumda bu job
+  kırmızı düşebilir. Compose adımına redis eklemek DAVRANIŞ değişikliği olduğundan doküman
+  diliminde yapılmadı; ci.yml'deki redis yorumu gerçeğe çevrildi + ayrı görev fişi açıldı.
+  Push'tan önce kapatılmalı.
 
 ## Açık sorular (insana sorulacaklar)
 

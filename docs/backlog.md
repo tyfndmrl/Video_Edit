@@ -515,8 +515,12 @@ ile durur (kusur belgede değil kurulumdadır — 422 yanlış olurdu). Gerekçe
   (md5 birebir geri): GetJob sahiplik filtresi gevşetildi → 2 test kırmızı (presign sızıntı
   imzasıyla); yeni `/steal` ucu eklendi → muhafız kırmızı; quota'dan RequireAuthorization
   düşürüldü → muhafız anonim dalda kırmızı.
-- **M2 (devam)**: SignalR progress kanalı gelince `refetchIntervalInBackground` geçici
-  çözümü kaldırılacak.
+- **M2 (devam) — KAPANDI (2026-08-31, "kaldırılMAYACAK" kararıyla)**: kayıt "SignalR progress
+  kanalı gelince `refetchIntervalInBackground` geçici çözümü kaldırılacak" diyordu. SignalR
+  kanalı 2026-08-31'de GELDİ, ama polling BİLİNÇLİ YEDEK olarak duruyor (DECISIONS 2026-08-31
+  satırı: "DB %5-adım yazımı ve polling AYNEN durur (yedek + sessizlik bekçisi)"); hub
+  kapsarken istemci yoklamayı zaten durduruyor, hub yoksa/düşerse/susarsa arka planda da
+  yoklayabilmek için `refetchIntervalInBackground` (assets/exports sorguları) yerinde kalır.
 - **M6**: Kota kontrolü check-then-act (bilinçli MVP kabulü) — eşzamanlı init'lerle sınırlı aşım mümkün; transactional/advisory-lock çözümü. Upload resume sertleştirme: dosya-değişti tespiti (ilk 1 MiB parmak izi), IndexedDB hayalet satırlarının tam yaşam döngüsü, FileSystemFileHandle akışı.
 - **Not (KAPANDI, teslim düzeltme turu 2026-08-12)**: E2E/ölçüm fixture'ı 122 MB ile
   `apps/editor/public/` altında duruyordu ve `vite build` onu `dist/`e kopyalıyordu (üretim
@@ -694,9 +698,12 @@ Kapatılanlar:
   "merkez = `floor(P)`" DEĞİL. Ara açıda merkezin `floor(P)`'ye oturduğu hâlâ ölçülmemiştir ve
   ölçülemez: §9.3'te gösterildiği gibi orada katmanın kendi kenar rampası ağırlık merkezini
   `0.7 px`'e kadar kaydırır, yani mevcut araç konum hatasıyla rampa payını ayıramaz.
-- **[AÇIK — 503'ün kalan varsayımı]** API ile worker'ın AYNI font kökünü gördüğü varsayımı
-  sürüyor. Fontları worker'da olup API'de olmayan bir dağıtımda 503 yanlış ret olurdu (o dağıtım
-  metin için zaten bozuktur: `/api/fonts` 503 döner). Ölçülmedi, iddia edilmiyor.
+- **[AÇIK — 503'ün kalan varsayımı; 2026-08-24'te ÖLÇÜLEBİLİR hale geldi, daraldı]** API ile
+  worker'ın AYNI font kökünü gördüğü varsayımı artık kör değil: yarım-iş #13 `FontRootHealth`
+  iki uca aynı türetimi verdi — API `GET /health` `fonts` bölümü ile worker açılış satırı aynı
+  parmak izini (fontId/dosya sayıları + manifest+lock pin setinin sha256'sı) raporlar; iki değer
+  birebir aynı değilse taraflar farklı kök görüyordur. Kalan tek iş İŞLETMECİ karşılaştırması
+  (`deploy/README.md` §5.2 adım 4) — süreçler arası otomatik kapı/RPC bilinçli yok.
 - **[AÇIK — raster sözleşmesinin İÇERİK yarısı]** Yeni kapı renk **dilbilgisini** ve gövde
   varlığını sorar; rasterin gerçekten çizilebilir olduğunu (glif kapsamı, aşırı uzun tek satır,
   vb.) SORMAZ. O yarı worker'da kalmaya devam ediyor ve `RasterRefusals` defterinde yazılı
@@ -781,10 +788,14 @@ Kapatılanlar (kullanıcı anlatımı `poc-bilinen-sinirlar.md` §1.8, §3 tablo
   ve gerçek-fare e2e `e2e/detach-audio-silent.spec.ts` (sessiz → öğe GRİ + Türkçe gerekçe;
   SESLİ → hâlâ çalışıyor). Negatif kontrol: dal geri alınınca 2 birim testi + e2e kırmızı,
   geri konunca yeşil (md5 birebir).
-- **[AÇIK] `.github/workflows/ci.yml` içinde doğrulanamayan bir sayı duruyor:** bir yorum
-  satırı "temiz klonda 139 test bunsuz kırılır" diyor. Bu, paketin büyüklüğü (bugün 143) değil
-  "kaç test kırılır" iddiasıdır ve ancak o adım kaldırılıp suite koşturularak ölçülebilir; bu
-  doküman turu Playwright koşmadığı için DOKUNULMADI. Ya ölçülmeli ya sayısızlaştırılmalıdır.
+- **[KAPANDI — 2026-08-25, B borçları B4 (`3a1c256`)] `.github/workflows/ci.yml` içinde
+  doğrulanamayan bir sayı duruyordu:** bir yorum satırı "temiz klonda 139 test bunsuz kırılır"
+  diyordu. Bu, paketin büyüklüğü (o gün 143) değil "kaç test kırılır" iddiasıydı ve ancak o adım
+  kaldırılıp suite koşturularak ölçülebilirdi; kayıt açıldığı doküman turu Playwright koşmadığı
+  için dokunulmamıştı. B4 önce ÖLÇTÜ (temiz klonda prepare dist'i kuruyor — "bunsuz kırılır"
+  öncülü zaten yanlıştı; dist YOKKEN vitest toplanamayan dosyanın testlerini sayamadığından
+  "N test kırılır" tanımlı bir büyüklük bile değil) sonra SAYISIZLAŞTIRDI: yorum artık
+  mekanizmayı ve sayının bilinçli yokluğunu anlatıyor (ölçüm kaydı B4 commit mesajında).
 - **[KAPANDI — 2026-08-25, B borçları B1] Ses parity'si (preview ↔ export RMS) ölçüldü.**
   Yöntem + 9 vakalı normatif sınır tablosu `poc-bilinen-sinirlar.md` §2.6'da; kalıcı muhafız
   `e2e/audio-parity.spec.ts` (OfflineAudioContext'te uygulamanın KENDİ kazanç modülleri ↔
@@ -1024,13 +1035,15 @@ denenmedi**; MinIO'nun neyi kanıtladığı / neyi kanıtlamadığı §4.2'de ka
     ayrı context'te (per-device logout; paylaşılan worker oturumu düşmez).
   - *Elle kalan öteki parça:* tarayıcı tarafının duvar saatleri (dosya seçici → "Hazır",
     çift tık, diyalog) — Playwright betiği ister, CI maliyeti gerekçesi geçerli (§5.1).
-- **[KAYIT] `EditorApp.fitButton` locator'ı BAYAT (test altyapısı, ürün değil).**
-  `e2e/support/editor.ts` "Sığdır" adlı bir düğme arıyor; üründe düğmenin adı **"Fit"**
-  (`TimelinePanel`). Bugüne kadar yakalanmadı çünkü `ensureContentVisible` yalnız klip ekranda
-  DEĞİLSE tıklıyor ve mevcut spec'lerin kısa fixture'larında auto-fit zaten yetiyordu; 640 sn'lik
-  klip ilk kez bu dalı zorladı ve locator 15 sn timeout ile düştü. Ölçüm betiği bu turda
-  locator'ı baypas etti (`/^(Fit|Sığdır)$/`), **repo dosyası değiştirilmedi**.
-  - *Yapılacak:* ya `fitButton`'ı ürünün adıyla hizalamak ya da düğmeye `data-testid` vermek.
+- **[KAPANDI — 2026-08-21, `37a11b1`] `EditorApp.fitButton` locator'ı BAYATTI (test
+  altyapısı, ürün değil).** `e2e/support/editor.ts` "Sığdır" adlı bir düğme arıyordu; üründe
+  düğmenin adı **"Fit"** (`TimelinePanel`). Bugüne kadar yakalanmamıştı çünkü
+  `ensureContentVisible` yalnız klip ekranda DEĞİLSE tıklıyor ve mevcut spec'lerin kısa
+  fixture'larında auto-fit zaten yetiyordu; 640 sn'lik klip ilk kez bu dalı zorladı ve locator
+  15 sn timeout ile düştü. Ölçüm betiği o turda locator'ı baypas etmişti, repo dosyası sonra
+  `37a11b1`'de önerilen hizalamayla düzeltildi: `fitButton` artık
+  `getByRole('button', { name: /^(Fit|Sığdır)/i })` — iki isme de bağlanır, gerekçesi
+  locator'ın kendi doc yorumunda.
 
 ## 13. tur denetiminden (2026-08-21 — backend düzeltme turu: kapatılanlar + BG kayıtları)
 
@@ -1342,11 +1355,14 @@ ve perf listesinden **media-urls paralelleştirmesi** (8'lik eşzamanlılık kap
 
 ## B borçları kapanış doğrulamasından (2026-08-25, 90d5f9f) — iki yeni düşük kayıt
 
-- **[DÜŞÜK — işletim prosedürü] Bayat dist tuzağı:** editör paketi (Vite dev dahil) timeline-schema'yı
-  `dist`'ten çözer; "backend yayını + Vite restart" tek başına schema paketini TAZELEMEZ —
+- **[KAPANDI — prosedür `docs/SKILLS.md` "schema-dist-tazeleme" girdisi olarak yazıldı]
+  Bayat dist tuzağı:** editör paketi (Vite dev dahil) timeline-schema'yı `dist`'ten çözer;
+  "backend yayını + Vite restart" tek başına schema paketini TAZELEMEZ —
   `pnpm --filter @videoedit/timeline-schema build` adımı gerekir (CI'da var; canlı ortam
   prosedüründe yazılı değildi, kapanış doğrulaması bunu tazelik iğnesiyle yakaladı: bezier
-  commit'i sonrası dist 21.08'den kalmaydı ve editör TS yarısını hiç görmeyecekti).
+  commit'i sonrası dist 21.08'den kalmaydı ve editör TS yarısını hiç görmeyecekti). Kayıt
+  "işletim prosedürü yazılmalı" diye açılmıştı; SKILLS girdisi tetikleyiciyi, komutu ve
+  tuzağın kendisini içeriyor.
 - **[DÜŞÜK — sözleşme adayı] Export tamamlanma yazımı son-yazan-kazanır:** terminal duruma
   (Failed/stalled) çekilmiş bir satırın üstüne tamamlanma yolu Succeeded+OutputKey yazabiliyor
   (ölçüldü: satır flip'inden sonra render 10 sn'lik yoklamadan önce doğal bitince). Üretimde

@@ -2,11 +2,13 @@
 
 Prod stack: Caddy (otomatik HTTPS) + api + worker + migrator + Postgres 17 + Redis 7. Upload/download trafigi VPS'e ugramaz (browser <-> R2 presigned URL).
 
-> **Durum notu (2026-08-12, `f39e0b4`): bu adimlarin tamami HENUZ GERCEK BIR VPS'te ve
-> GERCEK R2 hesabinda kosulmadi.** Tum gelistirme ve CI lokal MinIO ile yapildi. Kod yolu
-> S3 API uyumlu oldugu icin ayni, ama gercek R2'nin CORS davranisi, presigned imza uyumu,
-> multipart ETag bicimi ve lifecycle kurallari dogrulanmamistir. Ilk dagitimda §4 ve §7'ye
-> vakit ayirin. Bkz. [`docs/poc-bilinen-sinirlar.md`](../docs/poc-bilinen-sinirlar.md) §4.2.
+> **Durum notu (2026-08-12'de yazildi, 2026-08-31'de yeniden teyit edildi — hala gecerli):
+> bu adimlarin tamami HENUZ GERCEK BIR VPS'te ve GERCEK R2 hesabinda kosulmadi.** Tum
+> gelistirme ve CI lokal MinIO ile yapildi/yapiliyor (R2 anahtarlari kullanicidan bekleniyor,
+> `docs/STATE.md` "Siradakiler"). Kod yolu S3 API uyumlu oldugu icin ayni, ama gercek R2'nin
+> CORS davranisi, presigned imza uyumu, multipart ETag bicimi ve lifecycle kurallari
+> dogrulanmamistir. Ilk dagitimda §4 ve §7'ye vakit ayirin.
+> Bkz. [`docs/poc-bilinen-sinirlar.md`](../docs/poc-bilinen-sinirlar.md) §4.2.
 
 ## 1. On kosullar
 
