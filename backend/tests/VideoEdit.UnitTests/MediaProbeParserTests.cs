@@ -55,6 +55,30 @@ public class MediaProbeParserTests
     }
 
     [Fact]
+    public void PixFmtAndSquareSar_AreParsed_ForTheCoverGates()
+    {
+        // §2.6 üyelik olguları: pix_fmt + SAR (ffprobe "N:M" — ':' ayracı, '/' değil).
+        var probe = MediaProbeParser.Parse(VideoJson(
+            ""","pix_fmt":"yuv420p","sample_aspect_ratio":"1:1" """.TrimEnd()));
+        Assert.Equal("yuv420p", probe.PixelFormat);
+        Assert.Equal((1, 1), (probe.SarNum, probe.SarDen));
+    }
+
+    [Fact]
+    public void MissingOrZeroSar_StaysUnknown_AndNeverCountsAsSquare()
+    {
+        // Alan yok → 0/0; "0:1" beyanı da kare-piksel KANITI değildir (0/1 aynen taşınır,
+        // SarNum==SarDen>0 yüklemi sağlanmaz → §2.6 kapıları kapalı kalır).
+        var missing = MediaProbeParser.Parse(VideoJson());
+        Assert.Equal((0, 0), (missing.SarNum, missing.SarDen));
+        Assert.Null(missing.PixelFormat);
+
+        var declaredUnknown = MediaProbeParser.Parse(VideoJson(
+            ""","sample_aspect_ratio":"0:1" """.TrimEnd()));
+        Assert.Equal((0, 1), (declaredUnknown.SarNum, declaredUnknown.SarDen));
+    }
+
+    [Fact]
     public void DisplayMatrixRotationMinus90_SwapsDimensions()
     {
         var probe = MediaProbeParser.Parse(VideoJson(

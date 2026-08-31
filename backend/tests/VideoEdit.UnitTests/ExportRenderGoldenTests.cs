@@ -734,6 +734,53 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
             });
     }
 
+    [FfmpegFact]
+    public async Task BaseCanvasSkip_IsByteIdentical_OnTheRealisticTopology()
+    {
+        // §2.6 TABAN-TUVAL ATLAMASININ ÇİFT-VARYANT BAYT-AYNILIK GOLDEN'I (baş mimar kararı:
+        // "budanmış ve budanmamış grafik AYNI belge için bayt-aynı çıktı üretmek ZORUNDADIR;
+        // bu bir tolerans değil EŞİTLİKTİR"). AYNI belge iki kez derlenir: kaynak olguları TAM
+        // (taze probe eşleniği) → taban tuval + ilk overlay düşer; olgular YOK (eski davranış)
+        // → tuval kurulur. Olgular grafiğin GEOMETRİSİNE girmediği için iki derlemenin tek
+        // farkı bu satırlardır; iki grafik de GERÇEK ffmpeg'le sonuna kadar render edilir ve
+        // MP4 çıktıları BAYT düzeyinde karşılaştırılır (x264 aynı kare dizisi + aynı ayarlarla
+        // deterministiktir — run27/run28 sha256 emsali). Fark BEKLENMEDİĞİ için eşik pazarlığı
+        // yoktur: tek bayt fark = atlama yanlış, optimizasyon koddan çıkarılır (bayrakla değil).
+        // Topoloji GERÇEKÇİ sınıftır: altta run-içi GEÇİŞLİ tam-kare taban (xfade tam-kare
+        // opak girdilerde tam-kare opak üretir — izinli), üstte PiP overlay.
+        var (doc, sources) = TwoSolidsWithPipAndTransition(TransitionType.Crossfade);
+        var withFacts = sources.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value with
+            {
+                SourceWidth = 320,
+                SourceHeight = 240,
+                PixelFormat = "yuv420p",
+                SarNum = 1,
+                SarDen = 1,
+            });
+
+        var skipped = ExportCompiler.Compile(doc, withFacts, CanvasSpec);
+        var legacy = ExportCompiler.Compile(doc, sources, CanvasSpec);
+        Assert.DoesNotContain("[base]", skipped.FilterGraphScript);
+        Assert.Contains("[base]", legacy.FilterGraphScript);
+        Assert.Contains("xfade=", skipped.FilterGraphScript); // geçişli örtücü rejimi kapsamda
+        // Tek fark taban tuval + ilk overlay satırlarıdır (satır sayısı tam 2 eksilir).
+        Assert.Equal(
+            legacy.FilterGraphScript.Split(";\n").Length - 2,
+            skipped.FilterGraphScript.Split(";\n").Length);
+
+        var outSkipped = await RenderAsync(skipped, "canvas-skip-on");
+        var outLegacy = await RenderAsync(legacy, "canvas-skip-off");
+        var bytesSkipped = await File.ReadAllBytesAsync(outSkipped);
+        var bytesLegacy = await File.ReadAllBytesAsync(outLegacy);
+        Assert.True(bytesSkipped.AsSpan().SequenceEqual(bytesLegacy),
+            "taban-tuval atlaması ÇIKTIYI DEĞİŞTİRDİ — §2.6 bayt-aynılık sözleşmesi ihlal: "
+            + $"atlamalı {bytesSkipped.Length.ToString(CultureInfo.InvariantCulture)} B, "
+            + $"tuvalli {bytesLegacy.Length.ToString(CultureInfo.InvariantCulture)} B. "
+            + "Atlama koddan çıkarılmalı (bayrakla değil).");
+    }
+
     /// <summary>
     /// <see cref="TwoSolidsWithTransition"/> + köşede PiP üst katman (scale 0.25,
     /// P=(240,60) → kutu x[200,280) y[30,90)): tek amaç derlemeyi TEK KATMANLI HIZLI

@@ -50,6 +50,24 @@ public sealed record MediaProbe
     public string? ColorRange { get; init; }
 
     /// <summary>
+    /// Seçilen video stream'inin <c>pix_fmt</c>'i (ör. yuv420p, yuva420p, rgba); yoksa null.
+    /// Export tarafında YALNIZ üyelik kapılarını besler (taban-tuval atlaması / örtülen-katman
+    /// budaması — alfasız piksel formatı şartı, rendering-semantics §2.6): bilinmeyen format
+    /// "alfasız" SAYILMAZ, ilgili optimizasyon sessizce kapalı kalır.
+    /// </summary>
+    public string? PixelFormat { get; init; }
+
+    /// <summary>
+    /// Video stream'inin <c>sample_aspect_ratio</c>'su (SAR). ffprobe "N:M" yazar; yoksa ya da
+    /// ayrıştırılamazsa 0/0 = BİLİNMİYOR (0:1 beyanı da "bilinmiyor" sınıfıdır — kare piksel
+    /// KANITI değildir). Rotation swap'i SAR'a uygulanmaz: kapılar yalnız SarNum==SarDen>0
+    /// (kare piksel) olgusunu okur, o da eksen takasından bağımsızdır.
+    /// </summary>
+    public int SarNum { get; init; }
+
+    public int SarDen { get; init; }
+
+    /// <summary>
     /// HDR tespiti (rendering-semantics §6.2): color_trc ∈ {smpte2084, arib-std-b67}
     /// VEYA color_primaries = bt2020.
     /// </summary>

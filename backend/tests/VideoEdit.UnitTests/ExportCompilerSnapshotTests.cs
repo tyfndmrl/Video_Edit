@@ -510,6 +510,10 @@ public sealed class ExportCompilerSnapshotTests
         // M5: hız, renk düzeltme, LUT, keyframe (ifade yolu + sendcmd yolu)
         "speed-change", "color-adjust", "lut-effects", "keyframe-linear", "keyframe-eased",
         "volume-keyframes",
+        // 2026-09-01 perf turu: taban-tuval atlaması (§2.6) — olgular TAM olduğunda taban
+        // tuval + ilk overlay düşer; olgusuz eş fixture'lar (two-video-layers vb.) atlamasız
+        // biçimi zaten sabitler.
+        "canvas-skip-base",
     ];
 
     private static (TimelineDoc Doc, Dictionary<Guid, ExportAssetSource> Sources) Fixture(string name) =>
@@ -546,8 +550,39 @@ public sealed class ExportCompilerSnapshotTests
             // Görsel asset'in ses stream'i YOKTUR — kaynak defteri de bunu böyle bildirir.
             "image-clip" => (ImageClip(), ImageSources()),
             "image-over-video" => (ImageOverVideo(), ImageSources()),
+            "canvas-skip-base" => (CanvasSkipBase(), CanvasSkipSources()),
             _ => throw new ArgumentOutOfRangeException(nameof(name)),
         };
+
+    /// <summary>
+    /// Taban-tuval atlaması fixtürü (§2.6): altta timeline'ı baştan sona kaplayan İKİ bitişik
+    /// tam-kare klip (concat'li tek run — normalize pad satırları da snapshot'ta görünsün),
+    /// üstte PiP. Kaynak defteri A için TAM olguları taşır (tuval aspect'i + SAR 1 + yuv420p);
+    /// snapshot taban tuvalin ve ilk overlay'in DÜŞTÜĞÜNÜ sabitler.
+    /// </summary>
+    private static TimelineDoc CanvasSkipBase() => ExportTestDocs.MultiTrackDoc(
+    [
+        ExportTestDocs.VideoTrack(clips:
+        [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 1_000_000, 0, 2_000_000,
+                transform: ExportTestDocs.Transform(x: 0.25, y: -0.25, scale: 0.35)),
+        ]),
+        ExportTestDocs.VideoTrack(clips:
+        [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 2_000_000,
+                ExportTestDocs.Audio()),
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 2_000_000, 5_000_000, 7_000_000,
+                ExportTestDocs.Audio()),
+        ]),
+    ]);
+
+    private static Dictionary<Guid, ExportAssetSource> CanvasSkipSources() => new()
+    {
+        [ExportTestDocs.AssetA] = new ExportAssetSource(
+            "assets/a.mp4", true, "bt709", "bt709",
+            SourceWidth: 1920, SourceHeight: 1080, PixelFormat: "yuv420p", SarNum: 1, SarDen: 1),
+        [ExportTestDocs.AssetB] = new ExportAssetSource("assets/b.mp4", true, "bt709", "bt709"),
+    };
 
     /// <summary>AssetC bir PNG (ses yok, video stream'i tek kare), AssetA sesli video.</summary>
     private static Dictionary<Guid, ExportAssetSource> ImageSources() => new()

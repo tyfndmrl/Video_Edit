@@ -209,3 +209,37 @@ Suite (tümü kendi koşumum, 2026-08-31; API/Worker `api-run-signalr`/`worker-r
   **1592/1592 skip 0** (MinIO+ffmpeg) · editör 1342 + şema 222 · tsc -b + e2e tsc temiz.
   Doküman: rendering-semantics §4.1 YAZILIŞ GÜNCELLEMESİ kutusu + örnek zincir + exposure
   satırı + tablo terim notu.
+- **Bacak 2 — (c) tuval-atlama ✅ (2026-09-01).** MEKANİZMA ÖLÇÜMLE ÇİVİLENDİ (karar şartı):
+  rig'de iki aday karşılaştırıldı — eski −3,1 s sınıfını üreten şey, alt run tam-örtücüyken
+  TABAN TUVAL + İLK OVERLAY'İN atlanmasıdır (g-real-nocanvas: p50 −2,1 s ve MP4 **SHA256
+  birebir**); örtüsüz-pencere hızlı-yol dilimlemesi compReal'de yalnız [0,5)+[55,60) pencereyi
+  kapsar (kazanç tavanı ~1/6) ve topoloji/sözleşme maliyeti yüksek → SEÇİLMEDİ. Uygulama:
+  §2.6 örtücü yüklemi (`IsOpaqueFullCanvasRun` — CoversCanvas yerleşimi + worker'ın TAZE
+  yerel-dosya probe olguları: kaynak aspect'i == tuval (tamsayı çapraz çarpım), SAR=1, alfasız
+  pix_fmt izin listesi `AlphalessPixelFormats` + opaklık ≥1 + animasyonsuz; run-içi geçiş
+  İZİNLİ) + `skipBase` (en alt run [0,toplam)'ı tek run kaplıyorsa taban tuval + overlay'i
+  üretilmez; kompozisyon topolojisi/RGB rejimi/ses AYNEN, hızlı yola girilmez). Olgu
+  altyapısı: MediaProbe/parser'a `pix_fmt` + `sample_aspect_ratio` (bilinmiyor=0/0; "0:1"
+  kare-piksel kanıtı DEĞİL), ExportAssetSource'a PixelFormat/SarNum/SarDen, ExportJob taze
+  probe'dan taşır — Bacak 3'ün altyapısı buraya ÇEKİLDİ çünkü (c)'nin bayt-güvenliği aynı
+  olgulara muhtaç (alfalı/letterbox'lı taban tuval olmadan yanlış piksel üretirdi; doc-only
+  varyant bilinçli RED). Golden politikası: HİÇBİR piksel golden'ı değişmedi (bayt-aynılık —
+  eski↔yeni maxAbsDiff 0 / PSNR ∞; GoldenFrameTests geometri satırları dokunulmadı); yeni
+  kalıcı muhafızlar: `ExportRenderGoldenTests.BaseCanvasSkip_IsByteIdentical_OnTheRealistic`
+  `Topology` (çift-varyant CANLI render — aynı belge olgulu/olgusuz derlenir, tek fark 2
+  satır, MP4'ler bayt-aynı; geçişli örtücü topolojisiyle) + `ExportCoverOptimizationTests`
+  (yüklem envanteri: olgu-null/1919/yuva420p/bilinmeyen-pixfmt/SAR 2:1/SAR bilinmiyor/
+  opacity 0.999/animasyonlu/açıkta-başlayan/PiP taban → atlama ATEŞLENMEZ; tek-run belge
+  hızlı yolda kalır) + `ExportSnapshots/canvas-skip-base.txt` (yeni fixtür; mevcut olgusuz
+  fixtürlerin snapshot'ları DEĞİŞMEDİ) + MediaProbeParser pix_fmt/SAR testleri. CANLI
+  önce/sonra (compReal-1080p, bitişik pencere, g3b↔g3c): **35,9/35,6 → 32,7/32,0/32,3 s
+  (p50 35,75 → 32,3; −3,4 s; 1,68x → 1,86x)** ve iki worker'ın AYNI belge çıktısı
+  **SHA256-birebir** (`832ba5f3…59b6`, 34 878 279 B) — "belgelenen tuval renk-kaybı"
+  bu mekanizmada NE AÇILDI NE KAPANDI (bayt-aynı; kaybın kapanışı tek-katman hızlı yol
+  rejiminin işidir, bu bacağın mekanizması o değil — dürüst beyan). NEGATİF KONTROL: atlama
+  koşulu geçici TERSLENDİ → **27 kırmızı** (yüklem bataryası + canvas-skip-base dahil
+  snapshot'lar + çift-varyant bayt testi) → geri al md5 birebir (`caa1ef4b…e5f4`) +
+  touch+rebuild → 44/44 yeşil. Kapılar: build -warnaserror 0/0 · backend TAM **1610/1610
+  skip 0** (MinIO+ffmpeg) · editör 1342 + şema 222 · tsc -b + e2e tsc temiz. Doküman:
+  rendering-semantics YENİ §2.6 (taşıyıcı norm + olgu kaynağı + örtücü yüklemi + atlama),
+  CompiledExport.SourceWidth daraltılmış doktrin metni, ExportCompiler baş yorumu.

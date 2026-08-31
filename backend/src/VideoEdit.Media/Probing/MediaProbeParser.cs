@@ -58,7 +58,8 @@ public static class MediaProbeParser
             int width = 0, height = 0, fpsNum = 0, fpsDen = 0, avgNum = 0, avgDen = 0;
             var isVfr = false;
             string? colorTransfer = null, colorPrimaries = null, videoCodec = null;
-            string? colorSpace = null, colorRange = null;
+            string? colorSpace = null, colorRange = null, pixelFormat = null;
+            int sarNum = 0, sarDen = 0;
             var videoIndex = -1;
 
             if (video is { } v)
@@ -100,6 +101,21 @@ public static class MediaProbeParser
                 colorPrimaries = GetString(v, "color_primaries");
                 colorSpace = GetString(v, "color_space");
                 colorRange = GetString(v, "color_range");
+                pixelFormat = GetString(v, "pix_fmt");
+
+                // SAR: ffprobe "N:M" biçiminde yazar (rational'ların '/' ayracından farklı).
+                // Yok ya da ayrıştırılamaz → 0/0 (bilinmiyor); "0:1" de bilinmiyor sınıfıdır
+                // ve zaten SarNum==SarDen>0 yüklemini sağlamaz.
+                if (GetString(v, "sample_aspect_ratio") is { } sar)
+                {
+                    var colon = sar.IndexOf(':');
+                    if (colon > 0
+                        && int.TryParse(sar[..colon], NumberStyles.Integer, CultureInfo.InvariantCulture, out var sn)
+                        && int.TryParse(sar[(colon + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var sd))
+                    {
+                        (sarNum, sarDen) = (sn, sd);
+                    }
+                }
             }
 
             int? sampleRate = null, channels = null;
@@ -138,6 +154,9 @@ public static class MediaProbeParser
                 ColorPrimaries = colorPrimaries,
                 ColorSpace = colorSpace,
                 ColorRange = colorRange,
+                PixelFormat = pixelFormat,
+                SarNum = sarNum,
+                SarDen = sarDen,
                 IsHdr = Recipes.ColorChain.IsHdr(colorTransfer, colorPrimaries),
                 VideoCodec = videoCodec,
                 AudioCodec = audioCodec,

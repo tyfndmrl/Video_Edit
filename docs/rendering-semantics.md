@@ -616,6 +616,50 @@ ile beslenir (design 04 §2.5); expression'daki değerler yukarıdaki formüller
 halidir — yani compiler önce her keyframe zamanı için `overlay_x/y` çözer, aralar §3'e göre
 interpole edilir.
 
+### 2.6 Örtme Optimizasyonları: Taban-Tuval Atlaması ve Örtülen-Katman Budaması (NORMATİF)
+
+> **TAŞIYICI NORM.** Bu bölümün optimizasyonları GÖRÜNTÜ optimizasyonu değil **GRAFİK
+> optimizasyonudur**: optimize edilmiş ve edilmemiş grafik AYNI belge için **BAYT-AYNI çıktı**
+> üretmek zorundadır; bu eşitlik bir tolerans değil **EŞİTLİKTİR** ve canlı-ffmpeg çift-varyant
+> golden'ıyla koşulur (fark BEKLENMEDİĞİ için eşik pazarlığı yoktur; tek bayt fark ölçülürse
+> ilgili optimizasyon KODDAN çıkarılır — bayrakla değil). Aritmetik taban: %100 opak tam-kare
+> içeriğin opak alta `overlay(:format=rgb)` ile bindirilmesi 8-bit'te **birebir kopyadır**.
+>
+> **Olgu kaynağı.** Yüklemin her KAYNAK olgusu, worker'ın render edeceği YEREL dosyanın kendi
+> ffprobe'undan gelir (`ExportJob` → `ExportAssetSource`); belge ya da DB defteri
+> (`ExportAssetFacts`) bu karara GİREMEZ. Doktrin daraltması (baş mimar kararı, 2026-09-01):
+> `SourceWidth/SourceHeight/PixelFormat/SAR` **geometriyi hiçbir biçimde etkilemez** — hiçbir
+> placement/koordinat/kutu sayısı bu alanları okumaz (§2.5 sözleşmesi aynen) — ama grafiğin
+> **ÜYELİĞİNİ** sayılı kapılarda etkileyebilir: (1) dejenerelik reti (§2.5 önkoşulu), (2) bu
+> bölümün atlama/budaması. Probe'un üyelik etkisi yeni bir sınıf değildir: HDR tonemap zinciri
+> (§6.2) filtergraph'a zaten probe'dan girer. Olgulardan HERHANGİ BİRİ bilinmiyorsa (null/0)
+> optimizasyon YOKTUR — ölçüm yokluğu ne yanlış ret ne atlama/budama üretir.
+
+**Örtücü yüklemi** — bir run, penceresi boyunca tuvalin her pikselini kendi GERÇEK kaynak
+pikseliyle tam opak kaplar, ancak ve ancak (TÜMÜ birden):
+
+1. her segmenti MEDYA klibidir (raster değil) ve `CoversCanvas` yerleşimindedir
+   (kutu == tuval, merkez çapa, dönmesiz — saf belge aritmetiği, §2.5);
+2. her segmentin kaynağında `SourceW·H == SourceH·W` (tamsayı çapraz çarpım — kaynak aspect'i
+   tam tuval aspect'i; letterbox/pillarbox İMKÂNSIZ), `SAR = 1` (kare piksel, `SarNum==SarDen>0`)
+   ve pix_fmt ALFASIZ İZİN LİSTESİNDE (`ExportCompiler.AlphalessPixelFormats`; bilinmeyen format
+   alfasız SAYILMAZ);
+3. her segmentte `Opacity ≥ 1` ve `Animation.Any == false`;
+4. örtücünün KENDİ run'ı içindeki geçişler İZİNLİDİR: yerleşim-eşitliği invaryantı (§5.2) iki
+   tarafı aynı yerleşime zorlar ve xfade tam-kare opak girdilerde tam-kare opak üretir
+   (çift-varyant golden geçişli topolojiyle koşar).
+
+**Taban-tuval atlaması (uygulandı, 2026-09-01):** kompozisyon yolunda EN ALT run örtücü
+yüklemini sağlıyor VE frame defterinde `[0, toplamFrame)`'i tek run olarak kaplıyorsa taban
+tuval (`color=…[base]`) ve o run'ın overlay'i ÜRETİLMEZ — run'ın kendisi kompozit taban olur.
+Kompozisyon topolojisi korunur: kalan overlay'ler, RGB rejimi (§6.3) ve ses zincirleri AYNEN;
+TEK KATMANLI HIZLI YOLA girilmez (o yuv420p rejimidir ve yalnız tek-run belgelerin yoludur).
+Kanıtlar: `ExportRenderGoldenTests.BaseCanvasSkip_IsByteIdentical_OnTheRealisticTopology`
+(çift-varyant canlı render, MP4 bayt-aynı) + `ExportCoverOptimizationTests` (yüklemin her
+olgusu tek tek eksiltilince atlamanın ATEŞLENMEDİĞİ) + `ExportSnapshots/canvas-skip-base.txt`.
+Ölçülen kazanç: gerçekçi 60 sn 1080p bileşimde (çıkar-koş-ölç rig'i, 3 koşum p50) −2,1 s ve
+çıktı SHA256-birebir.
+
 ---
 
 ## 3. Easing ve Keyframe İnterpolasyonu

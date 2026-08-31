@@ -326,13 +326,15 @@ public sealed class ExportJob(
                     return;
                 }
 
-                // Boyutlar TABAN (dejenerelik) kapısı içindir (ExportCompiler.EnsureLayerFloor) —
-                // filtergraph'a girmezler, geometri kaynaktan bağımsız kalır. probe.Width/Height
-                // ROTATION UYGULANMIŞ değerlerdir, yani ffmpeg'in decode'da göreceği iw/ih ile
-                // eşleşir (MediaProbe sözleşmesi); DB'deki kolonlar da aynı yerden yazılır.
+                // Olgular ÜYELİK kapıları içindir (dejenerelik + §2.6 atlama/budama) —
+                // filtergraph GEOMETRİSİNE girmezler, geometri kaynaktan bağımsız kalır.
+                // probe.Width/Height ROTATION UYGULANMIŞ değerlerdir, yani ffmpeg'in decode'da
+                // göreceği iw/ih ile eşleşir (MediaProbe sözleşmesi); DB'deki kolonlar da aynı
+                // yerden yazılır. §2.6 kararı DB defterinden DEĞİL bu taze yerel-dosya
+                // probe'undan verilir (baş mimar kararı — bayat-probe riski böyle çöker).
                 sources[asset.Id] = new ExportAssetSource(
                     path, probe.HasAudio, probe.ColorTransfer, probe.ColorPrimaries,
-                    probe.Width, probe.Height);
+                    probe.Width, probe.Height, probe.PixelFormat, probe.SarNum, probe.SarDen);
             }
 
             // ── 5a) Overlay hazırlığı: metin/şekil PNG'leri (tasarım 04 §4.2 adım 3). — %15

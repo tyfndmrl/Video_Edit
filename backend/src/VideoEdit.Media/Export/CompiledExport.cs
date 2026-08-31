@@ -12,19 +12,41 @@ namespace VideoEdit.Media.Export;
 /// <param name="ColorTransfer">ffprobe <c>color_trc</c>; HDR tespiti ve <c>ColorChain.ForSource</c> girdisi.</param>
 /// <param name="ColorPrimaries">ffprobe <c>color_primaries</c>; aynı iki kararın ikinci girdisi.</param>
 /// <param name="SourceWidth">
-/// Kaynağın ROTATION UYGULANMIŞ genişliği (ffprobe; <c>MediaProbe.Width</c>). OPSİYONELDİR:
-/// yalnız DEJENERELİK kapısını (<see cref="LayerGeometry.IsDegenerate"/>) besler, üretilen
-/// filtergraph'ı HİÇBİR biçimde etkilemez — geometri kaynaktan bağımsız kalır (§2.5). Bilinmiyorsa
-/// (null/0) kapı ATLANIR; "ölçüm yokluğu yanlış ret üretmez" presedanı metin ölçümündekiyle aynıdır.
+/// Kaynağın ROTATION UYGULANMIŞ genişliği (worker'ın YEREL dosyaya çektiği taze ffprobe;
+/// <c>MediaProbe.Width</c>). OPSİYONELDİR ve GEOMETRİYİ HİÇBİR BİÇİMDE ETKİLEMEZ: hiçbir
+/// placement/koordinat/kutu sayısı bu alanı okumaz — geometri kaynaktan bağımsız kalır (§2.5).
+/// Grafiğin ÜYELİĞİNİ ise yalnız sayılı kapılarda etkiler: (1) dejenerelik reti
+/// (<see cref="LayerGeometry.IsDegenerate"/>), (2) taban-tuval atlaması ve örtülen-katman
+/// budaması (rendering-semantics §2.6) — bu optimizasyonlar görünür pikseli DEĞİŞTİREMEZ,
+/// kanıtları çift-varyant bayt-aynılık golden'larıdır. Bilinmiyorsa (null/0) kapıların tümü
+/// devre dışıdır: ölçüm yokluğu ne yanlış ret ne atlama/budama üretir ("ölçüm yokluğu yanlış
+/// sonuç üretmez" presedanı metin ölçümündekiyle aynıdır). Probe'un üyelik etkisi yeni bir
+/// sınıf değildir: <paramref name="ColorTransfer"/>/<paramref name="ColorPrimaries"/> HDR
+/// tonemap zincirini zaten probe'dan kurar.
 /// </param>
 /// <param name="SourceHeight"><inheritdoc cref="SourceWidth" path="/node()"/></param>
+/// <param name="PixelFormat">
+/// ffprobe <c>pix_fmt</c> (taze worker probe'u). Yalnız §2.6 üyelik kapılarını besler:
+/// atlama/budama, format <see cref="ExportCompiler.AlphalessPixelFormats"/> defterinde DEĞİLSE
+/// (alfa taşıyabilir ya da bilinmiyor) sessizce kapalı kalır — bilinmeyen format "alfasız"
+/// sayılmaz.
+/// </param>
+/// <param name="SarNum">
+/// ffprobe <c>sample_aspect_ratio</c> payı; 0 = bilinmiyor. §2.6 kapıları yalnız
+/// <c>SarNum == SarDen &gt; 0</c> (kare piksel) olgusunu okur — anamorfik ya da SAR'ı
+/// bilinmeyen kaynak tam-kare örtücü SAYILMAZ.
+/// </param>
+/// <param name="SarDen"><inheritdoc cref="SarNum" path="/node()"/></param>
 public sealed record ExportAssetSource(
     string Path,
     bool HasAudio,
     string? ColorTransfer,
     string? ColorPrimaries,
     int? SourceWidth = null,
-    int? SourceHeight = null)
+    int? SourceHeight = null,
+    string? PixelFormat = null,
+    int SarNum = 0,
+    int SarDen = 0)
 {
     public bool IsHdr => ColorChain.IsHdr(ColorTransfer, ColorPrimaries);
 }

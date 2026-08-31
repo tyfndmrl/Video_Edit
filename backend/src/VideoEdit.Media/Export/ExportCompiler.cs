@@ -127,7 +127,10 @@ public sealed record ExportPlan(
 ///    RENK KAYBINI da kaldırır: tuval yolu yuv→rgba→kompozisyon→yuv420p gidiş-dönüşü yapıyordu
 ///    ve DOKUNULMAMIŞ tam-kare bir klipte bile kayıp ölçülebilirdi (kayıpsız ffv1 karşılaştırma,
 ///    aynı renk etiketleriyle: tuval yolu PSNR 35.87 dB — Y 38.6 / V 31.1; hızlı yol PSNR ∞,
-///    yani kaynakla BİT BİT AYNI);
+///    yani kaynakla BİT BİT AYNI). ÇOK-KATMANLI belgede hızlı yola GİRİLMEZ ama akrabası
+///    vardır: en alt run §2.6 örtücü yüklemini tüm timeline boyunca sağlıyorsa taban tuval +
+///    onun overlay'i atlanır (TABAN-TUVAL ATLAMASI — Compile'daki skipBase; kompozisyon RGB
+///    rejimi ve kalan overlay'ler AYNEN kalır, çıktı bayt-aynıdır — canlı SHA256 kanıtlı);
 ///  - KOMPOZİSYON (tasarım 04 §2.2 + rendering-semantics §2.2): hızlı yol dışında taban DAİMA
 ///    proje çözünürlüğünde settings.backgroundColor tuvalidir; her run bu tuvale overlay edilir.
 ///    Boşluklar (klipsiz aralıklar) ayrı segment gerektirmez — taban tuval görünür.
@@ -247,6 +250,21 @@ public static class ExportCompiler
     /// Şeffaf pad rengi — katman zincirlerinde kullanılan tek "boşluk" rengi (rgba tuval).
     /// </summary>
     public const string TransparentPad = "#00000000";
+
+    /// <summary>
+    /// ALFASIZ olduğu bilinen ffprobe <c>pix_fmt</c> defteri — §2.6 üyelik kapılarının
+    /// (taban-tuval atlaması / örtülen-katman budaması) alfa şartını besler. BİLEREK
+    /// izin-listesidir: burada olmayan format "alfa taşıyabilir ya da bilinmiyor" sayılır ve
+    /// optimizasyon sessizce kapalı kalır — yanlış negatif (kapalı kalmış optimizasyon)
+    /// zararsızdır, yanlış pozitif (alfalı kaynağı örtücü saymak) sessiz piksel hatasıdır.
+    /// </summary>
+    public static readonly IReadOnlySet<string> AlphalessPixelFormats = new HashSet<string>(
+        StringComparer.Ordinal)
+    {
+        "yuv420p", "yuvj420p", "yuv422p", "yuvj422p", "yuv444p", "yuvj444p",
+        "yuv410p", "yuv411p", "yuv420p10le", "yuv422p10le", "yuv444p10le",
+        "nv12", "nv21", "rgb24", "bgr24", "gray", "gray10le",
+    };
 
     /// <summary>
     /// Şema geçiş tipi → ffmpeg xfade geçiş adı (rendering-semantics §5.3 NORMATİF tablosu).
@@ -894,23 +912,45 @@ public static class ExportCompiler
         }
         else
         {
-            // ── Taban tuval: proje çözünürlüğünde, TAM toplam frame sayısı kadar (frame defteri).
-            //    color d= bir frame CÖMERT verilir; trim=end_frame kesin sayıyı garanti eder
-            //    (d'nin µs yuvarlaması kaynak frame sayısını belirleyemez).
-            var canvasHeadroomUs = UsOf(totalFrames + 1, plan.FpsNum, plan.FpsDen);
-            //    Tuval RGB'dir: kompozisyon RGB'de yapılır (§6.3) ve settings.backgroundColor zaten
-            //    RGB hex'tir — araya yuv420p sokmak arka plan rengini gereksizce yuvarlardı.
-            videoLines.Add(
-                $"color=c={background}:s={plan.Width}x{plan.Height}:r={fpsArg}:d={TimeFormat.Sec(canvasHeadroomUs)},"
-                + $"trim=end_frame={totalFrames.ToString(CultureInfo.InvariantCulture)},"
-                + "format=rgba,setsar=1,settb=AVTB,setpts=PTS-STARTPTS[base]");
+            // ── TABAN-TUVAL ATLAMASI (rendering-semantics §2.6, 2026-09-01 perf turu): en ALT
+            //    run tüm timeline'ı GERÇEK piksellerle tam-kare kaplıyorsa (yerleşim + taze
+            //    probe olguları: kaynak aspect'i == tuval, SAR=1, alfasız pix_fmt; opaklık 1,
+            //    animasyonsuz) taban tuval + o run'ın overlay'i ATLANIR — run'ın kendisi
+            //    kompozit taban olur. Bu bir GRAFİK optimizasyonudur, görüntü değil: %100 opak
+            //    tam-kare içeriğin opak tuvale overlay'i 8-bit'te birebir kopyadır; kanıt
+            //    çift-varyant bayt-aynılık golden'ı + canlı SHA256 eşitliği (çıkar-koş-ölç
+            //    rig'inde 60 sn 1080p bileşim MP4'ü bayt-aynı, p50 −2,1 s). Olgular bilinmiyorsa
+            //    (eski davranış) tuval aynen kurulur. Kompozisyon topolojisi korunur: kalan
+            //    overlay'ler değişmez, hızlı yola GİRİLMEZ (o yuv420p'dir — §6.3 rejimi ayrı).
+            var skipBase = runs.Count >= 2
+                && CoversWholeTimelineWithRealPixels(runs[0], plan, totalFrames);
 
             // enable penceresinin bitişi yarım frame geri çekilir: bitişik iki run'da aynı t
             // değeri iki overlay'i birden tetiklemesin (tasarım 04 §8 tuzak 9).
             var halfFrameUs = UsOf(1, plan.FpsNum, plan.FpsDen) / 2;
 
-            composite = "base";
-            for (var n = 0; n < runs.Count; n++)
+            var firstOverlayRun = 0;
+            if (skipBase)
+            {
+                composite = EmitRun(videoLines, runs[0], plan, fpsArg, background, opaque: false, 0);
+                firstOverlayRun = 1;
+            }
+            else
+            {
+                // ── Taban tuval: proje çözünürlüğünde, TAM toplam frame sayısı kadar (frame defteri).
+                //    color d= bir frame CÖMERT verilir; trim=end_frame kesin sayıyı garanti eder
+                //    (d'nin µs yuvarlaması kaynak frame sayısını belirleyemez).
+                var canvasHeadroomUs = UsOf(totalFrames + 1, plan.FpsNum, plan.FpsDen);
+                //    Tuval RGB'dir: kompozisyon RGB'de yapılır (§6.3) ve settings.backgroundColor zaten
+                //    RGB hex'tir — araya yuv420p sokmak arka plan rengini gereksizce yuvarlardı.
+                videoLines.Add(
+                    $"color=c={background}:s={plan.Width}x{plan.Height}:r={fpsArg}:d={TimeFormat.Sec(canvasHeadroomUs)},"
+                    + $"trim=end_frame={totalFrames.ToString(CultureInfo.InvariantCulture)},"
+                    + "format=rgba,setsar=1,settb=AVTB,setpts=PTS-STARTPTS[base]");
+                composite = "base";
+            }
+
+            for (var n = firstOverlayRun; n < runs.Count; n++)
             {
                 var run = runs[n];
                 var label = EmitRun(videoLines, run, plan, fpsArg, background, opaque: false, n);
@@ -1712,6 +1752,43 @@ public static class ExportCompiler
         && placement.OverlayAnchorFactorY == 0.5d
         && placement.AnchorTargetX == width / 2d
         && placement.AnchorTargetY == height / 2d;
+
+    /// <summary>
+    /// §2.6 örtücü yüklemi (NORMATİF — rendering-semantics §2.6): run, penceresi boyunca proje
+    /// tuvalinin HER pikselini kendi GERÇEK kaynak pikseliyle ve tam opak kaplıyor mu?
+    /// Geometri yarısı saf belge aritmetiğidir (<see cref="CoversCanvas"/>); kaynak yarısı
+    /// worker'ın TAZE yerel-dosya probe'undan gelir (<see cref="ExportAssetSource"/>) ve
+    /// HERHANGİ BİR olgu bilinmiyorsa yüklem SAĞLANMAZ — ölçüm yokluğu optimizasyon üretmez.
+    /// Şartlar (tümü, her segmentte): medya klibi (raster değil) + kaynak aspect'i tam tuval
+    /// aspect'i (tamsayı çapraz çarpım — letterbox/pillarbox İMKÂNSIZ) + SAR=1 + alfasız
+    /// pix_fmt (izin listesi <see cref="AlphalessPixelFormats"/>) + opaklık ≥ 1 + animasyonsuz.
+    /// Run içi GEÇİŞLER İZİNLİDİR: yerleşim-eşitliği invaryantı iki tarafı aynı yerleşime
+    /// zorlar ve xfade tam-kare opak girdilerde tam-kare opak üretir (canlı golden'la sabit).
+    /// </summary>
+    private static bool IsOpaqueFullCanvasRun(LayerRun run, ExportPlan plan) =>
+        CoversCanvas(run.Placement, plan.Width, plan.Height)
+        && run.Segments.All(s => IsOpaqueFullFrameSegment(s, plan));
+
+    private static bool IsOpaqueFullFrameSegment(LayerSegment segment, ExportPlan plan) =>
+        segment.Raster is null
+        && segment.Clip.Opacity >= 1d
+        && !segment.Clip.Animation.Any
+        && segment.Asset is { SourceWidth: int sourceWidth and > 0, SourceHeight: int sourceHeight and > 0 } asset
+        && asset.SarNum > 0
+        && asset.SarNum == asset.SarDen
+        && asset.PixelFormat is { } pixelFormat
+        && AlphalessPixelFormats.Contains(pixelFormat)
+        && (long)sourceWidth * plan.Height == (long)sourceHeight * plan.Width;
+
+    /// <summary>
+    /// Taban-tuval atlamasının yüklemi: en alt run §2.6 örtücüsüdür VE tüm timeline'ı kaplar
+    /// (frame defterinde [0, toplam) — pencere birleşimi YOK, tek run).
+    /// </summary>
+    private static bool CoversWholeTimelineWithRealPixels(
+        LayerRun run, ExportPlan plan, long totalFrames) =>
+        run.StartFrame == 0
+        && run.EndFrame == totalFrames
+        && IsOpaqueFullCanvasRun(run, plan);
 
     /// <summary>
     /// Run'ı grafiğe yazar ve akış etiketini döndürür.
