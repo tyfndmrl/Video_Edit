@@ -144,3 +144,11 @@ Suite (tümü kendi koşumum, 2026-08-31; API/Worker `api-run-signalr`/`worker-r
   DELETE 204; 2 prob export objesi mc rm; prob Jobs satırları silindi; ADV10'un yeniden-koşum
   çıktısı canlı projenin gerçek geçmişi olarak bırakıldı). Kaçak ffmpeg yok; worktree tek;
   `git status` PROGRESS.md dışında temiz. Migration yok.
+
+## Yarım-iş turu 2 (2026-08-31 onayı: #1 defter, #6 catch envanteri, #5 B6 senkron)
+
+| # | İş | Durum | Not |
+|---|---|---|---|
+| 1 | Bayat defter kayıtları (BG-4/BG-5/M3-1109) | ✅ YAPILDI | Üçü de kodda zaten kapalıydı (grep kanıtları: feedbackCoverage.test var + eski eşsiz reason'lar feedback.ts'te; hasClipboardContent 0 geçiş; 6 parite vektör dosyası mevcut) — backlog kayıtları KAPANDI işlendi, tarihsel metin korundu. |
+| 6 | Boş catch envanteri | ⏳ SIRADA | |
+| 5 | B6 çapraz-sekme kitaplık senkronu (user-feed) | ⏳ | |

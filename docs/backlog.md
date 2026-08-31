@@ -1054,7 +1054,7 @@ Kapatılanlar (bu turda):
 
 **AÇIK kalanlar (bu turda BİLEREK yapılmadı — kayıt buraya):**
 
-- **[AÇIK — DÜŞÜK, BG-4] `timelineOps` ret kodlarının bir bölümü iki Türkçe mesaj tablosunun
+- **[KAPANDI — 2026-08-21 tur14 d3; defter 2026-08-31 işlendi, BG-4] `timelineOps` ret kodlarının bir bölümü iki Türkçe mesaj tablosunun
   (`feedback.ts` REASONS + `inspectorFeedback.ts`) hiçbirinde eşli değil; bu retlerde kullanıcı
   jenerik "İşlem uygulanamadı" görüyor.** Ölçülen alt sınır: literal `fail('…')` kodlarından
   9'u eşlenmemiş (comm diff) + dolaylı reason yollarından en az 2'si ("asset is not ready",
@@ -1065,7 +1065,10 @@ Kapatılanlar (bu turda):
     gibi kritik yollar doğru mesajlı — canlı doğrulandı). ~11-21 koda doğru Türkçe cümle
     yazmak UX kararı isteyen hacimli iş; dev-modda "eşlenmemiş reason" `console.warn` alarmı
     da aynı pakete girmeli. Bu turun yüksek/orta düzeltmeleriyle yarışmasın.
-- **[AÇIK — DÜŞÜK, BG-5] `timelineOps.ts` 3815 satır; 163 export'un ~30'u dışarıda
+  - *Kapanış (2026-08-31 doğrulaması):* tur14 dalga-3 tüm ret kodlarını tablolara eşledi ve
+    `feedbackCoverage.test.ts` eşleme muhafızını kurdu (yeni kod tabloya girmeden kırmızı);
+    eski eşsiz reason'lar ("asset is not ready" vb.) bugün `feedback.ts`'te mevcut (grep doğrulandı).
+- **[KAPANDI kısmen — 2026-08-21 tur14 d3; defter 2026-08-31 işlendi, BG-5] `timelineOps.ts` 3815 satır; 163 export'un ~30'u dışarıda
   kullanılmıyor, `hasClipboardContent` tam ölü.** Doğrulanan kısım: `hasClipboardContent`
   src ağacında yalnız tanımında geçiyor (1 hit, modül içi çağrı da 0). 30 sembollük liste
   tek tek yeniden üretilmedi (düşük şiddet; tarama yöntemi makul).
@@ -1073,6 +1076,9 @@ Kapatılanlar (bu turda):
     mutasyonlar tek kapıda" yazılı tasarım gerekçesine dokunan bir mimari karar.
     `hasClipboardContent` silme ve export budaması, BG-1 düzeltmesi aynı dosyaya dokunurken
     fırsatçı olarak birleştirilebilir; kendi başına tur harcatmaz.
+  - *Kapanış (2026-08-31 doğrulaması):* `hasClipboardContent` ve kullanılmayan export'lar tur14
+    dalga-3'te temizlendi (bugün src ağacında 0 geçiş — grep doğrulandı). Dosya bölmeme kararı
+    ("tek kapı") geçerli kalır; bu kaydın açık kalan tek parçası yok.
 
 ## 14. tur denetiminden (2026-08-21 — 13. turun triyaja ulaşmayan üç bulgusu: M1/M2/M3)
 
@@ -1106,14 +1112,18 @@ Kapatılanlar (bu turda):
 - **[DÜŞÜK — M3, sınıf kaydı] Belge-değişmezi katmanında cross-language parite vektörü
   eksikliği** — aşağıda ayrı başlıkta.
 
-### [AÇIK — DÜŞÜK, M3 sınıfı] Belge-değişmezi ailelerinde zod↔C# parite vektörü eksik
+### [KAPANDI — B borçları turu 2026-08-25; defter 2026-08-31 işlendi, M3 sınıfı] Belge-değişmezi ailelerinde zod↔C# parite vektörü eksikti
 
 Mevcut cross-language test-vektörleri (`test-vectors/`) HESAP/FORMÜL paritelerini kapsıyor:
 `easing-vectors`, `time-vectors`, `text-layout-vectors`, `frame-grid-corpus` ve 13. turda
 eklenen `keyframe-bounds-vectors`. Ama **belge-değişmezi** (structural invariant) katmanının
 çoğu ailesi tek dilden ölçülüyor — zod tarafı `invariants.test.ts`'te zengin, C# tarafı
 (`ExportCompiler.Validate` / `KeyframeCompiler.Parse` / geçiş-el kontrolü) ayrı yazılmış ve
-ikisini tek kaynaktan koşan paylaşılan vektör YOK. Vektörsüz aileler:
+ikisini tek kaynaktan koşan paylaşılan vektör YOKTU. *Kapanış (2026-08-31 doğrulaması):
+listelenen ailelerin tamamı sonradan vektörlendi ve iki dilde koşuyor — `keyframe-order-vectors.json`
+(B borçları), `source-range-vectors.json` (14. tur M3), `clip-placement-vectors.json` +
+`transition-symmetry-vectors.json` (B borçları), `keyframe-bounds-vectors.json` (13b) ve
+`easing-extrema-vectors.json` (bezier dilimi).* Yazıldığı andaki vektörsüz aileler:
 
 - **Keyframe sıralaması** — `strictly sorted` / duplike `timeUs` reddi (zod:
   invariants.test.ts "rejects unsorted/duplicate keyframes").
