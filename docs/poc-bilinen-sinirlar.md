@@ -1180,7 +1180,7 @@ TEKRAR DÜZENLEYEBİLME" idi. Bu cümlenin **iki yarısı** var ve ikisi AYNI g�
 
 | Yarı | Durum |
 |---|---|
-| "sonradan tekrar düzenleyebilme" | **ÖLÇÜLDÜ** (12. tur, gerçek fare/klavye — aşağıdaki kayıt) |
+| "sonradan tekrar düzenleyebilme" | **ÖLÇÜLDÜ** (12. tur, gerçek fare/klavye — aşağıdaki kayıt) ve **2026-08-31'den beri pakette KORUNUYOR** (`e2e/relogin-reopen.spec.ts` — §5.1 notu) |
 | "R2'de saklayıp" | **GERÇEK R2 HİÇ DENENMEDİ** — bu koşum da dâhil her şey MinIO'dur |
 
 **Ölçülen düzenleme yolu (12. tur, GERÇEK girdi; ölçüm betiği `e2e/.artifacts/` altında
@@ -1506,7 +1506,7 @@ yanlışlanmazlar**, yani "hâlâ doğru mu" sorusu elle sorulmalıdır.
 | Ölçüm | Nasıl koşuldu | Sonuç |
 |---|---|---|
 | **1,51 GiB / 10:40 kaynak, uçtan uca** (yükleme → işleme → timeline → kesme → export) | Playwright, GERÇEK fare + tarayıcının kendi dosya seçicisi; ölçüm betiği `e2e/.artifacts/` altında koştu ve repoya **girmedi** | **geçti** — sayılar §0.1'de. *(B2, 2026-08-25: aynı yol 2,53 GB'lık kaynakla n=2 olarak tekrarlandı — §0.1.1; boru hattının performansı artık kalıcı oransal testle korunuyor — §0.1.2. Elle kalan yalnız tarayıcı tarafının duvar saatleri.)* |
-| **Sonradan tekrar düzenleme** (böl → "Kaydedildi" → Çıkış → yenile → temiz adresten yeniden giriş → proje seçici → aynı proje) | Playwright, GERÇEK fare + GERÇEK klavye; aynı ölçüm paketi | **geçti** — belge birebir geri geldi, filmstrip tuvalinde 3120 farklı renk, `media-urls` 200 (§4.2) |
+| **Sonradan tekrar düzenleme** (böl → "Kaydedildi" → Çıkış → yenile → temiz adresten yeniden giriş → proje seçici → aynı proje) | Playwright, GERÇEK fare + GERÇEK klavye; aynı ölçüm paketi | **geçti** — belge birebir geri geldi, filmstrip tuvalinde 3120 farklı renk, `media-urls` 200 (§4.2). *(2026-08-31: bu akış artık pakette KORUNUYOR — `e2e/relogin-reopen.spec.ts`, aşağıdaki nota bakın.)* |
 
 > **Bu ölçümler neden pakette DEĞİL(di).** Birincisinin gerekçesi 1,5 GiB'lık dosya üretimi
 > (156 sn) + 5+ dakikalık koşumdu; **B2 turunda gerekçe ölçekle çözüldü**: 1-2 GB rejimini
@@ -1515,10 +1515,15 @@ yanlışlanmazlar**, yani "hâlâ doğru mu" sorusu elle sorulmalıdır.
 > iddialar oransal — §0.1.2). Elle kalan kısım tarayıcı tarafının duvar saatleridir (dosya
 > seçici → "Hazır" rozeti, çift tık, diyalog); onlar Playwright betiği ister ve CI maliyeti
 > gerekçesi onlar için geçerliliğini korur.
-> İkincisi paketin `auth.spec.ts`'iyle **kısmen** çakışıyor (çıkış/yeniden
-> giriş orada gerçek girdiyle zaten var), ama "gerçek medyalı proje geri geliyor mu" yarısı
-> hiçbir pakette yok — **bu yarım hâlâ koşulmuş ama korunmuyor**: bir regresyon onu sessizce
-> kırabilir. Borç `docs/backlog.md` 12. turda açık duruyor.
+> İkincisinin "gerçek medyalı proje geri geliyor mu" yarısı **2026-08-31'de pakete alındı**
+> (küçükler dilimi): `e2e/relogin-reopen.spec.ts` gerçek fare/klavyeyle böl → "Kaydedildi"
+> (rozetin sözü sunucu dokümanından ayrıca doğrulanır) → çıkış → yeniden giriş → proje
+> seçici satırı → aynı belge (sunucu dokümanı + revision birebir) + sayfanın kendi
+> `media-urls` isteği 200 + proxy'ye Range GET **206** akışını her koşumda korur (negatif
+> kontrol: autosave'in PUT'u yalancı başarıya çevrilince "rozet yalan söylüyor" kırmızısı).
+> 12. tur ölçümündeki filmstrip piksel sayımı teste taşınmadı (spec'in medya kanıtı
+> media-urls 200 + Range 206'dır); çıkış/yeniden girişin form sözleşmesi `auth.spec.ts`'te.
+> Borcun `docs/backlog.md` 12. tur kaydı KAPANDI olarak işlendi.
 
 **Test edilmeyen yüzeyler:** önizlemenin tam-kare golden karşılaştırması, yük/eşzamanlılık
 testi, güvenlik penetrasyon testi, tarayıcı matrisi

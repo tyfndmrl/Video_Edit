@@ -1014,9 +1014,14 @@ denenmedi**; MinIO'nun neyi kanıtladığı / neyi kanıtlamadığı §4.2'de ka
     süresi) ve eşikler üç ölçüm koşumundan türetilip gerekçesiyle test dosyasına yazıldı.
     Negatif kontrol: işleme tavanı 0,001'e çekildi → test kırmızı ("işleme oranı 0.183 >
     tavan 0.001"), dosya md5 birebir geri. Kapsam tablosu: `poc-bilinen-sinirlar.md` §0.1.2.
-  - **(a) "sonradan tekrar düzenleme"nin gerçek medyalı yarısı → AÇIK duruyor** (B2 kapsamı
-    dışıydı): mevcut `e2e/support/media.ts` fixture'ı (4 sn / ~2 MB) ile pakete alınabilir,
-    dosya boyutuyla ilgisi yok.
+  - **(a) "sonradan tekrar düzenleme"nin gerçek medyalı yarısı → KAPANDI (2026-08-31,
+    küçükler dilimi).** Öngörüldüğü gibi `e2e/support/media.ts` fixture'ıyla (4 sn / ~2 MB)
+    pakete alındı: `e2e/relogin-reopen.spec.ts` — gerçek fare/klavyeyle böl → "Kaydedildi"
+    (rozetin sözü sunucudan ayrıca doğrulanır) → çıkış → yeniden giriş → proje seçici satırı →
+    aynı belge (sunucu dokümanı + revision birebir; store karşılaştırması) + sayfanın kendi
+    media-urls isteği 200 + proxy'ye Range GET 206. Negatif kontrol: `putTimeline` yalancı
+    başarıya çevrildi → "rozet yalan söylüyor" mesajıyla kırmızı → md5 birebir geri. Oturum
+    ayrı context'te (per-device logout; paylaşılan worker oturumu düşmez).
   - *Elle kalan öteki parça:* tarayıcı tarafının duvar saatleri (dosya seçici → "Hazır",
     çift tık, diyalog) — Playwright betiği ister, CI maliyeti gerekçesi geçerli (§5.1).
 - **[KAYIT] `EditorApp.fitButton` locator'ı BAYAT (test altyapısı, ürün değil).**

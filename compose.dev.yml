@@ -1,4 +1,4 @@
-# Gelistirme ortami: SADECE altyapi servisleri (Postgres + Redis).
+# Gelistirme ortami: SADECE altyapi servisleri (Postgres + Redis + MinIO).
 # API'yi `dotnet run` ile (http://localhost:5000), frontend'i Vite ile (http://localhost:5173) lokal calistirin.
 #
 #   docker compose -f compose.dev.yml up -d

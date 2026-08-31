@@ -1,5 +1,5 @@
 # SKILLS — operasyonel prosedür envanteri
-Son güncelleme: 2026-08-25. Bu dosya, oturum hafızasında yaşayıp tekrar tekrar keşfedilen
+Son güncelleme: 2026-08-31. Bu dosya, oturum hafızasında yaşayıp tekrar tekrar keşfedilen
 prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutlardan türetildi.
 
 ### ortam-kaldirma
@@ -33,7 +33,11 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   (4) Docker kapanmışsa `MINIO_AVAILABLE=1` testleri skip yerine ZAMAN AŞIMIYLA kırmızı düşer (31 kırmızı deseni).
   (5) Worker font kökünü kendi bulur (env → walk-up); API ile worker parmak izi UYUŞMUYORSA iki taraf
   farklı kök görüyordur — worker'ı da `VIDEOEDIT_FONT_ROOT` ile başlat, `deploy/README.md` §5.2 adım 4.
-- Son doğrulanma: 2026-08-25
+  (6) Windows PowerShell 5.1'in `Start-Process`'inde `-Environment` YOK (PS 7+ özelliği) — servis env'ini
+  önce kabuğa yaz (`$env:VIDEOEDIT_FONT_ROOT=...`), süreç mirasla alır (2026-08-31'de ölçüldü).
+  (7) Docker Desktop'ı komutla açarken engine ~1-3 dk sonra hazır olur; `docker version` o ana kadar
+  pipe hatasıyla ASILIR — zaman aşımı verip yokla.
+- Son doğrulanma: 2026-08-31
 
 ### ikili-tazelik-dogrulama
 - Amaç: Canlı API/Worker'ın gerçekten hedef commit'in kodunu koştuğunu kanıtlamak.
@@ -48,7 +52,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   eski `blend=all_expr='A*(1-` YOK; UTF-8 `ExportEstimateOptions`, `BezierValueExtrema`, `ExpectedOutputClockUs` VAR.
 - Bilinen sınırlar/tuzaklar: DLL md5 farkı TEK BAŞINA bayatlık kanıtı DEĞİL (PDB yolu/MVID değişir) —
   IL bölgesini ya da iğneyi karşılaştır. `Api.dll`'de eski iğnenin XML-doc literalinde görünmesi davranış değildir.
-- Son doğrulanma: 2026-08-25
+- Son doğrulanma: 2026-08-31
 
 ### test-paketleri
 - Amaç: Dört kapının tamamını koşmak (commit öncesi zorunlu).
@@ -60,21 +64,21 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   pnpm -r test                                           # editör + timeline-schema vitest
   pnpm --filter @videoedit/editor exec tsc -b            # + apps/editor'da: npx tsc -p e2e/tsconfig.json --noEmit
   ```
-- Doğrulama: 2026-08-25 yeşil sayıları: backend 1557 · editör 1313 · şema 222 (bunlar BÜYÜR; skip 0 sabittir).
-- Bilinen sınırlar/tuzaklar: MinIO'suz koşumda ~17+ test skip'lenir — skip>0 görürsen önce Docker'a bak.
-  Lint YOK (kullanıcı kararı); "bitti" tanımı: build + testler + tsc.
-- Son doğrulanma: 2026-08-25
+- Doğrulama: 2026-08-31 yeşil sayıları: backend 1560 · editör 1313 · şema 222 (bunlar BÜYÜR; skip 0 sabittir).
+- Bilinen sınırlar/tuzaklar: MinIO'suz koşumda MinIO+ffmpeg kapılı testler skip'lenir (2026-08-31 ölçümü: 41) —
+  skip>0 görürsen önce Docker'a bak. Lint YOK (kullanıcı kararı); "bitti" tanımı: build + testler + tsc.
+- Son doğrulanma: 2026-08-31
 
 ### playwright-tam-suite
 - Amaç: Gerçek fare/klavye e2e paketinin tamamı.
 - Ne zaman tetiklenir: Kapanış doğrulamaları; UI'a dokunan dilimler.
 - Ne zaman KULLANILMAZ: Ortamın TEK SAHİBİ değilsen — paralel ajan/koşum sahte kırmızı üretir (ölçülmüş ders).
 - Girdi: ortam-kaldirma tamam + ikili-tazelik doğrulanmış + kaçak ffmpeg yok (`Get-Process ffmpeg`).
-- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-08-25: 159 test / 37 spec / ~10,5 dk.
+- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-08-31: 160 test / 38 spec / 10,7 dk.
 - Doğrulama: 0 failed, 0 skipped (ffmpeg PATH'teyse koşullu skip'ler tetiklenmez).
 - Bilinen sınırlar/tuzaklar: Sentetik girdi (dispatchEvent) YASAK — kanıt sayılmaz (review-gate kural 3).
   Süite testleri sadece Chromium'da.
-- Son doğrulanma: 2026-08-25
+- Son doğrulanma: 2026-08-31
 
 ### negatif-kontrol-protokolu
 - Amaç: Yeni/değişen her korumanın gerçekten yük taşıdığını kanıtlamak.
@@ -85,7 +89,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   DLL kullanır; geri yükleme sonrası dosyaya touch + rebuild ZORUNLU. (2) PowerShell `Get-Content` ANSI
   okuması Türkçe karakterleri bozar (mojibake) — dosya yazımı daima Write/Edit araçlarıyla. (3) `git checkout`
   autocrlf smudge'ı satır sonlarını değiştirebilir — bayt-birebirlik iddiasını hash'le kur.
-- Son doğrulanma: 2026-08-25
+- Son doğrulanma: 2026-08-31
 
 ### migration-uygulama
 - Amaç: EF migration'ını canlı DB'ye uygulamak.
@@ -135,4 +139,4 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   `| <no> | <iş> | ✅ YAPILDI | <önce-ölçüm> + <çözüm özeti> + <negatif kontrol> + <suite sayıları> |`;
   (7) takılırsan DUR ve kullanıcıya sor — varsayım yok.
 - Doğrulama: Kapanışta bağımsız doğrulayıcı maddeyi kendi reprodüksiyonuyla teyit eder (review-gate kural 2).
-- Son doğrulanma: 2026-08-25
+- Son doğrulanma: 2026-08-31

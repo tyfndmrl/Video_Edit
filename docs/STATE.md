@@ -1,5 +1,6 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-08-25, HEAD `1f964d0` (main). Ayrıntılı fotoğraf: `DURUM.md` (çift-rol denetim raporu).
+Son güncelleme: 2026-08-31, küçükler dilimi commit'iyle (öncesi `ae700cf`, main).
+Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
 
@@ -14,30 +15,34 @@ Son güncelleme: 2026-08-25, HEAD `1f964d0` (main). Ayrıntılı fotoğraf: `DUR
   bekçi kapsamı (sprite saati), reaper çok-worker iptali, 1-2 GB kalıcı perf muhafızı + 4 GiB tavanı,
   ci.yml sayısızlaştırma, tahmin sabitleri config, tembel backfill, LUT dyadik-olmayan bacak,
   bezier ekstremum kapıları.
-- Son yeşil sayılar (2026-08-25, bizzat koşuldu): backend **1557/1557** (0 skip) · editör 1313 ·
-  şema 222 · Playwright **159/159** · build -warnaserror 0 uyarı · prod bağımlılıklarında 0 açık.
+- **Küçükler dilimi** (2026-08-31, tek commit): SaveTimeline 409 birim sözleşme pini
+  (`SaveTimelineRevisionContractTests` + canlı ham-API eş-kanıtı), "sonradan tekrar düzenleme"
+  gerçek-medya e2e'si pakete (`e2e/relogin-reopen.spec.ts` — böl → Kaydedildi → çıkış →
+  yeniden giriş → seçici → aynı belge + proxy Range 206), README sayı/şema senkronu,
+  `compose.dev.yml:1` yorumu. Defter: `PROGRESS.md` §Küçükler.
+- Son yeşil sayılar (2026-08-31, bizzat koşuldu): backend **1560/1560** (0 skip; MinIO'suz
+  1519 + 41 skip) · editör 1313 · şema 222 · Playwright **160/160** (10,7 dk) ·
+  build -warnaserror 0 uyarı · tsc + e2e tsc + prod build temiz.
 
 ## Devam edenler
 
-- Yok. Çalışma ağacı temiz; süreklilik seti (bu dosyalar + `DURUM.md`) henüz commit'lenmedi.
+- Yok. Çalışma ağacı küçükler commit'iyle temiz.
 
-## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7 ile aynı)
+## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
-1. Süreklilik setini commit'le (bu dosyalar).
-2. `git push` — **kullanıcı onayı bekliyor** (origin 24+ commit geride).
-3. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
-4. SignalR/Redis kararı: getir ya da iskeleyi sök (kod tüketicisi 0; compose+proxy+README şeması duruyor).
-5. Küçükler: SaveTimeline 409 birim sözleşme pini — sözleşme: bayat `baseRevision` ile PUT /timeline
-  → 409 + güncel doküman gövdesi (`ProjectEndpoints.cs` Conflict dalı; komşu test dosyası
-  `TimelineRequestValidationTests`); "tekrar düzenleme" gerçek-medya e2e'sinin pakete alınması;
-  README sayı/şema senkronu (`README:225/241` bayat); `compose.dev.yml:1` yorumu.
-6. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
+1. `git push` — **kullanıcı onayı bekliyor** (origin 25+ commit geride).
+2. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
+3. SignalR/Redis kararı: getir ya da iskeleyi sök (kod tüketicisi 0; compose+proxy+README şeması
+  duruyor; README mimari şemasında artık dürüst "yazılmadı" notu var).
+4. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
   #11 upload resume sertleştirme.
 
 ## Bilinen sorunlar
 
-- `DURUM.md` §5 risk tablosu geçerli: R2 denenmemiş; tek export worker'ı + poll; 409 birim-pinsiz;
+- `DURUM.md` §5 risk tablosundan geçerli kalanlar: R2 denenmemiş; tek export worker'ı + poll;
   kota check-then-act + tamamlanma son-yazan-kazanır yarışları (düşük); SkiaSharp pin.
+  (409 birim-pinsizlik satırı ve "tekrar düzenleme korunmuyor" kaydı 2026-08-31 küçükler
+  dilimiyle KAPANDI; DURUM.md arşiv olduğu için orada güncellenmedi.)
 - Frontend'de 8+ gerekçeli-yorumlu boş `catch {}` — abort başarısızlığı telemetrisiz (tam envanter
   çıkarılmadı `[DOĞRULANMADI — tam sayı]`).
 - Dev bağımlılığı: nanoid <3.3.18 high (yalnız vite zinciri, prod'a girmez).
@@ -50,8 +55,11 @@ Son güncelleme: 2026-08-25, HEAD `1f964d0` (main). Ayrıntılı fotoğraf: `DUR
 4. SkiaSharp yükseltme penceresi (golden yeniden-kalibrasyon maliyetiyle) planlansın mı?
 5. Import-yönü/katman kuralı (dep-cruiser sınıfı; lint'ten ayrı) istenir mi, mevcut gevşemeler kabul mü?
 
-## Ortam notu (2026-08-25 sonu)
+## Ortam notu (2026-08-31 sonu)
 
-Servisler `api-run-bfinal`/`worker-run-bfinal` (HEAD kod-eşdeğeri) + Vite :5173 çalışır bırakıldı;
-Docker üçlüsü healthy. Yeni session ortamı `docs/SKILLS.md → ortam-kaldirma` ile doğrulamalı
-(Docker Desktop kapanmış olabilir — bilinen desen).
+Makine 25'inden sonra yeniden başlamış bulundu (Docker Desktop kapalı, servis yok — bilinen
+desen); ortam sıfırdan kaldırıldı. Servisler bu session'ın scratchpad'inden yayınlanan
+`api-run-kucukler`/`worker-run-kucukler` (HEAD kod-eşdeğeri; tazelik iğnelerle kanıtlı) +
+Vite :5173 çalışır durumda bırakıldı; Docker üçlüsü healthy. DİKKAT: yayın dizinleri
+session-scratchpad'te yaşar — yeni session onları bulamaz/güvenemez, `ortam-kaldirma` ile
+kendi yayınını yapmalı.

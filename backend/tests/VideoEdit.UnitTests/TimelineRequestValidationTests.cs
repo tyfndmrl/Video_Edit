@@ -1,6 +1,14 @@
+using System.Security.Claims;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using VideoEdit.Api.Endpoints;
 using VideoEdit.Contracts;
+using VideoEdit.Domain.Entities;
+using VideoEdit.Domain.Services;
+using VideoEdit.Infrastructure;
 
 namespace VideoEdit.UnitTests;
 
@@ -156,5 +164,148 @@ public class TimelineRequestValidationTests
         var (_, _, skip) = TimelineRequestValidation.NormalizePaging(int.MaxValue, 100);
         Assert.Equal(int.MaxValue, skip);
         Assert.True(skip >= 0);
+    }
+}
+
+/// <summary>
+/// SaveTimeline optimistic-concurrency SÖZLEŞME PİNİ (autosave'in 409 dalı).
+/// <para>
+/// Sözleşme (istemcinin çakışma diyaloğu buna dayanır — features/timeline çakışma tespiti):
+/// doğru <c>baseRevision</c> ile PUT 200 döner ve revision tam 1 artar; BAYAT
+/// <c>baseRevision</c> ile PUT 409 döner ve gövde GÜNCEL dokümanı + GÜNCEL revision'ı
+/// taşır (istemci "başka sekmede değişti" diyaloğunu bu gövdeyle kurar); 409 sunucudaki
+/// dokümanı DEĞİŞTİRMEZ (kaybolan-güncelleme yok). Bu sınıf eklenene kadar dal yalnız
+/// canlıda ölçülmüştü, birim pini yoktu (DURUM §5 risk kaydı).
+/// </para>
+/// <para>
+/// Kurulum CrossUserAccessTests deseni: Sqlite in-memory + handler'ların doğrudan
+/// çağrılması (handler'lar bu yüzden internal). Sqlite'ta JsonDocument/DateTimeOffset
+/// converter'ları AppDbContext'in test-provider dalından gelir.
+/// </para>
+/// </summary>
+public sealed class SaveTimelineRevisionContractTests : IDisposable
+{
+    private readonly SqliteConnection _connection;
+    private readonly AppDbContext _db;
+    private readonly Guid _ownerId = Guid.CreateVersion7();
+
+    public SaveTimelineRevisionContractTests()
+    {
+        _connection = new SqliteConnection("DataSource=:memory:");
+        _connection.Open();
+        _db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlite(_connection).Options);
+        _db.Database.EnsureCreated();
+    }
+
+    public void Dispose()
+    {
+        _db.Dispose();
+        _connection.Dispose();
+    }
+
+    private ClaimsPrincipal Owner =>
+        new(new ClaimsIdentity([new Claim("sub", _ownerId.ToString("D"))], "test"));
+
+    /// <summary>
+    /// Yüzeysel doğrulamayı GEÇEN, tek satırlık (whitespace'siz) doküman — raw-text
+    /// eşitliği kararlı olsun diye. <paramref name="marker"/> track id'sidir: V1/V2
+    /// gövdeleri birbirinden ayırt edilebilir kalır.
+    /// </summary>
+    private static string DocJson(Guid projectId, string marker) =>
+        $$"""{"schemaVersion":1,"projectId":"{{projectId:D}}","settings":{},"tracks":[{"id":"{{marker}}","type":"video","clips":[]}],"markers":[]}""";
+
+    private async Task<Project> SeedOwnedProjectAsync()
+    {
+        var projectId = Guid.CreateVersion7();
+        var project = new Project
+        {
+            Id = projectId,
+            OwnerId = _ownerId,
+            Name = "409 pin projesi",
+            Timeline = EmptyTimeline.Create(projectId, 1920, 1080, 30, 1, 48000),
+            RevisionNumber = 0,
+            FrameRateNum = 30,
+            FrameRateDen = 1,
+            Width = 1920,
+            Height = 1080,
+            AudioSampleRate = 48000,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+        };
+        _db.Projects.Add(project);
+        await _db.SaveChangesAsync();
+        return project;
+    }
+
+    private async Task<IResult> SaveAsync(Guid projectId, long baseRevision, string docJson)
+    {
+        using var doc = JsonDocument.Parse(docJson);
+        return await ProjectEndpoints.SaveTimeline(
+            projectId,
+            new SaveTimelineRequest(baseRevision, doc.RootElement.Clone()),
+            Owner, _db, new SnapshotPolicy(), TimeProvider.System, CancellationToken.None);
+    }
+
+    private Project Reload(Guid projectId) =>
+        _db.Projects.AsNoTracking().Single(p => p.Id == projectId);
+
+    [Fact]
+    public async Task SaveTimeline_WithCurrentBaseRevision_Returns200_AndIncrementsRevision()
+    {
+        var project = await SeedOwnedProjectAsync();
+        var v1 = DocJson(project.Id, "v1");
+
+        var result = await SaveAsync(project.Id, baseRevision: 0, v1);
+
+        var ok = Assert.IsType<Ok<SaveTimelineResponse>>(result);
+        Assert.Equal(1, ok.Value!.RevisionNumber);
+
+        var reloaded = Reload(project.Id);
+        Assert.Equal(1, reloaded.RevisionNumber);
+        Assert.Equal(v1, reloaded.Timeline.RootElement.GetRawText());
+    }
+
+    [Fact]
+    public async Task SaveTimeline_WithStaleBaseRevision_Returns409_WithCurrentDocument_AndDoesNotWrite()
+    {
+        var project = await SeedOwnedProjectAsync();
+        var v1 = DocJson(project.Id, "v1");
+        Assert.IsType<Ok<SaveTimelineResponse>>(await SaveAsync(project.Id, 0, v1)); // sunucu: rev 1 = V1
+
+        var revisionRowsBefore = _db.ProjectRevisions.AsNoTracking().Count(r => r.ProjectId == project.Id);
+
+        // Bayat istek: baseRevision 0 (sunucu 1'de) + FARKLI bir gövde (V2). Concurrency
+        // filtresi olmasaydı bu istek V2'yi yazar, "son yazan kazanır"a düşerdik.
+        var v2 = DocJson(project.Id, "v2");
+        var result = await SaveAsync(project.Id, baseRevision: 0, v2);
+
+        // 409 + gövde GÜNCEL durumu taşır: istemci diyaloğu revision'ı ve dokümanı buradan okur.
+        var conflict = Assert.IsType<Conflict<TimelineConflictResponse>>(result);
+        Assert.Equal(1, conflict.Value!.RevisionNumber);
+        Assert.Equal(v1, conflict.Value.Timeline.GetRawText());
+
+        // Kurban DEĞİŞMEDİ: doküman V1, revision 1, snapshot satırı doğmadı.
+        var reloaded = Reload(project.Id);
+        Assert.Equal(1, reloaded.RevisionNumber);
+        Assert.Equal(v1, reloaded.Timeline.RootElement.GetRawText());
+        Assert.Equal(revisionRowsBefore,
+            _db.ProjectRevisions.AsNoTracking().Count(r => r.ProjectId == project.Id));
+    }
+
+    [Fact]
+    public async Task SaveTimeline_WithAheadBaseRevision_Returns409_WithCurrentDocument()
+    {
+        // Eşitlik pini: filtre "==" olmalı, "<=" değil — sunucunun İLERİSİNDEN gelen
+        // baseRevision (karışmış istemci) de yazamaz ve güncel dokümanla 409 alır.
+        var project = await SeedOwnedProjectAsync();
+        var v1 = DocJson(project.Id, "v1");
+        Assert.IsType<Ok<SaveTimelineResponse>>(await SaveAsync(project.Id, 0, v1));
+
+        var result = await SaveAsync(project.Id, baseRevision: 5, DocJson(project.Id, "v2"));
+
+        var conflict = Assert.IsType<Conflict<TimelineConflictResponse>>(result);
+        Assert.Equal(1, conflict.Value!.RevisionNumber);
+        Assert.Equal(v1, conflict.Value.Timeline.GetRawText());
+        Assert.Equal(v1, Reload(project.Id).Timeline.RootElement.GetRawText());
     }
 }

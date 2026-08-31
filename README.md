@@ -16,9 +16,9 @@ MP4 olarak dışa aktar (1080p / 720p / 4K / dikey). React 19 + .NET 10 + Cloudf
 
 ### Zaman çizgisi ve düzenleme
 - **Çok katmanlı timeline** — video / ses / overlay track'leri; track ekleme, silme, sessize
-  alma, gizleme, kilitleme (en fazla 50 track, 2000 klip). *Track'lerin kendi arasında
-  yeniden sıralanması ve yeniden adlandırılması henüz yok — klipler katmanlar arasında
-  taşınabilir.*
+  alma, gizleme, kilitleme, **yeniden sıralama ve yeniden adlandırma** (2026-08-21;
+  gerçek-fare e2e'si `e2e/track-manage.spec.ts`) — en fazla 50 track, 2000 klip; klipler
+  katmanlar arasında taşınabilir.
 - **Kırpma, bölme, taşıma, ripple silme, kesim üstünde roll**; katmanlar arası taşıma
 - Yapışma (snapping), yakınlaştırma, tam sığdırma, marker'lar, timecode göstergesi
 - **Sağ tık menüsü** her klip / kesim / boşluk için bağlama duyarlı eylemlerle
@@ -125,8 +125,14 @@ tarayıcı ──(presigned PUT, 64 MiB parça)──► R2 / MinIO ◄──(in
    │ REST + JWT                                                               │ Hangfire
    ▼                                                                          │ (postgres)
   API (ASP.NET Core Minimal API) ──► PostgreSQL (timeline jsonb) ─────────────┘
-                                 └─► Redis (SignalR backplane)
+                                 └─► Redis (SignalR backplane — PLANLANAN; aşağıdaki nota bakın)
 ```
+
+> **Dürüst not (2026-08-31):** şemadaki Redis/SignalR hattı bugün **yazılmış değildir** —
+> ilerleme (upload/işleme/export) istemcinin **yoklamasıyla** (polling) akar; SignalR hub'ı
+> yok, Redis'i tüketen ürün kodu yok (compose + proxy iskeleti duruyor). "Getir ya da sök"
+> kararı açık bir ürün kararıdır (`docs/STATE.md` açık sorular); şema o karar verilene kadar
+> hedef mimariyi göstermeye devam ediyor.
 
 - **Frontend** ([apps/editor](apps/editor)) — Vite + React 19 + TypeScript + Tailwind 4.
   Canvas tabanlı timeline, **WebGL2 kompozitör**, gizli `<video>` havuzu (en fazla 4) üstünde
@@ -212,21 +218,22 @@ klipleri **sistem fontuyla** çizilir; o zaman render **belirlenimci değildir**
 
 ## Testler
 
-Aşağıdaki sayılar **2026-08-20**, `a1b3a73` + 10. tur (S1/S2 + F1/F2/F3) + **11. tur**
-düzeltmeleri (B1 miks asılması, B2 rejim testi, B3 çıktı saati bekçisi, B6 cümle sınıfı)
-üzerinde bizzat koşuldu — **E2E dahil**.
+Aşağıdaki sayılar **2026-08-31**'de, `ae700cf` + küçükler dilimi (409 birim pini +
+`relogin-reopen` e2e'si) üzerinde bizzat koşuldu — **E2E dahil** (API/Worker ikilisi
+ölçümden önce yeniden yayımlandı, koşan sürecin YÜKLEDİĞİ modül yolu + DLL iğne
+taramasıyla tazeliği doğrulandı ve ortamın tek sahibi bu koşumdu).
 
 ```bash
 # Derleme
-dotnet build backend/VideoEdit.sln                           # 0 uyarı, 0 hata ✓
+dotnet build backend/VideoEdit.sln -warnaserror              # 0 uyarı, 0 hata ✓
 
-# Backend — 1240 test.  MinIO ayaktaysa env değişkenini VERİN, yoksa 17 test Skip olur
-#   (ProcessAssetPipelineTests 7, MinioStorageSmokeTests 2, ExportJobPipelineTests 8).
-MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 1240/1240 ✓ (0 atlandı)
-dotnet test backend/VideoEdit.sln                            # 1223 ✓ + 17 atlandı
+# Backend — 1560 test.  MinIO ayaktaysa env değişkenini VERİN; MinIO'suz koşumda
+#   MinIO+ffmpeg kapılı sınıflar atlanır (pipeline/export/perf/korpus aileleri).
+MINIO_AVAILABLE=1 dotnet test backend/VideoEdit.sln          # 1560/1560 ✓ (0 atlandı, 2 dk 16 sn)
+dotnet test backend/VideoEdit.sln                            # 1519 ✓ + 41 atlandı
 
 # Editör + şema paketi birlikte
-pnpm -r test                                                 # editor 1198 ✓ · schema 191 ✓
+pnpm -r test                                                 # editor 1313 ✓ · schema 222 ✓
 
 # Tip denetimi
 pnpm --filter @videoedit/editor exec tsc -b                  # temiz ✓
@@ -238,18 +245,11 @@ pnpm --filter @videoedit/editor build                        # ✓
 # E2E — GERÇEK tarayıcıda GERÇEK fare/klavye ile (page.mouse / page.keyboard).
 # API (5000), worker ve Vite (5173) AYAKTA olmalı; Playwright hiçbir süreci
 # başlatmaz/öldürmez, ayakta olanlara bağlanır.
-pnpm --filter @videoedit/editor test:e2e                     # 143/143 ✓ (7,8 dk)
-#   ^ Bu KOŞULMUŞ bir sayıdır: API/Worker ikilisi ölçümden önce yeniden
-#     yayımlandı, koşan sürecin YÜKLEDİĞİ modül hash'i + dize taramasıyla
-#     tazeliği doğrulandı ve ortamın tek sahibi bu koşumdu.
-#     143'ün TAMAMI artık GERÇEK geçiş olmak zorundadır: a11y-smoke.spec.ts
-#     modal odak sözleşmesinin 7 testi önceden `test.fail` ("beklenen
-#     başarısızlık") taşıyordu; 2026-08-21'de üç overlay'e ortak odak
-#     yönetimi eklendi (src/lib/useModalFocus.ts: açılışta odak içeri,
-#     Tab/Shift+Tab tuzağı, kapanışta odağın tetikleyiciye dönüşü,
-#     ExportDialog'a Escape) ve 7 `test.fail` satırı SİLİNDİ — o testler
-#     gerçek klavyeyle geçiyor (a11y-smoke 14/14, negatif kontrollü ölçüm).
-#     Kayıt: docs/backlog.md B6/1 maddesi KAPANDI olarak güncellendi.
+pnpm --filter @videoedit/editor test:e2e                     # 160/160 ✓ (10,7 dk)
+#   ^ 160'ın TAMAMI gerçek geçiştir (test.fail yok, skip yok). Pakete en son
+#     eklenen: e2e/relogin-reopen.spec.ts — gerçek medyalı projede böl →
+#     "Kaydedildi" → çıkış → yeniden giriş → proje seçici → AYNI belge +
+#     medya URL'leri gerçekten servis ediliyor (proxy Range GET 206).
 ```
 
 > **Neden gerçek fare?** Teslim edilen ilk sürümde "E2E" testleri store'u doğrudan
@@ -291,7 +291,7 @@ backend/
   src/VideoEdit.Infrastructure/  EF Core, R2/S3 istemcisi, JWT
   src/VideoEdit.Media/           ffmpeg reçeteleri, probe, Export/ (FilterGraph compiler), Text/ (SkiaSharp)
   src/VideoEdit.Worker/          Hangfire: ProcessAssetJob, ExportJob, AssetReaperJob
-  tests/VideoEdit.UnitTests/     1232 test + ExportSnapshots/ (filtre grafiği metin snapshot'ları)
+  tests/VideoEdit.UnitTests/     1560 test (2026-08-31) + ExportSnapshots/ (filtre grafiği metin snapshot'ları)
   tests/GoldenFrames/            export karesi piksel golden'ları (11 PNG)
   tests/RasterGoldens/           SkiaSharp şekil rasteri golden'ları (4 PNG)
   tools/SchemaGen/               JSON Schema → C# DTO üretici
@@ -321,10 +321,13 @@ Sıradaki (öncelik sırasıyla, gerekçeleriyle
 1. ~~**LUT (.cube) editör yüzeyi + önizleme shader'ı**~~ — **KAPANDI (2026-08-21)**: `.cube`
    yükleme türü + Inspector LUT bölümü + §4.2 önizleme shader'ı; önizleme↔export paritesi
    ölçüldü (SSIM 0,994 — `e2e/lut.spec.ts`, kayıt §1.3)
-2. **Pis-dosya korpusu** — iPhone HDR/HLG, VFR, döndürülmüş MOV ile uçtan uca testler
+2. ~~**Pis-dosya korpusu**~~ — **KAPANDI (2026-08-21)**: VFR, display-matrix ile döndürülmüş
+   video, HLG/BT.2020 (iPhone HDR sınıfı), tek/garip çözünürlük ve dikey kaynaklar gerçek
+   ffmpeg'le ingest + export uçtan uca (`DirtyMediaCorpusTests`); B5 turunda korpusa
+   yalan-süre beyanlı dosya sınıfı da eklendi
 3. **`fx.*` keyframe'i** — renk/LUT parametrelerinin animasyonu
-4. **Track yeniden sıralama / yeniden adlandırma** — bugün katman sırası ancak track'leri doğru
-   sırada ekleyerek kurulabiliyor
+4. ~~**Track yeniden sıralama / yeniden adlandırma**~~ — **KAPANDI (2026-08-21)**: sağ tık
+   menüsünden taşı/adlandır + gerçek-fare e2e'si (`e2e/track-manage.spec.ts`)
 5. **Tarayıcı yeniden başlatma sonrası upload resume**
 6. **Revision retention job** + container sertleştirme (non-root, kaynak sınırları)
 7. **WebCodecs (v2) oynatıcı motoru** — kare-kesin önizleme (±1 kare toleransını kaldırır)

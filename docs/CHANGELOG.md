@@ -1,6 +1,18 @@
 # CHANGELOG — ters kronolojik
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
+## 2026-08-31
+- Küçükler dilimi (STATE eski §Sıradakiler 5; dört iş TEK commit): SaveTimeline 409 birim
+  sözleşme pini (`SaveTimelineRevisionContractTests`, Sqlite in-memory; + canlı ham-API
+  eş-kanıtı; negatif kontrol: concurrency filtresi sökülünce "bayat yazma Ok'landı" kırmızısı);
+  "sonradan tekrar düzenleme" gerçek-medya e2e'si pakete (`e2e/relogin-reopen.spec.ts` — böl →
+  "Kaydedildi"nin sözü sunucudan doğrulanır → çıkış → yeniden giriş → seçici → aynı belge +
+  media-urls 200 + proxy Range 206; negatif kontrol: putTimeline yalanı → "rozet yalan
+  söylüyor"); README senkronu (sayılar 2026-08-31 koşumlarından: backend 1560 / e2e 160;
+  Redis/SignalR şemasına dürüst "yazılmadı" notu — şema korundu, karar açık; yol haritasında
+  pis-dosya korpusu + track sıralama/adlandırma KAPANDI); `compose.dev.yml:1` yorumu
+  (+ MinIO). Backlog 12. tur kaydı ve poc §4.2/§5.1 kapanışları işlendi.
+
 ## 2026-08-25
 - Süreklilik dokümantasyon seti üretildi (CLAUDE.md + docs/{STRUCTURE,SKILLS,WORKFLOWS,DECISIONS,STATE,CHANGELOG}.md) — P1 uygulaması.
 - Çift-rol read-only denetim raporu: `DURUM.md` (🟡; R2 denenmemiş + 24 commit push'suz + doc bayatlıkları).
