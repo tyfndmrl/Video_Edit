@@ -50,8 +50,10 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   kota check-then-act + tamamlanma son-yazan-kazanır yarışları (düşük); SkiaSharp pin.
   (409 birim-pinsizlik satırı ve "tekrar düzenleme korunmuyor" kaydı 2026-08-31 küçükler
   dilimiyle KAPANDI; DURUM.md arşiv olduğu için orada güncellenmedi.)
-- Frontend'de 8+ gerekçeli-yorumlu boş `catch {}` — abort başarısızlığı telemetrisiz (tam envanter
-  çıkarılmadı `[DOĞRULANMADI — tam sayı]`).
+- ~~Frontend'de 8+ boş `catch {}` / abort telemetrisiz~~ KAPANDI (2026-08-31, yarim-is-2 #6):
+  tam envanter 35 sessiz catch (mekanik tarama), hepsi gerekçe-yorumlu; 4 abort sitesi dev-only
+  `devWarn` izli (üretimde bilinçli sessiz); muhafız `silentCatchInventory.test.ts` yorumsuz
+  sessiz catch eklenmesini kırmızıya düşürür. Defter: `PROGRESS.md` §Yarım-iş turu 2.
 - Dev bağımlılığı: nanoid <3.3.18 high (yalnız vite zinciri, prod'a girmez).
 
 ## Açık sorular (insana sorulacaklar)

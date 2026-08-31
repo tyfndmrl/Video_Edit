@@ -62,6 +62,7 @@ export async function register(email: string, password: string, displayName: str
     body: JSON.stringify({ email, password, displayName }),
   });
   if (!res.ok) {
+    // non-JSON hata gövdesi yutulur: mesaj status'ten yine üretilir (apiClient deseni)
     const body: unknown = await res.json().catch(() => null);
     throw new Error(registerErrorMessage(res.status, body));
   }
@@ -83,6 +84,7 @@ export async function login(email: string, password: string): Promise<void> {
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) {
+    // non-JSON hata gövdesi yutulur: mesaj status'ten yine üretilir (apiClient deseni)
     const body: unknown = await res.json().catch(() => null);
     throw new Error(loginErrorMessage(res.status, body));
   }
@@ -134,11 +136,13 @@ async function doRefresh(): Promise<boolean> {
       credentials: 'include',
     });
     if (!res.ok) return false;
+    // bozuk JSON gövdesi de "tazelenemedi" sayılır — null'a düşür, alttaki kapı yakalar
     const data = (await res.json().catch(() => null)) as { accessToken?: string } | null;
     if (!data?.accessToken) return false;
     accessToken = data.accessToken;
     return true;
   } catch {
+    // ağ hatası = tazelenemedi: false dönüşü çağıranı login ekranına düşürür (görünür sonuç)
     return false;
   }
 }

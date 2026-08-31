@@ -464,6 +464,7 @@ export function resetProgressHubForTests(): void {
   state.watchdogTimer = null;
   state.startAttempt = 0;
   state.starting = false;
+  // stop() reddi yutulur: kapanan/yarı-açık bağlantının söküm hatasında yapılacak şey yok
   void state.connection?.stop().catch(() => undefined);
   state.connection = null;
   state.connected = false;

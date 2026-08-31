@@ -26,6 +26,7 @@ import {
   useLibraryDndStore,
   type LibraryDragPayload,
 } from '../timeline/libraryDnd';
+import { devWarn } from '../../lib/devWarn';
 import { formatBytes, formatDurationUs, formatEta, formatSpeed } from './format';
 import { assetErrorLabel } from './assetErrors';
 import { AssetDeleteDialog } from './AssetDeleteDialog';
@@ -165,8 +166,9 @@ function LibraryContent({ projectId }: { projectId: string }) {
   const discardSession = useCallback(async (assetId: string) => {
     try {
       await uploadApi.abortUpload(assetId); // free the server-side multipart upload
-    } catch {
+    } catch (err) {
       // best effort — the 7-day lifecycle sweeps it anyway
+      devWarn(`Upload abort başarısız (yarım oturum atılırken; asset ${assetId})`, err);
     }
     await deleteUploadSession(assetId);
     setSessions((prev) => prev.filter((r) => r.assetId !== assetId));

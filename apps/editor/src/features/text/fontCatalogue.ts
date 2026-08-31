@@ -95,6 +95,7 @@ export function readCachedCatalogue(): FontCatalogueResponse | null {
     const parsed = JSON.parse(raw) as FontCatalogueResponse;
     return Array.isArray(parsed?.fonts) && parsed.fonts.length > 0 ? parsed : null;
   } catch {
+    // bozuk cache JSON'ı / erişilemeyen storage — cache yok say, derlenmiş 4'lü taşır
     return null;
   }
 }
@@ -184,6 +185,7 @@ export function isFontFileLoaded(fontId: string, weight = 400, italic = false): 
   try {
     return fonts.check(`${italic ? 'italic ' : ''}${weight} 16px "${fontFaceFamily(fontId)}"`);
   } catch {
+    // check() parse hatası (egzotik font dizgesi) — "yüklü değil" ile aynı sonuç
     return false;
   }
 }

@@ -24,6 +24,7 @@
  * The engine is UI-independent: it talks to the backend through the UploadApi
  * port (implemented in uploadApi.ts) and to R2 through global XMLHttpRequest.
  */
+import { devWarn } from '../../../lib/devWarn';
 
 // ---------------------------------------------------------------------------
 // API port (backend contract)
@@ -269,8 +270,9 @@ export class UploadEngine {
     if (this.phaseValue === 'aborted') {
       try {
         await this.opts.api.abortUpload(init.assetId);
-      } catch {
-        // best effort
+      } catch (err) {
+        // best effort — sonuç yine 'aborted'; artığı 7 günlük bucket yaşam döngüsü süpürür
+        devWarn(`Upload abort başarısız (init yarışında iptal; asset ${init.assetId})`, err);
       }
       this.settle({ status: 'aborted' });
       return this.donePromise;
@@ -333,8 +335,9 @@ export class UploadEngine {
     this.settle({ status: 'aborted' });
     try {
       if (this.assetIdValue) await this.opts.api.abortUpload(this.assetIdValue);
-    } catch {
+    } catch (err) {
       // best effort — the 7-day bucket lifecycle sweeps leftovers
+      devWarn(`Upload abort başarısız (iptal; asset ${this.assetIdValue})`, err);
     }
   }
 
@@ -551,8 +554,9 @@ export class UploadEngine {
         this.settle({ status: 'aborted' });
         try {
           if (this.assetIdValue) await this.opts.api.abortUpload(this.assetIdValue);
-        } catch {
+        } catch (err) {
           // best effort — the 7-day bucket lifecycle sweeps leftovers
+          devWarn(`Upload abort başarısız (complete uçuştayken iptal; asset ${this.assetIdValue})`, err);
         }
         return;
       }

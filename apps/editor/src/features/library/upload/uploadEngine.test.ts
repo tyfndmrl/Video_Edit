@@ -499,3 +499,85 @@ describe('uploadEngine — pause / resume / cancel', () => {
     expect(MockXhr.instances.length).toBe(0); // no part was ever sent
   });
 });
+
+// ---------------------------------------------------------------------------
+// Best-effort abort başarısızlığı: yutulur AMA dev'de görünür (yarim-is-2 #6).
+// Sözleşme: abortUpload reddi kullanıcıya ASLA hata olarak dönmez (sonuç yine
+// 'aborted', kart hatasız kapanır) — sessizliğin bedeli olan görünmezlik ise
+// devWarn ile kapatıldı: her üç abort yolunda console.warn'a bir iz düşer.
+// (Üretimde warn'ın da susturulduğu devWarn.test.ts'te bayrak düzeyinde sabit.)
+// ---------------------------------------------------------------------------
+
+describe('uploadEngine — abort failure is swallowed but dev-visible', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const failingAbort = (api: UploadApi): void => {
+    api.abortUpload = async () => {
+      throw new Error('abort-boom');
+    };
+  };
+  const expectAbortWarn = (warn: { mock: { calls: unknown[][] } }): void => {
+    const abortWarns = warn.mock.calls.filter(
+      (c) => typeof c[0] === 'string' && c[0].includes('abort başarısız'),
+    );
+    expect(abortWarns).toHaveLength(1);
+    expect(abortWarns[0]![0]).toContain('[VideoEdit]');
+    expect(abortWarns[0]![1]).toBeInstanceOf(Error);
+  };
+
+  it('mid-upload cancel: abort reddi sonucu değiştirmez, dev-warn düşer', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { api } = makeApi({ partSize: 4 });
+    failingAbort(api);
+    const engine = makeEngine(api, 12, { concurrency: 1 });
+    const done = engine.start();
+    await waitFor(() => MockXhr.instances.length === 1, 'part 1 PUT');
+    await engine.cancel();
+
+    const result = await done;
+    expect(result).toEqual({ status: 'aborted' }); // kullanıcı görünür davranış aynı
+    expect(engine.phase).toBe('aborted');
+    expectAbortWarn(warn);
+  });
+
+  it('init-yarışı canceli: abort reddi yutulur, dev-warn düşer', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { api } = makeApi({ partSize: 4 });
+    failingAbort(api);
+    const engine = makeEngine(api, 4);
+    const done = engine.start();
+    void engine.cancel(); // phase 'preparing': init yanıtı henüz işlenmedi
+    const result = await done;
+    expect(result).toEqual({ status: 'aborted' });
+    expect(MockXhr.instances.length).toBe(0);
+    expectAbortWarn(warn);
+  });
+
+  it('completing sırasında cancel + complete reddi: abort reddi de yutulur, dev-warn düşer', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { api } = makeApi({ partSize: 4 });
+    let rejectComplete!: (err: Error) => void;
+    api.completeUpload = () =>
+      new Promise((_resolve, reject) => {
+        rejectComplete = reject;
+      });
+    failingAbort(api);
+    const engine = makeEngine(api, 4, { concurrency: 1 });
+    const done = engine.start();
+    await waitFor(() => MockXhr.instances.length === 1, 'part PUT');
+    MockXhr.instances[0]!.succeed('etag-1');
+    await waitFor(() => engine.phase === 'completing', 'completing phase');
+
+    const cancelled = engine.cancel();
+    rejectComplete(new Error('complete-boom'));
+    await cancelled;
+
+    const result = await done; // yine kullanıcı iptali — hata kartı yok
+    expect(result).toEqual({ status: 'aborted' });
+    expect(engine.phase).toBe('aborted');
+    await waitFor(() => warn.mock.calls.length > 0, 'dev-warn');
+    expectAbortWarn(warn);
+  });
+});

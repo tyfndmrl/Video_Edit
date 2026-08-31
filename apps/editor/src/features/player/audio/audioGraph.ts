@@ -137,6 +137,7 @@ export class AudioGraph {
     this.nodes.clear();
     this.pendingElements.clear();
     if (this.ctx) {
+      // close() reddi yutulur: zaten kapalı/kapanan context'in söküm hatasında yapılacak şey yok
       void this.ctx.close().catch(() => undefined);
       this.ctx = null;
       this.master = null;

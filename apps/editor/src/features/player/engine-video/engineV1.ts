@@ -659,7 +659,7 @@ export class VideoPlaybackEngine implements PlaybackEngine {
         try {
           slot.video.currentTime = this.elementSourceUs(clip, targetUs, transition) / 1e6;
         } catch {
-          // ignore
+          // not seekable yet — ses-yalnız konum hassas değil, oynatım döngüsü toparlar
         }
       }
     }
@@ -787,6 +787,7 @@ export class VideoPlaybackEngine implements PlaybackEngine {
         }
       }
       if (video.paused) {
+        // play() reddi yutulur (autoplay/pause yarışı) — her tick yeniden dener
         void video.play().catch(() => undefined);
       }
       this.ensureAudioEnvelope(slot, clip, track, t);
@@ -1380,6 +1381,7 @@ async function preciseSeekElement(
       // Tiny forward bias on retries nudges the demuxer past rounding edges.
       video.currentTime = targetSec + attempt * 0.001;
     } catch {
+      // not seekable yet — preroll'dan vazgeç; sonraki render denemesi yeniden gelir
       return;
     }
     if (!hasRvfc) {

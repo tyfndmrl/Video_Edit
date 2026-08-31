@@ -80,6 +80,7 @@ function initialProjectId(): Uuid | null {
   try {
     return new URLSearchParams(window.location.search).get('project');
   } catch {
+    // erişilemeyen/egzotik location (ör. opaque origin) — parametresiz açılışla eşdeğer
     return null;
   }
 }
