@@ -64,7 +64,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   pnpm -r test                                           # editör + timeline-schema vitest
   pnpm --filter @videoedit/editor exec tsc -b            # + apps/editor'da: npx tsc -p e2e/tsconfig.json --noEmit
   ```
-- Doğrulama: 2026-08-31 (yarim-is-2 #5 sonu) yeşil sayıları: backend 1579 · editör 1339 · şema 222 (bunlar BÜYÜR; skip 0 sabittir).
+- Doğrulama: 2026-08-31 (gelistirme-3 #2 sonu) yeşil sayıları: backend 1591 · editör 1342 · şema 222 (bunlar BÜYÜR; skip 0 sabittir).
 - Bilinen sınırlar/tuzaklar: MinIO'suz koşumda MinIO+ffmpeg kapılı testler skip'lenir (2026-08-31 ölçümü: 41) —
   skip>0 görürsen önce Docker'a bak. Lint YOK (kullanıcı kararı); "bitti" tanımı: build + testler + tsc.
 - Son doğrulanma: 2026-08-31
@@ -74,7 +74,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
 - Ne zaman tetiklenir: Kapanış doğrulamaları; UI'a dokunan dilimler.
 - Ne zaman KULLANILMAZ: Ortamın TEK SAHİBİ değilsen — paralel ajan/koşum sahte kırmızı üretir (ölçülmüş ders).
 - Girdi: ortam-kaldirma tamam + ikili-tazelik doğrulanmış + kaçak ffmpeg yok (`Get-Process ffmpeg`).
-- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-08-31 (yarim-is-2 #5 sonu): 163 test / 41 spec / 10,4 dk.
+- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-08-31 (gelistirme-3 #2 sonu): 164 test / 42 spec / 10,4 dk.
 - Doğrulama: 0 failed, 0 skipped (ffmpeg PATH'teyse koşullu skip'ler tetiklenmez).
 - Bilinen sınırlar/tuzaklar: Sentetik girdi (dispatchEvent) YASAK — kanıt sayılmaz (review-gate kural 3).
   Süite testleri sadece Chromium'da.
@@ -127,6 +127,29 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
 - Bilinen sınırlar/tuzaklar: Sayılar bu makineye (20 mantıksal çekirdek) ve lokal loopback'e özgü —
   ağ vaadi değil. Tepe RSS ölçümü sürekli örneklemle alt sınır verir (`PeakWorkingSet64` kullan).
 - Son doğrulanma: 2026-08-25
+
+### e2e-hesap-temizligi
+- Amaç: Playwright koşumlarının biriktirdiği `e2e-*@videoedit.test` hesaplarını ve TÜM verilerini
+  (DB satırları + MinIO objeleri) dev ortamından silmek.
+- Ne zaman tetiklenir: Elle/periyodik — dev DB/MinIO şiştiğinde ya da tur kapanışlarında
+  (2026-08-31 ölçümü: 946 hesap / 15 435 proje / ~7 GiB obje birikmişti). Playwright
+  teardown'ına BİLİNÇLİ bağlanmadı (DECISIONS 2c satırı: süre + yarış + kırık koşum delili).
+- Ne zaman KULLANILMAZ: Paralel bir Playwright koşumu sürerken (koşumun aktif hesabını
+  silebilir); prod'a karşı ASLA (zaten ifade edilemez — aşağıya bak).
+- Çalıştırma: `powershell -ExecutionPolicy Bypass -File scripts\cleanup-e2e.ps1 -DryRun` (önce
+  say), sonra aynı komut `-DryRun`suz. Docker üçlüsü ayakta olmalı.
+- Doğrulama: Betik kendi doğrular (aday sayısı → silinen sayısı → `demo@videoedit.test` sayısı
+  DEĞİŞMEDİ); sonrasında tam Playwright koşumu yeşil kalmalı (temizlik koşumları bozmaz —
+  2026-08-31'de ölçüldü).
+- Bilinen sınırlar/tuzaklar: (1) Hedef SABİT compose.dev.yml konteynerleridir; bağlantı dizesi
+  parametresi YOKTUR + compose-etiket/DB-adı fail-fast'i vardır. (2) Aday deseni iki üreticinin
+  birleşimidir (`fixtures/test.ts` `e2e-*`, `auth.spec.ts` `e2e-auth-*`); desen dışı ya da demo
+  aday görülürse exit 2 ile HİÇBİR ŞEY silinmez — yeni bir spec farklı e-posta şekli üretirse
+  betikteki `$EmailStrictRegex` birlikte güncellenmeli. (3) Eski oturumların elle açtığı
+  ölçüm/idor-* hesapları desen DIŞIDIR ve bilerek silinmez. (4) Betik ASCII'dir — repo ps1
+  kuralı: BOM'suz UTF-8'i PS 5.1 ANSI okur, Türkçe karakter/em-dash akıllı tırnağa dönüşüp
+  parse'ı KIRAR (2026-08-31'de ölçüldü).
+- Son doğrulanma: 2026-08-31
 
 ### borc-kapama-protokolu
 - Amaç: Bir işi kullanıcının yerleşik disipliniyle kapatmak.

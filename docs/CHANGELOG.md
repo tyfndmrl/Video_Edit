@@ -2,6 +2,25 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-08-31
+- gelistirme-3 #2 — üç alt iş, üç commit: **(2a) asset silme çapraz-sekme senkronu**: SoftDelete
+  artık sahibinin `user:{id}` feed grubuna SÜREÇ-İÇİ `assetRemoved` yollar (Contracts tek tanım
+  `AssetRemovedMessage`; Redis turu yok — olay hub'la aynı süreçte); istemci satırı liste
+  cache'lerinden cerrahiyle düşürür + yalnız kotayı invalidate eder + noticed setiyle geç worker
+  mesajının diriltmesini keser. Kusur HEAD'de yeni spec'le yeniden üretildi (pasif sekme 30 sn
+  görmedi); kapanış `e2e/library-crosstab-delete.spec.ts` (satır 33 ms'de odak/yenilemesiz,
+  silme sonrası liste GET 0) + IDOR birim aynası; WS-engelli yedek yol değişmedi.
+  **(2b) ProjectRevisions retention**: `ProjectRevisionRetentionJob` (saatlik recurring
+  `revision-retention`) — proje başına son 50 Auto + 24 sa'ten eskilerde saat kovasına inceltme;
+  Checkpoint/PreRestore hiç silinmez (sorgu + silmede çifte Kind kilidi); sabitler
+  `RevisionRetention__*` config'i (açılışta Validate + etkin-değer logu). Önce ölçüldü: dev DB'de
+  15 861 Auto / 29 MB birikmişti; canlı tetiklenen iş seed'in 10 eskisini süpürdü, korumalılar
+  kaldı; muhafız `WorkerProgram_RegistersBothRecurringJobs`. **(2c) e2e hesap temizliği**:
+  `scripts/cleanup-e2e.ps1` (dev-yönlü, elle; ürüne uç açılmadı, teardown'a bağlanmadı —
+  DECISIONS) 946 e2e hesabını + 15 435 proje / 15 290 revizyon / 2 122 asset satırını ve ~7 GiB
+  / 10 376 MinIO objesini sildi; demo birebir korundu (fail-fast desen kilidi — negatif kontrol:
+  genişletilmiş desen exit 2 ile hiçbir şey silmeden durdu). Üç işte de negatif kontrol md5
+  birebir; kapanış kapıları: build 0/0 · backend 1591/1591 skip 0 · şema 222 · editör 1342 ·
+  tsc + e2e tsc + prod build temiz · Playwright TAM 164/164 (temizlik sonrası koşum).
 - gelistirme-3 #1 — Defter/doküman senkronu (bayatlık sınıfı; DAVRANIŞ SIFIR — yalnız doküman
   metinleri + kod yorumları): README test sayıları/anlatısı güncel yeşile eşitlendi (1560→1579,
   1313→1339, 160→163; "pakete en son eklenen" relogin-reopen→library-crosstab-sync; UnitTests

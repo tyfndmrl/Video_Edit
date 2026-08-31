@@ -1,6 +1,6 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-08-31, gelistirme-3 #1 (defter/doküman senkronu) dilimiyle (öncesi
-yarim-is-2 #5 B6 user-feed, main).
+Son güncelleme: 2026-08-31, gelistirme-3 #2 (silme senkronu + revision retention + e2e hesap
+temizliği; üç commit) dilimiyle (öncesi #1 defter senkronu, main).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
@@ -44,21 +44,28 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   başlığı sentetik-korpus gerçeğine döndü; ci.yml/MinioSmoke/PlayerPanel/editorBridge bayat
   yorumları düzeltildi; deploy/README damgası tazelendi. Eski↔gerçek çiftleri:
   `PROGRESS.md` §Geliştirme turu 3 #1.
-- Son yeşil sayılar (2026-08-31, yarim-is-2 #5 sonunda bizzat koşuldu; dört kapı —
-  build/backend/vitest/tsc — gelistirme-3 #1 kapanışında yeniden koşulup aynı sayılarla
-  yeşil, Playwright o dilimde gerekmedi): backend
-  **1579/1579** (0 skip) · editör 1339 · şema 222 · Playwright **163/163** ·
-  build -warnaserror 0 uyarı · tsc + e2e tsc + prod build temiz.
+- **Geliştirme turu 3 #2 — silme senkronu + revision retention + e2e temizliği**
+  (2026-08-31, üç commit): (2a) SoftDelete sahibinin feed grubuna süreç-içi `assetRemoved`
+  yayar; istemci satırı cache cerrahisiyle düşürür + kotayı tazeler (pasif sekme 33 ms'de
+  gördü; `e2e/library-crosstab-delete.spec.ts`). (2b) `ProjectRevisionRetentionJob`
+  (saatlik recurring): proje başına son 50 Auto + 24 sa'ten eskilerde saatlik inceltme;
+  Checkpoint/PreRestore dokunulmaz; sabitler `RevisionRetention__*`. (2c)
+  `scripts/cleanup-e2e.ps1`: 946 e2e hesabı + tüm verileri (15 435 proje, ~7 GiB obje)
+  silindi, demo birebir korundu; elle koşum (teardown'a bağlanmadı — DECISIONS).
+  Defter: `PROGRESS.md` §Geliştirme turu 3 #2.
+- Son yeşil sayılar (2026-08-31, gelistirme-3 #2 kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1591/1591** (0 skip) · editör 1342 · şema 222 ·
+  Playwright **164/164** (42 spec) · build -warnaserror 0 uyarı · tsc + e2e tsc + prod
+  build temiz.
 
 ## Devam edenler
 
-- Yok. Çalışma ağacı SignalR dilimi commit'iyle temiz.
+- Yok. Çalışma ağacı gelistirme-3 #2c commit'iyle temiz.
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
-1. **Geliştirme turu 3 devamı (kullanıcı onaylı):** #2 silme senkronu + revision retention +
-   e2e hesap temizliği, sonra #3 export perf 2. tur (`PROGRESS.md` §Geliştirme turu 3; #1
-   2026-08-31'de KAPANDI).
+1. **Geliştirme turu 3 devamı (kullanıcı onaylı):** #3 export perf 2. tur (baş mimar sözleşme
+   kararıyla) — `PROGRESS.md` §Geliştirme turu 3 (#1 ve #2 2026-08-31'de KAPANDI).
 2. `git push` — **kullanıcı onayı bekliyor** (origin 25+ commit geride; öncesinde ci.yml e2e
    redis boşluğu kapatılmalı — bkz. Bilinen sorunlar).
 3. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
@@ -76,6 +83,10 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   tam envanter 35 sessiz catch (mekanik tarama), hepsi gerekçe-yorumlu; 4 abort sitesi dev-only
   `devWarn` izli (üretimde bilinçli sessiz); muhafız `silentCatchInventory.test.ts` yorumsuz
   sessiz catch eklenmesini kırmızıya düşürür. Defter: `PROGRESS.md` §Yarım-iş turu 2.
+- ~~Silme çapraz-sekme senkronsuzluğu · ProjectRevisions sınırsız büyümesi · e2e hesap
+  birikimi~~ ÜÇÜ DE KAPANDI (2026-08-31, gelistirme-3 #2 — bkz. Tamamlananlar; keşif turu
+  tespitleriydi). e2e birikimi için kalıcı mekanizma ELLE koşulan betiktir (otomatik değil —
+  yeniden şişerse `SKILLS e2e-hesap-temizligi`).
 - Dev bağımlılığı: nanoid <3.3.18 high (yalnız vite zinciri, prod'a girmez).
 - **ci.yml e2e job'u redis BAŞLATMIYOR** (SignalR-öncesi kalıntı; gelistirme-3 #1'de tespit):
   backend'in artık Redis tüketicisi var ve `export-progress-hub.spec.ts` Redis'in ayakta
@@ -93,13 +104,14 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 4. SkiaSharp yükseltme penceresi (golden yeniden-kalibrasyon maliyetiyle) planlansın mı?
 5. Import-yönü/katman kuralı (dep-cruiser sınıfı; lint'ten ayrı) istenir mi, mevcut gevşemeler kabul mü?
 
-## Ortam notu (2026-08-31 sonu, yarim-is-2 #5 dilimi)
+## Ortam notu (2026-08-31 sonu, gelistirme-3 #2 dilimi)
 
-Servisler bu session'ın scratchpad'inden yayınlanan `api-run-b6feed`/`worker-run-b6feed`
-(Debug, HEAD kodu; tazelik yüklü modül yolları + 7 iğneyle kanıtlı: `SubscribeUserFeed`
-Api.dll UTF-8; `UserGroup`/`OwnerId` Contracts.dll UTF-8 ve `user:` UTF-16 — iki yayın
-dizininde de) + Vite :5173 (bu session'da taze başlatıldı) çalışır durumda bırakıldı;
-Docker üçlüsü healthy. Redis kanalın taşıyıcısıdır ama ZORUNLU DEĞİLDİR (feed dahil —
-hub yoksa davranış SignalR-öncesine düşer: yeni satır odak/yenilemede görünür; polling
-sözleşmesi değişmedi). DİKKAT: yayın dizinleri session-scratchpad'te yaşar — yeni session
-onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.
+Servisler bu session'ın scratchpad'inden yayınlanan `api-run-g3`/`worker-run-g3` (Debug,
+HEAD kodu; tazelik yüklü modül yolları + iğnelerle kanıtlı: `AssetRemovedMessage` Api/
+Worker Contracts.dll UTF-8, `assetRemoved` UTF-16, `PublishAssetRemovedAsync` Api.dll,
+`ProjectRevisionRetentionJob` Worker.dll) + Vite :5173 (bu session'da taze başlatıldı)
+çalışır durumda bırakıldı; Docker üçlüsü healthy; Hangfire'da `asset-reaper` +
+`revision-retention` recurring kayıtlı. Redis kanalın taşıyıcısıdır ama ZORUNLU DEĞİLDİR
+(assetRemoved dahil değil — o zaten süreç-içi; hub yoksa silme/yeni-satır SignalR-öncesi
+davranışa düşer, polling sözleşmesi değişmedi). DİKKAT: yayın dizinleri session-scratchpad'te
+yaşar — yeni session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.

@@ -31,6 +31,7 @@ KAPANDI, `yarim-is-2 #5`.) Ayrıntı: `docs/poc-bilinen-sinirlar.md`.
 - Canlı ikilinin tazeliğini kanıtlamak, negatif kontrol koşmak, perf ölçmek (SKILLS.md ilgili girdiler)
 - Denetim (baş mimar / baş geliştirici) turu düzenlemek (`docs/WORKFLOWS.md` → denetim turu)
 - Demo verisi kurup uçtan uca akışı gerçek fare/klavye ile doğrulamak
+- e2e hesap birikimini güvenli silmek (`docs/SKILLS.md` → e2e-hesap-temizligi; demo korumalı)
 
 ### Yapamaz / önce insana sormalı
 - `git push` — kullanıcı "sonra" dedi; origin bilinçli geride (karar: kullanıcı)
