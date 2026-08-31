@@ -68,6 +68,6 @@ Ayrıntı: `docs/poc-bilinen-sinirlar.md`.
 | `apps/editor/` | React editör + `e2e/` Playwright (yalnız gerçek girdi) |
 | `packages/timeline-schema/` | zod şema + invariants + `test-vectors/` (çift-dil parite) |
 | `backend/src/` | 6 .NET projesi (Api/Worker/Media/Domain/Infrastructure/Contracts) |
-| `backend/tests/` | 1557 test: golden/snapshot/muhafız defterleri/korpus |
+| `backend/tests/` | golden/snapshot/muhafız defterleri/korpus (güncel sayılar: `docs/STATE.md`) |
 | `docs/` | kanonik tarihçe + normatif sözleşmeler + bu setin dosyaları |
 | `PROGRESS.md` | yarım-iş ve B-borçları turlarının defteri |
