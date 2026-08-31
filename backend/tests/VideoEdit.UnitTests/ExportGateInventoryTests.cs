@@ -856,7 +856,7 @@ public sealed class ExportGateInventoryTests : IDisposable
             "SERBEST BİÇİMLİ TORBA (Dictionary<string, object>) — şemadaki tek yapısız doküman "
             + "yüzeyi, o yüzden defterde ayrı bir satırı var. ETİKET DÜZELTİLDİ (10. tur, F3): "
             + "satır eskiden Raster yazıyordu, oysa Skia bu torbayı HİÇ görmez — okunan değerler "
-            + "FİLTERGRAPH'a girer (ColorPipeline.ColorAdjustFilters → exposure=/lutrgb=/"
+            + "FİLTERGRAPH'a girer (ColorPipeline.ColorAdjustFilters → lutrgb= bileşik ifadesi/"
             + "colorchannelmixer=, Lut3dFilter/LutBlendFilter → lut3d=file=…/blend=all_mode=…). "
             + "Yanlış etiket satırı EveryStringThatReachesTheFfmpegGraphIsGatedAndProven'in "
             + "dışında bırakıyordu, yani muhafız kapattığını iddia ettiği sınıfın bir üyesini "
@@ -1768,8 +1768,12 @@ public sealed class ExportGateInventoryTests : IDisposable
         // ClipEffects.cs'te ve hepsi bu torbadan gelen değerlerle beslenir.
         var effectSource = File.ReadAllText(
             TestVectorFiles.Resolve("backend/src/VideoEdit.Media/Export/ClipEffects.cs"));
+
+        // 2026-09-01 perf turu: exposure→…→contrast aşamaları tek lutrgb bileşik ifadesine
+        // taşındı (ClipEffects.FusedStagesFilter) — ayrı `exposure=` filtresi artık üretilmiyor,
+        // token envanteri yeniden ölçüldü. Efekt yüzeyinin ffmpeg yolu hâlâ bu dosyadadır.
         foreach (var token in new[]
-                 { "exposure=", "lutrgb=", "colorchannelmixer=", "lut3d=file=", "blend=all_mode=" })
+                 { "lutrgb=", "colorchannelmixer=", "lut3d=file=", "blend=all_mode=" })
         {
             Assert.True(effectSource.Contains(token, StringComparison.Ordinal),
                 $"ClipEffects.cs artık '{token}' üretmiyor — efekt yüzeyinin ffmpeg yolu değişmiş "
@@ -1800,7 +1804,7 @@ public sealed class ExportGateInventoryTests : IDisposable
     public async Task ValidEffectParamsStillReachTheQueue()
     {
         // YANLIŞ RET KONTROLÜ: kapı yalnız ihlalleri kesmeli. Geçerli bir colorAdjust torbası
-        // (grafiğe exposure=/lutrgb=/colorchannelmixer= olarak giren değerler) 202 almalı.
+        // (grafiğe lutrgb=/colorchannelmixer= olarak giren değerler) 202 almalı.
         using var scope = new ExportGateInventoryTests();
         var projectId = await scope.SeedEffectAsync(
             Bag(EffectType.ColorAdjust, ("exposure", 0.25), ("saturation", -0.5), ("contrast", 1d)));

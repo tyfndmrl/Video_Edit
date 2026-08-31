@@ -63,11 +63,13 @@ public sealed record ClipEffects(ColorAdjustParams? Color, LutParams? Lut)
 /// Uygulama §4.1'in MATEMATİK sütununu (= GLSL sütunu = önizleme) birebir veren RGB-uzayı
 /// eşlemesini üretir:
 /// <list type="bullet">
-///   <item>contrast+brightness → <c>lutrgb</c> ile kanal başına TEK afin op;</item>
+///   <item>exposure → temperature → tint → contrast+brightness → kanal başına TEK
+///     <c>lutrgb</c> bileşik ifadesi (aşama sırası ve aşama başına clamp ifadede korunur —
+///     <see cref="FusedStagesFilter"/>);</item>
 ///   <item>saturation → <c>colorchannelmixer</c> ile BT.709 luma etrafında lineer karışım
 ///     (matris biçimi <c>mix(luma, rgb, 1+v)</c>'nin birebir açılımıdır).</item>
 /// </list>
-/// Bu iki metot artık dokümanın NORMATİF hücresidir: değişmeleri §4.1'in de değişmesini
+/// Bu iki üretici artık dokümanın NORMATİF hücresidir: değişmeleri §4.1'in de değişmesini
 /// gerektirir (Ek: Sözleşme Değişiklik Kuralı).
 /// </para>
 /// </summary>
@@ -192,37 +194,32 @@ public static class ColorPipeline
     }
 
     /// <summary>
-    /// §4.1 zinciri (aşama sırası NORMATİF). Sıfır olan parametre için filtre ÜRETİLMEZ.
+    /// §4.1 zinciri (aşama sırası NORMATİF). Sıfır olan parametre için filtre/aşama ÜRETİLMEZ.
     /// Zincirin RGB'de çalışması şarttır — çağıran <c>format=rgba</c>'yı önüne koyar.
+    /// <para>
+    /// <b>YAZILIŞ (2026-09-01 perf turu — formüller ve aşama sırası DEĞİŞMEDİ).</b> Kanal-başına
+    /// aşamalar (exposure → temperature → tint → contrast+brightness) artık TEK <c>lutrgb</c>
+    /// bileşik ifadesinde uygulanır; saturation'ın <c>colorchannelmixer</c> matrisi AYNEN ayrı
+    /// kalır (kanallar-arası karışım tablo filtresiyle İFADE EDİLEMEZ). Eski zincir aşama başına
+    /// ayrı filtre kuruyordu ve <c>exposure</c> float filtresi rgba↔gbrpf32 dönüşü + iki ek tablo
+    /// geçişiyle 60 sn'lik gerçekçi 1080p bileşimde ölçülür maliyet taşıyordu (çıkar-koş-ölç rig'i,
+    /// 3 koşum p50: 40,4 → 33,3 s). Bileşik ifade DOUBLE'da değerlendirilir (lutrgb tabloyu 256
+    /// girdi için bir kez kurar), aşama BAŞINA <c>clip(…,0,255)</c> ifadede KORUNUR ve ara 8-bit
+    /// niceleme kalkar — tek nihai niceleme kalır. Bu yön normatif matematik sütununa (= GLSL,
+    /// aşama-başına float clamp) YAKINSAMADIR; eski zincire göre fark ölçülen zarfla sınırlıdır
+    /// ve <c>ExportM5GoldenTests.ColorAdjustFusion_…</c> golden'ı taranan kümede çiviler
+    /// (rendering-semantics §4.1 yazılış kutusu).
+    /// </para>
     /// </summary>
     public static IReadOnlyList<string> ColorAdjustFilters(ColorAdjustParams p)
     {
         ArgumentNullException.ThrowIfNull(p);
-        var filters = new List<string>(5);
+        var filters = new List<string>(2);
 
-        // 1) exposure: çarpımsal 2^v gain (GAMMA DEĞİL). black=0 ile ffmpeg tam in*2^ev uygular.
-        if (p.Exposure != 0)
+        // 1-4) exposure → temperature → tint → contrast+brightness: kanal başına TEK lutrgb.
+        if (FusedStagesFilter(p) is { } fused)
         {
-            filters.Add($"exposure=exposure={Num(p.Exposure)}:black=0");
-        }
-
-        // 2) temperature: lineer RGB kanal ofseti, K_TEMP = 0.10. Pozitif v = sıcak (+R, −B).
-        if (p.Temperature != 0)
-        {
-            var k = Lit(KTemp * p.Temperature);
-            filters.Add($"lutrgb=r='clip(val+255*{k},0,255)':b='clip(val-255*{k},0,255)'");
-        }
-
-        // 3) tint: lineer yeşil ofseti, K_TINT = 0.10. Pozitif v = magenta (−G).
-        if (p.Tint != 0)
-        {
-            filters.Add($"lutrgb=g='clip(val-255*{Lit(KTint * p.Tint)},0,255)'");
-        }
-
-        // 4) contrast + brightness: TEK afin op (ayrı ayrı uygulamak YASAK — sıra farkı üretir).
-        if (p.Contrast != 0 || p.Brightness != 0)
-        {
-            filters.Add(ContrastBrightnessFilter(p.Contrast, p.Brightness));
+            filters.Add(fused);
         }
 
         // 5) saturation: BT.709 luma etrafında lineer karışım.
@@ -235,16 +232,78 @@ public static class ColorPipeline
     }
 
     /// <summary>
-    /// §4.1 adım 4 — <c>out = (in-0.5)*(1+contrast) + 0.5 + brightness</c>, KANAL BAŞINA,
-    /// tek afin op. 8-bit ekseninde 0.5 → 127.5, brightness → 255*b. lutrgb tablosu 256
-    /// girdiyi bir kez hesaplar (kare başına maliyet yok) ve sonucu [0,255]'e clamp eder.
-    /// Sapma gerekçesi için sınıf yorumuna bakınız.
+    /// §4.1 aşama 1-4'ün kanal-başına bileşik <c>lutrgb</c> ifadesi; dört aşama da kapalıysa
+    /// <c>null</c> (filtre üretilmez). Kanal ifadesi yalnız o kanala dokunan aşamaları içerir —
+    /// tek-aşamalı belgelerde üretilen filtre metni eski zincirin ilgili filtresiyle birebir
+    /// aynıdır (temperature/tint/contrast+brightness); yalnız-exposure'da float filtre yerine
+    /// aynı <c>in·2^v</c> çarpanının tablo hali yazılır. İfadeye dokunmayan kanal lutrgb'nin
+    /// kendi varsayılanında (kimlik) kalır; alfa kanalına hiçbir aşama dokunmaz.
     /// </summary>
-    public static string ContrastBrightnessFilter(double contrast, double brightness)
+    public static string? FusedStagesFilter(ColorAdjustParams p)
     {
-        var expression =
-            $"clip((val-127.5)*{Lit(1 + contrast)}+127.5+{Lit(255 * brightness)},0,255)";
-        return $"lutrgb=r='{expression}':g='{expression}':b='{expression}'";
+        ArgumentNullException.ThrowIfNull(p);
+        if (p.Exposure == 0 && p.Temperature == 0 && p.Tint == 0
+            && p.Contrast == 0 && p.Brightness == 0)
+        {
+            return null;
+        }
+
+        var r = ChannelExpression(p, '+', KTemp * p.Temperature);
+        var g = ChannelExpression(p, '-', KTint * p.Tint);
+        var b = ChannelExpression(p, '-', KTemp * p.Temperature);
+        var parts = new List<string>(3);
+        if (r is not null)
+        {
+            parts.Add($"r='{r}'");
+        }
+
+        if (g is not null)
+        {
+            parts.Add($"g='{g}'");
+        }
+
+        if (b is not null)
+        {
+            parts.Add($"b='{b}'");
+        }
+
+        return "lutrgb=" + string.Join(':', parts);
+    }
+
+    /// <summary>
+    /// Tek kanalın §4.1 aşama 1-4 bileşik ifadesi; kanala hiçbir aşama dokunmuyorsa
+    /// <c>null</c> (kanal lutrgb'ye hiç yazılmaz — kimlikte kalır). Aşama sırası ve aşama
+    /// başına <c>clip(…,0,255)</c> normatif tabloyla birebir; kapalı aşama ifadeye hiç girmez
+    /// (kimlik aşamasının clamp'i [0,255] girdide no-op'tur — eliderek yazmak kayıpsızdır).
+    /// <c>2^v</c> derleme anında hesaplanır (<c>exposure</c> filtresi de siyah=0'da tam
+    /// <c>in·2^ev</c> uygular — ölçüm ColorAdjust_MatchesTheNormativeStageFormulas'ta).
+    /// <para>
+    /// EN DIŞTAKİ <c>round(…)</c> TEK NİHAİ NİCELEMEDİR ve ÖLÇÜMLE SEÇİLDİ: lutrgb tablo
+    /// sonucunu <c>(int)</c> ile SIFIRA DOĞRU kırpar; çıplak ifade normatif double referansın
+    /// yanına ±1 LSB bırakıyordu, <c>round</c> (yarım sıfırdan uzağa — referans Byte() ve GPU
+    /// UNORM nicelemesiyle aynı kural) taranan kümenin 33 vakasının HEPSİNDE 256 girişte
+    /// referansla FARKSIZ tablo verdi (ExportM5GoldenTests füzyon golden'ı bunu çiviler).
+    /// </para>
+    /// </summary>
+    private static string? ChannelExpression(ColorAdjustParams p, char offsetSign, double offset)
+    {
+        var expr = "val";
+        if (p.Exposure != 0)
+        {
+            expr = $"clip({expr}*{Lit(Math.Pow(2d, p.Exposure))},0,255)";
+        }
+
+        if (offset != 0)
+        {
+            expr = $"clip({expr}{offsetSign}255*{Lit(offset)},0,255)";
+        }
+
+        if (p.Contrast != 0 || p.Brightness != 0)
+        {
+            expr = $"clip(({expr}-127.5)*{Lit(1 + p.Contrast)}+127.5+{Lit(255 * p.Brightness)},0,255)";
+        }
+
+        return expr == "val" ? null : $"round({expr})";
     }
 
     /// <summary>

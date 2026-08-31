@@ -377,7 +377,9 @@ public sealed class ExportM5GoldenTests : IDisposable
         var compiled = ExportCompiler.Compile(
             EffectDoc(ExportTestDocs.ColorAdjust(contrast: 0.5, brightness: 0.05)),
             sources, CanvasSpec);
-        Assert.Contains("lutrgb=r='clip((val-127.5)*1.5+127.5+12.75,0,255)'",
+        // 2026-09-01 füzyon yazılışı: aynı afin ifade, kanal-başına bileşik lutrgb'nin içinde
+        // ve tek nihai niceleme round(…) ile (ClipEffects.FusedStagesFilter).
+        Assert.Contains("lutrgb=r='round(clip((val-127.5)*1.5+127.5+12.75,0,255))'",
             compiled.FilterGraphScript);
         Assert.DoesNotContain("eq=", compiled.FilterGraphScript);
         var ours = PixelAt(RawFrame(await RenderRawAsync(compiled, "eq-ours"), 15), 160, 120);
@@ -547,6 +549,181 @@ public sealed class ExportM5GoldenTests : IDisposable
                 $"i={tag}: farklı R-çifti sayısı {redPairDiffs.ToString(CultureInfo.InvariantCulture)}/65536 "
                 + "— ölçülen zarfın (%1,8 @ i=0.8) çok üstünde, ffmpeg blend yolu değişmiş olabilir");
         }
+    }
+
+    [FfmpegFact]
+    public void ColorAdjustFusion_StaysWithinTheMeasuredEnvelope_AndConvergesToTheNormativeTable()
+    {
+        // SINIR + YAKINSAMA GOLDEN'I (2026-09-01 perf turu — rendering-semantics §4.1 yazılış
+        // kutusu). colorAdjust aşama 1-4 artık kanal başına TEK lutrgb bileşik ifadesidir
+        // (DOUBLE'da, aşama başına clip + tek nihai round — ClipEffects.FusedStagesFilter).
+        // Bu test farkı GİZLEMEZ, SINIRLAR ve YÖNÜNÜ kanıtlar: 256'lık gri ramp üstünde eski
+        // aşama-zinciri (bu testin içinde tarihsel referans olarak yeniden kurulur) ile füzyon
+        // canlı ffmpeg'de yan yana koşulur, ikisi de §4.1 MATEMATİK sütununun double
+        // referansına (ColorAdjustRef) vurulur. ÖLÇÜLEN ZARF (ffmpeg 8.0, 2026-09-01, taranan
+        // küme: her param {-1,-0.5,0.5,1} tekil + fixtür kombinasyonu + 12 karışık nokta = 33
+        // vaka × 256 giriş × 3 kanal — zarf beyanı BU KÜMEYE SINIRLIDIR):
+        //   füzyon ↔ normatif tablo: ≤ ±1 LSB, 33 vakanın 24'ünde 256 girişin TAMAMI BİREBİR
+        //     (kalan ±1'ler .5 bağlarının çift-temsil kırılımı);
+        //   eski zincir ↔ normatif: ±3 LSB'ye kadar (aşama başına 8-bit kesme birikimi);
+        //   eski ↔ füzyon: ≤ ±3 LSB, 28/33 vakada gerçek fark var (m4/m6 3'e DOKUNUR — test
+        //     uyuşmazlık noktalarına BİLEREK düşer, sınırlaması boş küme üstünde değildir).
+        // Füzyon her vakada normatif tabloya eski zincirden YAKIN YA DA EŞİTTİR — bu kırmızıysa
+        // füzyon yanlıştır, eşik gevşetilmez (baş mimar kararı).
+        var rampPath = Path.Combine(_dir, "ca-ramp.rgb");
+        var ramp = new byte[256 * 3];
+        for (var x = 0; x < 256; x++)
+        {
+            ramp[x * 3] = ramp[(x * 3) + 1] = ramp[(x * 3) + 2] = (byte)x;
+        }
+
+        File.WriteAllBytes(rampPath, ramp);
+
+        var singles = new List<(string Name, ColorAdjustParams P)>();
+        foreach (var v in (double[])[-1, -0.5, 0.5, 1])
+        {
+            var tag = v.ToString("0.##", CultureInfo.InvariantCulture);
+            singles.Add(($"e{tag}", new ColorAdjustParams(v, 0, 0, 0, 0, 0)));
+            singles.Add(($"t{tag}", new ColorAdjustParams(0, v, 0, 0, 0, 0)));
+            singles.Add(($"ti{tag}", new ColorAdjustParams(0, 0, v, 0, 0, 0)));
+            singles.Add(($"c{tag}", new ColorAdjustParams(0, 0, 0, v, 0, 0)));
+            singles.Add(($"b{tag}", new ColorAdjustParams(0, 0, 0, 0, v, 0)));
+        }
+
+        (string Name, ColorAdjustParams P)[] cases =
+        [
+            .. singles,
+            ("fixtur", new ColorAdjustParams(0.02, 0.05, 0, 0.06, 0.08, 0)),
+            ("m1", new ColorAdjustParams(1, 1, -1, 1, 1, 0)),
+            ("m2", new ColorAdjustParams(-1, -1, 1, -1, -1, 0)),
+            ("m3", new ColorAdjustParams(1, -0.5, 0.5, -0.5, 0.25, 0)),
+            ("m4", new ColorAdjustParams(0.5, 1, 0, 0.75, -0.5, 0)),
+            ("m5", new ColorAdjustParams(0.25, 0.05, -0.2, 0.06, 0.08, 0)),
+            ("m6", new ColorAdjustParams(-0.5, 0.5, -0.5, 0.5, 0, 0)),
+            ("m7", new ColorAdjustParams(1, 0, 0, -1, 0, 0)),
+            ("m8", new ColorAdjustParams(0.3, 0.4, -0.2, 0.25, 0.05, 0)),
+            ("m9", new ColorAdjustParams(-0.25, -0.05, 0.15, 0.4, 0.6, 0)),
+            ("m10", new ColorAdjustParams(0.75, 0.33, -0.66, 0.15, -0.1, 0)),
+            ("m11", new ColorAdjustParams(0.02, -1, 1, 1, -0.04, 0)),
+            ("m12", new ColorAdjustParams(0.9, 0.7, 0.6, -0.9, 0.3, 0)),
+        ];
+
+        var exactCases = 0;
+        var casesWithOldFusedDiff = 0;
+        var globalOldVsFused = 0;
+        foreach (var (name, p) in cases)
+        {
+            var fusedFilter = ColorPipeline.FusedStagesFilter(p);
+            Assert.NotNull(fusedFilter); // taranan her vakada en az bir aşama açık
+            var fused = RenderRampFrame(rampPath, fusedFilter!, $"caf-{name}");
+            var old = RenderRampFrame(rampPath, LegacyStageChain(p), $"cao-{name}");
+
+            var maxFusedVsRef = 0;
+            var maxOldVsRef = 0;
+            var maxOldVsFused = 0;
+            var reference = new ColorAdjustRef(p.Exposure, p.Temperature, p.Tint, p.Contrast, p.Brightness);
+            for (var x = 0; x < 256; x++)
+            {
+                byte[] expect = reference.Apply([(byte)x, (byte)x, (byte)x]);
+                for (var ch = 0; ch < 3; ch++)
+                {
+                    var i = (x * 3) + ch;
+                    maxFusedVsRef = Math.Max(maxFusedVsRef, Math.Abs(fused[i] - expect[ch]));
+                    maxOldVsRef = Math.Max(maxOldVsRef, Math.Abs(old[i] - expect[ch]));
+                    maxOldVsFused = Math.Max(maxOldVsFused, Math.Abs(old[i] - fused[i]));
+                }
+            }
+
+            Assert.True(maxFusedVsRef <= 1,
+                $"'{name}': füzyon tablosu normatif referanstan ±1 LSB'den fazla saptı "
+                + $"({maxFusedVsRef.ToString(CultureInfo.InvariantCulture)}) — §4.1 yazılış "
+                + "kutusunun ölçülen zarfı geçersiz, ffmpeg eval/lutrgb yolu değişmiş olabilir");
+            Assert.True(maxFusedVsRef <= maxOldVsRef,
+                $"'{name}': füzyon ({maxFusedVsRef.ToString(CultureInfo.InvariantCulture)}) normatif "
+                + $"tabloya eski zincirden ({maxOldVsRef.ToString(CultureInfo.InvariantCulture)}) UZAK "
+                + "— füzyon yanlıştır, eşik gevşetilmez (baş mimar kararı)");
+            Assert.True(maxOldVsFused <= 3,
+                $"'{name}': eski↔füzyon farkı ölçülen ±3 LSB zarfını aştı "
+                + $"({maxOldVsFused.ToString(CultureInfo.InvariantCulture)})");
+            if (maxFusedVsRef == 0)
+            {
+                exactCases++;
+            }
+
+            if (maxOldVsFused > 0)
+            {
+                casesWithOldFusedDiff++;
+            }
+
+            globalOldVsFused = Math.Max(globalOldVsFused, maxOldVsFused);
+        }
+
+        // SINIRLAMA GÜCÜ: uyuşmazlık noktaları GERÇEKTEN var (test boş kümeyi 'sınırlamıyor')
+        // ve füzyonun birebir-normatif çekirdeği geniş. Ölçülen: 28/33 fark, 24/33 birebir, tepe 3.
+        Assert.True(casesWithOldFusedDiff >= 10,
+            "eski↔füzyon farkı neredeyse hiç yok — ya iki yazılış özdeşleşti (füzyon geri mi "
+            + $"alındı?) ya fixture gücünü yitirdi ({casesWithOldFusedDiff.ToString(CultureInfo.InvariantCulture)}/33)");
+        Assert.True(globalOldVsFused >= 2,
+            "taramanın bilinen ±2-3 LSB noktaları kayboldu — eski zincir referansı değişmiş olabilir");
+        Assert.True(exactCases >= 20,
+            $"füzyonun normatif tabloya birebir oturduğu vaka sayısı düştü "
+            + $"({exactCases.ToString(CultureInfo.InvariantCulture)}/33, ölçülen 24) — nihai round "
+            + "nicelemesi değişmiş olabilir");
+    }
+
+    /// <summary>
+    /// ESKİ aşama-zinciri (2026-09-01 füzyonundan önceki ColorPipeline.ColorAdjustFilters'ın
+    /// aşama 1-4 yarısı) — bu testin TARİHSEL REFERANSIDIR, üretim kodu değildir. Füzyonun
+    /// "eski zincire göre fark ölçülen zarfla sınırlı" beyanı ancak eski zincir aynen
+    /// kurulabildiğinde ölçülebilir kalır.
+    /// </summary>
+    private static string LegacyStageChain(ColorAdjustParams p)
+    {
+        var filters = new List<string>(4);
+        if (p.Exposure != 0)
+        {
+            filters.Add(FormattableString.Invariant($"exposure=exposure={Num6(p.Exposure)}:black=0"));
+        }
+
+        if (p.Temperature != 0)
+        {
+            var k = Lit6(ColorPipeline.KTemp * p.Temperature);
+            filters.Add($"lutrgb=r='clip(val+255*{k},0,255)':b='clip(val-255*{k},0,255)'");
+        }
+
+        if (p.Tint != 0)
+        {
+            filters.Add($"lutrgb=g='clip(val-255*{Lit6(ColorPipeline.KTint * p.Tint)},0,255)'");
+        }
+
+        if (p.Contrast != 0 || p.Brightness != 0)
+        {
+            var expression =
+                $"clip((val-127.5)*{Lit6(1 + p.Contrast)}+127.5+{Lit6(255 * p.Brightness)},0,255)";
+            filters.Add($"lutrgb=r='{expression}':g='{expression}':b='{expression}'");
+        }
+
+        return string.Join(',', filters);
+    }
+
+    private static string Num6(double value) =>
+        value.ToString("0.######", CultureInfo.InvariantCulture);
+
+    private static string Lit6(double value) =>
+        value < 0 ? "(" + Num6(value) + ")" : Num6(value);
+
+    /// <summary>256×1 rampı verilen filtre zincirinden geçirir, ham rgb24 döner.</summary>
+    private byte[] RenderRampFrame(string rampPath, string chain, string name)
+    {
+        var outPath = Path.Combine(_dir, name + ".rgb");
+        RunFfmpeg([
+            "-y", "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-video_size", "256x1",
+            "-framerate", "1", "-i", rampPath,
+            "-vf", $"format=rgba,{chain},format=rgb24",
+            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", outPath,
+        ]);
+        return File.ReadAllBytes(outPath);
     }
 
     /// <summary>

@@ -735,8 +735,35 @@ yoktur (baş mimar kararı). Efektler klip pikseline **transform/overlay'den ÖN
 
 Tüm UI parametreleri `v ∈ [-1..1]`, default `0` (etkisiz). Uygulama sırası **NORMATİF**
 (iki tarafta aynı): `exposure → temperature → tint → contrast+brightness (tek afin op) →
-saturation`. Her aşama sonucu `[0..1]`'e clamp edilir (ffmpeg 8-bit ara formatların doğal
-davranışıyla eşleşmek için GLSL'de de aşama başına `clamp`).
+saturation`. Her aşama sonucu `[0..1]`'e clamp edilir (GLSL'de aşama başına `clamp`;
+ffmpeg gerçeklemesinde aynı clamp'ler bileşik ifadenin İÇİNDEDİR — aşağıdaki yazılış kutusu).
+
+> **YAZILIŞ GÜNCELLEMESİ (2026-09-01 perf turu — aşama formülleri ve sırası DEĞİŞMEDİ).**
+> ffmpeg gerçeklemesi kanal-başına aşamaları (`exposure → temperature → tint →
+> contrast+brightness`) artık **tek `lutrgb` bileşik ifadesinde** uygular
+> (`ClipEffects.FusedStagesFilter`); `saturation`'ın `colorchannelmixer` matrisi AYNEN ayrı
+> kalır (kanallar-arası karışım tablo filtresiyle ifade edilemez). Aşama başına `clip(…,0,255)`
+> ifadede korunur, ifade DOUBLE'da değerlendirilir (lutrgb tabloyu 256 giriş için bir kez
+> kurar), **ara 8-bit niceleme kalkar ve tek nihai niceleme kalır** — en dıştaki `round(…)`
+> (yarım sıfırdan uzağa; referans implementasyonun `Byte()` çevirisi ve GPU UNORM
+> nicelemesiyle aynı kural; çıplak bırakılsaydı lutrgb'nin `(int)` kesmesi ±1 LSB bırakıyordu,
+> ölçüldü). Eski aşama-zinciri (ayrı `exposure` float filtresi + aşama başına ayrı `lutrgb`)
+> aşama aralarında 8-bit'e iniyordu; "her aşama clamp'i 8-bit ara formatların doğal davranışıyla
+> eşleşir" gerekçesi bu yazılışla birlikte tarihe karıştı — clamp artık doğal yan etki değil,
+> ifadenin AÇIK terimidir. Eski zincire göre fark **ölçülen zarfla sınırlıdır** (ffmpeg 8.0,
+> 2026-09-01; taranan küme: her param {-1,-0.5,0.5,1} tekil + fixtür kombinasyonu
+> (0.02/0.05/0/0.06/0.08) + 12 karışık nokta = 33 vaka × 256 giriş × 3 kanal — zarf beyanı bu
+> kümeye SINIRLIDIR): eski↔füzyon ≤ **±3 LSB** (28/33 vakada gerçek fark; ±3'e iki vaka
+> dokunur), füzyon↔normatif-double-referans ≤ **±1 LSB** ve 33 vakanın **24'ünde 256 girişin
+> tamamı BİREBİR** (kalan ±1'ler `.5` bağlarının çift-temsil kırılımı); eski zincir referansa
+> ±3'e kadar açılıyordu. Yani bu yön normatif MATEMATİK sütununa ve GLSL'e **YAKINSAMADIR**.
+> Sınır golden'ı: `ExportM5GoldenTests.ColorAdjustFusion_StaysWithinTheMeasuredEnvelope_`
+> `AndConvergesToTheNormativeTable` (uyuşmazlık noktalarına BİLEREK düşer; eski zincir testin
+> içinde tarihsel referans olarak yeniden kurulur). Gerekçe ölçümü: çıkar-koş-ölç rig'i,
+> gerçekçi 60 sn 1080p bileşim 3 koşum p50 40,4 → 33,3 s (`exposure` float filtresi rgba↔float
+> dönüşleriyle zincirin en pahalı halkasıydı). Tekil-parametre belgelerde üretilen filtre metni
+> eski zincirin ilgili `lutrgb`'siyle aynı çekirdek ifadeyi taşır (`round(…)` sargısı eklenir);
+> yalnız-exposure'da float filtre yerine aynı `in·2^v` çarpanının tablo hali yazılır.
 
 Aşağıdaki `<…>` yer tutucuları **derleme zamanında hesaplanmış sayı literalleri**dir
 (InvariantCulture, en fazla 6 kesir hanesi); negatif literaller ffmpeg eval'de çift işaret
@@ -745,7 +772,7 @@ tuzağına düşmesin diye paranteze alınır (`255*(-0.02)`). Efekt zinciri **R
 
 | Param | UI aralığı | ffmpeg formülü | WebGL GLSL formülü | Matematik |
 |---|---|---|---|---|
-| `exposure` | -1..1 | `exposure=exposure=<v>:black=0` | `c.rgb = clamp(c.rgb * exp2(v), 0., 1.);` | Çarpımsal gain `2^v`. **Gamma DEĞİL.** ffmpeg `exposure` filtresi `black=0` ile tam `in * 2^ev` uygular. |
+| `exposure` | -1..1 | bileşik `lutrgb` içinde `clip(val*<2^v>,0,255)` terimi (çarpan derleme anında hesaplanır) | `c.rgb = clamp(c.rgb * exp2(v), 0., 1.);` | Çarpımsal gain `2^v`. **Gamma DEĞİL.** (Eski yazılıştaki ayrı `exposure=…:black=0` float filtresi de `black=0` ile tam `in * 2^ev` uyguluyordu — formül aynı, yazılış tabloya taşındı; yazılış kutusu.) |
 | `temperature` | -1..1 | `lutrgb=r='clip(val+255*<0.10*v>,0,255)':b='clip(val-255*<0.10*v>,0,255)'` | `c.r = clamp(c.r + 0.10*v, 0., 1.);`<br>`c.b = clamp(c.b - 0.10*v, 0., 1.);` | Lineer RGB kanal ofseti, katsayı `K_TEMP = 0.10`. Pozitif v = sıcak (+R, −B). |
 | `tint` | -1..1 | `lutrgb=g='clip(val-255*<0.10*v>,0,255)'` | `c.g = clamp(c.g - 0.10*v, 0., 1.);` | Lineer yeşil ofseti, katsayı `K_TINT = 0.10`. Pozitif v = magenta (−G). |
 | `brightness` | -1..1 | contrast ile **AYNI** `lutrgb` ifadesinde (`+<255*b>` terimi) | bkz. contrast satırı | Toplamsal: her RGB kanalına `b` ekler. |
@@ -754,21 +781,25 @@ tuzağına düşmesin diye paranteze alınır (`255*(-0.02)`). Efekt zinciri **R
 
 ffmpeg zinciri (compiler çıktısı, `exposure=0.30, temperature=0.45, tint=-0.20,
 contrast=0.15, brightness=0.05, saturation=0.20` — `ExportSnapshots/color-adjust.txt`
-fixture'ının birebir aynısı; okunurluk için satırlara bölünmüştür, compiler tek satır yazar):
+fixture'ının birebir aynısı; okunurluk için satırlara bölünmüştür, compiler tek satır yazar.
+Tablodaki aşama formülleri kanal ifadesinin içinde İÇTEN DIŞA okunur: `2^0.3 = 1.231144`
+çarpanı exposure, `±255*0.045` temperature, `-255*(-0.02)` tint (yalnız g), afin terim
+contrast+brightness):
 
 ```
-exposure=exposure=0.3:black=0,
-lutrgb=r='clip(val+255*0.045,0,255)':b='clip(val-255*0.045,0,255)',
-lutrgb=g='clip(val-255*(-0.02),0,255)',
-lutrgb=r='clip((val-127.5)*1.15+127.5+12.75,0,255)'
-      :g='clip((val-127.5)*1.15+127.5+12.75,0,255)'
-      :b='clip((val-127.5)*1.15+127.5+12.75,0,255)',
+lutrgb=r='round(clip((clip(clip(val*1.231144,0,255)+255*0.045,0,255)-127.5)*1.15+127.5+12.75,0,255))'
+      :g='round(clip((clip(clip(val*1.231144,0,255)-255*(-0.02),0,255)-127.5)*1.15+127.5+12.75,0,255))'
+      :b='round(clip((clip(clip(val*1.231144,0,255)-255*0.045,0,255)-127.5)*1.15+127.5+12.75,0,255))',
 colorchannelmixer=rr=1.15748:rg=-0.14304:rb=-0.01444:gr=-0.04252:gg=1.05696:gb=-0.01444
                  :br=-0.04252:bg=-0.14304:bb=1.18556
 ```
 
 Notlar:
 
+- "ffmpeg formülü" sütunundaki `lutrgb` ifadeleri, yazılış kutusu gereği kanal-başına TEK
+  bileşik ifadenin AŞAMA TERİMLERİDİR: derleyici açık aşamaları içten dışa zincirleyip en
+  dışa tek `round(…)` koyar (tekil-parametre belgede sütundaki biçim `round` sargısıyla
+  birebir görünür; çok-parametrede terimler iç içe geçer — yukarıdaki örnek).
 - `colortemperature` (Kelvin tabanlı) **kullanılmaz** — GLSL'de birebir eşi kurulamayan
   nonlineer eğri; yerine yukarıdaki sabit katsayılı lineer ofset normatiftir. `colorbalance`
   da (shadows/midtones/highlights nonlineer ağırlıklama) aynı gerekçeyle reddedildi;
