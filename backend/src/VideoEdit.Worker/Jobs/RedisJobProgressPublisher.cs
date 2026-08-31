@@ -38,7 +38,10 @@ public static class JobProgressMessages
         StatusWire(job.Status),
         Math.Clamp(job.ProgressPercent, 0, 100),
         job.ProgressStage,
-        job.Status == JobStatus.Failed ? job.ErrorMessage : null);
+        job.Status == JobStatus.Failed ? job.ErrorMessage : null,
+        // Feed (user:{id}) hedefi — B6. ProcessAsset işinde RequestedBy = yükleyen =
+        // asset sahibi (AssetEndpoints complete), export'ta işi başlatan kullanıcı.
+        OwnerId: job.RequestedBy);
 
     /// <summary>API'nin <c>ExportEndpoints.StatusString</c> aynası (test-pinli kopya).</summary>
     public static string StatusWire(JobStatus status) => status switch

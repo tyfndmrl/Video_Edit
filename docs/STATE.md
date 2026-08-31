@@ -1,5 +1,5 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-08-31, SignalR ilerleme kanalı dilimiyle (öncesi küçükler `b08ce3a`, main).
+Son güncelleme: 2026-08-31, yarim-is-2 #5 (B6 user-feed) dilimiyle (öncesi #6 catch envanteri `a038bbf`, main).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
@@ -28,9 +28,18 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   DEĞİL (Redis'siz API/Worker açılır — canlıda ölçüldü); abonelik REST'le aynı sahiplik
   kapısından (IDOR matrisi hub'a uzatıldı); JWT query-string YALNIZ hub yolunda + istek logu
   query'siz. Backplane bilinçli YOK (DECISIONS). Defter: `PROGRESS.md` §SignalR.
-- Son yeşil sayılar (2026-08-31, SignalR dilimi sonunda bizzat koşuldu): backend
-  **1575/1575** (0 skip) · editör 1324 · şema 222 · Playwright **162/162** (10,3 dk) ·
-  build -warnaserror (tam rebuild) 0 uyarı · tsc + e2e tsc + prod build temiz.
+- **Yarım-iş turu 2 — 3/3 KAPANDI** (2026-08-31): #1 bayat defter kayıtları, #6 sessiz catch
+  TAM envanteri (35; muhafız `silentCatchInventory.test.ts`), #5 **B6 çapraz-sekme kitaplık
+  senkronu (user-feed)**: worker publish'i `ownerId` taşır → forwarder sahibinin `user:{id}`
+  feed grubuna DA yollar; hub'da PARAMETRESİZ `SubscribeUserFeed` (kimlik JWT'den — başkasının
+  feed'i adreslenemez, IDOR aynası); istemci kitaplık açıkken feed'e abone, BİLİNMEYEN
+  assetId'de listeyi+kotayı BİR kez invalidate eder (fırtına yok — kopya-teslim süzgeci +
+  noticed seti). Kanıt: `e2e/library-crosstab-sync.spec.ts` (pasif sekme + ham-API yükleme,
+  satır 2,85 sn'de odak/yenilemesiz) + publish gecikmesi n=3 (p50 0,74 s → worker-publish
+  yeterli, DECISIONS). Defter: `PROGRESS.md` §Yarım-iş turu 2.
+- Son yeşil sayılar (2026-08-31, yarim-is-2 #5 sonunda bizzat koşuldu): backend
+  **1579/1579** (0 skip) · editör 1339 · şema 222 · Playwright **163/163** ·
+  build -warnaserror 0 uyarı · tsc + e2e tsc + prod build temiz.
 
 ## Devam edenler
 
@@ -41,8 +50,8 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 1. `git push` — **kullanıcı onayı bekliyor** (origin 25+ commit geride).
 2. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
 3. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
-  #11 upload resume sertleştirme. (SignalR maddesi 2026-08-31'de KAPANDI; kalan komşu iş
-  backlog B6 — çapraz-sekme kitaplık senkronu user-feed grubu ister, kapsam dışı bırakıldı.)
+  #11 upload resume sertleştirme. (SignalR maddesi 2026-08-31'de KAPANDI; komşusu backlog B6 —
+  çapraz-sekme kitaplık senkronu — da AYNI GÜN user-feed grubuyla KAPANDI, yarim-is-2 #5.)
 
 ## Bilinen sorunlar
 
@@ -65,13 +74,13 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 4. SkiaSharp yükseltme penceresi (golden yeniden-kalibrasyon maliyetiyle) planlansın mı?
 5. Import-yönü/katman kuralı (dep-cruiser sınıfı; lint'ten ayrı) istenir mi, mevcut gevşemeler kabul mü?
 
-## Ortam notu (2026-08-31 sonu, SignalR dilimi)
+## Ortam notu (2026-08-31 sonu, yarim-is-2 #5 dilimi)
 
-Servisler bu session'ın scratchpad'inden yayınlanan `api-run-signalr`/`worker-run-signalr`
-(HEAD kodu; tazelik yüklü modül yolu + 6 iğneyle kanıtlı: `JobProgressHub`,
-`RedisProgressForwarder`, `RedisJobProgressPublisher`, `PublishProgressAsync` UTF-8;
-`job-progress`, `/hubs/progress` UTF-16) + taze Vite :5173 (yeni `@microsoft/signalr`
-bağımlılığı için restart ŞART) çalışır durumda bırakıldı; Docker üçlüsü healthy — Redis
-artık canlı kanalın taşıyıcısıdır ama ZORUNLU DEĞİLDİR (kapalıyken API/Worker açılır,
-polling taşır; canlıda ölçüldü). DİKKAT: yayın dizinleri session-scratchpad'te yaşar —
-yeni session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.
+Servisler bu session'ın scratchpad'inden yayınlanan `api-run-b6feed`/`worker-run-b6feed`
+(Debug, HEAD kodu; tazelik yüklü modül yolları + 7 iğneyle kanıtlı: `SubscribeUserFeed`
+Api.dll UTF-8; `UserGroup`/`OwnerId` Contracts.dll UTF-8 ve `user:` UTF-16 — iki yayın
+dizininde de) + Vite :5173 (bu session'da taze başlatıldı) çalışır durumda bırakıldı;
+Docker üçlüsü healthy. Redis kanalın taşıyıcısıdır ama ZORUNLU DEĞİLDİR (feed dahil —
+hub yoksa davranış SignalR-öncesine düşer: yeni satır odak/yenilemede görünür; polling
+sözleşmesi değişmedi). DİKKAT: yayın dizinleri session-scratchpad'te yaşar — yeni session
+onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.

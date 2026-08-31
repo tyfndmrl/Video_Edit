@@ -2,6 +2,21 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-08-31
+- yarim-is-2 #5 — B6 çapraz-sekme kitaplık senkronu KAPANDI (user-feed grubu): worker'ın her
+  progress publish'i artık `ownerId` (Jobs.RequestedBy) taşır; forwarder mesajı sahibinin
+  `user:{id}` feed grubuna DA yollar (eski, alansız payload'da feed atlanır); hub'a
+  PARAMETRESİZ `SubscribeUserFeed`/`UnsubscribeUserFeed` (kimlik JWT'den — başkasının feed'i
+  adreslenemez; IDOR aynası `CrossUserAccessTests.Hub_SubscribeUserFeed_*`). İstemci:
+  `useProjectAssets` kitaplık açıkken feed katkısı verir (bağlantı meşgul satır olmadan da
+  yaşar), `handleProgressMessage` ardışık kopya teslimi süzer ve BİLİNMEYEN assetId'de listeyi
+  + kotayı BİR kez invalidate eder (bilinen id'ler mevcut `asset:{id}` yolunda — fırtına yok).
+  Önce ölçüldü: kusur yeni spec'le HEAD'de yeniden üretildi; complete→ilk publish n=3
+  0,62-1,79 s (p50 0,74) → worker-publish yeterli, API'ye ikinci publish yönü AÇILMADI
+  (DECISIONS). Kanıt: `e2e/library-crosstab-sync.spec.ts` (pasif sekme + ham-API yükleme:
+  satır 2,85 sn'de, kota kendiliğinden, sayfa yüklemesi 0, ilk liste GET'i ilk feed
+  mesajından SONRA; toplam 2 liste GET'i) + 5 yeni birim (novelty/dedupe/kota) + 4 backend
+  (feed üyeliği, forwarder 3-grup, eski-payload atlanır, tel `ownerId` pini). Negatif kontrol
+  ×3, md5 birebir. Yedek yol değişmedi (progress-fallback + export-progress-hub yeşil).
 - SignalR ilerleme kanalı (kullanıcı kararı "GETİR" — tasarım 03 §5'e sadık, tek commit):
   worker her progress DB yazımının yanında Redis `job-progress` publish'i
   (`RedisJobProgressPublisher` — asla fırlatmaz, Redis zorunlu değil); API'de

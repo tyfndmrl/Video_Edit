@@ -104,7 +104,10 @@ public sealed class RedisProgressForwarder(
     /// Tek mesajın iletimi — SAF ve testli yüzey (ProgressHubTests sahte IHubContext ile
     /// çağırır). Bozuk payload loglanıp ATLANIR (kanal komşu mesajlar için akmaya devam
     /// eder); her mesaj <c>job:{id}</c> grubuna, assetId taşıyanlar AYRICA <c>asset:{id}</c>
-    /// grubuna gider (istemcinin asset aboneliği — JobProgressHub.SubscribeAsset gerekçesi).
+    /// grubuna gider (istemcinin asset aboneliği — JobProgressHub.SubscribeAsset gerekçesi);
+    /// OwnerId taşıyanlar sahibin <c>user:{id}</c> feed grubuna DA gider (B6 — pasif sekme
+    /// BİLMEDİĞİ satırın doğuşunu ancak buradan duyar; alanı taşımayan eski payload'da feed
+    /// bacağı atlanır, id-bazlı gruplar aynen beslenir).
     /// </summary>
     internal async Task ForwardAsync(string payload, CancellationToken ct = default)
     {
@@ -122,6 +125,12 @@ public sealed class RedisProgressForwarder(
         if (message.AssetId is { } assetId)
         {
             await hub.Clients.Group(JobProgressChannel.AssetGroup(assetId))
+                .SendAsync(JobProgressChannel.HubMethod, message, ct);
+        }
+
+        if (message.OwnerId is { } ownerId)
+        {
+            await hub.Clients.Group(JobProgressChannel.UserGroup(ownerId))
                 .SendAsync(JobProgressChannel.HubMethod, message, ct);
         }
     }

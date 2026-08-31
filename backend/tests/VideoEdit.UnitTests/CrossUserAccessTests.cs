@@ -470,6 +470,28 @@ public sealed class CrossUserAccessTests : IDisposable
         Assert.Empty(groups.Added);
     }
 
+    [Fact]
+    public async Task Hub_SubscribeUserFeed_LandsInTheCallersOwnFeed_NeverTheVictims()
+    {
+        // Feed aboneliğinin IDOR aynası, ret DEĞİL adreslenemezliktir: metot parametre
+        // almaz, hedef grup çağıranın JWT kimliğinden türetilir — saldırganın "kurbanın
+        // feed'ine abone olma" isteğini İFADE EDEBİLECEĞİ bir yüzey yoktur. Kanıt: çağrı
+        // TEK gruba girer ve o grup saldırganın kendi feed'idir; kurbanın feed grubuna
+        // (forwarder'ın user:{victim} hedefi) tek bir üyelik çağrısı bile gitmez.
+        var groups = new RecordingGroupManager();
+        using var hub = new VideoEdit.Api.Hubs.JobProgressHub(_db)
+        {
+            Context = new TestHubCallerContext(Attacker, "conn-attacker"),
+            Groups = groups,
+        };
+
+        await hub.SubscribeUserFeed();
+
+        var added = Assert.Single(groups.Added);
+        Assert.Equal(("conn-attacker", JobProgressChannel.UserGroup(_attackerId)), added);
+        Assert.DoesNotContain(groups.Added, g => g.Group == JobProgressChannel.UserGroup(_victimId));
+    }
+
     // ---------- Seed yardımcıları ----------
 
     private async Task<Project> SeedVictimProjectAsync(string name = "Kurbanın projesi")

@@ -93,6 +93,26 @@ public sealed class ProgressHubTests : IDisposable
     }
 
     [Fact]
+    public async Task SubscribeUserFeed_JoinsTheCallersOwnFeedGroup()
+    {
+        // Pozitif yarım (B6): parametresiz abonelik, JWT kimliğinden türetilen user:{id}
+        // grubuna girer — forwarder'ın feed hedefiyle birebir. Negatif yarım (başkasının
+        // feed'ine ulaşılamazlık) CrossUserAccessTests.Hub_SubscribeUserFeed_* aynasında.
+        var groups = new RecordingGroupManager();
+        using var hub = new JobProgressHub(_db)
+        {
+            Context = new TestHubCallerContext(Owner, "conn-own"),
+            Groups = groups,
+        };
+
+        await hub.SubscribeUserFeed();
+
+        var added = Assert.Single(groups.Added);
+        Assert.Equal("conn-own", added.ConnectionId);
+        Assert.Equal(JobProgressChannel.UserGroup(_ownerId), added.Group);
+    }
+
+    [Fact]
     public async Task Unsubscribe_RemovesOnlyTheCallersOwnConnection()
     {
         // Kapısız unsubscribe'ın zararsızlık gerekçesi: yalnız Context.ConnectionId düşer.
@@ -150,6 +170,49 @@ public sealed class ProgressHubTests : IDisposable
         Assert.Contains(hub.Sent, s => s.Group == JobProgressChannel.JobGroup(jobId));
         Assert.Contains(hub.Sent, s => s.Group == JobProgressChannel.AssetGroup(assetId));
         Assert.All(hub.Sent, s => Assert.Equal(JobProgressChannel.HubMethod, s.Method));
+    }
+
+    [Fact]
+    public async Task Forwarder_MessageWithOwner_IsAlsoSentToTheOwnersFeedGroup()
+    {
+        // B6: OwnerId taşıyan mesaj, id-bazlı grupların YANINDA sahibinin user:{id} feed
+        // grubuna da gider — pasif sekmenin "listende yeni satır doğdu"yu duyduğu tek yol.
+        var hub = new RecordingHubContext();
+        var forwarder = CreateForwarder(hub, redis: null);
+        var jobId = Guid.CreateVersion7();
+        var assetId = Guid.CreateVersion7();
+        var ownerId = Guid.CreateVersion7();
+        var message = new JobProgressMessage(
+            jobId, "processAsset", assetId, null, "running", 0, "download", OwnerId: ownerId);
+
+        await forwarder.ForwardAsync(JobProgressChannel.Serialize(message));
+
+        Assert.Equal(3, hub.Sent.Count);
+        Assert.Contains(hub.Sent, s => s.Group == JobProgressChannel.JobGroup(jobId));
+        Assert.Contains(hub.Sent, s => s.Group == JobProgressChannel.AssetGroup(assetId));
+        var feed = Assert.Single(hub.Sent, s => s.Group == JobProgressChannel.UserGroup(ownerId));
+        Assert.Equal(JobProgressChannel.HubMethod, feed.Method);
+        Assert.Equal(message, Assert.IsType<JobProgressMessage>(Assert.Single(feed.Args)));
+    }
+
+    [Fact]
+    public async Task Forwarder_LegacyPayloadWithoutOwner_SkipsTheFeedGroup()
+    {
+        // Geriye uyumluluk: ownerId alanı taşımayan (eski worker ikilisi) payload feed'e
+        // GÖNDERİLMEZ ama id-bazlı gruplar aynen beslenir — kanal karışık sürümde de akar.
+        var hub = new RecordingHubContext();
+        var forwarder = CreateForwarder(hub, redis: null);
+        var jobId = Guid.CreateVersion7();
+        var legacyPayload =
+            $"{{\"jobId\":\"{jobId:D}\",\"jobType\":\"export\",\"assetId\":null," +
+            "\"projectId\":null,\"status\":\"running\",\"progressPercent\":40," +
+            "\"progressStage\":\"render\"}";
+
+        await forwarder.ForwardAsync(legacyPayload);
+
+        var sent = Assert.Single(hub.Sent);
+        Assert.Equal(JobProgressChannel.JobGroup(jobId), sent.Group);
+        Assert.DoesNotContain(hub.Sent, s => s.Group.StartsWith("user:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -230,12 +293,14 @@ public sealed class ProgressHubTests : IDisposable
         // TS istemcisi (entities/progressHub.ts) bu alan adlarını okur; SignalR JSON
         // protokolü da camelCase yazar — Redis payload'ı ile hub telinin aynı biçimde
         // olduğu buradan sabitlenir.
+        var requestedBy = Guid.CreateVersion7();
         var message = JobProgressMessages.FromJob(new Job
         {
             Id = Guid.CreateVersion7(),
             Type = JobType.Export,
             Status = JobStatus.Running,
             ProjectId = Guid.CreateVersion7(),
+            RequestedBy = requestedBy,
             ProgressPercent = 55,
             ProgressStage = "render",
         });
@@ -247,6 +312,8 @@ public sealed class ProgressHubTests : IDisposable
         Assert.Equal("running", root.GetProperty("status").GetString());
         Assert.Equal(55, root.GetProperty("progressPercent").GetInt32());
         Assert.Equal("render", root.GetProperty("progressStage").GetString());
+        // Feed hedefi (B6): sahip RequestedBy'dan gelir ve camelCase 'ownerId' olarak yazılır.
+        Assert.Equal(requestedBy, root.GetProperty("ownerId").GetGuid());
 
         var roundTripped = JobProgressChannel.TryDeserialize(JobProgressChannel.Serialize(message));
         Assert.Equal(message, roundTripped);

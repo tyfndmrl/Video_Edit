@@ -64,7 +64,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   pnpm -r test                                           # editör + timeline-schema vitest
   pnpm --filter @videoedit/editor exec tsc -b            # + apps/editor'da: npx tsc -p e2e/tsconfig.json --noEmit
   ```
-- Doğrulama: 2026-08-31 yeşil sayıları: backend 1560 · editör 1313 · şema 222 (bunlar BÜYÜR; skip 0 sabittir).
+- Doğrulama: 2026-08-31 (yarim-is-2 #5 sonu) yeşil sayıları: backend 1579 · editör 1339 · şema 222 (bunlar BÜYÜR; skip 0 sabittir).
 - Bilinen sınırlar/tuzaklar: MinIO'suz koşumda MinIO+ffmpeg kapılı testler skip'lenir (2026-08-31 ölçümü: 41) —
   skip>0 görürsen önce Docker'a bak. Lint YOK (kullanıcı kararı); "bitti" tanımı: build + testler + tsc.
 - Son doğrulanma: 2026-08-31
@@ -74,7 +74,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
 - Ne zaman tetiklenir: Kapanış doğrulamaları; UI'a dokunan dilimler.
 - Ne zaman KULLANILMAZ: Ortamın TEK SAHİBİ değilsen — paralel ajan/koşum sahte kırmızı üretir (ölçülmüş ders).
 - Girdi: ortam-kaldirma tamam + ikili-tazelik doğrulanmış + kaçak ffmpeg yok (`Get-Process ffmpeg`).
-- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-08-31: 160 test / 38 spec / 10,7 dk.
+- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-08-31 (yarim-is-2 #5 sonu): 163 test / 41 spec / 10,4 dk.
 - Doğrulama: 0 failed, 0 skipped (ffmpeg PATH'teyse koşullu skip'ler tetiklenmez).
 - Bilinen sınırlar/tuzaklar: Sentetik girdi (dispatchEvent) YASAK — kanıt sayılmaz (review-gate kural 3).
   Süite testleri sadece Chromium'da.

@@ -76,6 +76,22 @@ public sealed class JobProgressHub(AppDbContext db) : Hub
     }
 
     /// <summary>
+    /// Çağıranın KENDİ <c>user:{id}</c> feed grubuna abone olur (B6 — çapraz-sekme kitaplık
+    /// senkronu: "listende yeni satır doğdu" yayını). PARAMETRESİZ ve bu, kapının kendisidir:
+    /// hedef grup çağıranın JWT'sindeki kimlikten türetilir, başka bir kullanıcının feed'i bu
+    /// yüzeyde ADRESLENEMEZ bile — id-parametreli abonelik + sahiplik sorgusu (SubscribeJob
+    /// deseni) burada bilinçli reddedildi, sorgulanacak bir iddia yok (DB'ye inilmez).
+    /// IDOR aynası: CrossUserAccessTests.Hub_SubscribeUserFeed_*.
+    /// </summary>
+    public async Task SubscribeUserFeed()
+    {
+        var userId = Context.User?.GetUserId()
+            ?? throw new HubException("Kimlik doğrulanmadı.");
+        await Groups.AddToGroupAsync(
+            Context.ConnectionId, JobProgressChannel.UserGroup(userId), Context.ConnectionAborted);
+    }
+
+    /// <summary>
     /// Abonelikten çıkar. Kapı YOK ve bu bilinçli: yalnız çağıranın KENDİ bağlantısı
     /// (<c>Context.ConnectionId</c>) gruptan düşer — başkasının aboneliğine dokunulamaz,
     /// üye olunmayan gruptan çıkmak zararsız no-op'tur.
@@ -88,4 +104,16 @@ public sealed class JobProgressHub(AppDbContext db) : Hub
     public Task UnsubscribeAsset(Guid assetId) =>
         Groups.RemoveFromGroupAsync(
             Context.ConnectionId, JobProgressChannel.AssetGroup(assetId), Context.ConnectionAborted);
+
+    /// <summary>
+    /// Kendi feed grubundan çıkar (kitaplık kapanınca — istemci katkı modeli). Abonelikle
+    /// aynı türetim: yalnız çağıranın kimliğinin grubu, yalnız çağıranın bağlantısı.
+    /// </summary>
+    public async Task UnsubscribeUserFeed()
+    {
+        var userId = Context.User?.GetUserId()
+            ?? throw new HubException("Kimlik doğrulanmadı.");
+        await Groups.RemoveFromGroupAsync(
+            Context.ConnectionId, JobProgressChannel.UserGroup(userId), Context.ConnectionAborted);
+    }
 }

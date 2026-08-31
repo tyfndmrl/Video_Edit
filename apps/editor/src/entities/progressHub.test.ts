@@ -10,6 +10,8 @@ import { QueryClient } from '@tanstack/react-query';
 import {
   ASSETS_POLL_MS,
   applyProgressMessage,
+  feedWantedForTests,
+  handleProgressMessage,
   hubAwareAssetsInterval,
   hubAwareExportsInterval,
   hubAwareJobInterval,
@@ -17,6 +19,7 @@ import {
   simulateHubStateForTests,
   syncAssetSubscriptions,
   syncJobSubscriptions,
+  syncUserFeed,
   watchedForTests,
   type JobProgressMessage,
 } from './progressHub';
@@ -27,7 +30,13 @@ import {
   type ExportJobDto,
   type ExportListResponse,
 } from './exports';
-import { projectAssetsQueryKey, type AssetDto, type AssetListResponse } from './assets';
+import {
+  projectAssetsQueryKey,
+  quotaQueryKey,
+  type AssetDto,
+  type AssetListResponse,
+  type QuotaSummaryDto,
+} from './assets';
 
 const PROJECT = '01890000-0000-7000-8000-0000000000b1';
 const JOB = '01890000-0000-7000-8000-0000000000c1';
@@ -212,6 +221,122 @@ describe('mesaj → query cache köprüsü', () => {
   });
 });
 
+describe('user-feed (B6): bilinmeyen-asset tepkisi + yineleme süzgeci', () => {
+  const UNKNOWN_ASSET = '01890000-0000-7000-8000-0000000000f9';
+
+  function seedCaches(): void {
+    client.setQueryData<AssetListResponse>(projectAssetsQueryKey(PROJECT), {
+      items: [asset('ready')],
+      page: 1,
+      pageSize: 100,
+      totalCount: 1,
+    });
+    client.setQueryData<QuotaSummaryDto>([...quotaQueryKey], {
+      usedBytes: 100,
+      maxBytes: 1000,
+      assetCount: 1,
+      maxConcurrentUploads: 4,
+    });
+  }
+
+  function feedMsg(
+    status: JobProgressMessage['status'],
+    assetId: string,
+    overrides: Partial<JobProgressMessage> = {},
+  ): JobProgressMessage {
+    return exportMsg(status, {
+      jobType: 'processAsset',
+      assetId,
+      projectId: null,
+      progressPercent: 0,
+      progressStage: 'download',
+      ...overrides,
+    });
+  }
+
+  it('bilinmeyen assetId listeyi + kotayı BİR kez invalidate eder; sonraki adımlar sete takılır', () => {
+    seedCaches();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+
+    handleProgressMessage(client, feedMsg('running', UNKNOWN_ASSET));
+
+    expect(spy).toHaveBeenCalledTimes(2); // asset listeleri + kota
+    // Liste invalidate'i isInvalidated ile OKUNAMAZ: hemen ardından koşan applyAssetMessage
+    // yaması (setQueriesData) bayrağı sıfırlar — çağrının hedefi predicate'inden doğrulanır.
+    const listPredicate = (
+      spy.mock.calls[0]![0] as { predicate: (q: { queryKey: readonly unknown[] }) => boolean }
+    ).predicate;
+    expect(listPredicate({ queryKey: projectAssetsQueryKey(PROJECT) })).toBe(true);
+    expect(listPredicate({ queryKey: [...quotaQueryKey] })).toBe(false);
+    expect(client.getQueryState([...quotaQueryKey])!.isInvalidated).toBe(true);
+    // Satır UYDURULMADI — liste üyeliği hâlâ sunucunun bilgisi (refetch getirecek).
+    const list = client.getQueryData<AssetListResponse>(projectAssetsQueryKey(PROJECT))!;
+    expect(list.items.map((a) => a.id)).toEqual([ASSET]);
+
+    // Aynı asset'in sonraki %5-adım mesajları fırtına üretmez (noticed seti).
+    handleProgressMessage(client, feedMsg('running', UNKNOWN_ASSET, { progressPercent: 20 }));
+    handleProgressMessage(client, feedMsg('running', UNKNOWN_ASSET, { progressPercent: 40 }));
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('bilinen assetId feed yolundan invalidate ÜRETMEZ — mevcut yama yolu işler', () => {
+    seedCaches();
+    client.setQueryData<AssetListResponse>(projectAssetsQueryKey(PROJECT), {
+      items: [asset('processing')],
+      page: 1,
+      pageSize: 100,
+      totalCount: 1,
+    });
+    const spy = vi.spyOn(client, 'invalidateQueries');
+
+    handleProgressMessage(client, feedMsg('running', ASSET, { progressPercent: 70 }));
+
+    expect(spy).not.toHaveBeenCalled();
+    const list = client.getQueryData<AssetListResponse>(projectAssetsQueryKey(PROJECT))!;
+    expect(list.items[0]!.progress).toBe(0.7); // applyAssetMessage yaması aynen çalıştı
+  });
+
+  it('export mesajı (assetId yok) kota invalidate etmez', () => {
+    seedCaches();
+    handleProgressMessage(client, exportMsg('running'));
+    expect(client.getQueryState([...quotaQueryKey])!.isInvalidated).toBe(false);
+  });
+
+  it('terminal bilinmeyen-asset mesajında liste invalidate\'i TEK (terminal dalından), kota buradan', () => {
+    seedCaches();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+
+    handleProgressMessage(client, feedMsg('succeeded', UNKNOWN_ASSET, { progressPercent: 100 }));
+
+    // notice: yalnız kota (liste terminal dalına bırakılır) + apply terminal: asset listeleri.
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(client.getQueryState([...quotaQueryKey])!.isInvalidated).toBe(true);
+    expect(client.getQueryState(projectAssetsQueryKey(PROJECT))!.isInvalidated).toBe(true);
+  });
+
+  it('ardışık birebir kopya teslim (asset grubu + feed) BİR kez işlenir; farklı mesaj işlenir', () => {
+    seedCaches();
+    client.setQueryData<AssetListResponse>(projectAssetsQueryKey(PROJECT), {
+      items: [asset('processing')],
+      page: 1,
+      pageSize: 100,
+      totalCount: 1,
+    });
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const terminal = feedMsg('succeeded', ASSET, { progressPercent: 100 });
+
+    handleProgressMessage(client, terminal);
+    handleProgressMessage(client, terminal); // ikinci grup teslimi — süzülür
+
+    expect(spy).toHaveBeenCalledTimes(1); // çift değil TEK terminal invalidate
+
+    // Farklı bir mesaj süzgeçten geçer.
+    handleProgressMessage(client, feedMsg('running', ASSET, { progressPercent: 45 }));
+    const list = client.getQueryData<AssetListResponse>(projectAssetsQueryKey(PROJECT))!;
+    expect(list.items[0]!.progress).toBe(0.45);
+  });
+});
+
 describe('abonelik katkı modeli', () => {
   it('iki owner aynı işi izlerken biri bırakınca abonelik yaşar; ikisi de bırakınca düşer', () => {
     syncJobSubscriptions(client, 'exports-list:p1', [JOB, 'ikinci']);
@@ -230,5 +355,19 @@ describe('abonelik katkı modeli', () => {
     syncJobSubscriptions(client, 'exports-list:p1', [JOB]);
     syncAssetSubscriptions(client, 'assets-list:p1', []);
     expect(watchedForTests()).toEqual({ jobs: [JOB], assets: [] });
+  });
+
+  it('feed katkısı (B6): iki kitaplık örneğinden biri kapanınca istek yaşar, ikisi de kapanınca düşer', () => {
+    syncUserFeed(client, 'assets-list:p1', true);
+    syncUserFeed(client, 'assets-list:p2', true);
+    expect(feedWantedForTests().owners).toEqual(['assets-list:p1', 'assets-list:p2']);
+
+    syncUserFeed(client, 'assets-list:p1', false);
+    expect(feedWantedForTests().owners).toEqual(['assets-list:p2']);
+
+    syncUserFeed(client, 'assets-list:p2', false);
+    expect(feedWantedForTests().owners).toEqual([]);
+    // Bağlantı hiç kurulmadı (token yok) — abonelik bayrağı da hiç kalkmadı.
+    expect(feedWantedForTests().subscribed).toBe(false);
   });
 });

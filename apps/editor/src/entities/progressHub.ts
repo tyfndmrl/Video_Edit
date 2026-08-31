@@ -2,8 +2,10 @@
  * progressHub — SignalR canlı ilerleme istemcisi (tasarım 03 §5; DECISIONS 2026-08-31).
  *
  * Akış: worker her progress DB yazımının yanında Redis'e publish eder; API'nin forwarder'ı
- * mesajı `job:{id}` / `asset:{id}` SignalR gruplarına iletir; bu modül gruba abone olur ve
- * gelen mesajları react-query cache'ine işler. POLLING SİLİNMEDİ — YEDEKTİR (tasarım şartı):
+ * mesajı `job:{id}` / `asset:{id}` SignalR gruplarına — ve sahibinin `user:{id}` FEED grubuna
+ * (B6: pasif sekme, başka istemcinin doğurduğu satırı ancak buradan duyar; bilinmeyen assetId
+ * listeyi + kotayı invalidate eder) — iletir; bu modül gruplara abone olur ve gelen mesajları
+ * react-query cache'ine işler. POLLING SİLİNMEDİ — YEDEKTİR (tasarım şartı):
  * hub bağlanamadıysa, düştüyse ya da bir abonelik SUSTUYSA (aşağıdaki bekçi) bugünkü 2 sn /
  * 3 sn aralıklı yoklama AYNEN devreye girer. Doğruluk kaynağı her zaman sunucu DTO'larıdır:
  * terminal mesaj (succeeded/failed/canceled) cache'e yazılMAZ, ilgili sorguyu invalidate
@@ -47,6 +49,8 @@ export interface JobProgressMessage {
   progressPercent: number;
   progressStage: string | null;
   error?: string | null;
+  /** İşin sahibi — sunucu feed (user:{id}) hedeflemesi için taşır; istemci okumaz. */
+  ownerId?: string | null;
 }
 
 /** Hub yolu/metodu — sunucudaki JobProgressChannel sabitlerinin istemci aynası. */
@@ -87,6 +91,16 @@ interface HubState {
   assetContributions: Map<string, ReadonlySet<string>>;
   watchedJobs: Set<string>;
   watchedAssets: Set<string>;
+  /**
+   * user:{id} feed'ini (B6 — "listende yeni satır doğdu" yayını) isteyen hook örnekleri.
+   * Katkı modeli id kümeleriyle aynı; küme boş değilken bağlantı feed'e abonedir. Feed
+   * `covered`'a GİRMEZ: bir polling kapısını kapatmaz (bilinmeyen satır için yoklama
+   * zaten yok) ve sessizliği normaldir (hiçbir iş koşmuyorken mesaj beklenmez) — bekçi
+   * onu düşürmemeli.
+   */
+  feedOwners: Set<string>;
+  /** Feed aboneliği bu bağlantıda sunucuca kabul edildi mi (bağlantıyla ölür). */
+  feedSubscribed: boolean;
   /** Kurulmuş + susmamış abonelikler → polling kapısını kapatan küme. */
   covered: Map<CoverageKey, number>;
   startTimer: ReturnType<typeof setTimeout> | null;
@@ -103,6 +117,8 @@ const state: HubState = {
   assetContributions: new Map(),
   watchedJobs: new Set(),
   watchedAssets: new Set(),
+  feedOwners: new Set(),
+  feedSubscribed: false,
   covered: new Map(),
   startTimer: null,
   startAttempt: 0,
@@ -164,6 +180,58 @@ function isExportsListKey(key: readonly unknown[]): boolean {
 
 function isAssetsListKey(key: readonly unknown[]): boolean {
   return key.length === 3 && key[0] === 'projects' && key[2] === 'assets';
+}
+
+/** ['quota'] deseni — assets.ts'teki quotaQueryKey ile aynı şekil (değer importu döngü kurardı). */
+function isQuotaKey(key: readonly unknown[]): boolean {
+  return key.length === 1 && key[0] === 'quota';
+}
+
+/**
+ * Bağlantı handler'ının giriş noktası — üç katman (dışa açık: birim testleri gerçek
+ * QueryClient ile çağırır):
+ *  1. YİNELEME SÜZGECİ: aynı mesaj birden çok gruptan gelebilir (meşgul satırı izleyen
+ *     sekme hem `asset:{id}` hem feed üyesidir) — ardışık birebir kopya bir kez işlenir
+ *     (terminal mesajın çift invalidate'i çift GET olurdu). İki FARKLI yazım hiçbir zaman
+ *     birebir aynı değildir (JobProgressWriter yalnız stage/≥5 puan/heartbeat'te yazar).
+ *  2. BİLİNMEYEN-ASSET tepkisi (B6): feed'den gelen, hiçbir liste cache'inde olmayan
+ *     assetId listeyi + kotayı invalidate eder — pasif sekme yeni satırı böyle duyar.
+ *  3. applyProgressMessage: bugüne kadarki cache köprüsü, değişmedi.
+ */
+export function handleProgressMessage(client: QueryClient, msg: JobProgressMessage): void {
+  const sig =
+    `${msg.jobId}|${msg.assetId ?? ''}|${msg.status}|${msg.progressPercent}` +
+    `|${msg.progressStage ?? ''}|${msg.error ?? ''}`;
+  if (sig === lastDeliverySig) return;
+  lastDeliverySig = sig;
+  noticeUnknownAsset(client, msg);
+  applyProgressMessage(client, msg);
+}
+
+let lastDeliverySig: string | null = null;
+
+/**
+ * FIRTINA KORUMASI iki katmandır: bilinen id'ye çarpan olaylar buradan hiç geçmez (mevcut
+ * `asset:{id}` yaması işler, liste çekilmez); bilinmeyen id ise `noticedNewAssets` ile BİR
+ * kez invalidate tetikler — aynı asset'in sonraki %5-adım mesajları sete takılır. Terminal
+ * mesajda liste invalidate'i applyAssetMessage'ın terminal dalına bırakılır (tek refetch);
+ * kota her halükârda buradan tazelenir (upload'ın orijinal baytları complete anında sayılır,
+ * türev baytlarını da ready akışındaki assetSync yakalar).
+ */
+const noticedNewAssets = new Set<string>();
+
+function noticeUnknownAsset(client: QueryClient, msg: JobProgressMessage): void {
+  const assetId = msg.assetId;
+  if (assetId === null || assetId === undefined || noticedNewAssets.has(assetId)) return;
+  const known = client
+    .getQueriesData<AssetListResponse>({ predicate: (q) => isAssetsListKey(q.queryKey) })
+    .some(([, data]) => data?.items.some((a) => a.id === assetId) ?? false);
+  if (known) return;
+  noticedNewAssets.add(assetId);
+  if (!isTerminal(msg.status)) {
+    void client.invalidateQueries({ predicate: (q) => isAssetsListKey(q.queryKey) });
+  }
+  void client.invalidateQueries({ predicate: (q) => isQuotaKey(q.queryKey) });
 }
 
 /**
@@ -256,6 +324,42 @@ export function syncAssetSubscriptions(
     client, state.assetContributions, state.watchedAssets, owner, assetIds, 'asset');
 }
 
+/**
+ * user:{id} feed katkısı (B6): kitaplığı açık tutan hook (useProjectAssets) mount'ta ister,
+ * unmount'ta bırakır. Feed, meşgul satır olmasa da bağlantıyı AYAKTA tutar — pasif sekmenin
+ * tek dinleme nedeni "başka istemcide yeni satır doğdu" yayınıdır. Abonelik kurulamazsa
+ * davranış SignalR-öncesi kabul edilmiş hale düşer (yeni satır odak/yenilemede görünür).
+ */
+export function syncUserFeed(client: QueryClient, owner: string, wanted: boolean): void {
+  state.client = client;
+  if (wanted) state.feedOwners.add(owner);
+  else state.feedOwners.delete(owner);
+
+  if (state.feedOwners.size > 0) {
+    ensureStarted();
+    void subscribeUserFeed();
+  } else if (state.feedSubscribed) {
+    state.feedSubscribed = false;
+    void invokeQuietly('UnsubscribeUserFeed');
+  }
+}
+
+async function subscribeUserFeed(): Promise<void> {
+  if (state.feedSubscribed) return;
+  const connection = state.connection;
+  if (!connection || connection.state !== HubConnectionState.Connected) {
+    return; // bağlantı gelince resubscribeAll kurar
+  }
+  try {
+    await connection.invoke('SubscribeUserFeed');
+    if (state.feedOwners.size > 0) state.feedSubscribed = true;
+    else void invokeQuietly('UnsubscribeUserFeed'); // istek beklerken küme boşaldı (yarış)
+  } catch {
+    // Feed aboneliği kurulamadı → kapatacağı bir polling kapısı yok, sessiz düşüş bilinçli:
+    // pasif sekme yeni satırı SignalR-öncesi gibi odak/yenilemede görür.
+  }
+}
+
 function syncContribution(
   client: QueryClient,
   contributions: Map<string, ReadonlySet<string>>,
@@ -314,11 +418,13 @@ function markCovered(key: CoverageKey): void {
   state.covered.set(key, Date.now());
 }
 
-async function invokeQuietly(method: string, id: string): Promise<void> {
+async function invokeQuietly(method: string, id?: string): Promise<void> {
   const connection = state.connection;
   if (!connection || connection.state !== HubConnectionState.Connected) return;
   try {
-    await connection.invoke(method, id);
+    // Parametresiz metotlar (UnsubscribeUserFeed) argümansız çağrılır — invoke(m, undefined)
+    // tek elemanlı argüman listesi gönderir ve sunucuda imza uyuşmazlığına düşerdi.
+    await (id === undefined ? connection.invoke(method) : connection.invoke(method, id));
   } catch {
     // best-effort — gruptan düşmemek zararsızdır (sunucu bağlantı kapanınca zaten düşürür)
   }
@@ -343,14 +449,16 @@ function ensureStarted(): void {
     .build();
 
   connection.on(PROGRESS_HUB_METHOD, (raw: JobProgressMessage) => {
-    // Her mesaj kapsamayı tazeler (sessizlik bekçisinin saati) ve cache'e işlenir.
+    // Her mesaj kapsamayı tazeler (sessizlik bekçisinin saati; yineleme süzgecinin ÖNÜNDE —
+    // kopya teslim de kanalın canlı olduğunun kanıtıdır) ve cache'e işlenir.
     const key: CoverageKey = raw.assetId ? `asset:${raw.assetId}` : `job:${raw.jobId}`;
     if (state.covered.has(key)) markCovered(key);
-    if (state.client) applyProgressMessage(state.client, raw);
+    if (state.client) handleProgressMessage(state.client, raw);
   });
 
   connection.onreconnecting(() => {
     state.connected = false;
+    state.feedSubscribed = false; // gruplar bağlantıyla ölür — feed de yeniden kurulacak
     dropAllCoverage(); // yoklama DERHAL devralsın; yeniden bağlanınca abonelikler kurulur
   });
 
@@ -364,6 +472,7 @@ function ensureStarted(): void {
     // taze bir bağlantıyı rampalı zamanlayıcıyla yeniden dene.
     state.connected = false;
     state.connection = null;
+    state.feedSubscribed = false;
     dropAllCoverage();
     scheduleRestart();
   });
@@ -393,7 +502,9 @@ async function startConnection(connection: HubConnection): Promise<void> {
 
 function scheduleRestart(): void {
   if (state.startTimer) return;
-  if (state.watchedJobs.size + state.watchedAssets.size === 0) return; // izlenen yoksa ısrar etme
+  // İzlenen id yoksa VE feed istenmemişse ısrar etme; feed isteği tek başına yeniden
+  // bağlanma nedenidir (pasif sekmenin tek kanalı odur — B6).
+  if (state.watchedJobs.size + state.watchedAssets.size + state.feedOwners.size === 0) return;
   const delay = Math.min(
     START_RETRY_BASE_MS * 2 ** Math.min(state.startAttempt, 5),
     START_RETRY_MAX_MS,
@@ -409,6 +520,7 @@ async function resubscribeAll(): Promise<void> {
   // Gruplar bağlantıya bağlıdır — her (yeniden) bağlantıda sıfırdan kurulur.
   for (const id of state.watchedJobs) await subscribe('job', id);
   for (const id of state.watchedAssets) await subscribe('asset', id);
+  if (state.feedOwners.size > 0) await subscribeUserFeed();
 }
 
 function dropAllCoverage(): void {
@@ -472,7 +584,16 @@ export function resetProgressHubForTests(): void {
   state.assetContributions.clear();
   state.watchedJobs.clear();
   state.watchedAssets.clear();
+  state.feedOwners.clear();
+  state.feedSubscribed = false;
   state.covered.clear();
+  noticedNewAssets.clear();
+  lastDeliverySig = null;
+}
+
+/** Birim testleri feed katkı durumunu okur (watchedForTests'in feed yarısı). */
+export function feedWantedForTests(): { owners: string[]; subscribed: boolean } {
+  return { owners: [...state.feedOwners].sort(), subscribed: state.feedSubscribed };
 }
 
 /** Birim testleri izlenen kümeleri okur (katkı birleşiminin doğruluğu için). */

@@ -32,6 +32,16 @@ public static class JobProgressChannel
     public static string AssetGroup(Guid assetId) => $"asset:{assetId:D}";
 
     /// <summary>
+    /// Kullanıcı-akışı (feed) grubu — "listende yeni satır doğdu" yayını (backlog B6:
+    /// çapraz-sekme kitaplık senkronu). id-bazlı gruplar sekmenin ZATEN bildiği satırları
+    /// taşır; başka istemcinin yüklediği asseti pasif sekme ancak SAHİBİNİN akışından
+    /// duyabilir. Forwarder her mesajı sahibin bu grubuna DA yollar; abonelik parametresiz
+    /// <c>SubscribeUserFeed</c> ile kurulur (kimlik çağıranın JWT'sinden — başka kullanıcının
+    /// feed'i hub yüzeyinde ADRESLENEMEZ bile).
+    /// </summary>
+    public static string UserGroup(Guid userId) => $"user:{userId:D}";
+
+    /// <summary>
     /// Redis payload'ının serileştirme sözleşmesi: camelCase + null'lar atlanmaz.
     /// İstemciye SignalR JSON protokolü de camelCase yazar — alan adları tek biçimdir.
     /// </summary>
@@ -74,6 +84,13 @@ public static class JobProgressChannel
 /// <param name="ProgressPercent">0-100.</param>
 /// <param name="ProgressStage">Worker aşama anahtarı ('download'|'render'|... — DTO ile aynı).</param>
 /// <param name="Error">Failed işte gerekçe; aksi halde null.</param>
+/// <param name="OwnerId">
+/// İşin sahibi (Jobs.RequestedBy) — forwarder'ın <see cref="JobProgressChannel.UserGroup"/>
+/// feed hedefi (B6). Nullable ve varsayılanı null: alanı taşımayan (eski ikili) payload'da
+/// forwarder feed gönderimini ATLAR, id-bazlı gruplar aynen beslenir. Feed grubu sahiplik
+/// kapılıdır (parametresiz abonelik), dolayısıyla alan yalnız sahibinin kendisine ulaşır —
+/// kimlik sızıntısı değildir.
+/// </param>
 public sealed record JobProgressMessage(
     Guid JobId,
     string JobType,
@@ -82,4 +99,5 @@ public sealed record JobProgressMessage(
     string Status,
     int ProgressPercent,
     string? ProgressStage,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error = null,
+    Guid? OwnerId = null);

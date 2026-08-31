@@ -15,12 +15,13 @@ Redis (canlı ilerleme pub/sub'ı — zorunlu değil, yoklama yedeği durur).
 **Yapar:** çoklu katman timeline; kırpma/kesme/ayırma/taşıma; frame/zoom/timecode/player/kısayollar;
 undo-redo + işlem geçmişi; geçişler; metin/şekil/sticker; colorAdjust + LUT (.cube); hız; keyframe;
 ses/müzik miksi; export profilleri (720p/1080p/2160p/dikey); hesap + kota + versiyon geçmişi;
-SignalR canlı ilerleme (worker→Redis→`/hubs/progress`; polling YEDEK — 2026-08-31).
+SignalR canlı ilerleme (worker→Redis→`/hubs/progress`; polling YEDEK — 2026-08-31; `user:{id}`
+feed'iyle çapraz-sekme kitaplık senkronu dahil).
 
 **Yapmaz (bilinçli, kayıtlı):** gerçek Cloudflare R2 (hiç denenmedi — dev+CI MinIO), `fx.*`
 keyframe kanalı, hız rampası, emoji/tam shaping, mobil, çoklu-worker işletimi, lint (kullanıcı
-kararı), SignalR user-feed grubu (çapraz-sekme kitaplık senkronu — backlog B6 açık).
-Ayrıntı: `docs/poc-bilinen-sinirlar.md`.
+kararı). (SignalR user-feed grubu 2026-08-31'de GELDİ — çapraz-sekme kitaplık senkronu / B6
+KAPANDI, `yarim-is-2 #5`.) Ayrıntı: `docs/poc-bilinen-sinirlar.md`.
 
 ## Yetenek Haritası
 

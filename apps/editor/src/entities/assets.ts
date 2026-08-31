@@ -9,7 +9,7 @@
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from './apiClient';
-import { hubAwareAssetsInterval, syncAssetSubscriptions } from './progressHub';
+import { hubAwareAssetsInterval, syncAssetSubscriptions, syncUserFeed } from './progressHub';
 
 export type AssetStatusDto = 'uploading' | 'uploaded' | 'processing' | 'ready' | 'failed';
 export type AssetKindDto = 'video' | 'audio' | 'image' | 'lut';
@@ -90,6 +90,16 @@ export function useProjectAssets(projectId: string | null) {
     syncAssetSubscriptions(queryClient, owner, busyKey === '' ? [] : busyKey.split(','));
     return () => syncAssetSubscriptions(queryClient, owner, []);
   }, [queryClient, projectId, busyKey]);
+
+  // user:{id} feed aboneliği (B6): kitaplık açıkken sekme, BAŞKA istemcinin/sekmenin
+  // doğurduğu satırı da duymalı — id-bazlı abonelikler yalnız bilinen satırları taşır.
+  // Mount/unmount'a bağlı katkı; meşgul satır olmasa da hub bağlantısını ayakta tutar.
+  useEffect(() => {
+    if (projectId === null) return;
+    const owner = `assets-list:${projectId}`;
+    syncUserFeed(queryClient, owner, true);
+    return () => syncUserFeed(queryClient, owner, false);
+  }, [queryClient, projectId]);
 
   return query;
 }
