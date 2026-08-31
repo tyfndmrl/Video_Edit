@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using VideoEdit.Api.Assets;
 using VideoEdit.Api.Endpoints;
@@ -347,12 +348,16 @@ public sealed class CrossUserAccessTests : IDisposable
     {
         var asset = await SeedVictimAssetAsync(status: AssetStatus.Ready);
 
+        var hub = new RecordingHubContext();
         var result = await AssetEndpoints.SoftDelete(
-            asset.Id, Attacker, _db, _storage, TimeProvider.System, CancellationToken.None);
+            asset.Id, Attacker, _db, _storage, TimeProvider.System, hub,
+            NullLoggerFactory.Instance, CancellationToken.None);
 
         // Sahibin "zaten silinmiş" idempotent 204 yolu yabancıya AÇILMAZ: yalın 404.
         Assert.IsType<NotFound>(result);
         Assert.Null(_db.Assets.AsNoTracking().Single(a => a.Id == asset.Id).DeletedAt);
+        // Ret hiçbir feed'e olay da sızdırmaz (assetRemoved yalnız gerçek silmede doğar).
+        Assert.Empty(hub.Sent);
     }
 
     [Fact]

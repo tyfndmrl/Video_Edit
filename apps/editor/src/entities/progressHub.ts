@@ -4,7 +4,9 @@
  * Akış: worker her progress DB yazımının yanında Redis'e publish eder; API'nin forwarder'ı
  * mesajı `job:{id}` / `asset:{id}` SignalR gruplarına — ve sahibinin `user:{id}` FEED grubuna
  * (B6: pasif sekme, başka istemcinin doğurduğu satırı ancak buradan duyar; bilinmeyen assetId
- * listeyi + kotayı invalidate eder) — iletir; bu modül gruplara abone olur ve gelen mesajları
+ * listeyi + kotayı invalidate eder) — iletir; SİLME ise iş doğurmadığından API'nin kendisi
+ * feed grubuna `assetRemoved` yollar (istemci satırı cache'ten düşürür + kotayı tazeler —
+ * handleAssetRemovedMessage); bu modül gruplara abone olur ve gelen mesajları
  * react-query cache'ine işler. POLLING SİLİNMEDİ — YEDEKTİR (tasarım şartı):
  * hub bağlanamadıysa, düştüyse ya da bir abonelik SUSTUYSA (aşağıdaki bekçi) bugünkü 2 sn /
  * 3 sn aralıklı yoklama AYNEN devreye girer. Doğruluk kaynağı her zaman sunucu DTO'larıdır:
@@ -53,9 +55,21 @@ export interface JobProgressMessage {
   ownerId?: string | null;
 }
 
+/** Sunucudaki AssetRemovedMessage'ın (VideoEdit.Contracts/JobProgress.cs) camelCase teli. */
+export interface AssetRemovedMessage {
+  assetId: string;
+}
+
 /** Hub yolu/metodu — sunucudaki JobProgressChannel sabitlerinin istemci aynası. */
 export const PROGRESS_HUB_PATH = '/hubs/progress';
 export const PROGRESS_HUB_METHOD = 'progress';
+
+/**
+ * İkinci hub metodu (B6'nın SİLME yarısı): API, soft-delete sonrası sahibinin feed grubuna
+ * süreç-içi `assetRemoved` yollar — silme worker işi doğurmadığı için `progress` akışına
+ * hiç girmez ve pasif sekme onu ancak buradan duyabilir.
+ */
+export const PROGRESS_HUB_ASSET_REMOVED_METHOD = 'assetRemoved';
 
 /** Asset listesi yoklama aralığı (bugünkü değer — assets.ts buradan tüketir). */
 export const ASSETS_POLL_MS = 3000;
@@ -231,6 +245,35 @@ function noticeUnknownAsset(client: QueryClient, msg: JobProgressMessage): void 
   if (!isTerminal(msg.status)) {
     void client.invalidateQueries({ predicate: (q) => isAssetsListKey(q.queryKey) });
   }
+  void client.invalidateQueries({ predicate: (q) => isQuotaKey(q.queryKey) });
+}
+
+/**
+ * `assetRemoved` mesajını işler (B6'nın silme yarısı — dışa açık: birim testleri gerçek
+ * QueryClient ile çağırır). TEK OLAY = TEK INVALIDATE sözleşmesi: satır liste
+ * cache'lerinden CERRAHİYLE düşürülür (liste GET'i yok — üyelik bilgisi zaten sunucudan,
+ * 204 dönen silmenin duyurusudur) ve yalnız kota invalidate edilir (gösterge sunucu
+ * otoritesidir). Silinen id `noticedNewAssets`'e yazılır: işlenmekte olan bir asset
+ * silindiyse worker'ın GEÇ progress mesajları "bilinmeyen asset" sayılıp listeyi yeniden
+ * çektiremez (diriltme fırtınası yok); terminal mesajın liste invalidate'i zararsızdır —
+ * sunucu listesi silineni zaten içermez (sunucu-otoriter liste).
+ */
+export function handleAssetRemovedMessage(client: QueryClient, msg: AssetRemovedMessage): void {
+  const assetId = msg.assetId;
+  if (!assetId) return;
+  noticedNewAssets.add(assetId);
+  state.covered.delete(`asset:${assetId}`);
+  client.setQueriesData<AssetListResponse>(
+    { predicate: (q) => isAssetsListKey(q.queryKey) },
+    (old) => {
+      if (!old || !old.items.some((a) => a.id === assetId)) return old;
+      return {
+        ...old,
+        items: old.items.filter((a) => a.id !== assetId),
+        totalCount: Math.max(0, old.totalCount - 1),
+      };
+    },
+  );
   void client.invalidateQueries({ predicate: (q) => isQuotaKey(q.queryKey) });
 }
 
@@ -454,6 +497,12 @@ function ensureStarted(): void {
     const key: CoverageKey = raw.assetId ? `asset:${raw.assetId}` : `job:${raw.jobId}`;
     if (state.covered.has(key)) markCovered(key);
     if (state.client) handleProgressMessage(state.client, raw);
+  });
+
+  connection.on(PROGRESS_HUB_ASSET_REMOVED_METHOD, (raw: AssetRemovedMessage) => {
+    // Silme duyurusu yalnız sahibinin feed grubundan gelir (sunucu hedefler) — kapsama
+    // saatine dokunmaz: feed `covered` dışıdır (sessizliği normaldir, bekçi saymaz).
+    if (state.client) handleAssetRemovedMessage(state.client, raw);
   });
 
   connection.onreconnecting(() => {

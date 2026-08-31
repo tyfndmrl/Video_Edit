@@ -21,6 +21,16 @@ public static class JobProgressChannel
     /// <summary>İstemcinin dinlediği hub metodu adı (connection.on(...) hedefi).</summary>
     public const string HubMethod = "progress";
 
+    /// <summary>
+    /// İkinci hub metodu: kitaplıktan asset SİLİNDİ (B6'nın silme yarısı — gelistirme-3 #2a).
+    /// Silme worker işi doğurmaz, dolayısıyla <c>progress</c> akışına hiç girmez; API
+    /// (hub'ı kendisi barındırır) soft-delete sonrası sahibinin
+    /// <see cref="UserGroup"/> feed grubuna süreç-içi bu metotla
+    /// <see cref="AssetRemovedMessage"/> yollar. Redis turu BİLEREK yok: olay API'de doğar
+    /// ve hub aynı süreçtedir (tek instance — DECISIONS backplane satırı).
+    /// </summary>
+    public const string HubMethodAssetRemoved = "assetRemoved";
+
     /// <summary>İş bazlı grup: export akışı iş id'siyle abone olur.</summary>
     public static string JobGroup(Guid jobId) => $"job:{jobId:D}";
 
@@ -101,3 +111,12 @@ public sealed record JobProgressMessage(
     string? ProgressStage,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error = null,
     Guid? OwnerId = null);
+
+/// <summary>
+/// <see cref="JobProgressChannel.HubMethodAssetRemoved"/> yükü — bilinçli olarak
+/// <see cref="JobProgressMessage"/>'dan AYRI küçük bir tel tipi: silme bir iş değildir,
+/// iş-şekilli mesaja sahte status uydurup sözlüğü kirletmek reddedildi. Sahip alanı
+/// taşınmaz: mesaj yalnız sahibinin <see cref="JobProgressChannel.UserGroup"/> feed
+/// grubuna gönderilir (hedefleme sunucunun işidir), istemci yalnız assetId okur.
+/// </summary>
+public sealed record AssetRemovedMessage(Guid AssetId);

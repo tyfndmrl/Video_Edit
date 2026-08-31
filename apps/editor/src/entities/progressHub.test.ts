@@ -11,6 +11,7 @@ import {
   ASSETS_POLL_MS,
   applyProgressMessage,
   feedWantedForTests,
+  handleAssetRemovedMessage,
   handleProgressMessage,
   hubAwareAssetsInterval,
   hubAwareExportsInterval,
@@ -334,6 +335,49 @@ describe('user-feed (B6): bilinmeyen-asset tepkisi + yineleme süzgeci', () => {
     handleProgressMessage(client, feedMsg('running', ASSET, { progressPercent: 45 }));
     const list = client.getQueryData<AssetListResponse>(projectAssetsQueryKey(PROJECT))!;
     expect(list.items[0]!.progress).toBe(0.45);
+  });
+
+  describe('silme duyurusu (assetRemoved — gelistirme-3 #2a)', () => {
+    it('satırı liste cache\'lerinden CERRAHİYLE düşürür (liste invalidate yok) + yalnız kotayı tazeler', () => {
+      seedCaches();
+      const spy = vi.spyOn(client, 'invalidateQueries');
+
+      handleAssetRemovedMessage(client, { assetId: ASSET });
+
+      // Tek olay = tek invalidate: yalnız kota. Liste GET'siz cerrahiyle güncellenir.
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(client.getQueryState([...quotaQueryKey])!.isInvalidated).toBe(true);
+      expect(client.getQueryState(projectAssetsQueryKey(PROJECT))!.isInvalidated).toBe(false);
+      const list = client.getQueryData<AssetListResponse>(projectAssetsQueryKey(PROJECT))!;
+      expect(list.items).toEqual([]);
+      expect(list.totalCount).toBe(0);
+    });
+
+    it('silinen id noticed setine girer: geç worker mesajı listeyi yeniden ÇEKTİREMEZ (diriltme yok)', () => {
+      seedCaches();
+      const spy = vi.spyOn(client, 'invalidateQueries');
+
+      handleAssetRemovedMessage(client, { assetId: ASSET });
+      // İşlenmekte olan asset silinmişti — worker'ın geç %5-adım mesajı hâlâ akabilir:
+      // artık listede olmayan id "bilinmeyen asset" sayılıp liste refetch'i tetikleyemez.
+      handleProgressMessage(client, feedMsg('running', ASSET, { progressPercent: 60 }));
+
+      expect(spy).toHaveBeenCalledTimes(1); // yalnız silmenin kota invalidate'i
+      const list = client.getQueryData<AssetListResponse>(projectAssetsQueryKey(PROJECT))!;
+      expect(list.items).toEqual([]); // satır geri UYDURULMADI
+    });
+
+    it('listede olmayan id için cerrahi no-op ama kota yine tazelenir (gösterge sunucu otoritesi)', () => {
+      seedCaches();
+      const spy = vi.spyOn(client, 'invalidateQueries');
+
+      handleAssetRemovedMessage(client, { assetId: UNKNOWN_ASSET });
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(client.getQueryState([...quotaQueryKey])!.isInvalidated).toBe(true);
+      const list = client.getQueryData<AssetListResponse>(projectAssetsQueryKey(PROJECT))!;
+      expect(list.items.map((a) => a.id)).toEqual([ASSET]); // başka satıra dokunulmadı
+    });
   });
 });
 

@@ -315,13 +315,16 @@ public sealed class AssetEndpointsTests : IDisposable
             await rival.SaveChangesAsync();
         }
 
+        var hub = new RecordingHubContext();
         var result = await AssetEndpoints.SoftDelete(
-            asset.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, CancellationToken.None);
+            asset.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, hub,
+            NullLoggerFactory.Instance, CancellationToken.None);
 
         Assert.IsType<NoContent>(result);
         var reloaded = Reload(asset.Id);
         Assert.Equal(AssetStatus.Processing, reloaded.Status); // guard: Failed'a çekilmedi
         Assert.NotNull(reloaded.DeletedAt); // ama silme isteği yerine getirildi
+        Assert.Single(hub.Sent); // yarışı kaybeden dal da GERÇEK silmedir → tek duyuru
     }
 
     [Fact]
@@ -329,14 +332,72 @@ public sealed class AssetEndpointsTests : IDisposable
     {
         var asset = await SeedUploadingAssetAsync();
 
+        var hub = new RecordingHubContext();
         var result = await AssetEndpoints.SoftDelete(
-            asset.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, CancellationToken.None);
+            asset.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, hub,
+            NullLoggerFactory.Instance, CancellationToken.None);
 
         Assert.IsType<NoContent>(result);
         Assert.Contains(("abort", asset.StorageKey), _storage.Calls);
         var reloaded = Reload(asset.Id);
         Assert.Equal(AssetStatus.Failed, reloaded.Status);
         Assert.NotNull(reloaded.DeletedAt);
+        // Uploading dalı da kitaplık satırı düşüren gerçek bir silmedir → duyuru burada da doğar.
+        var sent = Assert.Single(hub.Sent);
+        Assert.Equal(JobProgressChannel.UserGroup(_userId), sent.Group);
+    }
+
+    // ---------- gelistirme-3 #2a: silme duyurusu (assetRemoved) ----------
+
+    [Fact]
+    public async Task SoftDelete_PublishesAssetRemovedOnlyToTheOwnersFeedGroup()
+    {
+        // IDOR aynası (yayın tarafı): olay YALNIZ sahibinin user:{id} feed grubuna gider —
+        // başka hiçbir grup (job:/asset:/başka kullanıcı) hedeflenmez. Süreç-içi gönderim
+        // olduğu için ölçüm yüzeyi RecordingHubContext'tir (forwarder testleriyle aynı sahte).
+        var asset = await SeedUploadingAssetAsync();
+        await using (var rival = NewContext())
+        {
+            var a = await rival.Assets.SingleAsync(x => x.Id == asset.Id);
+            a.TransitionTo(AssetStatus.Uploaded);
+            a.TransitionTo(AssetStatus.Processing);
+            a.TransitionTo(AssetStatus.Ready);
+            a.UploadId = null;
+            await rival.SaveChangesAsync();
+        }
+
+        var hub = new RecordingHubContext();
+        var result = await AssetEndpoints.SoftDelete(
+            asset.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, hub,
+            NullLoggerFactory.Instance, CancellationToken.None);
+
+        Assert.IsType<NoContent>(result);
+        var sent = Assert.Single(hub.Sent);
+        Assert.Equal(JobProgressChannel.UserGroup(_userId), sent.Group);
+        Assert.Equal(JobProgressChannel.HubMethodAssetRemoved, sent.Method);
+        var message = Assert.IsType<AssetRemovedMessage>(Assert.Single(sent.Args));
+        Assert.Equal(asset.Id, message.AssetId);
+    }
+
+    [Fact]
+    public async Task SoftDelete_SecondDelete_DoesNotPublishAgain()
+    {
+        // Duyuru yalnız durum DEĞİŞTİREN silmede doğar: ikinci DELETE (satır zaten silinmiş,
+        // sahiplik filtresi 404 döner) feed'e ikinci olay üretmez — pasif sekmede
+        // yinelenen cerrahi/invalidate tetiklenmez.
+        var asset = await SeedUploadingAssetAsync();
+        var hub = new RecordingHubContext();
+
+        var first = await AssetEndpoints.SoftDelete(
+            asset.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, hub,
+            NullLoggerFactory.Instance, CancellationToken.None);
+        var second = await AssetEndpoints.SoftDelete(
+            asset.Id, PrincipalFor(_userId), _db, _storage, TimeProvider.System, hub,
+            NullLoggerFactory.Instance, CancellationToken.None);
+
+        Assert.IsType<NoContent>(first);
+        Assert.IsType<NotFound>(second);
+        Assert.Single(hub.Sent);
     }
 
     // ---------- Bulgu 4: S3 hata haritalama ----------

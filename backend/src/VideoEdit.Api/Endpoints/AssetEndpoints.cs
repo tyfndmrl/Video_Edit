@@ -2,10 +2,12 @@ using System.Security.Claims;
 using System.Text.Json;
 using Amazon.S3;
 using Hangfire;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using VideoEdit.Api.Assets;
 using VideoEdit.Api.Auth;
+using VideoEdit.Api.Hubs;
 using VideoEdit.Contracts;
 using VideoEdit.Domain;
 using VideoEdit.Domain.Entities;
@@ -703,7 +705,8 @@ public static class AssetEndpoints
 
     internal static async Task<IResult> SoftDelete(
         Guid id, ClaimsPrincipal principal, AppDbContext db, IStorageService storage,
-        TimeProvider clock, CancellationToken ct)
+        TimeProvider clock, IHubContext<JobProgressHub> progressHub, ILoggerFactory loggerFactory,
+        CancellationToken ct)
     {
         var asset = await FindOwnedAssetAsync(db, id, principal.GetUserId(), track: false, ct);
         if (asset is null)
@@ -729,6 +732,7 @@ public static class AssetEndpoints
             if (claimed == 1)
             {
                 await AbortUploadIgnoringMissingAsync(storage, asset, ct);
+                await PublishAssetRemovedAsync(progressHub, loggerFactory, asset.OwnerId, id);
                 return Results.NoContent();
             }
         }
@@ -738,11 +742,47 @@ public static class AssetEndpoints
         // ilgili klipler timeline'da "medya eksik" olarak işaretlenir. R2 prefix GC
         // (DeletePrefix) hard-delete job'ına gelecek; şimdilik yalnız soft delete — R2
         // objeleri yerinde kalır. 0 satır (zaten silinmiş) de 204: silme idempotenttir.
-        await db.Assets
+        var removed = await db.Assets
             .Where(a => a.Id == id && a.DeletedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(a => a.DeletedAt, now), ct);
 
+        if (removed == 1)
+        {
+            await PublishAssetRemovedAsync(progressHub, loggerFactory, asset.OwnerId, id);
+        }
+
         return Results.NoContent();
+    }
+
+    /// <summary>
+    /// Silmeyi sahibinin <c>user:{id}</c> feed grubuna duyurur (B6'nın silme yarısı —
+    /// pasif sekme/çapraz istemci senkronu). SÜREÇ-İÇİ doğrudan gönderim: olay API'de doğar
+    /// ve hub aynı süreçtedir — Redis publish turu bilinçli yok (tek API instance; DECISIONS).
+    /// Yalnız GERÇEKTEN durum değiştiren silme (etkilenen satır = 1) yayınlanır: idempotent
+    /// ikinci DELETE olay üretmez. Hedef grup sahiplik kapılıdır (parametresiz
+    /// SubscribeUserFeed — kimlik JWT'den), mesaj başka kullanıcıya ulaşamaz.
+    /// </summary>
+    private static async Task PublishAssetRemovedAsync(
+        IHubContext<JobProgressHub> hub, ILoggerFactory loggerFactory, Guid ownerId, Guid assetId)
+    {
+        try
+        {
+            // İstek iptali yayını kesmesin: DB'deki silme commit edildi, duyuru da tamamlanmalı
+            // (CancellationToken.None). Grup boşsa gönderim ucuz bir no-op'tur.
+            await hub.Clients.Group(JobProgressChannel.UserGroup(ownerId))
+                .SendAsync(
+                    JobProgressChannel.HubMethodAssetRemoved,
+                    new AssetRemovedMessage(assetId),
+                    CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // Yayın best-effort: silme DB'de TAMAMLANDI, 204 dönmek zorundayız — burada
+            // istisna akıtmak istemciye "silinmedi" yalanı söylerdi. Yayın düşerse pasif
+            // sekme SignalR-öncesi kabul edilmiş davranışa düşer (odak/yenilemede görür).
+            loggerFactory.CreateLogger(nameof(AssetEndpoints)).LogWarning(
+                ex, "assetRemoved yayını gönderilemedi (asset {AssetId}); silme geçerli.", assetId);
+        }
     }
 
     // ---------- Helpers ----------
