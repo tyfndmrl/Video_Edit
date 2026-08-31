@@ -1241,14 +1241,18 @@ sözleşmesini KULLANMA biçimi çalışıyor.
 - Ve en önemlisi: **ağ**. §0.1'deki 321 MB/sn loopback sayısıdır; gerçek R2'de yükleme
   süresi kullanıcının internet hızıdır.
 
-### 4.3 Versiyon (revision) temizleme işi YOK
+### 4.3 Versiyon (revision) temizleme işi ~~YOK~~ → VAR (2026-08-31, gelistirme-3 #2b)
 
 Autosave her kaydetmede revision üretir; `SnapshotPolicy` bunların bir kısmını snapshot'lar
 (20 revision'da bir VEYA 5 dakikada bir + değişiklik VEYA manuel checkpoint/restore öncesi).
-**Eskiyenleri silen periyodik iş yoktur** — worker'da kayıtlı tek yinelenen iş
-`asset-reaper`'dır (`Worker/Program.cs`, `AddOrUpdate<AssetReaperJob>` — 15 dakikada bir). Yani `ProjectRevisions`
-tablosu **sınırsız büyür**. Plandaki kural ("son 50 auto + eskilerde inceltme") yazılmadı.
-POC ölçeğinde sorun değil; aylarca kullanılan bir kurulumda disk ve sorgu maliyeti olur.
+~~**Eskiyenleri silen periyodik iş yoktur** — `ProjectRevisions` tablosu **sınırsız büyür**.~~
+**KAPANDI:** `ProjectRevisionRetentionJob` (saatlik recurring `revision-retention`) plandaki
+kuralı uygular — proje başına son 50 Auto tutulur, 24 saatten eski Auto'lar saat başına 1'e
+inceltilir; Checkpoint/PreRestore hiç silinmez; sabitler `RevisionRetention__*` config'inden.
+Kapanış günü dev DB'de 15 861 Auto satırı (29 MB) birikmişti — sınırsız büyüme gerçekti, ama
+dağılım proje başına ≤50 olduğundan (binlerce küçük e2e projesi) günlük işletimde asıl şişkinlik
+e2e HESAP birikimiydi (gelistirme-3 #2c'nin konusu). Tarihsel not: kapanıştan önce worker'ın
+tek yinelenen işi `asset-reaper`'dı.
 
 ### 4.4 Kota kontrolü check-then-act (yarış mümkün)
 

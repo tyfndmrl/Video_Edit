@@ -88,10 +88,18 @@ builder.Services.AddSingleton<IJobProgressPublisher>(sp => new RedisJobProgressP
     sp.GetRequiredService<ILogger<RedisJobProgressPublisher>>(),
     sp.GetRequiredService<TimeProvider>()));
 
+// ProjectRevisions retention sabitleri: varsayılanlar tasarım 03 tarifidir (son 50 auto +
+// 24 saatten eskilerde saatte 1'e inceltme); farklı işletim RevisionRetention section'ından
+// (env: RevisionRetention__*) ezebilir. Kural değişmez — yalnız sayılar.
+builder.Services.Configure<RevisionRetentionOptions>(
+    builder.Configuration.GetSection(RevisionRetentionOptions.SectionName));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<RevisionRetentionOptions>>().Value);
+
 // İş sınıfları — Hangfire DI (AspNetCoreJobActivator) scope başına çözer.
 builder.Services.AddScoped<IProcessAssetJob, ProcessAssetJob>();
 builder.Services.AddScoped<IExportJob, ExportJob>();
 builder.Services.AddScoped<AssetReaperJob>();
+builder.Services.AddScoped<ProjectRevisionRetentionJob>();
 
 // Export orijinal LRU cache'i (tasarım 04 §4.2) — süreç başına tek instance.
 builder.Services.AddSingleton<OriginalCache>();
@@ -190,13 +198,28 @@ EnsureMediaToolAvailable(ffmpegOptions.FfprobePath, "ffprobe");
         .LogInformation("Export tahmin sabitleri (etkin): {Effective}", estimates.DescribeEffective());
 }
 
-// Reaper: 15 dk'da bir (kuyruk seçimi AssetReaperJob.Run üzerindeki [Queue] attribute'undan).
+// Revision retention sabitleri de AÇILIŞTA doğrulanır + görünür kılınır (ExportEstimates
+// deseni): bozuk override ilk koşumda kullanıcının versiyon geçmişini sessizce süpürmemeli.
+{
+    var retention = host.Services.GetRequiredService<RevisionRetentionOptions>();
+    retention.Validate();
+    host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("RevisionRetention")
+        .LogInformation("Revision retention sabitleri (etkin): {Effective}", retention.DescribeEffective());
+}
+
+// Reaper: 15 dk'da bir; revision retention: saatte bir (inceltme kovası da saatliktir — daha
+// sık koşum yalnız no-op üretir). Kuyruk seçimi iş sınıflarındaki [Queue] attribute'undan.
 using (var scope = host.Services.CreateScope())
 {
-    scope.ServiceProvider.GetRequiredService<IRecurringJobManager>().AddOrUpdate<AssetReaperJob>(
+    var recurring = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
+    recurring.AddOrUpdate<AssetReaperJob>(
         "asset-reaper",
         job => job.Run(CancellationToken.None),
         "*/15 * * * *");
+    recurring.AddOrUpdate<ProjectRevisionRetentionJob>(
+        "revision-retention",
+        job => job.Run(CancellationToken.None),
+        "0 * * * *");
 }
 
 host.Run();
