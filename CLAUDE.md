@@ -48,6 +48,18 @@ Ayrıntı: `docs/poc-bilinen-sinirlar.md`.
    `docs/poc-bilinen-sinirlar.md` (ölçülmüş sınırlar), `docs/rendering-semantics.md` (normatif
    render sözleşmesi), `docs/review-gate.md` (bağlayıcı denetim kuralları), `DURUM.md` (son denetim raporu)
 
+## Session Protokolleri
+
+**Açılış (P2 — kullanıcı promptu yapıştırmasa da uygula):** Okuma sırasını izle; ilk mesajda somut
+iş talimatı YOKSA önce ≤15 satırlık rapor ver (ne/neredeyiz/yapabilirim/yapamam+eksik/tutarsızlık),
+işi bloke eden en fazla 3 soru sor ve dosya değiştirmeden bekle. İş talimatı VARSA raporu 3-5 satıra
+indir ve işe başla. Doküman ile gerçek dosya çelişirse GERÇEK DOSYA doğrudur; çelişkiyi bildir.
+
+**Kapanış (P3 — her session sonunda; dilim içinde de sürekli):** `docs/CHANGELOG.md` + `docs/STATE.md`
+güncelle; dokunulan SKILLS girdilerinin "Son doğrulanma" tarihini çek; yeni karar varsa DECISIONS'a
+(reddedilen alternatifiyle); yetenek haritası değiştiyse bu dosyayı. Değişmeyene dokunma. Son satır:
+bir sonraki session'ın ilk işi. Güncellenmeyen set, yanlış bilgi verdiği için hiç set olmamasından kötüdür.
+
 ## Kırmızı Çizgiler
 
 - `docs/review-gate.md` BAĞLAYICIDIR: (1) başka bir ajanın/raporun çıktısı kanıt değildir — iddiayı
