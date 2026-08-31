@@ -1,5 +1,5 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-08-31, küçükler dilimi commit'iyle (öncesi `ae700cf`, main).
+Son güncelleme: 2026-08-31, SignalR ilerleme kanalı dilimiyle (öncesi küçükler `b08ce3a`, main).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
@@ -20,22 +20,29 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   gerçek-medya e2e'si pakete (`e2e/relogin-reopen.spec.ts` — böl → Kaydedildi → çıkış →
   yeniden giriş → seçici → aynı belge + proxy Range 206), README sayı/şema senkronu,
   `compose.dev.yml:1` yorumu. Defter: `PROGRESS.md` §Küçükler.
-- Son yeşil sayılar (2026-08-31, bizzat koşuldu): backend **1560/1560** (0 skip; MinIO'suz
-  1519 + 41 skip) · editör 1313 · şema 222 · Playwright **160/160** (10,7 dk) ·
-  build -warnaserror 0 uyarı · tsc + e2e tsc + prod build temiz.
+- **SignalR ilerleme kanalı** (2026-08-31, kullanıcı kararı — tasarım 03 §5): worker her
+  progress DB yazımının YANINDA Redis `job-progress` publish'i; API'de `RedisProgressForwarder`
+  → `JobProgressHub` (`/hubs/progress`) `job:{id}` / `asset:{id}` grupları; istemci
+  (`entities/progressHub.ts`) hub kapsarken yoklamayı durdurur. Polling YEDEK (silinmedi;
+  sessizlik bekçisi `HUB_SILENCE_TIMEOUT_MS` ile susan kanalda geri gelir); Redis zorunlu
+  DEĞİL (Redis'siz API/Worker açılır — canlıda ölçüldü); abonelik REST'le aynı sahiplik
+  kapısından (IDOR matrisi hub'a uzatıldı); JWT query-string YALNIZ hub yolunda + istek logu
+  query'siz. Backplane bilinçli YOK (DECISIONS). Defter: `PROGRESS.md` §SignalR.
+- Son yeşil sayılar (2026-08-31, SignalR dilimi sonunda bizzat koşuldu): backend
+  **1575/1575** (0 skip) · editör 1324 · şema 222 · Playwright **162/162** (10,3 dk) ·
+  build -warnaserror (tam rebuild) 0 uyarı · tsc + e2e tsc + prod build temiz.
 
 ## Devam edenler
 
-- Yok. Çalışma ağacı küçükler commit'iyle temiz.
+- Yok. Çalışma ağacı SignalR dilimi commit'iyle temiz.
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
 1. `git push` — **kullanıcı onayı bekliyor** (origin 25+ commit geride).
 2. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
-3. SignalR/Redis kararı: getir ya da iskeleyi sök (kod tüketicisi 0; compose+proxy+README şeması
-  duruyor; README mimari şemasında artık dürüst "yazılmadı" notu var).
-4. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
-  #11 upload resume sertleştirme.
+3. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
+  #11 upload resume sertleştirme. (SignalR maddesi 2026-08-31'de KAPANDI; kalan komşu iş
+  backlog B6 — çapraz-sekme kitaplık senkronu user-feed grubu ister, kapsam dışı bırakıldı.)
 
 ## Bilinen sorunlar
 
@@ -51,15 +58,18 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 
 1. Push: 2026-08-31'de yeniden soruldu — kullanıcı "beklesin" dedi (karar tazelendi).
 2. R2: 2026-08-31'de soruldu — "henüz değil" (beklemede; anahtarlar kullanıcıdan).
-3. ~~SignalR/Redis~~ KARAR VERİLDİ (2026-08-31): GETİRİLECEK — dilim başladı.
+3. ~~SignalR/Redis~~ KARAR VERİLDİ (2026-08-31): GETİRİLECEK — AYNI GÜN UYGULANDI (bkz.
+   Tamamlananlar; DECISIONS satırı gerekçe + reddedilenlerle güncel).
 4. SkiaSharp yükseltme penceresi (golden yeniden-kalibrasyon maliyetiyle) planlansın mı?
 5. Import-yönü/katman kuralı (dep-cruiser sınıfı; lint'ten ayrı) istenir mi, mevcut gevşemeler kabul mü?
 
-## Ortam notu (2026-08-31 sonu)
+## Ortam notu (2026-08-31 sonu, SignalR dilimi)
 
-Makine 25'inden sonra yeniden başlamış bulundu (Docker Desktop kapalı, servis yok — bilinen
-desen); ortam sıfırdan kaldırıldı. Servisler bu session'ın scratchpad'inden yayınlanan
-`api-run-kucukler`/`worker-run-kucukler` (HEAD kod-eşdeğeri; tazelik iğnelerle kanıtlı) +
-Vite :5173 çalışır durumda bırakıldı; Docker üçlüsü healthy. DİKKAT: yayın dizinleri
-session-scratchpad'te yaşar — yeni session onları bulamaz/güvenemez, `ortam-kaldirma` ile
-kendi yayınını yapmalı.
+Servisler bu session'ın scratchpad'inden yayınlanan `api-run-signalr`/`worker-run-signalr`
+(HEAD kodu; tazelik yüklü modül yolu + 6 iğneyle kanıtlı: `JobProgressHub`,
+`RedisProgressForwarder`, `RedisJobProgressPublisher`, `PublishProgressAsync` UTF-8;
+`job-progress`, `/hubs/progress` UTF-16) + taze Vite :5173 (yeni `@microsoft/signalr`
+bağımlılığı için restart ŞART) çalışır durumda bırakıldı; Docker üçlüsü healthy — Redis
+artık canlı kanalın taşıyıcısıdır ama ZORUNLU DEĞİLDİR (kapalıyken API/Worker açılır,
+polling taşır; canlıda ölçüldü). DİKKAT: yayın dizinleri session-scratchpad'te yaşar —
+yeni session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.

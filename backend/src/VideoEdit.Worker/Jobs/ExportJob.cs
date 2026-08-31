@@ -56,7 +56,8 @@ public sealed class ExportJob(
     TimeProvider clock,
     RunningRenderRegistry renders,
     ITextRasterService? textRaster = null,
-    ExportEstimateOptions? estimates = null) : IExportJob
+    ExportEstimateOptions? estimates = null,
+    IJobProgressPublisher? progressPublisher = null) : IExportJob
 {
     /// <summary>Disk yetersizse en fazla bu kadar denemede Failed('disk-full').</summary>
     public const int MaxDiskFullAttempts = 3;
@@ -124,6 +125,7 @@ public sealed class ExportJob(
         job.LastProgressAt = now; // heartbeat: reaper "canlı iş" kanıtı
         job.AttemptCount += 1;
         await db.SaveChangesAsync(ct);
+        await PublishProgressAsync(job);
 
         if (job.ProjectId is null || job.TimelineSnapshot is null)
         {
@@ -223,7 +225,7 @@ public sealed class ExportJob(
                 return;
             }
 
-            var progress = new JobProgressWriter(db, job, clock);
+            var progress = new JobProgressWriter(db, job, clock, progressPublisher);
             using var cancelCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
             // Reaper'ın ULAŞABİLECEĞİ iptal kancası. Kayıt indirmeden ÖNCE açılır (render'ın
@@ -538,6 +540,7 @@ public sealed class ExportJob(
             job.CompletedAt = doneAt;
             job.LastProgressAt = doneAt;
             await db.SaveChangesAsync(CancellationToken.None);
+            await PublishProgressAsync(job); // terminal mesaj: istemci otoriter DTO'yu bir kez çeker
 
             logger.LogInformation(
                 "ExportJob {JobId}: export completed ({DurationUs} us, key={OutputKey}).",
@@ -824,6 +827,7 @@ public sealed class ExportJob(
         job.Status = JobStatus.Queued;
         job.ProgressStage = "memory-wait";
         await db.SaveChangesAsync(ct);
+        await PublishProgressAsync(job);
         backgroundJobs.Schedule<IExportJob>(
             j => j.Run(job.Id, CancellationToken.None), MemoryWaitRetryDelay);
         logger.LogWarning(
@@ -873,6 +877,7 @@ public sealed class ExportJob(
         job.Status = JobStatus.Queued;
         job.ProgressStage = "disk-wait";
         await db.SaveChangesAsync(ct);
+        await PublishProgressAsync(job);
         backgroundJobs.Schedule<IExportJob>(
             j => j.Run(job.Id, CancellationToken.None), DiskFullRetryDelay);
         logger.LogWarning(
@@ -902,9 +907,19 @@ public sealed class ExportJob(
         job.ErrorMessage = message.Length > 4000 ? message[..4000] : message;
         job.CompletedAt = now;
         await db.SaveChangesAsync(CancellationToken.None);
+        await PublishProgressAsync(job);
 
         logger.LogWarning(
             "ExportJob {JobId}: failed deterministically ({Reason}): {Detail}", job.Id, reason, detail);
+    }
+
+    /// <summary>Terminal/geçiş DB yazımlarının yanına en-iyi-gayret canlı bildirim (null-güvenli).</summary>
+    private async Task PublishProgressAsync(Job job)
+    {
+        if (progressPublisher is not null)
+        {
+            await progressPublisher.PublishAsync(JobProgressMessages.FromJob(job), CancellationToken.None);
+        }
     }
 
     /// <summary>API'nin yazdığı cancel bayrağını taze okur (tracked entity'e güvenilmez).</summary>
@@ -930,11 +945,24 @@ public sealed class ExportJob(
     private async Task MarkCanceledAsync(Guid jobId)
     {
         var now = clock.GetUtcNow();
-        await db.Jobs
+        var touched = await db.Jobs
             .Where(j => j.Id == jobId && j.Status == JobStatus.Canceled)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(j => j.CompletedAt, j => j.CompletedAt ?? now)
                 .SetProperty(j => j.ProgressStage, "canceled"), CancellationToken.None);
+        if (touched > 0 && progressPublisher is not null)
+        {
+            // ExecuteUpdate tracked entity'yi güncellemez — mesaj DB'nin bilinen hâliyle elle
+            // kurulur (Status filtresi Canceled'ı garantiledi; stage az önce 'canceled' yazıldı).
+            var job = await db.Jobs.AsNoTracking().SingleOrDefaultAsync(
+                j => j.Id == jobId, CancellationToken.None);
+            if (job is not null)
+            {
+                await progressPublisher.PublishAsync(
+                    JobProgressMessages.FromJob(job), CancellationToken.None);
+            }
+        }
+
         logger.LogInformation("ExportJob {JobId}: canceled; ffmpeg killed and temp cleaned.", jobId);
     }
 

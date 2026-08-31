@@ -11,6 +11,8 @@ using VideoEdit.Api;
 using VideoEdit.Api.Assets;
 using VideoEdit.Api.Auth;
 using VideoEdit.Api.Endpoints;
+using VideoEdit.Api.Hubs;
+using VideoEdit.Contracts;
 using VideoEdit.Domain.Entities;
 using VideoEdit.Domain.Services;
 using VideoEdit.Infrastructure;
@@ -113,6 +115,27 @@ try
                 ClockSkew = TimeSpan.FromSeconds(30),
                 NameClaimType = "name",
             };
+
+            // SignalR + JWT (tasarım 03 §3/§8): WebSocket handshake'i Authorization başlığı
+            // taşıyamaz — istemci token'ı 'access_token' query parametresiyle gönderir.
+            // Query-string token'ı YALNIZ hub yolunda kabul edilir: REST uçlarında URL'de
+            // token dolaşması normalleşmesin. Log tarafı: Serilog istek logu path'i query'siz
+            // yazar (UseSerilogRequestLogging çağrısındaki redact notu) — token loglara sızmaz.
+            options.Events = new JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    var accessToken = context.Request.Query["access_token"];
+                    if (!string.IsNullOrEmpty(accessToken)
+                        && context.HttpContext.Request.Path.StartsWithSegments(
+                            JobProgressChannel.HubPath))
+                    {
+                        context.Token = accessToken;
+                    }
+
+                    return Task.CompletedTask;
+                },
+            };
         });
     builder.Services.AddAuthorization();
 
@@ -125,6 +148,15 @@ try
         .AllowAnyHeader()
         .AllowAnyMethod()
         .AllowCredentials()));
+
+    // --- SignalR ilerleme kanalı (tasarım 03 §5; DECISIONS 2026-08-31) ---
+    // Hub sunucusu framework içinden gelir (paket yok). Redis backplane'i BİLEREK EKLENMEDİ:
+    // tek API instance'ında hub'lar arası senkron ihtiyacı yok — worker'dan gelen mesajları
+    // RedisProgressForwarder düz pub/sub aboneliğiyle alıp gruba yayınlar. Çok-instance'a
+    // çıkılırsa backplane geri alma koşulu DECISIONS satırındadır. Forwarder Redis'e
+    // ERİŞEMEZSE API açılır ve açık kalır; hub beslenmez, istemciler polling yedeğine döner.
+    builder.Services.AddSignalR();
+    builder.Services.AddHostedService<RedisProgressForwarder>();
 
     // --- ProblemDetails + global exception handler ---
     builder.Services.AddProblemDetails();
@@ -257,6 +289,11 @@ try
     app.UseForwardedHeaders(forwardedOptions);
 
     app.UseExceptionHandler();
+    // İstek logu path'i QUERY'SİZ yazar (Serilog RequestPath = HttpContext.Request.Path).
+    // Bu, hub yolundaki 'access_token' query parametresinin loglara sızmaması şartının
+    // (tasarım 03 §8 "query redact") uygulanmasıdır — query'yi loga ekleyen bir seçenek
+    // (IncludeQueryInRequestPath vb.) BİLİNÇLİ olarak açılmaz; açılacaksa hub yolu hariç
+    // tutulmak zorundadır.
     app.UseSerilogRequestLogging();
     app.UseCors(corsPolicy);
     app.UseAuthentication();
@@ -295,6 +332,7 @@ try
     app.MapAssetEndpoints();
     app.MapExportEndpoints();
     app.MapFontEndpoints();
+    app.MapProgressHubEndpoints();
 
     app.Run();
     return 0;

@@ -17,7 +17,8 @@ apps/editor/
                              keyframes/ shortcuts/ auth/ projects/ versions/ history/
   src/state/                 docStore (patch-undo) · editorStore · assetStore · timelineOps
                              (TÜM doküman mutasyonları tek kapıdan — 4600+ satır, bilinçli)
-  src/entities/              API istemci sarmalayıcıları (assets/exports/auth)
+  src/entities/              API istemci sarmalayıcıları (assets/exports/auth) + progressHub.ts
+                             (SignalR canlı ilerleme; polling yedeği kapıları + sessizlik bekçisi)
   e2e/                       Playwright — YALNIZ gerçek fare/klavye; support/ yardımcıları
   e2e/fixtures/seed.ts       API'den gerçek asset kuran test tohumu
 
@@ -31,13 +32,17 @@ packages/timeline-schema/
 backend/src/
   Directory.Build.props      XML-doc kapısı (yapısal uyarılar = hata; CS1591 gerekçeli susturuk)
   VideoEdit.Contracts/       [G kısmen] NJsonSchema üretimi C# DTO'ları (TimelineContracts.g.cs)
+                             + JobProgress.cs (canlı ilerleme kanalının TEK sabit/payload tanımı)
   VideoEdit.Domain/          Entity'ler + UploadRules (EF'siz saf)
   VideoEdit.Infrastructure/  EF Core + AppDbContext + Migrations/ [G-sonra-commit] + R2Storage + Auth
   VideoEdit.Media/           SAF ffmpeg/Skia katmanı (EF'e dokunmaz): ExportCompiler (3800+ satır),
                              ClipEffects, LayerGeometry, FfmpegRunner, Recipes/, Text/, CubeLutValidator
   VideoEdit.Api/             Minimal API: Endpoints/ (Auth/Project/Asset/Export/Font/Health) + kota + rate limit
+                             + Hubs/ (JobProgressHub sahiplik-kapılı abonelik; RedisProgressForwarder
+                             pub/sub→grup köprüsü; kayıt ProgressHubEndpoints'te — muhafız görür)
   VideoEdit.Worker/          Hangfire host: ProcessAssetJob (proxy/filmstrip/waveform/poster),
-                             ExportJob (disk+bellek kapıları, render bekçileri), AssetReaperJob
+                             ExportJob (disk+bellek kapıları, render bekçileri), AssetReaperJob,
+                             RedisJobProgressPublisher (progress DB yazımlarının yanında canlı yayın)
 
 backend/tools/SchemaGen/     zod JSON Schema → C# codegen aracı
 

@@ -76,6 +76,18 @@ builder.Services.Configure<ExportEstimateOptions>(
     builder.Configuration.GetSection(ExportEstimateOptions.SectionName));
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ExportEstimateOptions>>().Value);
 
+// İlerleme yayıncısı (SignalR dilimi — tasarım 03 §5): her progress DB yazımının YANINDA
+// Redis 'job-progress' kanalına publish; API'nin forwarder'ı hub grubuna iletir. Redis
+// ZORUNLU DEĞİLDİR: bağlantı dizisi yoksa/erişilemezse yayın sessizce düşer, DB yazımı ve
+// istemcinin polling yedeği aynen çalışır (RedisJobProgressPublisher sözleşmesi). Dev
+// fallback'i Postgres'inkiyle aynı desendir (yalnız Development'ta localhost).
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis")
+    ?? (builder.Environment.IsDevelopment() ? "localhost:6379" : null);
+builder.Services.AddSingleton<IJobProgressPublisher>(sp => new RedisJobProgressPublisher(
+    redisConnectionString,
+    sp.GetRequiredService<ILogger<RedisJobProgressPublisher>>(),
+    sp.GetRequiredService<TimeProvider>()));
+
 // İş sınıfları — Hangfire DI (AspNetCoreJobActivator) scope başına çözer.
 builder.Services.AddScoped<IProcessAssetJob, ProcessAssetJob>();
 builder.Services.AddScoped<IExportJob, ExportJob>();
@@ -102,7 +114,8 @@ builder.Services.AddHangfire((sp, cfg) => cfg
     .UseFilter(new JobFailureStateFilter(
         sp.GetRequiredService<IServiceScopeFactory>(),
         sp.GetRequiredService<TimeProvider>(),
-        sp.GetRequiredService<ILogger<JobFailureStateFilter>>()))
+        sp.GetRequiredService<ILogger<JobFailureStateFilter>>(),
+        sp.GetRequiredService<IJobProgressPublisher>()))
     .UsePostgreSqlStorage(
         o => o.UseNpgsqlConnection(connectionString),
         new PostgreSqlStorageOptions

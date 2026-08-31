@@ -1,5 +1,5 @@
 # VideoEdit
-Son güncelleme: 2026-08-25
+Son güncelleme: 2026-08-31
 
 ## Nedir
 
@@ -7,17 +7,20 @@ Tarayıcıda çalışan, CapCut benzeri çok katmanlı video editörü POC'u. Ku
 yükler (tarayıcıdan doğrudan multipart → MinIO/R2), canvas timeline'da düzenler (kes/böl/taşı,
 geçişler, metin/şekil/sticker, renk, LUT, hız, keyframe), WebGL2 önizlemede izler ve final
 videoyu sunucuda ffmpeg render eder. Frontend React 19 + zustand + WebGL2; backend .NET 10
-Minimal API + Hangfire worker; PostgreSQL (timeline jsonb) + MinIO (dev'de R2 yerine).
+Minimal API + Hangfire worker; PostgreSQL (timeline jsonb) + MinIO (dev'de R2 yerine) +
+Redis (canlı ilerleme pub/sub'ı — zorunlu değil, yoklama yedeği durur).
 
 ## Kapsam
 
 **Yapar:** çoklu katman timeline; kırpma/kesme/ayırma/taşıma; frame/zoom/timecode/player/kısayollar;
 undo-redo + işlem geçmişi; geçişler; metin/şekil/sticker; colorAdjust + LUT (.cube); hız; keyframe;
-ses/müzik miksi; export profilleri (720p/1080p/2160p/dikey); hesap + kota + versiyon geçmişi.
+ses/müzik miksi; export profilleri (720p/1080p/2160p/dikey); hesap + kota + versiyon geçmişi;
+SignalR canlı ilerleme (worker→Redis→`/hubs/progress`; polling YEDEK — 2026-08-31).
 
-**Yapmaz (bilinçli, kayıtlı):** gerçek Cloudflare R2 (hiç denenmedi — dev+CI MinIO), SignalR/Redis
-(ilerleme yoklamayla; iskele duruyor, karar açık), `fx.*` keyframe kanalı, hız rampası, emoji/tam
-shaping, mobil, çoklu-worker işletimi, lint (kullanıcı kararı). Ayrıntı: `docs/poc-bilinen-sinirlar.md`.
+**Yapmaz (bilinçli, kayıtlı):** gerçek Cloudflare R2 (hiç denenmedi — dev+CI MinIO), `fx.*`
+keyframe kanalı, hız rampası, emoji/tam shaping, mobil, çoklu-worker işletimi, lint (kullanıcı
+kararı), SignalR user-feed grubu (çapraz-sekme kitaplık senkronu — backlog B6 açık).
+Ayrıntı: `docs/poc-bilinen-sinirlar.md`.
 
 ## Yetenek Haritası
 
@@ -31,7 +34,6 @@ shaping, mobil, çoklu-worker işletimi, lint (kullanıcı kararı). Ayrıntı: 
 ### Yapamaz / önce insana sormalı
 - `git push` — kullanıcı "sonra" dedi; origin bilinçli geride (karar: kullanıcı)
 - Gerçek R2 dağıtımı — R2 hesap anahtarları kullanıcıdan gelmeli
-- SignalR/Redis kararı (getir ya da sök) — açık ürün kararı
 - MVP-dışı özellik başlatmak (fx.*, hız rampası, emoji…) — kapsam kararı kullanıcının
 - SkiaSharp yükseltmesi — tüm golden PNG'ler 3.116'ya kalibre; yeniden kalibrasyon kararı ister
 - Lint kurulumu — kullanıcı açıkça HAYIR dedi (`PROGRESS.md` başlığı)

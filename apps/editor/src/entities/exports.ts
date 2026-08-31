@@ -8,8 +8,14 @@
  * - POST /api/jobs/{jobId}/cancel -> 204
  * - GET  /api/projects/{id}/exports -> paged list, newest first
  */
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from './apiClient';
+import {
+  hubAwareExportsInterval,
+  hubAwareJobInterval,
+  syncJobSubscriptions,
+} from './progressHub';
 
 /**
  * Wire names of the export profiles — mirror of `ExportProfiles.TryParse` on the
@@ -91,7 +97,11 @@ export const jobQueryKey = (jobId: string) => ['jobs', jobId] as const;
 // Polling policy (pure — unit tested without react-query)
 // ---------------------------------------------------------------------------
 
-/** Poll cadence while an export job is in flight (SignalR replaces this later). */
+/**
+ * Poll cadence while an export job is in flight. SignalR canlı kanalı (entities/progressHub)
+ * birincildir; bu yoklama YEDEKTİR ve hub bir işi kapsamadığı anda aynen devreye girer —
+ * saf fonksiyonlar bugünkü politikayı tanımlar, hook'lar hub-farkındalı kapıdan geçirir.
+ */
 export const EXPORTS_POLL_MS = 2000;
 
 export function isJobActive(status: ExportJobStatusDto): boolean {
@@ -118,27 +128,56 @@ export function jobRefetchInterval(job: ExportJobDto | undefined): number | fals
 // ---------------------------------------------------------------------------
 
 /**
- * Export job list for a project (newest first). Polls every 2 s while any job
- * is active — also in background tabs, so a long render keeps reporting
- * progress when the user returns (same interim pattern as useProjectAssets).
+ * Export job list for a project (newest first). Canlı yol: aktif işler SignalR hub'ına
+ * abone edilir ve ilerleme push ile gelir — hub bir işi kapsıyorken o iş İÇİN yoklama
+ * durur. Hub yoksa/düşerse/susarsa bugünkü davranış aynen: 2 s poll (background dahil),
+ * her şey terminal olunca stop (hubAwareExportsInterval kapısı).
  */
 export function useProjectExports(projectId: string | null) {
-  return useQuery({
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: projectExportsQueryKey(projectId ?? 'none'),
     queryFn: () => listProjectExports(projectId as string),
     enabled: projectId !== null,
-    refetchInterval: (query) => exportsRefetchInterval(query.state.data?.items),
+    refetchInterval: (query) => hubAwareExportsInterval(query.state.data?.items),
     refetchIntervalInBackground: true,
   });
+
+  // Aktif işlerin abonelik senkronu. Effect id listesinin İÇERİĞİNE bağlanır ki no-op
+  // fetch'ler (items referansı her fetch'te değişir) yeniden senkron tetiklemesin; owner
+  // anahtarı bu hook'un katkısını useJob'unkinden ayırır (progressHub katkı modeli).
+  // Unmount/proje değişiminde katkı boşaltılır — hayalet abonelik kalmaz.
+  const activeKey = (query.data?.items ?? [])
+    .filter((j) => isJobActive(j.status))
+    .map((j) => j.id)
+    .join(',');
+  useEffect(() => {
+    const owner = `exports-list:${projectId ?? 'none'}`;
+    syncJobSubscriptions(queryClient, owner, activeKey === '' ? [] : activeKey.split(','));
+    return () => syncJobSubscriptions(queryClient, owner, []);
+  }, [queryClient, projectId, activeKey]);
+
+  return query;
 }
 
-/** Single export job (polls while queued/running). */
+/** Single export job (hub kapsıyorken push; aksi halde queued/running boyunca poll). */
 export function useJob(jobId: string | null) {
-  return useQuery({
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: jobQueryKey(jobId ?? 'none'),
     queryFn: () => getJob(jobId as string),
     enabled: jobId !== null,
-    refetchInterval: (query) => jobRefetchInterval(query.state.data),
+    refetchInterval: (query) => hubAwareJobInterval(query.state.data),
     refetchIntervalInBackground: true,
   });
+
+  const active = query.data !== undefined && isJobActive(query.data.status);
+  useEffect(() => {
+    if (jobId === null) return;
+    const owner = `job:${jobId}`;
+    syncJobSubscriptions(queryClient, owner, active ? [jobId] : []);
+    return () => syncJobSubscriptions(queryClient, owner, []);
+  }, [queryClient, jobId, active]);
+
+  return query;
 }

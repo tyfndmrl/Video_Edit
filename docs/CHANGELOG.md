@@ -2,6 +2,24 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-08-31
+- SignalR ilerleme kanalı (kullanıcı kararı "GETİR" — tasarım 03 §5'e sadık, tek commit):
+  worker her progress DB yazımının yanında Redis `job-progress` publish'i
+  (`RedisJobProgressPublisher` — asla fırlatmaz, Redis zorunlu değil); API'de
+  `RedisProgressForwarder` (BackgroundService; Redis'siz dayanıklılık canlıda ölçüldü —
+  aşağıda) →
+  `JobProgressHub` `/hubs/progress` `job:{id}`/`asset:{id}` grupları; kanal/yol/metot/grup
+  sabitleri TEK yerde (`Contracts/JobProgress.cs`); JWT query-string YALNIZ hub yolunda +
+  istek logu query'siz (redact). İstemci `entities/progressHub.ts`: hub kapsarken export/asset
+  yoklaması durur, hub yok/düşük/sessizken (bekçi 15 sn) bugünkü 2 sn / 3 sn polling AYNEN
+  yedek. Sahiplik kapısı hub aboneliğinde de (IDOR matrisi uzatıldı: `CrossUserAccessTests.Hub_*`
+  + uç envanteri defterine `/hubs/progress` satırları; `MapHub` muhafız gereği
+  `ProgressHubEndpoints` grubunda). Kanıt: canlı e2e ağ ölçümü (hub akarken export GET'i
+  canlı pencerede 0; WS engelliyken polling ≥2 GET ile iş yine tamamlandı) + canlı
+  dayanıklılık (Redis container durdu → koşan API /health+login 200; Redis KAPALIYKEN
+  açılan API de /health 200, Redis dönünce forwarder kendiliğinden abone) + iki negatif
+  kontrol (kapı söküldü → HubException gelmedi kırmızısı; forwarder söküldü → "hub'dan mesaj
+  gelmedi" kırmızısı; md5 birebir geri). Backplane paketi bilinçli YOK (tek instance —
+  DECISIONS geri-alma koşuluyla).
 - Küçükler dilimi (STATE eski §Sıradakiler 5; dört iş TEK commit): SaveTimeline 409 birim
   sözleşme pini (`SaveTimelineRevisionContractTests`, Sqlite in-memory; + canlı ham-API
   eş-kanıtı; negatif kontrol: concurrency filtresi sökülünce "bayat yazma Ok'landı" kırmızısı);

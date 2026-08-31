@@ -97,6 +97,10 @@ ve istemcinin duvar saatinden alındı (aşama sınırlarının payı ±0,4 sn).
 | **Dosya seçiciden "Hazır" rozetine** | **75,6 sn** | — | Kullanıcının GÖRDÜĞÜ toplam (yükleme + kuyruk + işleme + UI yoklaması) |
 | Timeline'a alma (kitaplıkta çift tık) | **0,34 sn** | — | Klip süresi tam 640 000 000 µs |
 
+*(2026-08-31: buradaki "UI yoklaması" bileşeni de yoklama devrindendir — işleme ilerlemesi
+artık SignalR push'uyla akar (`asset:{id}` grubu), 3 sn'lik asset yoklaması YEDEK olarak durur;
+ölçüm satırları tarihsel kayıt olarak değiştirilmedi.)*
+
 **Türevler (bir 1,51 GiB kaynağın ürettiği her şey).**
 
 | Türev | Boyut | Not |
@@ -121,7 +125,10 @@ seçilip `Delete`. Kalan klip **tam 60 000 000 µs**.
 - Kullanıcının gördüğü duvar saati (diyalogdaki "Dışa aktar"a basıştan "Tamamlandı" rozetine):
   60 sn'lik kesimde **19,5 / 20,5 sn**, tam 10:40'lık çizelgede **184,2 sn**. Aradaki fark
   kuyruk gecikmesi + UI yoklamasıdır; kuyruğa alınma bu koşumlarda **0,4 – 4,3 sn** arasında
-  gezindi (Hangfire yoklaması).
+  gezindi (Hangfire yoklaması). *(2026-08-31 notu: bu ölçümler yoklama devrindendir. İlerleme
+  artık SignalR push'uyla akar ve "UI yoklaması" bileşeni canlı yolda kaybolur — 2 sn'lik
+  yoklama kadansı YEDEK olarak durur, hub yoksa/susarsa aynen geri gelir; ölçüm satırları
+  tarihsel kayıt olarak DEĞİŞTİRİLMEDİ.)*
 - **Üç 60 sn'lik koşumun çıktısı bayt sayısı olarak BİREBİR aynı** (215 311 057) — render bu
   belgede belirlenimci davrandı. Bu bir belirlenimcilik İSPATI değildir (boyut eşitliği içerik
   eşitliği demek değil), yalnız gözlemdir.

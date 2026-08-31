@@ -21,7 +21,8 @@ export default defineConfig({
     headers: crossOriginIsolationHeaders,
     proxy: {
       '/api': 'http://localhost:5000',
-      // SignalR hub: needs WebSocket proxying.
+      // SignalR JobProgressHub (/hubs/progress) — entities/progressHub.ts buradan bağlanır;
+      // ws:true olmadan WebSocket upgrade'i proxy'den geçmez ve istemci polling yedeğine düşer.
       '/hubs': { target: 'http://localhost:5000', ws: true },
     },
   },

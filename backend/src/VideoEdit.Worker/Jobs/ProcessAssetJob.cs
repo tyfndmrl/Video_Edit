@@ -45,7 +45,8 @@ public sealed class ProcessAssetJob(
     IBackgroundJobClient backgroundJobs,
     ILogger<ProcessAssetJob> logger,
     TimeProvider clock,
-    ProcessingOptions processing) : IProcessAssetJob
+    ProcessingOptions processing,
+    IJobProgressPublisher? progressPublisher = null) : IProcessAssetJob
 {
     /// <summary>Süre bilinmiyorken kaba disk payı: orijinal + proxy + türevler ≈ 3× dosya boyutu.</summary>
     public const int RequiredDiskMultiplier = 3;
@@ -108,6 +109,7 @@ public sealed class ProcessAssetJob(
         }
 
         await db.SaveChangesAsync(ct);
+        await PublishProgressAsync(job); // queued→running geçişi de canlı kanala düşer
 
         // Temp dizini jobId+Guid: aynı işin (yarışan) iki koşusu asla aynı dizini paylaşmaz.
         var tempDir = Path.Combine(
@@ -122,7 +124,7 @@ public sealed class ProcessAssetJob(
                 return;
             }
 
-            var progress = new JobProgressWriter(db, job, clock);
+            var progress = new JobProgressWriter(db, job, clock, progressPublisher);
 
             // ── 2) Orijinali indir (stream) — %0-15.
             var originalPath = Path.Combine(tempDir, "original" + Path.GetExtension(asset.StorageKey));
@@ -319,6 +321,16 @@ public sealed class ProcessAssetJob(
         job.ProgressStage = "done";
         job.CompletedAt = doneAt;
         await db.SaveChangesAsync(ct);
+        await PublishProgressAsync(job); // asset Ready + job Succeeded AYNI commit'te — istemci taze çeker
+    }
+
+    /// <summary>Terminal DB yazımlarının yanına en-iyi-gayret canlı bildirim (null-güvenli).</summary>
+    private async Task PublishProgressAsync(Job job)
+    {
+        if (progressPublisher is not null)
+        {
+            await progressPublisher.PublishAsync(JobProgressMessages.FromJob(job), CancellationToken.None);
+        }
     }
 
     // ───────────────────────── Kind pipeline'ları ─────────────────────────
@@ -644,6 +656,7 @@ public sealed class ProcessAssetJob(
         job.Status = JobStatus.Queued;
         job.ProgressStage = "disk-wait";
         await db.SaveChangesAsync(ct);
+        await PublishProgressAsync(job);
         backgroundJobs.Schedule<IProcessAssetJob>(
             j => j.Run(job.Id, CancellationToken.None), DiskFullRetryDelay);
         logger.LogWarning(
@@ -672,6 +685,7 @@ public sealed class ProcessAssetJob(
         job.ErrorMessage = message.Length > 4000 ? message[..4000] : message;
         job.CompletedAt = now;
         await db.SaveChangesAsync(CancellationToken.None);
+        await PublishProgressAsync(job);
 
         logger.LogWarning(
             "ProcessAssetJob {JobId}: asset {AssetId} failed deterministically ({Reason}): {Detail}",

@@ -6,8 +6,10 @@
  * upload write side (init/presign/complete/abort) lives with the upload engine
  * adapter: features/library/upload/uploadApi.ts.
  */
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from './apiClient';
+import { hubAwareAssetsInterval, syncAssetSubscriptions } from './progressHub';
 
 export type AssetStatusDto = 'uploading' | 'uploaded' | 'processing' | 'ready' | 'failed';
 export type AssetKindDto = 'video' | 'audio' | 'image' | 'lut';
@@ -59,27 +61,37 @@ export const projectAssetsQueryKey = (projectId: string) =>
   ['projects', projectId, 'assets'] as const;
 
 /**
- * Project asset list. Polls every 3 s while any asset is queued/processing
- * (uploaded -> processing -> ready happens server-side; SignalR replaces this
- * polling in M1-B).
+ * Project asset list. Canlı yol: uploaded/processing satırlar SignalR hub'ının
+ * `asset:{id}` gruplarına abone edilir (entities/progressHub) ve işleme ilerlemesi push
+ * ile gelir — hub kapsıyorken yoklama durur. Hub yoksa/düşerse/susarsa bugünkü davranış
+ * aynen: 3 s poll, hiçbir satır meşgul değilken stop (hubAwareAssetsInterval kapısı).
  */
 export function useProjectAssets(projectId: string | null) {
-  return useQuery({
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: projectAssetsQueryKey(projectId ?? 'none'),
     queryFn: () => listProjectAssets(projectId as string),
     enabled: projectId !== null,
-    refetchInterval: (query) => {
-      const items = query.state.data?.items;
-      if (!items) return false;
-      const busy = items.some((a) => a.status === 'uploaded' || a.status === 'processing');
-      return busy ? 3000 : false;
-    },
+    refetchInterval: (query) => hubAwareAssetsInterval(query.state.data?.items),
     // Keep polling while the tab is in the background so processing status is
     // fresh when the user returns (react-query pauses refetchInterval in
-    // hidden tabs by default). ACCEPTED interim solution until SignalR push
-    // replaces this polling in M2.
+    // hidden tabs by default) — hub kapsamı da sekme görünürlüğünden bağımsızdır.
     refetchIntervalInBackground: true,
   });
+
+  // Meşgul asset'lerin abonelik senkronu (exports.ts'teki desenle aynı: içerik anahtarı +
+  // owner'lı katkı + unmount temizliği).
+  const busyKey = (query.data?.items ?? [])
+    .filter((a) => a.status === 'uploaded' || a.status === 'processing')
+    .map((a) => a.id)
+    .join(',');
+  useEffect(() => {
+    const owner = `assets-list:${projectId ?? 'none'}`;
+    syncAssetSubscriptions(queryClient, owner, busyKey === '' ? [] : busyKey.split(','));
+    return () => syncAssetSubscriptions(queryClient, owner, []);
+  }, [queryClient, projectId, busyKey]);
+
+  return query;
 }
 
 // ---------------------------------------------------------------------------

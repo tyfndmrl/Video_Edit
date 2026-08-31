@@ -10,8 +10,15 @@ namespace VideoEdit.Worker.Jobs;
 /// heartbeat'i çok yavaş ilerleyen uzun transcode'da bile taze kalsın). Her yazım
 /// LastProgressAt'ı damgalar. Çağrılar TEK thread'den gelir (ffmpeg progress callback'i
 /// FfmpegRunner'ın okuma döngüsünden seri await edilir) — DbContext güvenli.
+/// <para>
+/// SignalR dilimi: her DB yazımının YANINDA aynı satırın tel mesajı yayıncıya da verilir
+/// (Redis → API forwarder → hub grubu). Throttle DEĞİŞMEZ — hub da DB ile aynı adımları
+/// görür; publish en-iyi-gayrettir ve yazım akışını asla düşüremez (publisher sözleşmesi).
+/// Yayıncı null ise (birim testleri) davranış eskisiyle birebirdir.
+/// </para>
 /// </summary>
-public sealed class JobProgressWriter(AppDbContext db, Job job, TimeProvider clock)
+public sealed class JobProgressWriter(
+    AppDbContext db, Job job, TimeProvider clock, IJobProgressPublisher? publisher = null)
 {
     public static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(2);
 
@@ -37,5 +44,12 @@ public sealed class JobProgressWriter(AppDbContext db, Job job, TimeProvider clo
         _lastStage = stage;
         _lastWrittenAt = now;
         await db.SaveChangesAsync(ct);
+
+        if (publisher is not null)
+        {
+            // CancellationToken.None bilinçli: yazım DB'ye ULAŞTI — iptal, başarılı yazımın
+            // bildirimini yarı yolda kesip OCE'yi çağıranın cancel yoluna akıtmamalı.
+            await publisher.PublishAsync(JobProgressMessages.FromJob(job), CancellationToken.None);
+        }
     }
 }

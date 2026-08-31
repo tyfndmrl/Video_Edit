@@ -493,7 +493,14 @@ public static class ExportEndpoints
             job.CompletedAt);
     }
 
-    private static string StatusString(JobStatus status) => status switch
+    /// <summary>
+    /// DTO'nun tel-durum yazımı. Internal: worker'ın canlı-ilerleme mesajı aynı kelime
+    /// dağarcığını kendi kopyasıyla üretir (JobProgressMessages.StatusWire — katman kuralı
+    /// worker→Api referansına izin vermez) ve iki kopya
+    /// <c>ProgressHubTests.WorkerWireStatusMatchesTheApiDtoStatusForEveryJobStatus</c> ile
+    /// her enum değeri üzerinde eşitlenir.
+    /// </summary>
+    internal static string StatusString(JobStatus status) => status switch
     {
         JobStatus.Queued => "queued",
         JobStatus.Running => "running",

@@ -125,14 +125,20 @@ tarayıcı ──(presigned PUT, 64 MiB parça)──► R2 / MinIO ◄──(in
    │ REST + JWT                                                               │ Hangfire
    ▼                                                                          │ (postgres)
   API (ASP.NET Core Minimal API) ──► PostgreSQL (timeline jsonb) ─────────────┘
-                                 └─► Redis (SignalR backplane — PLANLANAN; aşağıdaki nota bakın)
+                                 └─► Redis pub/sub ◄──(job-progress publish)── Worker
+                                        │
+                                        └─► SignalR `/hubs/progress` ──► tarayıcı (canlı ilerleme)
 ```
 
-> **Dürüst not (2026-08-31):** şemadaki Redis/SignalR hattı bugün **yazılmış değildir** —
-> ilerleme (upload/işleme/export) istemcinin **yoklamasıyla** (polling) akar; SignalR hub'ı
-> yok, Redis'i tüketen ürün kodu yok (compose + proxy iskeleti duruyor). "Getir ya da sök"
-> kararı açık bir ürün kararıdır (`docs/STATE.md` açık sorular); şema o karar verilene kadar
-> hedef mimariyi göstermeye devam ediyor.
+> **Canlı ilerleme (2026-08-31):** işleme/export ilerlemesi artık **SignalR**'la akar:
+> worker her progress DB yazımının yanında Redis `job-progress` kanalına publish eder,
+> API'deki forwarder mesajı `job:{id}` / `asset:{id}` gruplarına iletir, istemci
+> (`entities/progressHub.ts`) abone olduğu işler için yoklamayı durdurur. **Polling
+> YEDEKTİR ve silinmemiştir:** hub yoksa/düşerse/susarsa bugüne kadarki 2 sn (export) /
+> 3 sn (asset) yoklama aynen devreye girer; Redis erişilemezse API/Worker yine açılır
+> (Redis zorunlu değildir). Hub aboneliği REST ile aynı sahiplik kapısından geçer
+> (yabancı iş/asset reddedilir). SignalR Redis **backplane'i bilinçli yok** — tek API
+> instance'ında düz pub/sub yeter (`docs/DECISIONS.md` 2026-08-31 satırı).
 
 - **Frontend** ([apps/editor](apps/editor)) — Vite + React 19 + TypeScript + Tailwind 4.
   Canvas tabanlı timeline, **WebGL2 kompozitör**, gizli `<video>` havuzu (en fazla 4) üstünde

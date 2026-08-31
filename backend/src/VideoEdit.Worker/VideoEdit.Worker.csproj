@@ -12,6 +12,9 @@
     <PackageReference Include="Hangfire.PostgreSql" Version="1.21.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <!-- İlerleme pub/sub'ı (tasarım 03 §5): worker 'job-progress' kanalına publish eder.
+         Redis çalışma zamanında OPSİYONELDİR — RedisJobProgressPublisher sözleşmesi. -->
+    <PackageReference Include="StackExchange.Redis" Version="2.13.17" />
   </ItemGroup>
 
   <ItemGroup>

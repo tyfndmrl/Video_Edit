@@ -428,6 +428,48 @@ public sealed class CrossUserAccessTests : IDisposable
         Assert.Empty(_jobs.StateChanges); // Hangfire tarafına da dokunulmadı
     }
 
+    // ---------- SignalR hub abonelikleri (IDOR matrisinin hub'a uzantısı) ----------
+
+    [Fact]
+    public async Task Hub_SubscribeJob_ForeignJob_IsRejected_AndJoinsNoGroup()
+    {
+        var project = await SeedVictimProjectAsync();
+        var job = await SeedVictimExportJobAsync(project, JobStatus.Running);
+        var groups = new RecordingGroupManager();
+        using var hub = new VideoEdit.Api.Hubs.JobProgressHub(_db)
+        {
+            Context = new TestHubCallerContext(Attacker),
+            Groups = groups,
+        };
+
+        var ex = await Assert.ThrowsAsync<Microsoft.AspNetCore.SignalR.HubException>(
+            () => hub.SubscribeJob(job.Id));
+
+        // REST 404'ünün aynası: "yok" ile "senin değil" ayrımı mesajdan da sızmaz.
+        Assert.Equal(VideoEdit.Api.Hubs.JobProgressHub.NotFoundMessage, ex.Message);
+        // Ret gruba HİÇ dokunmadan gelir: tek bir AddToGroupAsync çağrısı bile yapılmadı —
+        // saldırgan kurbanın canlı ilerleme yayınına (hata mesajları dahil) bağlanamaz.
+        Assert.Empty(groups.Added);
+    }
+
+    [Fact]
+    public async Task Hub_SubscribeAsset_ForeignAsset_IsRejected_AndJoinsNoGroup()
+    {
+        var asset = await SeedVictimAssetAsync(status: AssetStatus.Processing);
+        var groups = new RecordingGroupManager();
+        using var hub = new VideoEdit.Api.Hubs.JobProgressHub(_db)
+        {
+            Context = new TestHubCallerContext(Attacker),
+            Groups = groups,
+        };
+
+        var ex = await Assert.ThrowsAsync<Microsoft.AspNetCore.SignalR.HubException>(
+            () => hub.SubscribeAsset(asset.Id));
+
+        Assert.Equal(VideoEdit.Api.Hubs.JobProgressHub.NotFoundMessage, ex.Message);
+        Assert.Empty(groups.Added);
+    }
+
     // ---------- Seed yardımcıları ----------
 
     private async Task<Project> SeedVictimProjectAsync(string name = "Kurbanın projesi")
@@ -661,6 +703,13 @@ public sealed class CrossUserEndpointInventoryTests
         ["GET /api/projects/{projectId:guid}/exports"] = nameof(CrossUserAccessTests.Export_ListForProject_ForeignProject_Returns404_LeaksNoDownloadUrl),
         ["GET /api/jobs/{id:guid}"] = nameof(CrossUserAccessTests.Export_GetJob_ForeignJob_Returns404_LeaksNoDownloadUrl),
         ["POST /api/jobs/{id:guid}/cancel"] = nameof(CrossUserAccessTests.Export_CancelJob_ForeignJob_Returns404_AndJobStaysQueued),
+        // SignalR hub'ı (2026-08-31): HTTP yüzeyi rota parametresi TAŞIMAZ — id alan yüzey
+        // hub'ın abonelik METOTLARIDIR (SubscribeJob/SubscribeAsset) ve IDOR matrisi oraya
+        // uzanır. Defter satırları o kapı testlerine bağlanır: uç, "sahiplik testi olmadan
+        // yeşil kalamaz" kuralının kapsamında kalır (parametresiz diye muaf DEĞİLDİR —
+        // muafiyet, id'nin hub metodu argümanına taşındığı gerçeğini gizlerdi).
+        ["* /hubs/progress"] = nameof(CrossUserAccessTests.Hub_SubscribeJob_ForeignJob_IsRejected_AndJoinsNoGroup),
+        ["* /hubs/progress/negotiate"] = nameof(CrossUserAccessTests.Hub_SubscribeAsset_ForeignAsset_IsRejected_AndJoinsNoGroup),
     };
 
     /// <summary>
@@ -837,6 +886,12 @@ public sealed class CrossUserEndpointInventoryTests
         var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions());
         builder.Services.AddLogging();
         builder.Services.AddRouting();
+        // SignalR dilimi (2026-08-31): MapProgressHubEndpoints, MapHub'ın istediği marker
+        // servisleri olmadan koşamaz — GERÇEK AddSignalR kaydedilir (trap değil; MapHub kayıt
+        // ANINDA marker'ı yoklar). Uygulama yine hiç BAŞLATILMAZ, hiçbir hub örneklenmez;
+        // kazanım: hub'ın negotiate + bağlantı uçları rota tablosuna girer ve defter
+        // kapsamına alınır (satır-içi MapHub yasağı Program.cs'te geçerli kalır).
+        builder.Services.AddSignalR();
         RegisterHandlerServiceTypes(builder.Services);
         // Boş builder sunucu kaydetmez ama WebApplication kurucusu IServer ister; uygulama
         // hiç BAŞLATILMAZ — sahte sunucu yalnız Build()'i geçirir.

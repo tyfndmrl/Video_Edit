@@ -1,6 +1,7 @@
 using Hangfire.States;
 using Hangfire.Storage;
 using VideoEdit.Domain;
+using VideoEdit.Domain.Entities;
 using VideoEdit.Infrastructure;
 
 namespace VideoEdit.Worker.Jobs;
@@ -17,7 +18,8 @@ namespace VideoEdit.Worker.Jobs;
 public sealed class JobFailureStateFilter(
     IServiceScopeFactory scopeFactory,
     TimeProvider clock,
-    ILogger<JobFailureStateFilter> logger) : IApplyStateFilter
+    ILogger<JobFailureStateFilter> logger,
+    IJobProgressPublisher? progressPublisher = null) : IApplyStateFilter
 {
     public void OnStateApplied(ApplyStateContext context, IWriteOnlyTransaction transaction)
     {
@@ -37,7 +39,15 @@ public sealed class JobFailureStateFilter(
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var error = "hangfire-failed: "
                 + (failed.Exception?.Message ?? failed.Reason ?? "background job failed");
-            SyncFailure(db, jobRowId, error, clock.GetUtcNow());
+            var syncedJob = SyncFailure(db, jobRowId, error, clock.GetUtcNow());
+            if (syncedJob is not null && progressPublisher is not null)
+            {
+                // Transient yolun nihai Failed'ı da canlı kanala düşer (diğer terminal
+                // yazımlarla aynı desen); publish en-iyi-gayrettir ve fırlatmaz.
+                progressPublisher
+                    .PublishAsync(JobProgressMessages.FromJob(syncedJob), CancellationToken.None)
+                    .GetAwaiter().GetResult();
+            }
         }
         catch (Exception ex)
         {
@@ -78,15 +88,16 @@ public sealed class JobFailureStateFilter(
     /// <summary>
     /// SAF senkron mantığı — unit test doğrudan çağırır (Hangfire pipeline'ı taklit edilmez).
     /// Terminal (Succeeded/Failed/Canceled) satırlara dokunmaz — deterministik hata yolu
-    /// Failed + açıklayıcı ErrorMessage'ı zaten yazmıştır.
+    /// Failed + açıklayıcı ErrorMessage'ı zaten yazmıştır. Dönüş: satır BU çağrıyla Failed'a
+    /// çekildiyse güncellenmiş Job (çağıran canlı bildirim yayınlar), dokunulmadıysa null.
     /// </summary>
-    public static void SyncFailure(AppDbContext db, Guid jobRowId, string error, DateTimeOffset now)
+    public static Job? SyncFailure(AppDbContext db, Guid jobRowId, string error, DateTimeOffset now)
     {
         var job = db.Jobs.SingleOrDefault(j => j.Id == jobRowId);
         if (job is null
             || job.Status is JobStatus.Succeeded or JobStatus.Failed or JobStatus.Canceled)
         {
-            return;
+            return null;
         }
 
         job.Status = JobStatus.Failed;
@@ -103,5 +114,6 @@ public sealed class JobFailureStateFilter(
         }
 
         db.SaveChanges();
+        return job;
     }
 }

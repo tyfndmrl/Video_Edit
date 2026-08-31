@@ -15,6 +15,9 @@
     <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <!-- Worker'ın 'job-progress' kanalını dinleyen forwarder için (RedisProgressForwarder).
+         SignalR Redis BACKPLANE paketi bilinçli YOK: tek API instance — DECISIONS 2026-08-31. -->
+    <PackageReference Include="StackExchange.Redis" Version="2.13.17" />
   </ItemGroup>
 
   <PropertyGroup>
