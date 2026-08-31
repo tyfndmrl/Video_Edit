@@ -49,9 +49,9 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 
 ## Açık sorular (insana sorulacaklar)
 
-1. Push şimdi mi? ("sonra" kararı hâlâ geçerli mi?)
-2. R2 dağıtımına ne zaman başlanacak; R2 hesap anahtarları?
-3. SignalR/Redis: özellik olarak gelsin mi, iskele sökülsün mü?
+1. Push: 2026-08-31'de yeniden soruldu — kullanıcı "beklesin" dedi (karar tazelendi).
+2. R2: 2026-08-31'de soruldu — "henüz değil" (beklemede; anahtarlar kullanıcıdan).
+3. ~~SignalR/Redis~~ KARAR VERİLDİ (2026-08-31): GETİRİLECEK — dilim başladı.
 4. SkiaSharp yükseltme penceresi (golden yeniden-kalibrasyon maliyetiyle) planlansın mı?
 5. Import-yönü/katman kuralı (dep-cruiser sınıfı; lint'ten ayrı) istenir mi, mevcut gevşemeler kabul mü?
 
