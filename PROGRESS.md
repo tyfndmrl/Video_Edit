@@ -243,3 +243,34 @@ Suite (tümü kendi koşumum, 2026-08-31; API/Worker `api-run-signalr`/`worker-r
   skip 0** (MinIO+ffmpeg) · editör 1342 + şema 222 · tsc -b + e2e tsc temiz. Doküman:
   rendering-semantics YENİ §2.6 (taşıyıcı norm + olgu kaynağı + örtücü yüklemi + atlama),
   CompiledExport.SourceWidth daraltılmış doktrin metni, ExportCompiler baş yorumu.
+- **Bacak 3 — (a) örtülen-katman budaması ✅ (2026-09-01, daraltılmış doktrinle).** Penceresi,
+  ÜSTÜNDEKİ TEK bir §2.6 örtücüsünün penceresince frame defterinde KAPSANAN run'ın video
+  zinciri + overlay'i üretilmez (`prunedRuns` — Compile kompozisyon dalı); yüklem baş mimar
+  kararının listesiyle birebir: örtücünün her segmenti medya klibi + CoversCanvas + taze
+  probe'dan SourceW·H==SourceH·W + SAR=1 + alfasız pix_fmt + Opacity≥1 + Animation.Any==false;
+  tek-run kapsaması (pencere birleşimi YOK); örtücü üstte; olgu bilinmiyorsa budama YOK;
+  girişler + SES zincirleri DOKUNULMAZ (örtülen görünmez ama DUYULUR); topoloji korunur
+  (hızlı yola girilmez; budama sonrası tek run kalırsa taban tuval de kalır — overlay'siz düz
+  çıkış 2026-08-24 bisect'inin bayt-farkı sınıfıdır, o rejime girilmez). KANIT: (1) çift-varyant
+  CANLI bayt-aynılık ×3 — `CoveredLayerPruning_IsByteIdentical_OnTheCutawayTopology`
+  (sesli örtülen PiP'li cutaway, gerçek ffmpeg, MP4 bayt-aynı) + `BaseCanvasSkip_IsByte…`
+  + GERÇEK medya belgesi CANLIDA: compCovered'ın g3c (budamasız) ↔ g3d (budamalı) worker
+  çıktıları **SHA256-birebir** (`2566a184…c524`, 59 406 143 B); (2) canlı yakalanan g3d
+  grafiği: [2:v] alt-açı + [3:v] şekil + [4:v] metin zincirleri YOK, [2:a] alt-açının SESİ
+  DURUYOR, tek overlay (cutaway), tuval atlanmış; (3) yüklem envanteri
+  (`ExportCoverOptimizationTests`): olgu-null/1919/yuva420p/SAR≠1/opacity 0.999/keyframe'li
+  örtücü/pencereden taşan örtülen/alttaki örtücü/pencere birleşimi (iki komşu örtücü) →
+  budama ATEŞLENMEZ; giriş listesi olgulu↔olgusuz birebir; (4) yeni snapshot
+  `covered-layer-pruned.txt` (sesli örtülenin video zinciri yok, sesi + girişi var). CANLI
+  önce/sonra (compCovered-1080p, bitişik pencere, g3c↔g3d): **28,0/28,7 → 20,1/20,1/20,0 s
+  (p50 28,35 → 20,1; −8,3 s; 2,12x → 2,99x)** — örtülü sınıfın israfı kapandı. compReal'de
+  budanacak şey yok (beklenen 0 — fixtür dürüstlüğü bunun için). NEGATİF KONTROL: pencere
+  KAPSAMASI geçici KESİŞMEYE çevrildi → **5 kırmızı** (çift-varyant bayt golden'ı TAM
+  sözleşme mesajıyla: "örtülen-katman budaması ÇIKTIYI DEĞİŞTİRDİ — §2.6 bayt-aynılık
+  sözleşmesi ihlal: budanmış 79933 B, budanmamış 79940 B" + pencere-taşan/birleşim/ses
+  bataryası + covered-layer-pruned snapshot) → geri al md5 birebir (`26794bd4…e8b8`) +
+  touch+rebuild → yeşil. Kapılar: build -warnaserror 0/0 · backend TAM **1626/1626 skip 0**
+  (MinIO+ffmpeg) · editör 1342 + şema 222 · tsc -b + e2e tsc temiz. Doküman: §2.6 budama
+  bölümü + KAPSAM BEYANI (animasyonlu/merkez-dışı örtücü, pencere birleşimi, eğri-ekstremum
+  örtme kanıtı KAPSAM DIŞI); DECISIONS +3 satır (daraltılmış doktrin + bayt-aynılık normu /
+  colorAdjust füzyonu / N-paralel ERTELENDİ — reddedilenler ve geri alma koşullarıyla).

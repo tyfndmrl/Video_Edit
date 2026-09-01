@@ -781,6 +781,78 @@ public sealed class ExportRenderGoldenTests(FfmpegTestMediaFixture media) : IDis
             + "Atlama koddan çıkarılmalı (bayrakla değil).");
     }
 
+    [FfmpegFact]
+    public async Task CoveredLayerPruning_IsByteIdentical_OnTheCutawayTopology()
+    {
+        // §2.6 ÖRTÜLEN-KATMAN BUDAMASININ ÇİFT-VARYANT BAYT-AYNILIK GOLDEN'I. Topoloji budamanın
+        // GERÇEK sınıfıdır (b-roll cutaway): tam-kare örtücü [1,2) altındaki SESLİ PiP [1.2,1.8)
+        // budanır; taban [0,3) pencereye sığmaz, kalır (ve tam-span örtücü olarak taban-tuval
+        // atlamasını alır). AYNI belge olgulu/olgusuz derlenir — fark yalnız budanan video
+        // zinciri + overlay + (taban atlaması) satırlarıdır — ve iki grafik de GERÇEK ffmpeg'le
+        // sonuna kadar render edilip MP4 çıktıları BAYT düzeyinde karşılaştırılır. Fark
+        // BEKLENMEZ: örtücü, örtülenin penceresinin tamamında tam-kare opak çizer; opak üst
+        // katman overlay'i 8-bit'te birebir kopyadır. SES her iki varyantta da PiP'inkini
+        // İÇERİR (örtülen görünmez ama DUYULUR — budama ses zincirine dokunAMAZ).
+        var bottom = MediaFile("prune-bottom.mp4", "0x804020", withAudio: true);
+        var cover = MediaFile("prune-cover.mp4", "0x2080C0");
+        var pip = MediaFile("prune-pip.mp4", "0xC02080", withAudio: true);
+        var doc = ExportTestDocs.MultiTrackDoc(
+        [
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 1_000_000, 0, 1_000_000),
+            ]),
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetC, 1_200_000, 0, 600_000,
+                    ExportTestDocs.Audio(),
+                    transform: ExportTestDocs.Transform(x: 0.2, y: 0.15, scale: 0.3)),
+            ]),
+            ExportTestDocs.VideoTrack(clips:
+            [
+                ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 3_000_000,
+                    ExportTestDocs.Audio()),
+            ]),
+        ], width: CanvasWidth, height: CanvasHeight);
+        var factless = new Dictionary<Guid, ExportAssetSource>
+        {
+            [ExportTestDocs.AssetA] = new(bottom, true, "bt709", "bt709"),
+            [ExportTestDocs.AssetB] = new(cover, false, "bt709", "bt709"),
+            [ExportTestDocs.AssetC] = new(pip, true, "bt709", "bt709"),
+        };
+        var withFacts = factless.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value with
+            {
+                SourceWidth = 320,
+                SourceHeight = 240,
+                PixelFormat = "yuv420p",
+                SarNum = 1,
+                SarDen = 1,
+            });
+
+        var pruned = ExportCompiler.Compile(doc, withFacts, CanvasSpec);
+        var legacy = ExportCompiler.Compile(doc, factless, CanvasSpec);
+
+        // Budama imzası: PiP'in video zinciri yok, SESİ ve girişi var; eskide hepsi var.
+        Assert.DoesNotContain("[1:v]", pruned.FilterGraphScript);
+        Assert.Contains("[1:a]", pruned.FilterGraphScript);
+        Assert.Contains("[1:v]", legacy.FilterGraphScript);
+        Assert.Equal(
+            legacy.Inputs.Select(i => string.Join(' ', i.ToArgs())),
+            pruned.Inputs.Select(i => string.Join(' ', i.ToArgs())));
+
+        var outPruned = await RenderAsync(pruned, "prune-on");
+        var outLegacy = await RenderAsync(legacy, "prune-off");
+        var bytesPruned = await File.ReadAllBytesAsync(outPruned);
+        var bytesLegacy = await File.ReadAllBytesAsync(outLegacy);
+        Assert.True(bytesPruned.AsSpan().SequenceEqual(bytesLegacy),
+            "örtülen-katman budaması ÇIKTIYI DEĞİŞTİRDİ — §2.6 bayt-aynılık sözleşmesi ihlal: "
+            + $"budanmış {bytesPruned.Length.ToString(CultureInfo.InvariantCulture)} B, "
+            + $"budanmamış {bytesLegacy.Length.ToString(CultureInfo.InvariantCulture)} B. "
+            + "Budama koddan çıkarılmalı (bayrakla değil).");
+    }
+
     /// <summary>
     /// <see cref="TwoSolidsWithTransition"/> + köşede PiP üst katman (scale 0.25,
     /// P=(240,60) → kutu x[200,280) y[30,90)): tek amaç derlemeyi TEK KATMANLI HIZLI

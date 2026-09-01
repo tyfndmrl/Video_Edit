@@ -649,16 +649,49 @@ pikseliyle tam opak kaplar, ancak ve ancak (TÜMÜ birden):
    tarafı aynı yerleşime zorlar ve xfade tam-kare opak girdilerde tam-kare opak üretir
    (çift-varyant golden geçişli topolojiyle koşar).
 
-**Taban-tuval atlaması (uygulandı, 2026-09-01):** kompozisyon yolunda EN ALT run örtücü
-yüklemini sağlıyor VE frame defterinde `[0, toplamFrame)`'i tek run olarak kaplıyorsa taban
-tuval (`color=…[base]`) ve o run'ın overlay'i ÜRETİLMEZ — run'ın kendisi kompozit taban olur.
-Kompozisyon topolojisi korunur: kalan overlay'ler, RGB rejimi (§6.3) ve ses zincirleri AYNEN;
-TEK KATMANLI HIZLI YOLA girilmez (o yuv420p rejimidir ve yalnız tek-run belgelerin yoludur).
-Kanıtlar: `ExportRenderGoldenTests.BaseCanvasSkip_IsByteIdentical_OnTheRealisticTopology`
+**Taban-tuval atlaması (uygulandı, 2026-09-01):** kompozisyon yolunda EN ALT (budanmamış) run
+örtücü yüklemini sağlıyor VE frame defterinde `[0, toplamFrame)`'i tek run olarak kaplıyorsa
+taban tuval (`color=…[base]`) ve o run'ın overlay'i ÜRETİLMEZ — run'ın kendisi kompozit taban
+olur. Kompozisyon topolojisi korunur: kalan overlay'ler, RGB rejimi (§6.3) ve ses zincirleri
+AYNEN; TEK KATMANLI HIZLI YOLA girilmez (o yuv420p rejimidir ve yalnız tek-run belgelerin
+yoludur). Atlama ancak üstte en az bir SAĞ KALAN overlay varsa yapılır: bayt-aynılık kanıtı
+"taban + overlay zinciri" topolojisi içindir — overlay'siz düz `[vN]→vout` çıkışı encoder'a
+farklı ara formattan iner ve bayt değiştirir (2026-08-24 bisect'inde ölçülen sınıf; o rejime
+girilmez). Kanıtlar:
+`ExportRenderGoldenTests.BaseCanvasSkip_IsByteIdentical_OnTheRealisticTopology`
 (çift-varyant canlı render, MP4 bayt-aynı) + `ExportCoverOptimizationTests` (yüklemin her
 olgusu tek tek eksiltilince atlamanın ATEŞLENMEDİĞİ) + `ExportSnapshots/canvas-skip-base.txt`.
 Ölçülen kazanç: gerçekçi 60 sn 1080p bileşimde (çıkar-koş-ölç rig'i, 3 koşum p50) −2,1 s ve
 çıktı SHA256-birebir.
+
+**Örtülen-katman budaması (uygulandı, 2026-09-01):** penceresi, ÜSTÜNDEKİ (overlay sırasında
+sonra gelen) TEK bir örtücü run'ın penceresi tarafından frame defterinde KAPSANAN run'ın
+video zinciri ve overlay'i ÜRETİLMEZ: o pencerede örtücü tuvalin her pikselini tam opak
+çizer, örtülenin hiçbir pikseli çıktıya katkı yapamaz (opak üst katman overlay'i 8-bit'te
+birebir kopyadır). Kurallar:
+
+- **Tek-run kapsaması ŞARTTIR; pencere BİRLEŞİMİ YOKTUR** — komşu iki örtücünün birleşimi
+  pencereyi kapsasa da budama yapılmaz (`AdjacentCoverersOnSeparateTracks_DoNotPruneBy`
+  `WindowUnion` bunu sabitler).
+- **Girişler ve SES zincirleri DOKUNULMAZ:** budanan yalnız video zinciri satırlarıdır —
+  örtülen katman görünmez ama DUYULUR (fiziksel semantik; ffmpeg `-i` listesi olgulu/olgusuz
+  derlemede birebir aynı kalır, kullanılmayan video akışı çözülmez).
+- Örtülenin KENDİ olguları/animasyonu karara girmez (görünmeyecek şeyin niteliği önemsiz);
+  yüklem yalnız ÖRTÜCÜYE sorulur. Örtücü ALTTAYSA üsttekini budayamaz (overlay sırası).
+- Budama sonrası tek run kalsa bile HIZLI YOLA girilmez ve taban-tuval ancak üstte sağ kalan
+  overlay varken atlanır (üstteki kutu) — kompozisyon topolojisi korunur.
+
+Kanıtlar: `ExportRenderGoldenTests.CoveredLayerPruning_IsByteIdentical_OnTheCutawayTopology`
+(çift-varyant canlı render — cutaway topolojisi, sesli örtülen PiP; MP4 bayt-aynı) +
+`ExportCoverOptimizationTests` yüklem envanteri (olgu-null / 1919×1080 / yuva420p / SAR≠1 /
+opaklık 0.999 / keyframe'li örtücü / pencereden taşan örtülen / alttaki örtücü / pencere
+birleşimi → budama ATEŞLENMEZ) + `ExportSnapshots/covered-layer-pruned.txt`.
+
+> **KAPSAM BEYANI.** Animasyonlu ya da merkez-dışı çapalı örtücü, pencere BİRLEŞİMİ ile örtme
+> ve eğri-ekstremum tabanlı örtme kanıtı (örtücünün ölçek/pozisyon animasyonunun ekstremumdan
+> "yine de tam-kare kalır" çıkarımı — altyapı `AnimationTrack.CurveMin/CurveMax`'ta hazır
+> olsa da) **KAPSAM DIŞIDIR — ölçülmeden genişletilemez** (baş mimar kararı, 2026-09-01:
+> geniş yüklem bu tur için REDDEDİLDİ; ayrı ölçümlü ayrı karar ister).
 
 ---
 

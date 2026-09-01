@@ -134,7 +134,10 @@ public sealed record ExportPlan(
 ///  - KOMPOZİSYON (tasarım 04 §2.2 + rendering-semantics §2.2): hızlı yol dışında taban DAİMA
 ///    proje çözünürlüğünde settings.backgroundColor tuvalidir; her run bu tuvale overlay edilir.
 ///    Boşluklar (klipsiz aralıklar) ayrı segment gerektirmez — taban tuval görünür.
-///    Render sırası tracks dizisinde SONDAN BAŞA'dır (tracks[0] en üst katman, şema §1.2);
+///    Render sırası tracks dizisinde SONDAN BAŞA'dır (tracks[0] en üst katman, şema §1.2).
+///    İKİ §2.6 OPTİMİZASYONU bu topolojiyi KORUYARAK satır düşürür (taban-tuval atlaması +
+///    örtülen-katman budaması — girişler ve ses zincirleri aynen, hızlı yola girilmez,
+///    kanıt çift-varyant bayt-aynılık golden'ları);
 ///  - OVERLAY VARLIKLARI (tasarım 04 §3): metin/şekil klibi worker'da SkiaSharp ile
 ///    TEK şeffaf PNG'ye rasterlenir ve normal katman zincirinden geçer; çıkartma kendi asset
 ///    dosyasıyla girer. Hiçbiri SES ÜRETMEZ. Metin/şekil rasterinin ölçek kutusu TUVAL DEĞİL
@@ -912,28 +915,80 @@ public static class ExportCompiler
         }
         else
         {
+            // ── ÖRTÜLEN-KATMAN BUDAMASI (rendering-semantics §2.6, 2026-09-01 perf turu):
+            //    penceresi, ÜSTÜNDEKİ bir §2.6 örtücüsünün penceresi tarafından frame
+            //    defterinde KAPSANAN run'ın video zinciri + overlay'i ÜRETİLMEZ — o pencerede
+            //    örtücü tam-kare opak çizer, alttaki hiçbir piksele katkı yapamaz (overlay'in
+            //    opak-üst kopya semantiği; kanıt çift-varyant bayt-aynılık golden'ı). Tek-run
+            //    kapsaması ŞARTTIR (pencere birleşimi YOK — komşu iki örtücünün birleşimi
+            //    kapsıyor olsa da budama yapılmaz, KAPSAM DIŞI beyanı §2.6'da). Girişler ve
+            //    SES zincirleri DOKUNULMAZ: örtülen katman görünmez ama DUYULUR (fiziksel
+            //    semantik) — budanan yalnız video zinciri satırlarıdır. Örtücünün kendisi de
+            //    daha üst bir örtücü tarafından budanabilir: kapsama geçişlidir (k, j'yi
+            //    kapsıyorsa j'nin kapsadığı i'yi de kapsar), bu yüzden "herhangi bir üst
+            //    örtücü" sorgusu güvenlidir.
+            var prunedRuns = new HashSet<int>();
+            for (var i = 0; i < runs.Count; i++)
+            {
+                for (var j = i + 1; j < runs.Count; j++)
+                {
+                    if (runs[j].StartFrame <= runs[i].StartFrame
+                        && runs[j].EndFrame >= runs[i].EndFrame
+                        && IsOpaqueFullCanvasRun(runs[j], plan))
+                    {
+                        prunedRuns.Add(i);
+                        break;
+                    }
+                }
+            }
+
             // ── TABAN-TUVAL ATLAMASI (rendering-semantics §2.6, 2026-09-01 perf turu): en ALT
-            //    run tüm timeline'ı GERÇEK piksellerle tam-kare kaplıyorsa (yerleşim + taze
-            //    probe olguları: kaynak aspect'i == tuval, SAR=1, alfasız pix_fmt; opaklık 1,
-            //    animasyonsuz) taban tuval + o run'ın overlay'i ATLANIR — run'ın kendisi
-            //    kompozit taban olur. Bu bir GRAFİK optimizasyonudur, görüntü değil: %100 opak
-            //    tam-kare içeriğin opak tuvale overlay'i 8-bit'te birebir kopyadır; kanıt
-            //    çift-varyant bayt-aynılık golden'ı + canlı SHA256 eşitliği (çıkar-koş-ölç
-            //    rig'inde 60 sn 1080p bileşim MP4'ü bayt-aynı, p50 −2,1 s). Olgular bilinmiyorsa
-            //    (eski davranış) tuval aynen kurulur. Kompozisyon topolojisi korunur: kalan
-            //    overlay'ler değişmez, hızlı yola GİRİLMEZ (o yuv420p'dir — §6.3 rejimi ayrı).
-            var skipBase = runs.Count >= 2
-                && CoversWholeTimelineWithRealPixels(runs[0], plan, totalFrames);
+            //    (budanmamış) run tüm timeline'ı GERÇEK piksellerle tam-kare kaplıyorsa
+            //    (yerleşim + taze probe olguları: kaynak aspect'i == tuval, SAR=1, alfasız
+            //    pix_fmt; opaklık 1, animasyonsuz) taban tuval + o run'ın overlay'i ATLANIR —
+            //    run'ın kendisi kompozit taban olur. Bu bir GRAFİK optimizasyonudur, görüntü
+            //    değil: %100 opak tam-kare içeriğin opak tuvale overlay'i 8-bit'te birebir
+            //    kopyadır; kanıt çift-varyant bayt-aynılık golden'ı + canlı SHA256 eşitliği
+            //    (çıkar-koş-ölç rig'inde 60 sn 1080p bileşim MP4'ü bayt-aynı, p50 −2,1 s).
+            //    Olgular bilinmiyorsa (eski davranış) tuval aynen kurulur. Kompozisyon
+            //    topolojisi korunur: kalan overlay'ler değişmez, hızlı yola GİRİLMEZ
+            //    (o yuv420p'dir — §6.3 rejimi ayrı).
+            var firstOverlayRun = 0;
+            while (prunedRuns.Contains(firstOverlayRun))
+            {
+                firstOverlayRun++;
+            }
+
+            // Atlama ancak taban run'ın ÜSTÜNDE en az bir SAĞ KALAN overlay varsa yapılır:
+            // bayt-aynılık kanıtı "taban + overlay zinciri" topolojisi içindir — overlay'siz
+            // düz [vN]→vout çıkışı encoder'a FARKLI ara formattan iner ve bayt değiştirir
+            // (2026-08-24 bisect'inde ölçülen sınıf). Tüm üst katmanları budanmış bir örtücü
+            // bu yüzden taban tuvale NORMAL overlay edilir (runs[^1] hiçbir zaman budanamaz —
+            // üstünde örtücü yok — dolayısıyla bu dal yalnız "en üst run örtücü ve altta
+            // başka sağ kalan yok" hâlinde görülür).
+            var survivorsAboveFirst = false;
+            for (var n = firstOverlayRun + 1; n < runs.Count; n++)
+            {
+                if (!prunedRuns.Contains(n))
+                {
+                    survivorsAboveFirst = true;
+                    break;
+                }
+            }
+
+            var skipBase = survivorsAboveFirst
+                && CoversWholeTimelineWithRealPixels(runs[firstOverlayRun], plan, totalFrames);
 
             // enable penceresinin bitişi yarım frame geri çekilir: bitişik iki run'da aynı t
             // değeri iki overlay'i birden tetiklemesin (tasarım 04 §8 tuzak 9).
             var halfFrameUs = UsOf(1, plan.FpsNum, plan.FpsDen) / 2;
 
-            var firstOverlayRun = 0;
             if (skipBase)
             {
-                composite = EmitRun(videoLines, runs[0], plan, fpsArg, background, opaque: false, 0);
-                firstOverlayRun = 1;
+                composite = EmitRun(
+                    videoLines, runs[firstOverlayRun], plan, fpsArg, background,
+                    opaque: false, firstOverlayRun);
+                firstOverlayRun++;
             }
             else
             {
@@ -948,10 +1003,16 @@ public static class ExportCompiler
                     + $"trim=end_frame={totalFrames.ToString(CultureInfo.InvariantCulture)},"
                     + "format=rgba,setsar=1,settb=AVTB,setpts=PTS-STARTPTS[base]");
                 composite = "base";
+                firstOverlayRun = 0;
             }
 
             for (var n = firstOverlayRun; n < runs.Count; n++)
             {
+                if (prunedRuns.Contains(n))
+                {
+                    continue; // §2.6 budaması: video zinciri + overlay üretilmez (ses AYNEN).
+                }
+
                 var run = runs[n];
                 var label = EmitRun(videoLines, run, plan, fpsArg, background, opaque: false, n);
                 var next = $"c{n.ToString(CultureInfo.InvariantCulture)}";

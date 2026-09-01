@@ -510,10 +510,11 @@ public sealed class ExportCompilerSnapshotTests
         // M5: hız, renk düzeltme, LUT, keyframe (ifade yolu + sendcmd yolu)
         "speed-change", "color-adjust", "lut-effects", "keyframe-linear", "keyframe-eased",
         "volume-keyframes",
-        // 2026-09-01 perf turu: taban-tuval atlaması (§2.6) — olgular TAM olduğunda taban
-        // tuval + ilk overlay düşer; olgusuz eş fixture'lar (two-video-layers vb.) atlamasız
-        // biçimi zaten sabitler.
-        "canvas-skip-base",
+        // 2026-09-01 perf turu: taban-tuval atlaması + örtülen-katman budaması (§2.6) —
+        // olgular TAM olduğunda taban tuval + ilk overlay düşer / örtülen katmanın video
+        // zinciri düşer (SESİ KALIR); olgusuz eş fixture'lar (two-video-layers vb.)
+        // optimizasyonsuz biçimi zaten sabitler.
+        "canvas-skip-base", "covered-layer-pruned",
     ];
 
     private static (TimelineDoc Doc, Dictionary<Guid, ExportAssetSource> Sources) Fixture(string name) =>
@@ -551,8 +552,35 @@ public sealed class ExportCompilerSnapshotTests
             "image-clip" => (ImageClip(), ImageSources()),
             "image-over-video" => (ImageOverVideo(), ImageSources()),
             "canvas-skip-base" => (CanvasSkipBase(), CanvasSkipSources()),
+            "covered-layer-pruned" => (CoveredLayerPruned(), CanvasSkipSources()),
             _ => throw new ArgumentOutOfRangeException(nameof(name)),
         };
+
+    /// <summary>
+    /// Örtülen-katman budaması fixtürü (§2.6): tam-kare cutaway [1,3) altındaki SESLİ PiP
+    /// [1.5,2.5) budanır (video zinciri + overlay düşer, girişi ve SES zinciri KALIR); taban
+    /// [0,4) cutaway penceresine sığmadığı için kalır ve tam-span örtücü olarak taban-tuval
+    /// atlamasını da alır. Cutaway ve taban AYNI olgulu A varlığından, örtülen PiP olgusuz
+    /// B'den — örtülenin KENDİ olguları karara girmez (yüklem yalnız örtücüye bakar).
+    /// </summary>
+    private static TimelineDoc CoveredLayerPruned() => ExportTestDocs.MultiTrackDoc(
+    [
+        ExportTestDocs.VideoTrack(clips:
+        [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 1_000_000, 5_000_000, 7_000_000),
+        ]),
+        ExportTestDocs.VideoTrack(clips:
+        [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetB, 1_500_000, 0, 1_000_000,
+                ExportTestDocs.Audio(),
+                transform: ExportTestDocs.Transform(x: 0.2, y: 0.2, scale: 0.3)),
+        ]),
+        ExportTestDocs.VideoTrack(clips:
+        [
+            ExportTestDocs.VideoClip(ExportTestDocs.AssetA, 0, 0, 4_000_000,
+                ExportTestDocs.Audio()),
+        ]),
+    ]);
 
     /// <summary>
     /// Taban-tuval atlaması fixtürü (§2.6): altta timeline'ı baştan sona kaplayan İKİ bitişik
