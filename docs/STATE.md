@@ -60,8 +60,9 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   24/33 vakada birebir, zarf golden'la çivili), (c) taban-tuval atlaması + (a) örtülen-katman
   budaması (§2.6: taze worker-probe olguları + tek-run kapsaması + BAYT-AYNILIK normu —
   çift-varyant canlı golden'lar + iki A/B worker sha256 eşitliği; örtülenin SESİ korunur),
-  (d) N-paralel ERTELENDİ (DECISIONS). Sonuç: compReal-1080p 38,3→32,4 s (**1,85x** — hedef
-  2x'e ~2,4 s kala; açık soru 6), örtülü sınıf 41,4→**20,1 s (2,99x)**, dikey 2,10x.
+  (d) N-paralel ERTELENDİ (DECISIONS). Sonuç: compReal-1080p 38,3→32,4 s (**1,85x**; kabul
+  ölçütü 2026-09-01 kullanıcı kararıyla ≥1,8x'e daraltılıp KAPANDI — açık soru 6),
+  örtülü sınıf 41,4→**20,1 s (2,99x)**, dikey 2,10x.
   Defter: `PROGRESS.md` §tur3 #3 + `performans-raporu.md` §12.
 - Son yeşil sayılar (2026-09-01, gelistirme-3 #3 kapanışında bizzat koşuldu — dört kapı +
   prod build + TAM Playwright): backend **1626/1626** (0 skip) · editör 1342 · şema 222 ·
@@ -74,12 +75,10 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
-1. **Export perf hedef kararı (açık soru 6):** compReal-1080p 1,85x'te — (d) N-paralel'i kendi
-   sözleşme turuyla açmak YA DA kapsam ölçütünü gerekçeli daraltmak; karar kullanıcının.
-2. `git push` — **kullanıcı onayı bekliyor** (origin 25+ commit geride; öncesinde ci.yml e2e
+1. `git push` — **kullanıcı onayı bekliyor** (origin 25+ commit geride; öncesinde ci.yml e2e
    redis boşluğu kapatılmalı — bkz. Bilinen sorunlar).
-3. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
-4. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
+2. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
+3. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
   #11 upload resume sertleştirme. (SignalR maddesi 2026-08-31'de KAPANDI; komşusu backlog B6 —
   çapraz-sekme kitaplık senkronu — da AYNI GÜN user-feed grubuyla KAPANDI, yarim-is-2 #5.)
 
@@ -113,12 +112,11 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    Tamamlananlar; DECISIONS satırı gerekçe + reddedilenlerle güncel).
 4. SkiaSharp yükseltme penceresi (golden yeniden-kalibrasyon maliyetiyle) planlansın mı?
 5. Import-yönü/katman kuralı (dep-cruiser sınıfı; lint'ten ayrı) istenir mi, mevcut gevşemeler kabul mü?
-6. **Export perf hedefi (2026-09-01, gelistirme-3 #3 kapanışı — baş mimar kararının şartı):**
-   gerçekçi fixtürde 1080p **1,85x** (32,4 s; hedef ≥2x = ≤30 s, fark ~2,4 s); örtülü sınıf
-   2,99x, dikey 2,10x, 720p 1,94x. (d) N-paralel dilimleme AÇILMADAN soruluyor: (i) (d)'yi
-   kendi sözleşme turuyla aç (dilim sınırları geçiş+örtme pencereleri dışında, closed-GOP,
-   bellek kapısı çarpanı — DECISIONS geri-alma satırı), (ii) kapsam ölçütünü gerekçeli daralt
-   (ör. "gerçekçi ≥1,8x + örtülü ≥2x" — bugünkü ölçülmüş durum), (iii) hedefi beklet.
+6. ~~Export perf hedefi~~ KARAR VERİLDİ (2026-09-01, kullanıcı — AskUserQuestion): kapsam
+   ölçütü ölçülmüş duruma DARALTILDI ve KAPANDI — kabul: gerçekçi 1080p ≥1,8x (ölçülen
+   1,85x) + örtülü sınıf 2,99x + dikey 2,10x + 720p 1,94x. (d) N-paralel AÇILMADI
+   (DECISIONS satırı gerekçe + geri-alma koşuluyla: kullanıcı hedefi yeniden yükseltirse
+   kendi sözleşme turuyla).
 
 ## Ortam notu (2026-09-01 sonu, gelistirme-3 #3 dilimi)
 
