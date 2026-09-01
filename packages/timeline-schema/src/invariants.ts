@@ -45,6 +45,21 @@
  * 9. A drawn clip's transform.scale is strictly positive (compiler:
  *    ExportCompiler.ValidateGeometry). Audio clips produce no visual layer and
  *    are skipped, exactly like the compiler skips them.
+ * 10. Link pairs (AV bond): every `linkId` value in the document appears on
+ *     EXACTLY 2 clips, and the pair is one `video` and one `audio` media clip.
+ *     Linked partners carry an IDENTICAL `groupId` (both absent or the same
+ *     value) — a link is the tighter bond and must not straddle two groups.
+ * 11. Groups: every `groupId` value in the document appears on AT LEAST 2
+ *     clips (a single-member group is a dangling reference, not a group).
+ * 12. Clip kind matches the type of the track it sits on (defensive closure of
+ *     a long-standing schema gap): 'audio' clips only on audio tracks,
+ *     'video'/'image' only on video tracks, 'text'/'shape'/'sticker' only on
+ *     overlay tracks. Without it a video clip parked on an audio track WOULD
+ *     be drawn by the export compiler (it reads clip.kind, never track.type).
+ *
+ * Rules 10-12 are DOCUMENT-wide (a link may span two tracks), so they live in
+ * their own pass `checkLinkAndGroupInvariants`, which runs next to the
+ * per-track walk — see checkTimelineInvariants.
  *
  * Rule 3 has a SECOND half that lives outside `superRefine`: the export
  * compiler additionally requires both clip EDGES (`timelineStartUs` and
@@ -686,6 +701,125 @@ function checkTrack(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Link / group / kind-placement invariants (rules 10-12) — document-wide pass
+//
+// A separate pass beside the per-track walk, because none of these rules fits
+// inside one track: a link pair legitimately spans a video and an audio track,
+// and a group can span any number of tracks. The per-track walk deliberately
+// never sees them.
+// ---------------------------------------------------------------------------
+
+/**
+ * The one track type each clip kind may sit on (rule 12). A total record on
+ * purpose — adding a clip kind without deciding its home track becomes a
+ * compile error here instead of a silent validation gap.
+ */
+const TRACK_TYPE_FOR_KIND: Record<Clip['kind'], Track['type']> = {
+  video: 'video',
+  image: 'video',
+  audio: 'audio',
+  text: 'overlay',
+  shape: 'overlay',
+  sticker: 'overlay',
+};
+
+/** Where a clip carrying a shared id (linkId/groupId) was found. */
+interface ClipOccurrence {
+  trackIndex: number;
+  clipIndex: number;
+  clip: Clip;
+}
+
+/**
+ * Rules 10-12: link pairs, group membership, clip-kind/track-type placement.
+ * Runs from `checkTimelineInvariants` (and is exported for callers that want
+ * just this pass, mirroring `exportFrameGridIssues`' shape).
+ */
+export function checkLinkAndGroupInvariants(doc: TimelineDoc, ctx: InvariantIssueSink): void {
+  const links = new Map<string, ClipOccurrence[]>();
+  const groups = new Map<string, ClipOccurrence[]>();
+
+  doc.tracks.forEach((track, trackIndex) => {
+    track.clips.forEach((clip, clipIndex) => {
+      // Rule 12 — every clip, linked/grouped or not.
+      const expectedType = TRACK_TYPE_FOR_KIND[clip.kind];
+      if (track.type !== expectedType) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            `clip placement violated: a '${clip.kind}' clip belongs on a '${expectedType}' track, `
+            + `got a '${track.type}' track`,
+          path: ['tracks', trackIndex, 'clips', clipIndex, 'kind'],
+        });
+      }
+      const occurrence: ClipOccurrence = { trackIndex, clipIndex, clip };
+      // linkId is typed on MediaClip only, but the doc may be hand-built, so
+      // read it generically and let the pair check below judge the kinds.
+      const linkId = (clip as { linkId?: unknown }).linkId;
+      if (typeof linkId === 'string') {
+        links.set(linkId, [...(links.get(linkId) ?? []), occurrence]);
+      }
+      if (clip.groupId !== undefined) {
+        groups.set(clip.groupId, [...(groups.get(clip.groupId) ?? []), occurrence]);
+      }
+    });
+  });
+
+  for (const [linkId, occurrences] of links) {
+    const first = occurrences[0];
+    const firstPath = ['tracks', first.trackIndex, 'clips', first.clipIndex, 'linkId'];
+    // Rule 10, cardinality: a link names exactly one AV pair.
+    if (occurrences.length !== 2) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          `link invariant violated: linkId ${linkId} appears on ${occurrences.length} clip(s), `
+          + 'a link is exactly 2 clips (one video + one audio)',
+        path: firstPath,
+      });
+      continue;
+    }
+    // Rule 10, pair shape: one video + one audio. Only media clips carry these
+    // kinds, so this check also rejects a linkId smuggled onto an overlay clip.
+    const [a, b] = occurrences;
+    const kinds = [a.clip.kind, b.clip.kind].sort();
+    if (kinds[0] !== 'audio' || kinds[1] !== 'video') {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          `link invariant violated: linkId ${linkId} must pair one video and one audio media clip, `
+          + `got ${a.clip.kind} + ${b.clip.kind}`,
+        path: firstPath,
+      });
+    }
+    // Rule 10, group consistency: link partners never straddle two groups.
+    if (a.clip.groupId !== b.clip.groupId) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          `link/group consistency violated: link partners must carry an identical groupId `
+          + `(both absent or the same), got ${a.clip.groupId ?? 'none'} vs ${b.clip.groupId ?? 'none'}`,
+        path: firstPath,
+      });
+    }
+  }
+
+  // Rule 11: no single-member groups.
+  for (const [groupId, occurrences] of groups) {
+    if (occurrences.length < 2) {
+      const first = occurrences[0];
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          `group invariant violated: groupId ${groupId} has ${occurrences.length} member(s), `
+          + 'a group is at least 2 clips',
+        path: ['tracks', first.trackIndex, 'clips', first.clipIndex, 'groupId'],
+      });
+    }
+  }
+}
+
 /**
  * Run all document-wide invariant checks, reporting failures through `ctx`.
  * Designed to be called from `TimelineDocSchema.superRefine`.
@@ -696,6 +830,7 @@ export function checkTimelineInvariants(
   assetDurations?: AssetDurations,
 ): void {
   doc.tracks.forEach((track, ti) => checkTrack(ctx, track, ti, doc.settings.fps, assetDurations));
+  checkLinkAndGroupInvariants(doc, ctx);
 }
 
 // ---------------------------------------------------------------------------

@@ -136,6 +136,9 @@ namespace VideoEdit.Contracts.Timeline
         [System.Text.Json.Serialization.JsonPropertyName("opacity")]
         public double Opacity { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("groupId")]
+        public System.Guid? GroupId { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("kind")]
         [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<MediaClipKind>))]
         public MediaClipKind Kind { get; set; } = default!;
@@ -154,6 +157,9 @@ namespace VideoEdit.Contracts.Timeline
 
         [System.Text.Json.Serialization.JsonPropertyName("audio")]
         public ClipAudio? Audio { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("linkId")]
+        public System.Guid? LinkId { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("transitionIn")]
         public Transition? TransitionIn { get; set; } = default!;
@@ -471,6 +477,9 @@ namespace VideoEdit.Contracts.Timeline
         [System.Text.Json.Serialization.JsonPropertyName("opacity")]
         public double Opacity { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("groupId")]
+        public System.Guid? GroupId { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("kind")]
         public string Kind { get; set; } = default!;
 
@@ -541,6 +550,9 @@ namespace VideoEdit.Contracts.Timeline
         [System.Text.Json.Serialization.JsonPropertyName("opacity")]
         public double Opacity { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("groupId")]
+        public System.Guid? GroupId { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("kind")]
         public string Kind { get; set; } = default!;
 
@@ -592,6 +604,9 @@ namespace VideoEdit.Contracts.Timeline
 
         [System.Text.Json.Serialization.JsonPropertyName("opacity")]
         public double Opacity { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("groupId")]
+        public System.Guid? GroupId { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("kind")]
         public string Kind { get; set; } = default!;

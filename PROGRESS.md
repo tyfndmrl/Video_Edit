@@ -274,3 +274,20 @@ Suite (tümü kendi koşumum, 2026-08-31; API/Worker `api-run-signalr`/`worker-r
   bölümü + KAPSAM BEYANI (animasyonlu/merkez-dışı örtücü, pencere birleşimi, eğri-ekstremum
   örtme kanıtı KAPSAM DIŞI); DECISIONS +3 satır (daraltılmış doktrin + bayt-aynılık normu /
   colorAdjust füzyonu / N-paralel ERTELENDİ — reddedilenler ve geri alma koşullarıyla).
+
+## Özellik turu (2026-09-01 onayı: 5 timeline özelliği — plan onaylı, ExitPlanMode)
+
+> Plan: `C:\Users\tayfun\.claude\plans\capcut-ve-canva-gibi-hashed-penguin.md` (keşif 3 Explore +
+> tasarım 2 Plan ajanı; kullanıcı kararları: J sessiz geri tarama, link=taşı+sil+böl, grup belgeye
+> kalıcı, I/O ERTELENDİ). Commit öneki: `ozellik-<dilim>`. Her dilim: dört kapı + negatif kontrol
+> + gerçek-girdi e2e.
+
+| Dilim | İçerik | Durum | Not |
+|---|---|---|---|
+| 0 | Şema: linkId/groupId + invariant pass + codegen zinciri | ✅ YAPILDI (2026-09-01) | `linkId` (MediaClip) + `groupId` (klip tabanı) opsiyonel uuid; YENİ doküman-geçişli pass `checkLinkAndGroupInvariants` (kural 10-12: link TAM 2 klip = bir video + bir audio; grup ≥2 üye; link eşleri özdeş groupId; K4 savunması kind↔track-tipi — ekleme ÖNCESİ tarama: paket/editör/e2e-seed dokümanlarının hiçbiri kırılmadı, tam suite de doğruladı). Codegen: timeline.schema.json (opsiyonel uuid ref'leri) + TimelineContracts.g.cs (MediaClip'e nullable LinkId, tüm klip sınıflarına nullable GroupId; C# tarafına başka dokunuş yok). +13 paket testi (222→235; K1-K4 pozitif/negatif + alansız eski doküman DEĞİŞMEDEN geçerli pini). Negatif kontrol: link toplama söküldü → 4 yeni test tam imzayla kırmızı → md5-birebir geri (`0d5b20a6…55eff`). Kapılar: backend **1626/1626 skip 0** · editör 1342 · şema 235 · -warnaserror 0/0 · tsc -b + e2e tsc + prod build temiz |
+| 1 | Track partisyonu (video üstte / ses altta) | ⏳ | |
+| 2 | linkId çekirdeği: link/unlink + sil/böl/taşı kapanışı | ⏳ | |
+| 3 | Otomatik AV ayrımlı ekleme | ⏳ | |
+| 4 | Klip grupları (Ctrl+G) | ⏳ | |
+| 5a | J shuttle: transport store + tek-hız sessiz geri tarama | ⏳ | |
+| 5b | J shuttle: kademe merdiveni + rozet + yardım/karar kayıtları | ⏳ | |

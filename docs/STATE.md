@@ -1,6 +1,6 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-01, gelistirme-3 #3 (export perf 2. turu — baş mimar sözleşme
-kararıyla üç bacak; öncesi #1 defter senkronu + #2 silme/retention/temizlik, main).
+Son güncelleme: 2026-09-01, özellik turu dilim 0 (şema linkId/groupId + invariant pass +
+codegen; plan: `capcut-ve-canva-gibi-hashed-penguin.md`, defter: `PROGRESS.md` §Özellik turu).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
@@ -71,7 +71,11 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 
 ## Devam edenler
 
-- Yok. Çalışma ağacı gelistirme-3 #3 kapanış commit'iyle temiz.
+- **Özellik turu (2026-09-01 onaylı plan — 5 timeline özelliği, 7 dilim)**: dilim 0 ✅
+  (şema `linkId`/`groupId` + `checkLinkAndGroupInvariants` kural 10-12 + codegen; eski
+  dokümanlar değişmeden geçerli; dört kapı + prod build yeşil, backend 1626/1626 skip 0,
+  şema testleri 222→235). Sıradaki dilimler: 1 (track partisyonu) → 2 (link çekirdeği) →
+  3 (oto AV ayrımı) → 4 (gruplar) → 5a/5b (J shuttle). Defter: `PROGRESS.md` §Özellik turu.
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 

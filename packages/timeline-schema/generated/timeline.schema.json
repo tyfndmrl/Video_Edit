@@ -15,7 +15,7 @@
       "$ref": "#/definitions/__schema8"
     },
     "markers": {
-      "$ref": "#/definitions/__schema53"
+      "$ref": "#/definitions/__schema55"
     }
   },
   "required": [
@@ -224,8 +224,11 @@
         "opacity": {
           "$ref": "#/definitions/__schema39"
         },
-        "kind": {
+        "groupId": {
           "$ref": "#/definitions/__schema40"
+        },
+        "kind": {
+          "$ref": "#/definitions/__schema41"
         },
         "assetId": {
           "$ref": "#/definitions/__schema1"
@@ -237,16 +240,19 @@
           "$ref": "#/definitions/__schema16"
         },
         "speed": {
-          "$ref": "#/definitions/__schema41"
-        },
-        "audio": {
           "$ref": "#/definitions/__schema42"
         },
+        "audio": {
+          "$ref": "#/definitions/__schema43"
+        },
+        "linkId": {
+          "$ref": "#/definitions/__schema46"
+        },
         "transitionIn": {
-          "$ref": "#/definitions/__schema45"
+          "$ref": "#/definitions/__schema47"
         },
         "transitionOut": {
-          "$ref": "#/definitions/__schema47"
+          "$ref": "#/definitions/__schema49"
         }
       },
       "required": [
@@ -580,6 +586,13 @@
       "maximum": 1
     },
     "__schema40": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/__schema1"
+        }
+      ]
+    },
+    "__schema41": {
       "type": "string",
       "enum": [
         "video",
@@ -587,7 +600,7 @@
         "image"
       ]
     },
-    "__schema41": {
+    "__schema42": {
       "type": "object",
       "properties": {
         "rate": {
@@ -601,7 +614,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema42": {
+    "__schema43": {
       "anyOf": [
         {
           "$ref": "#/definitions/ClipAudio"
@@ -615,7 +628,7 @@
       "type": "object",
       "properties": {
         "volume": {
-          "$ref": "#/definitions/__schema43"
+          "$ref": "#/definitions/__schema44"
         },
         "fadeInUs": {
           "$ref": "#/definitions/__schema15"
@@ -624,7 +637,7 @@
           "$ref": "#/definitions/__schema15"
         },
         "muted": {
-          "$ref": "#/definitions/__schema44"
+          "$ref": "#/definitions/__schema45"
         }
       },
       "required": [
@@ -635,15 +648,22 @@
       ],
       "additionalProperties": false
     },
-    "__schema43": {
+    "__schema44": {
       "type": "number",
       "minimum": 0,
       "maximum": 2
     },
-    "__schema44": {
+    "__schema45": {
       "type": "boolean"
     },
-    "__schema45": {
+    "__schema46": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/__schema1"
+        }
+      ]
+    },
+    "__schema47": {
       "allOf": [
         {
           "$ref": "#/definitions/Transition"
@@ -654,7 +674,7 @@
       "type": "object",
       "properties": {
         "type": {
-          "$ref": "#/definitions/__schema46"
+          "$ref": "#/definitions/__schema48"
         },
         "durationUs": {
           "$ref": "#/definitions/__schema16"
@@ -666,7 +686,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema46": {
+    "__schema48": {
       "type": "string",
       "enum": [
         "crossfade",
@@ -677,7 +697,7 @@
         "dissolve"
       ]
     },
-    "__schema47": {
+    "__schema49": {
       "allOf": [
         {
           "$ref": "#/definitions/Transition"
@@ -708,11 +728,14 @@
         "opacity": {
           "$ref": "#/definitions/__schema39"
         },
+        "groupId": {
+          "$ref": "#/definitions/__schema40"
+        },
         "kind": {
-          "$ref": "#/definitions/__schema48"
+          "$ref": "#/definitions/__schema50"
         },
         "text": {
-          "$ref": "#/definitions/__schema49"
+          "$ref": "#/definitions/__schema51"
         }
       },
       "required": [
@@ -728,11 +751,11 @@
       ],
       "additionalProperties": false
     },
-    "__schema48": {
+    "__schema50": {
       "type": "string",
       "const": "text"
     },
-    "__schema49": {
+    "__schema51": {
       "type": "object",
       "properties": {
         "content": {
@@ -845,11 +868,14 @@
         "opacity": {
           "$ref": "#/definitions/__schema39"
         },
+        "groupId": {
+          "$ref": "#/definitions/__schema40"
+        },
         "kind": {
-          "$ref": "#/definitions/__schema50"
+          "$ref": "#/definitions/__schema52"
         },
         "shape": {
-          "$ref": "#/definitions/__schema51"
+          "$ref": "#/definitions/__schema53"
         }
       },
       "required": [
@@ -865,11 +891,11 @@
       ],
       "additionalProperties": false
     },
-    "__schema50": {
+    "__schema52": {
       "type": "string",
       "const": "shape"
     },
-    "__schema51": {
+    "__schema53": {
       "type": "object",
       "properties": {
         "type": {
@@ -936,8 +962,11 @@
         "opacity": {
           "$ref": "#/definitions/__schema39"
         },
+        "groupId": {
+          "$ref": "#/definitions/__schema40"
+        },
         "kind": {
-          "$ref": "#/definitions/__schema52"
+          "$ref": "#/definitions/__schema54"
         },
         "assetId": {
           "$ref": "#/definitions/__schema1"
@@ -956,11 +985,11 @@
       ],
       "additionalProperties": false
     },
-    "__schema52": {
+    "__schema54": {
       "type": "string",
       "const": "sticker"
     },
-    "__schema53": {
+    "__schema55": {
       "type": "array",
       "items": {
         "$ref": "#/definitions/Marker"
@@ -976,10 +1005,10 @@
           "$ref": "#/definitions/__schema15"
         },
         "label": {
-          "$ref": "#/definitions/__schema54"
+          "$ref": "#/definitions/__schema56"
         },
         "color": {
-          "$ref": "#/definitions/__schema55"
+          "$ref": "#/definitions/__schema57"
         }
       },
       "required": [
@@ -988,11 +1017,11 @@
       ],
       "additionalProperties": false
     },
-    "__schema54": {
+    "__schema56": {
       "type": "string",
       "maxLength": 200
     },
-    "__schema55": {
+    "__schema57": {
       "allOf": [
         {
           "$ref": "#/definitions/__schema7"

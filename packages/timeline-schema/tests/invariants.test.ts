@@ -1347,3 +1347,151 @@ describe('structural schema', () => {
     expect(validateTimelineDoc(doc).success).toBe(false);
   });
 });
+
+describe('link / group / kind-placement invariants (rules 10-12)', () => {
+  function audioTrack(clips: MediaClip[]): Track {
+    return { id: uid(nextId++), type: 'audio', muted: false, hidden: false, locked: false, clips };
+  }
+
+  function audioClip(
+    partial: Partial<MediaClip> & Pick<MediaClip, 'timelineStartUs' | 'timelineDurationUs'>,
+  ): MediaClip {
+    return mediaClip({
+      kind: 'audio',
+      audio: { volume: 1, fadeInUs: 0, fadeOutUs: 0, muted: false },
+      ...partial,
+    });
+  }
+
+  const LINK_1 = uid(7001);
+  const GROUP_1 = uid(8001);
+
+  /** validDoc + a linked AV pair: video twin on the video track, audio twin below. */
+  function docWithLinkedPair(): { doc: TimelineDoc; video: MediaClip; audio: MediaClip } {
+    const doc = validDoc();
+    const video = mediaClip({
+      timelineStartUs: 5_000_000,
+      timelineDurationUs: 1_000_000,
+      linkId: LINK_1,
+    });
+    const audio = audioClip({
+      timelineStartUs: 5_000_000,
+      timelineDurationUs: 1_000_000,
+      linkId: LINK_1,
+    });
+    doc.tracks[1].clips.push(video);
+    doc.tracks.push(audioTrack([audio]));
+    return { doc, video, audio };
+  }
+
+  it('accepts a linked video+audio pair (rule 10 baseline)', () => {
+    expect(validateTimelineDoc(docWithLinkedPair().doc).success).toBe(true);
+  });
+
+  it('accepts a linked pair whose two sides carry the SAME groupId (rule 10 consistency)', () => {
+    const { doc, video, audio } = docWithLinkedPair();
+    video.groupId = GROUP_1;
+    audio.groupId = GROUP_1;
+    expect(validateTimelineDoc(doc).success).toBe(true);
+  });
+
+  it('accepts a cross-kind group (text + video member) with >= 2 members (rule 11 baseline)', () => {
+    const doc = validDoc();
+    doc.tracks[0].clips[0].groupId = GROUP_1; // text overlay
+    doc.tracks[1].clips[0].groupId = GROUP_1; // video clip
+    expect(validateTimelineDoc(doc).success).toBe(true);
+  });
+
+  it('rejects a dangling linkId (1 clip)', () => {
+    const { doc, audio } = docWithLinkedPair();
+    audio.linkId = undefined;
+    expectIssue(doc, 'link invariant violated');
+    expectIssue(doc, 'a link is exactly 2 clips');
+  });
+
+  it('rejects a linkId shared by 3 clips', () => {
+    const { doc } = docWithLinkedPair();
+    const third = mediaClip({
+      timelineStartUs: 8_000_000,
+      timelineDurationUs: 1_000_000,
+      linkId: LINK_1,
+    });
+    doc.tracks[1].clips.push(third);
+    expectIssue(doc, 'appears on 3 clip(s)');
+  });
+
+  it('rejects a video+video link pair (rule 10 pair shape)', () => {
+    const { doc, audio } = docWithLinkedPair();
+    audio.linkId = undefined;
+    const secondVideo = mediaClip({
+      timelineStartUs: 8_000_000,
+      timelineDurationUs: 1_000_000,
+      linkId: LINK_1,
+    });
+    doc.tracks[1].clips.push(secondVideo);
+    expectIssue(doc, 'must pair one video and one audio media clip, got video + video');
+  });
+
+  it('rejects link partners with DIFFERENT groupIds (rule 10 consistency)', () => {
+    const { doc, video, audio } = docWithLinkedPair();
+    // Anchor the group on a third clip so rule 11 stays satisfied and the
+    // failure below is unambiguously the consistency half of rule 10.
+    video.groupId = GROUP_1;
+    doc.tracks[1].clips[0].groupId = GROUP_1;
+    audio.groupId = undefined;
+    expectIssue(doc, 'link/group consistency violated');
+  });
+
+  it('rejects a single-member group (rule 11)', () => {
+    const doc = validDoc();
+    doc.tracks[1].clips[0].groupId = GROUP_1;
+    expectIssue(doc, 'group invariant violated');
+    expectIssue(doc, 'has 1 member(s)');
+  });
+
+  it('rejects an audio clip on a video track (rule 12)', () => {
+    const doc = validDoc();
+    doc.tracks[1].clips.push(
+      audioClip({ timelineStartUs: 5_000_000, timelineDurationUs: 1_000_000 }),
+    );
+    expectIssue(doc, "a 'audio' clip belongs on a 'audio' track, got a 'video' track");
+  });
+
+  it('rejects a video clip on an audio track (rule 12 — the export-side gap)', () => {
+    const doc = validDoc();
+    doc.tracks.push(
+      audioTrack([mediaClip({ timelineStartUs: 0, timelineDurationUs: 1_000_000 })]),
+    );
+    expectIssue(doc, "a 'video' clip belongs on a 'video' track, got a 'audio' track");
+  });
+
+  it('rejects a text clip on a video track (rule 12)', () => {
+    const doc = validDoc();
+    doc.tracks[1].clips.push(textClip(5_000_000, 1_000_000));
+    expectIssue(doc, "a 'text' clip belongs on a 'overlay' track");
+  });
+
+  it('rejects a video clip on an overlay track (rule 12)', () => {
+    const doc = validDoc();
+    doc.tracks[0].clips.push(
+      mediaClip({ timelineStartUs: 2_000_000, timelineDurationUs: 1_000_000 }),
+    );
+    expectIssue(doc, "a 'video' clip belongs on a 'video' track, got a 'overlay' track");
+  });
+
+  it('keeps pre-link/group documents valid UNCHANGED (backward-compat pin)', () => {
+    // A document written before these fields existed must parse exactly as it
+    // did: valid, and with no linkId/groupId materialized onto its clips.
+    const doc = validDoc();
+    const result = validateTimelineDoc(doc);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      for (const track of result.data.tracks) {
+        for (const clip of track.clips) {
+          expect('linkId' in clip).toBe(false);
+          expect('groupId' in clip).toBe(false);
+        }
+      }
+    }
+  });
+});

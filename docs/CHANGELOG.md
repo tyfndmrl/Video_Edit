@@ -2,6 +2,14 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-01
+- ozellik-0 — şema linkId/groupId + link-grup-kind invariant pass + codegen (özellik turu
+  dilim 0): MediaClipSchema'ya opsiyonel `linkId` (AV çifti bağı), klip tabanına opsiyonel
+  `groupId`; invariants.ts'e kural 10-12 + YENİ doküman-geçişli pass
+  `checkLinkAndGroupInvariants` (link TAM 2 klip = bir video + bir audio; grup ≥2 üye; link
+  eşleri özdeş groupId; kind↔track-tipi savunması). schemaVersion=1 kaldı; codegen zinciri
+  (timeline.schema.json + TimelineContracts.g.cs: nullable LinkId/GroupId) koşuldu; +13
+  paket testi (235), eski doküman değişmeden-geçerli pini; negatif kontrol md5-birebir.
+  Dört kapı + prod build yeşil (backend 1626/1626 skip 0). Defter: `PROGRESS.md` §Özellik turu.
 - gelistirme-3 #3 — export perf 2. turu (baş mimar sözleşme kararıyla; üç bacak, üç commit +
   kapanış): **Bacak 0** — eski perf fixtürünün çifte kusuru (overlay'ler örtülü + tuval dışı)
   kaynağından doğrulandı; compReal/compCovered/compDikey fixtürleri kuruldu, **≥2x ölçütü

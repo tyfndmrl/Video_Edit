@@ -181,6 +181,13 @@ const clipBaseShape = {
   effects: z.array(EffectSchema),
   /** Base opacity 0..1 (keyframes may override). */
   opacity: z.number().min(0).max(1),
+  /**
+   * Group membership. A groupId names a set of AT LEAST 2 clips (invariants.ts,
+   * group rules) of any kind — text/shape/sticker included, which is why the
+   * field lives on the shared base. Group members only move together; every
+   * other operation stays per-clip.
+   */
+  groupId: uuid.optional(),
 };
 
 export const MediaClipSchema = z
@@ -195,6 +202,14 @@ export const MediaClipSchema = z
     speed: z.object({ rate: z.number().min(0.1).max(10) }),
     /** Embedded audio of a video clip; null when detached or absent. */
     audio: ClipAudioSchema.nullable(),
+    /**
+     * AV pair bond. The same linkId value appears on EXACTLY 2 clips in the
+     * document: one `video` and one `audio` media clip (invariants.ts, link
+     * rules). Linked partners move, delete and split TOGETHER; trim stays a
+     * single-clip operation and does not break the bond. Media clips only —
+     * that is why the field lives here and not on the shared clip base.
+     */
+    linkId: uuid.optional(),
     transitionIn: TransitionSchema.optional(),
     transitionOut: TransitionSchema.optional(),
   })
