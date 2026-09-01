@@ -105,17 +105,19 @@ test.describe('SignalR ilerleme kanalı — canlı yol', () => {
     await app.open(project.projectId, { email: account.email, password: account.password });
     const library = new LibraryPanelHarness(page);
 
-    // ── Hazırlık: gerçek medya + 2 klip (timeline 8 sn — render penceresi ölçüme yeter).
+    // ── Hazırlık: gerçek medya + iki ekleme (timeline 8 sn — render penceresi
+    // ölçüme yeter). Sesli kaynakta her ekleme video + otomatik ses ikizi
+    // üretir (ozellik-3): 2, sonra 4 klip.
     await library.pickFiles([video.path]);
     await library.waitForReady(video.fileName);
     await library.doubleClickAsset(video.fileName);
     await expect
       .poll(async () => (await app.state()).clipCount, { timeout: 15_000 })
-      .toBe(1);
+      .toBe(2);
     await library.doubleClickAsset(video.fileName);
     await expect
       .poll(async () => (await app.state()).clipCount, { timeout: 15_000 })
-      .toBe(2);
+      .toBe(4);
 
     // ── Export: GERÇEK fare; yoklama sayacı tıklamayla başlar.
     const openExport = page.getByRole('button', { name: 'Dışa Aktar', exact: true });

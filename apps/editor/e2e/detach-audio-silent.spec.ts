@@ -9,10 +9,12 @@
  * doğurur, yani `clip.audio` sessizliği AYIRT EDEMEZ; editör varlığın probe
  * olgusunu (`hasAudio`, API zaten dönüyordu) hiç okumuyordu.
  *
- * Bu spec iki yönü birden sabitler:
- *  1. sessiz videoda öğe GRİ ve Türkçe gerekçe kullanıcıya asılı (title),
- *  2. SESLİ videoda öğe hâlâ AÇIK ve gerçekten çalışıyor — bilinmeyen/sesli
- *     kaynağı da griletmek yanlış ret olurdu (yanlış yönde "düzeltme" bekçisi).
+ * Bu spec iki yönü birden sabitler (ozellik-3 sonrası şekliyle):
+ *  1. sessiz videoda öğe GRİ ve Türkçe gerekçe kullanıcıya asılı (title) —
+ *     klip artık `audio: null` doğduğu için gerekçe düz gömülü-ses kuralıdır,
+ *  2. SESLİ videoda ekleme OTOMATİK AV ayrımıyla zaten ayrılmış çift doğurur;
+ *     menü "yapılacak iş kalmadı" gerekçesiyle griler (elle detach'ın canlı
+ *     yolu hasAudio'su bilinmeyen seed medyasında: link-clips.spec.ts).
  *
  * KURAL (docs/review-gate.md §3): yalnız gerçek girdi — yükleme gerçek dosya
  * seçici, timeline'a alma gerçek çift tık, menü gerçek sağ tık.
@@ -29,7 +31,11 @@ import {
 } from './support/media';
 import { createEmptyProject } from './support/projects';
 
-/** Gerçek yükleme + işleme + çift tıkla timeline'a alma; klip id'sini döndürür. */
+/**
+ * Gerçek yükleme + işleme + çift tıkla timeline'a alma; VİDEO klibinin id'sini
+ * döndürür. `expectedClips` çağıranın karar-tablosu beklentisidir (ozellik-3):
+ * sessiz video 1 klip, sesli video otomatik AV ayrımıyla 2 klip doğurur.
+ */
 async function uploadAndPlaceOnTimeline(
   page: Page,
   account: {
@@ -40,6 +46,7 @@ async function uploadAndPlaceOnTimeline(
   },
   label: string,
   media: { path: string; fileName: string },
+  expectedClips: number,
 ): Promise<{ app: EditorApp; clipId: string }> {
   const project = await createEmptyProject(account.context.request, account.accessToken, label);
   const app = new EditorApp(page);
@@ -53,10 +60,12 @@ async function uploadAndPlaceOnTimeline(
   await expect
     .poll(async () => (await app.state()).clipCount, {
       timeout: 15_000,
-      message: 'Çift tık videoyu timeline\'a EKLEMEDİ.',
+      message: `Çift tık ${expectedClips} klip eklemeliydi (karar tablosu).`,
     })
-    .toBe(1);
-  const clipId = (await app.state()).tracks.flatMap((t) => t.clips)[0].id;
+    .toBe(expectedClips);
+  const clipId = (await app.state())
+    .tracks.flatMap((t) => t.clips)
+    .find((c) => c.kind === 'video')!.id;
   return { app, clipId };
 }
 
@@ -74,6 +83,7 @@ test.describe('"Sesi ayır" — sessiz kaynak kapısı (gerçek fare)', () => {
       account,
       'E2E sessiz detach',
       silent,
+      1, // hasAudio=false -> karar tablosu TEK klip der (ikiz yok).
     );
 
     // GERÇEK sağ tık -> menü.
@@ -87,10 +97,14 @@ test.describe('"Sesi ayır" — sessiz kaynak kapısı (gerçek fare)', () => {
         'ses klibi export\'ta 422 `asset-clip-type` alır (ölçüldü).',
     ).toBeDisabled();
     // Gerekçe op'un kendi ret kodudur ve kullanıcıya Türkçesi asılıdır (title).
-    await expect(item).toHaveAttribute('data-block-reason', 'source has no audio stream');
+    // ozellik-3'ten beri kesin-sessiz kaynakta klip `audio: null` DOĞAR
+    // (buildClipFromAsset), yani ÖNCE gömülü-ses kuralı konuşur; eski
+    // 'source has no audio stream' dalı yalnız legacy (audio dolu) kliplerde
+    // yaşar ve birim testte pinlidir (clipPropertyOps.test.ts).
+    await expect(item).toHaveAttribute('data-block-reason', 'clip has no embedded audio');
     await expect(item).toHaveAttribute(
       'title',
-      'Kaynak videoda ses akışı yok (sessiz video) — ayrılacak ses yok',
+      'Klipte gömülü ses yok (zaten ayrılmış olabilir)',
     );
 
     // Gri öğe hiçbir şey üretmez: doküman tek (video) klipte kalır.
@@ -100,7 +114,7 @@ test.describe('"Sesi ayır" — sessiz kaynak kapısı (gerçek fare)', () => {
     expect(st.tracks.flatMap((t) => t.clips.map((c) => c.kind))).toEqual(['video']);
   });
 
-  test('SESLİ videoda "Sesi ayır" hâlâ AÇIK ve gerçekten ayırıyor (yanlış ret yok)', async ({
+  test('SESLİ videoda ekleme ZATEN ayrılmış çift doğurur; menü "Sesi ayır"ı doğru gerekçeyle griler', async ({
     page,
     account,
   }) => {
@@ -108,31 +122,16 @@ test.describe('"Sesi ayır" — sessiz kaynak kapısı (gerçek fare)', () => {
     test.setTimeout(300_000);
 
     const voiced = ensureTestVideo();
+    // ozellik-3: hasAudio=true kaynakta çift tık OTOMATİK AV ayrımı yapar —
+    // "Sesi ayır"ın el ile yapacağı işi ekleme kendisi yapmış olur (2 klip).
     const { app, clipId } = await uploadAndPlaceOnTimeline(
       page,
       account,
       'E2E sesli detach',
       voiced,
+      2,
     );
 
-    await app.timeline.click(await app.timeline.clipCenter(clipId), 'right');
-    await expect(app.contextMenu).toBeVisible();
-
-    const item = page.getByTestId('timeline-menu-detachAudio');
-    await expect(
-      item,
-      'SESLİ videoda "Sesi ayır" grilendi — sessiz-kaynak kapısı yanlış yöne taşmış: ' +
-        'kapı yalnız KESİN hasAudio=false üzerinde engel kurmalı.',
-    ).toBeEnabled();
-
-    // GERÇEK tık: video klibi resmini korur, ses klibi ses track'ine doğar.
-    await item.click();
-    await expect
-      .poll(async () => (await app.state()).clipCount, {
-        timeout: 10_000,
-        message: '"Sesi ayır" tıklandı ama ses klibi doğmadı.',
-      })
-      .toBe(2);
     const after = await app.state();
     const kinds = after.tracks
       .flatMap((t) => t.clips.map((c) => ({ kind: c.kind, trackType: t.type })))
@@ -141,9 +140,22 @@ test.describe('"Sesi ayır" — sessiz kaynak kapısı (gerçek fare)', () => {
       { kind: 'audio', trackType: 'audio' },
       { kind: 'video', trackType: 'video' },
     ]);
-    // ozellik-2: ayrılan çift BAĞLI doğar — iki klipte aynı taze linkId.
+    // Çift BAĞLI doğar — iki klipte aynı taze linkId (detach formülü).
     const clips = after.tracks.flatMap((t) => t.clips);
     expect(clips[0].linkId).toBeDefined();
     expect(clips.every((c) => c.linkId === clips[0].linkId)).toBe(true);
+
+    // Menü: gömülü ses ikize taşındığı için "Sesi ayır" DOĞRU gerekçeyle gri —
+    // yanlış ret değil, yapılacak iş kalmadığının beyanı. (Elle detach'ın canlı
+    // yolu hasAudio'su ölçülmemiş seed medyasında sürüyor: link-clips.spec.ts.)
+    await app.timeline.click(await app.timeline.clipCenter(clipId), 'right');
+    await expect(app.contextMenu).toBeVisible();
+    const item = page.getByTestId('timeline-menu-detachAudio');
+    await expect(item).toBeDisabled();
+    await expect(item).toHaveAttribute('data-block-reason', 'clip has no embedded audio');
+
+    // Gri öğe hiçbir şey üretmez: klip sayısı 2'de kalır.
+    await page.keyboard.press('Escape');
+    expect((await app.state()).clipCount).toBe(2);
   });
 });

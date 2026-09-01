@@ -50,9 +50,12 @@ export type DragVisual =
     }
   | {
       kind: 'insert';
-      trackIndex: number | 'new';
-      startUs: MicroSec;
-      durationUs: MicroSec;
+      /**
+       * One ghost per clip the drop would create — an AV asset carries TWO
+       * (video row + target audio row), read from the SAME plan the drop
+       * commits (planAddClipFromAsset). 'new' = the new-track zone.
+       */
+      ghosts: { trackIndex: number | 'new'; startUs: MicroSec; durationUs: MicroSec }[];
       valid: boolean;
       guideUs: MicroSec | null;
     }
@@ -657,15 +660,17 @@ export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState
         ctx.stroke();
       }
     } else if (drag.kind === 'insert') {
-      const y = drag.trackIndex === 'new' ? trackTop(trackCount) + 2 : trackTop(drag.trackIndex);
-      const h = drag.trackIndex === 'new' ? NEW_TRACK_ZONE_H - 6 : TRACK_H;
-      const x = timeToX(drag.startUs, scrollUs, pxPerUs);
-      const w = Math.max(2, drag.durationUs * pxPerUs);
-      roundRect(ctx, x, y + 2, w, h - 4, 4);
-      ctx.fillStyle = drag.valid ? COLORS.ghostValid : COLORS.ghostInvalid;
-      ctx.fill();
-      ctx.strokeStyle = drag.valid ? COLORS.ghostValidStroke : COLORS.ghostInvalidStroke;
-      ctx.stroke();
+      for (const g of drag.ghosts) {
+        const y = g.trackIndex === 'new' ? trackTop(trackCount) + 2 : trackTop(g.trackIndex);
+        const h = g.trackIndex === 'new' ? NEW_TRACK_ZONE_H - 6 : TRACK_H;
+        const x = timeToX(g.startUs, scrollUs, pxPerUs);
+        const w = Math.max(2, g.durationUs * pxPerUs);
+        roundRect(ctx, x, y + 2, w, h - 4, 4);
+        ctx.fillStyle = drag.valid ? COLORS.ghostValid : COLORS.ghostInvalid;
+        ctx.fill();
+        ctx.strokeStyle = drag.valid ? COLORS.ghostValidStroke : COLORS.ghostInvalidStroke;
+        ctx.stroke();
+      }
     } else if (drag.kind === 'marquee') {
       const x = Math.min(drag.x0, drag.x1);
       const y = Math.min(drag.y0, drag.y1);

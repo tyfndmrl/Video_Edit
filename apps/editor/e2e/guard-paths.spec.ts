@@ -546,13 +546,15 @@ for (const run of [
     const library = new LibraryPanelHarness(page);
     await library.pickFiles([video.path]);
     await library.waitForReady(video.fileName);
+    // Sesli kaynak: otomatik AV ayrımı (ozellik-3) video + linkli ses ikizi
+    // ekler; bölme, bağ kapanışıyla İKİ yarıyı da böler (dilim-2) → 4 klip.
     await library.doubleClickAsset(video.fileName);
     await expect
       .poll(async () => (await app.state()).clipCount, {
         timeout: 20_000,
-        message: 'Kütüphaneden timeline\'a klip eklenemedi.',
+        message: 'Kütüphaneden timeline\'a klipler (video + ses ikizi) eklenemedi.',
       })
-      .toBe(1);
+      .toBe(2);
 
     // --- 1. GERÇEK sağ tık menüsüyle böl ---
     let st = await app.state();
@@ -565,7 +567,10 @@ for (const run of [
     await page.waitForTimeout(250);
 
     st = await app.state();
-    expect(st.clipCount, 'Bölme iki klip üretmeliydi.').toBe(2);
+    expect(
+      st.clipCount,
+      'Bölme, bağ kapanışıyla dört klip üretmeliydi (video 2 + ses ikizi 2).',
+    ).toBe(4);
     const [first, second] = clipsInOrder(st);
     expect(
       first.timelineStartUs + first.timelineDurationUs,
@@ -663,9 +668,14 @@ for (const run of [
       await account.context.request.get(`/api/projects/${project.projectId}`, {
         headers: { Authorization: `Bearer ${account.accessToken}` },
       })
-    ).json()) as { timeline: { tracks: { clips: (DocClip & { timelineStartUs: number })[] }[] } };
+    ).json()) as {
+      timeline: { tracks: { clips: (DocClip & { timelineStartUs: number; kind: string })[] }[] };
+    };
+    // Yalnız VİDEO yarıları: otomatik ses ikizleri (ozellik-3) aynı zamanlarda
+    // yaşar ama geçiş/yerleşim iddiasının öznesi değildir.
     const savedClips = detail.timeline.tracks
       .flatMap((t) => t.clips)
+      .filter((c) => c.kind === 'video')
       .sort((x, y) => x.timelineStartUs - y.timelineStartUs);
     expect(savedClips[0].transitionOut, 'Kaydedilen belgede geçiş olmalı.').toBeDefined();
     expect(

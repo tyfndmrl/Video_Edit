@@ -62,10 +62,11 @@ test.describe('SignalR ilerleme kanalı — polling yedeği', () => {
     // ── Yükleme + işleme: hub'sız da "Hazır" (asset yoklaması yaşıyor).
     await library.pickFiles([video.path]);
     await library.waitForReady(video.fileName);
+    // Sesli kaynak: otomatik AV ayrımı (ozellik-3) video + ses ikizi ekler.
     await library.doubleClickAsset(video.fileName);
     await expect
       .poll(async () => (await app.state()).clipCount, { timeout: 15_000 })
-      .toBe(1);
+      .toBe(2);
 
     // ── Export: gerçek fare.
     const openExport = page.getByRole('button', { name: 'Dışa Aktar', exact: true });

@@ -76,6 +76,9 @@ const REASONS: Record<string, string> = {
   'asset is not ready': 'Medya henüz hazır değil — işlenmesi bitince ekleyin',
   'asset has no known duration': 'Medyanın süresi bilinmiyor, klip oluşturulamadı',
   'lut is not a clip source': "LUT (.cube) timeline'a eklenmez — Inspector'daki LUT bölümünden bir klibe uygulayın",
+  // Otomatik AV ayrımı (ozellik-3): yeni track gerektiren ekleme, sunucu
+  // tavanını (50 track) aşacaksa TÜMÜYLE reddedilir — kısmi başarı yasak.
+  'track limit reached': 'Track sınırına ulaşıldı (50)',
   'only an image asset can be a sticker': 'Çıkartma yalnız görsel (resim) dosyadan eklenir',
   'invalid opacity': 'Geçersiz opaklık değeri',
   'no text clip in selection': 'Seçimde metin klibi yok',
@@ -127,6 +130,9 @@ const NOTICES: Record<string, string> = {
   // tavanın üstünde kaldıysa op ölçeği tavana indirir ve bunu söyler.
   'scale clamped by rotation canvas':
     'Ölçek, dönme ara tuvali 8192 px sınırına sığsın diye küçültüldü',
+  // Otomatik AV ayrımı (ozellik-3): ses ikizi boş/kilitsiz bir ses şeridi
+  // bulamayınca yeni bir track açıldı — sessizce değil, söyleyerek.
+  'audio placed on a new track': "Ses yeni bir track'e yerleştirildi",
 };
 
 /** timelineOps `reason` -> kullanıcıya gösterilecek Türkçe uyarı. */

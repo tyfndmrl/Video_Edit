@@ -16,6 +16,8 @@ import { createEmptyDoc, defaultProjectSettings, useDocStore } from './docStore'
 import { useAssetStore } from './assetStore';
 import { useEditorStore } from './editorStore';
 import {
+  AUDIO_PLACED_ON_NEW_TRACK,
+  MAX_TRACKS,
   addClipFromAsset,
   addTextClip,
   addTrack,
@@ -36,6 +38,7 @@ import {
   moveTrack,
   pasteAtPlayhead,
   pasteBlockReason,
+  planAddClipFromAsset,
   planMoveClips,
   renameTrack,
   splitAtPlayhead,
@@ -1454,6 +1457,290 @@ describe('linkId core (ozellik-2)', () => {
       expect(restored).toHaveLength(2);
       expect(restored.every((c) => c.linkId === L1)).toBe(true);
       expectValid();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Otomatik AV ayrımı (ozellik-3): planAddClipFromAsset + çift-klipli commit.
+// Karar tablosu, ses yerleşim politikası, kısmi başarı yasağı ve plan<->commit
+// ayrışmazlığı (guardPaths deseni) burada sabitlenir.
+// ---------------------------------------------------------------------------
+
+describe('automatic AV split on add (ozellik-3)', () => {
+  const AV_VIDEO = '01890000-0000-7000-8000-000000000601';
+  const SILENT_VIDEO = '01890000-0000-7000-8000-000000000602';
+  const UNKNOWN_VIDEO = '01890000-0000-7000-8000-000000000603';
+  const IMAGE_ASSET = '01890000-0000-7000-8000-000000000604';
+  const AUDIO_ASSET = '01890000-0000-7000-8000-000000000605';
+
+  function seedAssets(): void {
+    useAssetStore.getState().setAssets([
+      { id: AV_VIDEO, kind: 'video', name: 'sesli.mp4', status: 'ready', durationUs: 4 * US, hasAudio: true },
+      { id: SILENT_VIDEO, kind: 'video', name: 'sessiz.mp4', status: 'ready', durationUs: 4 * US, hasAudio: false },
+      { id: UNKNOWN_VIDEO, kind: 'video', name: 'eski.mp4', status: 'ready', durationUs: 4 * US },
+      { id: IMAGE_ASSET, kind: 'image', name: 'foto.png', status: 'ready' },
+      { id: AUDIO_ASSET, kind: 'audio', name: 'muzik.m4a', status: 'ready', durationUs: 4 * US },
+    ]);
+  }
+
+  function allClips(): MediaClip[] {
+    return currentDoc().tracks.flatMap((t) => t.clips) as MediaClip[];
+  }
+
+  beforeEach(seedAssets);
+
+  describe('decision table', () => {
+    it('image asset -> ONE clip (unchanged)', () => {
+      const trackId = addTrack('video');
+      const res = addClipFromAsset(IMAGE_ASSET, { trackId }, 0);
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.audioClipId).toBeUndefined();
+      expect(allClips()).toHaveLength(1);
+      expectValid();
+    });
+
+    it('audio asset -> ONE clip (unchanged)', () => {
+      const trackId = addTrack('audio');
+      const res = addClipFromAsset(AUDIO_ASSET, { trackId }, 0);
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.audioClipId).toBeUndefined();
+      expect(allClips()).toHaveLength(1);
+      expectValid();
+    });
+
+    it('video + hasAudio=true -> TWO linked clips: video half audio:null, twin = detach formula', () => {
+      const trackId = addTrack('video');
+      const res = addClipFromAsset(AV_VIDEO, { trackId }, 2 * US);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.audioClipId).toBeDefined();
+      expect(res.audioTrackId).toBeDefined();
+
+      const clips = allClips();
+      expect(clips).toHaveLength(2);
+      const vid = clips.find((c) => c.kind === 'video')!;
+      const aud = clips.find((c) => c.kind === 'audio')!;
+      expect(vid.audio, 'Gömülü ses TÜMÜYLE ikize taşınır (detach sonrası şekil).').toBeNull();
+      expect(aud.audio).toEqual({ volume: 1, fadeInUs: 0, fadeOutUs: 0, muted: false });
+      // detachAudio formülü: aynı assetId/sourceIn/Out/speed/timeline penceresi.
+      expect(aud.assetId).toBe(vid.assetId);
+      expect(aud.sourceInUs).toBe(vid.sourceInUs);
+      expect(aud.sourceOutUs).toBe(vid.sourceOutUs);
+      expect(aud.speed).toEqual(vid.speed);
+      expect(aud.timelineStartUs).toBe(vid.timelineStartUs);
+      expect(aud.timelineDurationUs).toBe(vid.timelineDurationUs);
+      // Ortak TAZE linkId + İKİSİ birden seçili.
+      expect(vid.linkId).toBeDefined();
+      expect(aud.linkId).toBe(vid.linkId);
+      expect([...useEditorStore.getState().selection].sort()).toEqual([vid.id, aud.id].sort());
+      expectValid();
+    });
+
+    it('video + hasAudio=false -> ONE clip with audio:null; detach menu greys with the plain rule', () => {
+      const trackId = addTrack('video');
+      const res = addClipFromAsset(SILENT_VIDEO, { trackId }, 0);
+      expect(res.ok).toBe(true);
+      const clips = allClips();
+      expect(clips).toHaveLength(1);
+      expect(clips[0].audio, 'Kesin-sessiz kaynakta gömülü ses NESNESİ yazılmaz.').toBeNull();
+      // audio:null artık ÖNCE konuşur — sessiz videoda menü bu gerekçeyle grilenir.
+      expect(detachAudioBlockReason(currentDoc(), clips[0].id)).toBe('clip has no embedded audio');
+      expectValid();
+    });
+
+    it('video + hasAudio=undefined (unmeasured row) -> ONE clip WITH embedded audio (unchanged)', () => {
+      const trackId = addTrack('video');
+      const res = addClipFromAsset(UNKNOWN_VIDEO, { trackId }, 0);
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.audioClipId).toBeUndefined();
+      const clips = allClips();
+      expect(clips).toHaveLength(1);
+      expect(clips[0].audio, 'Bilinmeyen olgu sessizlik DEĞİLDİR: ikiz üretmek 422 tuzağıdır.').not.toBeNull();
+      expect(clips[0].linkId).toBeUndefined();
+      expectValid();
+    });
+  });
+
+  describe('single mutate = single undo', () => {
+    it('ONE Ctrl+Z removes BOTH halves (and the spawned audio track)', () => {
+      addTrack('video');
+      const before = currentDoc().tracks.length;
+      const res = addClipFromAsset(AV_VIDEO, { trackId: currentDoc().tracks[0].id }, 0);
+      expect(res.ok).toBe(true);
+      expect(allClips()).toHaveLength(2);
+      expect(currentDoc().tracks.length).toBe(before + 1);
+
+      useDocStore.getState().undo();
+      expect(allClips(), 'TEK undo çiftin İKİSİNİ de kaldırmalı (tek mutate).').toHaveLength(0);
+      expect(currentDoc().tracks.length, 'Doğan ses track\'i de aynı undo ile gider.').toBe(before);
+      expectValid();
+    });
+  });
+
+  describe('audio placement policy', () => {
+    it('lands on the FIRST unlocked audio track that is free at the range (no notice)', () => {
+      const videoTrackId = addTrack('video');
+      const audioTrackId = addTrack('audio');
+      const res = addClipFromAsset(AV_VIDEO, { trackId: videoTrackId }, 0);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.audioTrackId).toBe(audioTrackId);
+      expect(res.notice).toBeUndefined();
+      expectValid();
+    });
+
+    it('skips a LOCKED audio lane and a lane that is FULL at the range', () => {
+      const videoTrackId = addTrack('video');
+      const lockedId = addTrack('audio');
+      toggleTrackLocked(lockedId);
+      const fullId = addTrack('audio');
+      expect(addClipFromAsset(AUDIO_ASSET, { trackId: fullId }, 0).ok).toBe(true);
+      const freeId = addTrack('audio');
+
+      const res = addClipFromAsset(AV_VIDEO, { trackId: videoTrackId }, 0);
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.audioTrackId).toBe(freeId);
+      expectValid();
+    });
+
+    it('all lanes unusable -> NEW audio track at the BOTTOM (partition) + notice', () => {
+      const videoTrackId = addTrack('video');
+      const fullId = addTrack('audio');
+      expect(addClipFromAsset(AUDIO_ASSET, { trackId: fullId }, 0).ok).toBe(true);
+
+      const res = addClipFromAsset(AV_VIDEO, { trackId: videoTrackId }, 0);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.notice).toBe(AUDIO_PLACED_ON_NEW_TRACK);
+      const tracks = currentDoc().tracks;
+      // Partisyon: yeni ses şeridi push edilir - EN ALTTA doğar.
+      expect(tracks[tracks.length - 1].id).toBe(res.audioTrackId);
+      expect(tracks[tracks.length - 1].type).toBe('audio');
+      expect(tracks.map((t) => t.type)).toEqual(['video', 'audio', 'audio']);
+      expectValid();
+    });
+
+    it('with NO audio track at all the twin births one (also bottom, also told)', () => {
+      const videoTrackId = addTrack('video');
+      const res = addClipFromAsset(AV_VIDEO, { trackId: videoTrackId }, 0);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.notice).toBe(AUDIO_PLACED_ON_NEW_TRACK);
+      expect(currentDoc().tracks.map((t) => t.type)).toEqual(['video', 'audio']);
+      expectValid();
+    });
+  });
+
+  describe('partial success is impossible (track ceiling)', () => {
+    /** 1 boş video track + (MAX_TRACKS-1) KİLİTLİ ses track'i = tavan dolu. */
+    function loadCeilingDoc(): void {
+      const tracks: Track[] = [videoTrack(TRACK_1, [])];
+      for (let i = 1; i < MAX_TRACKS; i++) {
+        tracks.push({
+          id: `01890000-0000-7000-8000-0000000007${i.toString(16).padStart(2, '0')}`,
+          type: 'audio',
+          muted: false,
+          hidden: false,
+          locked: true,
+          clips: [],
+        });
+      }
+      useDocStore.getState().loadDoc(docWith(tracks));
+    }
+
+    it('video fits but the twin would need track 51 -> the WHOLE add refuses', () => {
+      loadCeilingDoc();
+      const historyBefore = useDocStore.getState().history.length;
+      const res = addClipFromAsset(AV_VIDEO, { trackId: TRACK_1 }, 0);
+      expect(res).toEqual({ ok: false, reason: 'track limit reached' });
+      expect(allClips(), 'Kısmi başarı yasak: video da yazılmamış olmalı.').toHaveLength(0);
+      expect(useDocStore.getState().history.length, 'Tarih temiz kalmalı.').toBe(historyBefore);
+      expectValid();
+    });
+
+    it('the ceiling also guards the plain single-clip newTrack path', () => {
+      loadCeilingDoc();
+      const res = addClipFromAsset(IMAGE_ASSET, { newTrack: true }, 0);
+      expect(res).toEqual({ ok: false, reason: 'track limit reached' });
+      expect(allClips()).toHaveLength(0);
+    });
+
+    it('a 49-track document cannot sneak to 51 through the two-new-track corner', () => {
+      // 1 video + 47 kilitli ses = 48 track; newTrack hedefi video icin 1,
+      // ikiz icin 1 track daha ister -> 50'ye sigar. 49'da sigmaz.
+      const tracks: Track[] = [videoTrack(TRACK_1, [])];
+      for (let i = 1; i < MAX_TRACKS - 1; i++) {
+        tracks.push({
+          id: `01890000-0000-7000-8000-0000000008${i.toString(16).padStart(2, '0')}`,
+          type: 'audio',
+          muted: false,
+          hidden: false,
+          locked: true,
+          clips: [],
+        });
+      }
+      useDocStore.getState().loadDoc(docWith(tracks)); // 49 track
+      const res = addClipFromAsset(AV_VIDEO, { newTrack: true }, 0);
+      expect(res).toEqual({ ok: false, reason: 'track limit reached' });
+      expect(currentDoc().tracks.length).toBe(MAX_TRACKS - 1);
+      expectValid();
+    });
+  });
+
+  describe('plan <-> commit non-divergence (guardPaths pattern)', () => {
+    it('whenever the plan says ok the commit succeeds, and refusals carry the SAME reason', () => {
+      const scenarios: {
+        name: string;
+        setup(): { assetId: string; target: Parameters<typeof addClipFromAsset>[1]; startUs: number };
+      }[] = [
+        {
+          name: 'AV split onto an existing video track',
+          setup: () => ({ assetId: AV_VIDEO, target: { trackId: addTrack('video') }, startUs: 0 }),
+        },
+        {
+          name: 'AV split via newTrack',
+          setup: () => ({ assetId: AV_VIDEO, target: { newTrack: true }, startUs: US }),
+        },
+        {
+          name: 'locked target track',
+          setup: () => {
+            const trackId = addTrack('video');
+            toggleTrackLocked(trackId);
+            return { assetId: AV_VIDEO, target: { trackId }, startUs: 0 };
+          },
+        },
+        {
+          name: 'track type mismatch',
+          setup: () => ({ assetId: AV_VIDEO, target: { trackId: addTrack('audio') }, startUs: 0 }),
+        },
+        {
+          name: 'overlap on the video lane',
+          setup: () => {
+            const trackId = addTrack('video');
+            expect(addClipFromAsset(UNKNOWN_VIDEO, { trackId }, 0).ok).toBe(true);
+            return { assetId: AV_VIDEO, target: { trackId }, startUs: US };
+          },
+        },
+        {
+          name: 'asset not ready',
+          setup: () => {
+            useAssetStore.getState().updateAsset(AV_VIDEO, { status: 'processing' });
+            return { assetId: AV_VIDEO, target: { trackId: addTrack('video') }, startUs: 0 };
+          },
+        },
+      ];
+      for (const scenario of scenarios) {
+        useDocStore.getState().loadDoc(createEmptyDoc(PROJECT_ID, { ...defaultProjectSettings }));
+        seedAssets();
+        const { assetId, target, startUs } = scenario.setup();
+        const asset = useAssetStore.getState().getAsset(assetId)!;
+        const plan = planAddClipFromAsset(currentDoc(), asset, target, startUs);
+        const res = addClipFromAsset(assetId, target, startUs);
+        expect(res.ok, scenario.name).toBe(plan.ok);
+        if (!plan.ok && !res.ok) expect(res.reason, scenario.name).toBe(plan.reason);
+        if (plan.ok) expectValid();
+      }
     });
   });
 });

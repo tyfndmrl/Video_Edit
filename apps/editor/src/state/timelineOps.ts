@@ -853,6 +853,15 @@ export function deleteTrack(trackId: Uuid): OpResult {
  *     shortens).
  * The still-image default (4 s) goes through the same path, which is what puts
  * it on the grid in NTSC projects where 4_000_000 us is not a frame boundary.
+ *
+ * `audio` is null where the sound CANNOT exist: stills, and videos whose probe
+ * fact says the source has no audio stream (`hasAudio === false`). Writing the
+ * mixer object on a certain-silent video used to make the detach menu offer an
+ * action whose product the export refused with 422 `asset-clip-type` — with
+ * null the menu greys via the plain 'clip has no embedded audio' rule instead.
+ * Unknown (`hasAudio === undefined`, pre-probe row) keeps the object: refusing
+ * on "unknown" would contradict the export gate, which only asks the question
+ * where the answer is certain.
  */
 function buildClipFromAsset(
   asset: AssetSummary,
@@ -879,7 +888,9 @@ function buildClipFromAsset(
     sourceOutUs: durationUs,
     speed: { rate: 1 },
     audio:
-      asset.kind === 'image' ? null : { volume: 1, fadeInUs: 0, fadeOutUs: 0, muted: false },
+      asset.kind === 'image' || (asset.kind === 'video' && asset.hasAudio === false)
+        ? null
+        : { volume: 1, fadeInUs: 0, fadeOutUs: 0, muted: false },
     transform: { x: 0, y: 0, scale: 1, rotationDeg: 0, anchorX: 0.5, anchorY: 0.5 },
     keyframes: {},
     effects: [],
@@ -890,13 +901,185 @@ function buildClipFromAsset(
 export type AddClipTarget = { trackId: Uuid } | { newTrack: true };
 
 export type AddClipResult =
-  | { ok: true; clipId: Uuid; trackId: Uuid }
+  | {
+      ok: true;
+      clipId: Uuid;
+      trackId: Uuid;
+      /** Present when the add auto-split an AV pair (ozellik-3): the audio twin. */
+      audioClipId?: Uuid;
+      audioTrackId?: Uuid;
+      /** Success-with-correction code (see OpResult.notice), e.g. AUDIO_PLACED_ON_NEW_TRACK. */
+      notice?: string;
+    }
   | { ok: false; reason: string };
 
+/** Notice code: the audio twin had no usable audio lane and got a fresh one. */
+export const AUDIO_PLACED_ON_NEW_TRACK = 'audio placed on a new track';
+
 /**
- * Creates a MediaClip from a READY asset (sourceIn=0, sourceOut=duration,
- * speed 1, default audio) at the given time, snapped to the project fps grid.
- * Rejects overlaps and track-type mismatches; `newTrack` appends a fresh track.
+ * Frontend mirror of the server's track ceiling
+ * (TimelineRequestValidation.MaxTracks): a document the add would push past
+ * this bound could never be SAVED, so the plan refuses up front instead of
+ * letting the autosave die on a typed 422 later.
+ */
+export const MAX_TRACKS = 50;
+
+/** One placed clip of an add plan (index into `d.tracks`, or a fresh track). */
+interface PlannedClip {
+  clip: MediaClip;
+  /** Present when the clip lands on an EXISTING track. */
+  trackIndex?: number;
+}
+
+export interface AddClipPlan {
+  ok: true;
+  /**
+   * The gesture's primary clip (named after the dominant case; for an
+   * image/audio asset it is simply that clip). `newTrack` mirrors the target.
+   */
+  video: PlannedClip & { newTrack?: boolean };
+  /**
+   * The audio twin — present ONLY for a video asset whose probe MEASURED an
+   * audio stream (`hasAudio === true`). Shares one fresh linkId with `video`.
+   */
+  audio?: PlannedClip;
+  /** True when the audio twin needs a fresh audio track (pushed to the bottom). */
+  newAudioTrack?: boolean;
+  notice?: string;
+}
+
+export type AddClipPlanResult = AddClipPlan | { ok: false; reason: string };
+
+/**
+ * PURE planner behind addClipFromAsset — THE single decision point that the
+ * commit, the timeline's insert ghost (TimelinePanel insertTargetFor) and any
+ * block reason all read, so "the ghost said valid, the drop refused" is
+ * impossible by construction (same contract as pasteBlockReason).
+ *
+ * Decision table (ozellik-3, automatic AV split):
+ *  - image/audio asset                    -> ONE clip (unchanged behaviour);
+ *  - video + hasAudio === true            -> TWO clips: the video clip with
+ *    `audio: null` plus an exact audio twin (detachAudio's formula: same
+ *    assetId/sourceIn/sourceOut/speed/timeline range) under ONE fresh linkId;
+ *  - video + hasAudio === false           -> ONE clip, `audio: null`
+ *    (buildClipFromAsset; certain silence carries no mixer object);
+ *  - video + hasAudio === undefined       -> ONE clip WITH embedded audio
+ *    (unknown is not silence: minting a twin on an unmeasured row risks the
+ *    measured 422 `asset-clip-type` trap when the source turns out silent).
+ *
+ * Audio placement: the first UNLOCKED audio track that is FREE at the target
+ * range; otherwise a NEW audio track (partition policy pushes it to the
+ * bottom) with the AUDIO_PLACED_ON_NEW_TRACK notice — a deliberate departure
+ * from detachAudio's "never spawn a track when audio tracks exist" strictness,
+ * because refusing the product's PRIMARY add gesture over a full lane would be
+ * hostile. Partial success is BANNED: when the whole plan (including any new
+ * track) would push the document past MAX_TRACKS, everything is refused —
+ * a video clip whose sound silently went missing is not an outcome.
+ */
+export function planAddClipFromAsset(
+  d: TimelineDoc,
+  asset: AssetSummary,
+  target: AddClipTarget,
+  timelineStartUs: MicroSec,
+): AddClipPlanResult {
+  if (asset.status !== 'ready') return { ok: false, reason: 'asset is not ready' };
+  if (asset.kind === 'lut') return { ok: false, reason: 'lut is not a clip source' };
+
+  const startUs = snapUsToFrameGrid(Math.max(0, Math.round(timelineStartUs)), d.settings.fps);
+  const clip = buildClipFromAsset(asset, startUs, d.settings.fps);
+  if (!clip) return { ok: false, reason: 'asset has no known duration' };
+
+  const requiredType = trackTypeForClipKind(clip.kind);
+  let video: AddClipPlan['video'];
+  let plannedNewTracks = 0;
+
+  if ('trackId' in target) {
+    const trackIndex = d.tracks.findIndex((t) => t.id === target.trackId);
+    if (trackIndex < 0) return { ok: false, reason: 'track not found' };
+    const track = d.tracks[trackIndex];
+    if (track.locked) return { ok: false, reason: 'track is locked' };
+    if (track.type !== requiredType) return { ok: false, reason: 'track type mismatch' };
+    if (!fitsInTrack(track, clip.timelineStartUs, clip.timelineDurationUs)) {
+      return { ok: false, reason: 'overlaps an existing clip' };
+    }
+    video = { clip, trackIndex };
+  } else {
+    plannedNewTracks += 1;
+    video = { clip, newTrack: true };
+  }
+
+  // Decision table: only a MEASURED audio stream births the twin.
+  if (asset.kind !== 'video' || asset.hasAudio !== true) {
+    if (plannedNewTracks > 0 && d.tracks.length + plannedNewTracks > MAX_TRACKS) {
+      return { ok: false, reason: 'track limit reached' };
+    }
+    return { ok: true, video };
+  }
+
+  // The embedded sound moves WHOLLY into the twin: the video half carries none
+  // (same shape detachAudio leaves behind), and the pair is born linked.
+  const pairLinkId = uuidv7();
+  clip.audio = null;
+  clip.linkId = pairLinkId;
+  const audioClip: MediaClip = {
+    id: uuidv7(),
+    kind: 'audio',
+    assetId: clip.assetId,
+    timelineStartUs: clip.timelineStartUs,
+    timelineDurationUs: clip.timelineDurationUs,
+    sourceInUs: clip.sourceInUs,
+    sourceOutUs: clip.sourceOutUs,
+    speed: { ...clip.speed },
+    audio: { volume: 1, fadeInUs: 0, fadeOutUs: 0, muted: false },
+    transform: { ...DEFAULT_TRANSFORM },
+    keyframes: {},
+    effects: [],
+    opacity: 1,
+    linkId: pairLinkId,
+  };
+
+  const audioTrackIndex = d.tracks.findIndex(
+    (t) =>
+      t.type === 'audio' &&
+      !t.locked &&
+      fitsInTrack(t, audioClip.timelineStartUs, audioClip.timelineDurationUs),
+  );
+  let audio: AddClipPlan['audio'];
+  let newAudioTrack = false;
+  let notice: string | undefined;
+  if (audioTrackIndex >= 0) {
+    audio = { clip: audioClip, trackIndex: audioTrackIndex };
+  } else {
+    plannedNewTracks += 1;
+    newAudioTrack = true;
+    audio = { clip: audioClip };
+    notice = AUDIO_PLACED_ON_NEW_TRACK;
+  }
+
+  // Partial success is banned: past the ceiling the WHOLE add refuses (the
+  // sum covers the video's own new track too, so a 49-track document cannot
+  // sneak to 51 through the two-new-track corner). Only an add that OPENS a
+  // track is gated — a legacy over-limit document keeps its existing lanes
+  // usable (the server refuses its save either way).
+  if (plannedNewTracks > 0 && d.tracks.length + plannedNewTracks > MAX_TRACKS) {
+    return { ok: false, reason: 'track limit reached' };
+  }
+
+  return {
+    ok: true,
+    video,
+    audio,
+    ...(newAudioTrack ? { newAudioTrack: true } : {}),
+    ...(notice !== undefined ? { notice } : {}),
+  };
+}
+
+/**
+ * Creates clip(s) from a READY asset at the given time, snapped to the project
+ * fps grid — the COMMIT half of planAddClipFromAsset (all placement decisions
+ * live there). A video asset with a measured audio stream lands as a LINKED
+ * AV pair in ONE mutate (one undo entry) with BOTH halves selected; everything
+ * else lands as the familiar single clip.
  */
 export function addClipFromAsset(
   assetId: Uuid,
@@ -906,38 +1089,53 @@ export function addClipFromAsset(
   const d = doc();
   const asset = useAssetStore.getState().getAsset(assetId);
   if (!asset) return { ok: false, reason: 'asset not found' };
-  if (asset.status !== 'ready') return { ok: false, reason: 'asset is not ready' };
-  if (asset.kind === 'lut') return { ok: false, reason: 'lut is not a clip source' };
 
-  const startUs = snapUsToFrameGrid(Math.max(0, Math.round(timelineStartUs)), d.settings.fps);
-  const clip = buildClipFromAsset(asset, startUs, d.settings.fps);
-  if (!clip) return { ok: false, reason: 'asset has no known duration' };
+  const plan = planAddClipFromAsset(d, asset, target, timelineStartUs);
+  if (!plan.ok) return plan;
 
-  const requiredType = trackTypeForClipKind(clip.kind);
+  const videoClip = plan.video.clip;
+  const audioClip = plan.audio?.clip;
+  const newPrimaryTrack =
+    plan.video.newTrack === true ? makeTrack(trackTypeForClipKind(videoClip.kind)) : null;
+  // Same name detachAudio gives its spawned lane — the twin is the same product.
+  const newAudioTrack = plan.newAudioTrack === true ? makeTrack('audio', 'Ses') : null;
+  const primaryTrackId =
+    newPrimaryTrack !== null ? newPrimaryTrack.id : d.tracks[plan.video.trackIndex!].id;
+  const audioTrackId =
+    audioClip === undefined
+      ? undefined
+      : newAudioTrack !== null
+        ? newAudioTrack.id
+        : d.tracks[plan.audio!.trackIndex!].id;
 
-  if ('trackId' in target) {
-    const track = d.tracks.find((t) => t.id === target.trackId);
-    if (!track) return { ok: false, reason: 'track not found' };
-    if (track.locked) return { ok: false, reason: 'track is locked' };
-    if (track.type !== requiredType) return { ok: false, reason: 'track type mismatch' };
-    if (!fitsInTrack(track, clip.timelineStartUs, clip.timelineDurationUs)) {
-      return { ok: false, reason: 'overlaps an existing clip' };
-    }
-    useDocStore.getState().mutate('addClip', `${asset.name} eklendi`, (dd) => {
-      const t = dd.tracks.find((x) => x.id === target.trackId);
-      if (t) insertClipSorted(t, clip);
-    });
-    useEditorStore.getState().setSelection([clip.id]);
-    return { ok: true, clipId: clip.id, trackId: target.trackId };
-  }
-
-  const newTrack = makeTrack(requiredType);
   useDocStore.getState().mutate('addClip', `${asset.name} eklendi`, (dd) => {
-    newTrack.clips.push(clip);
-    insertTrackPositioned(dd, newTrack);
+    if (newPrimaryTrack !== null) {
+      newPrimaryTrack.clips.push(videoClip);
+      insertTrackPositioned(dd, newPrimaryTrack);
+    } else {
+      const t = dd.tracks.find((x) => x.id === primaryTrackId);
+      if (t) insertClipSorted(t, videoClip);
+    }
+    if (audioClip !== undefined) {
+      if (newAudioTrack !== null) {
+        newAudioTrack.clips.push(audioClip);
+        insertTrackPositioned(dd, newAudioTrack);
+      } else {
+        const t = dd.tracks.find((x) => x.id === audioTrackId);
+        if (t) insertClipSorted(t, audioClip);
+      }
+    }
   });
-  useEditorStore.getState().setSelection([clip.id]);
-  return { ok: true, clipId: clip.id, trackId: newTrack.id };
+  useEditorStore
+    .getState()
+    .setSelection(audioClip !== undefined ? [videoClip.id, audioClip.id] : [videoClip.id]);
+  return {
+    ok: true,
+    clipId: videoClip.id,
+    trackId: primaryTrackId,
+    ...(audioClip !== undefined ? { audioClipId: audioClip.id, audioTrackId } : {}),
+    ...(plan.notice !== undefined ? { notice: plan.notice } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------

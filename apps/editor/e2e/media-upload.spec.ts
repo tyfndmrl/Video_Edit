@@ -86,6 +86,8 @@ test.describe('Kitaplık — gerçek medya yükleme', () => {
     expect(asset!.status).toBe('ready');
 
     // 4) Çift tık -> timeline'a ekleme (DnD'nin yedek yolu, gerçek fare).
+    //    Kaynak SESLİ (worker ffprobe: hasAudio=true) → otomatik AV ayrımı
+    //    (ozellik-3): video klip + linkli ses ikizi = 2 klip.
     const before = await app.state();
     expect(before.clipCount).toBe(0);
     await library.doubleClickAsset(video.fileName);
@@ -93,13 +95,14 @@ test.describe('Kitaplık — gerçek medya yükleme', () => {
     await expect
       .poll(async () => (await app.state()).clipCount, {
         timeout: 10_000,
-        message: 'Çift tık sonrası timeline\'a klip eklenmedi.',
+        message:
+          'Çift tık sonrası 2 klip (video + otomatik ayrılan ses ikizi) eklenmeliydi.',
       })
-      .toBe(1);
+      .toBe(2);
 
     const after = await app.state();
-    const clip = after.tracks.flatMap((t) => t.clips)[0];
-    expect(clip.kind).toBe('video');
+    const clip = after.tracks.flatMap((t) => t.clips).find((c) => c.kind === 'video')!;
+    expect(clip, 'Video klibi bulunamadı.').toBeTruthy();
     // Klip süresi kaynağın GERÇEK süresinden gelir (kare ızgarasına oturur):
     // 4 sn ± 1 kare (33 333 µs).
     expect(Math.abs(clip.timelineDurationUs - (asset!.durationMicros ?? 0))).toBeLessThanOrEqual(

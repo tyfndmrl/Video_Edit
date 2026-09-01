@@ -2,6 +2,29 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-01
+- ozellik-3 — otomatik AV ayrımı: video ekleme linkli çift klip (özellik turu dilim 3,
+  FRONTEND-only): SAF planlayıcı `planAddClipFromAsset` EXPORT edildi — commit
+  (`addClipFromAsset`), timeline ekleme hayaleti (insertTargetFor) ve blok gerekçeleri AYNI
+  planı okur ("ghost geçerli dedi, drop reddetti" imkânsız). Karar tablosu: image/audio TEK
+  klip; video+hasAudio=true ÇİFT klip (video yarısı `audio:null` + detachAudio formülüyle ses
+  ikizi + ORTAK taze linkId, TEK mutate = TEK undo, İKİSİ birden seçili);
+  video+hasAudio=false TEK klip ve `buildClipFromAsset` artık `audio:null` yazar (detach
+  menüsü 'clip has no embedded audio' ile doğru grilenir); hasAudio bilinmeyen TEK klip
+  gömülü sesle (ikiz üretmek ölçülmüş 422 tuzağı). Ses yerleşimi: ilk kilitsiz+aralıkta boş
+  audio track; yoksa YENİ track (partisyon: en alta) + notice 'audio placed on a new track'
+  (balon yolu = TRANSITION_DROPPED emsali; drop işleyicisi artık reportOp'tan geçer). KISMİ
+  BAŞARI YASAK: plan tavanı aşarsa (frontend `MAX_TRACKS=50`, sunucu aynası) TÜMÜ RED
+  'track limit reached'; toplam yeni-track sayısı hesaba girer (49→51 köşesi kapalı). Çoklu
+  insert ghost'u (DragVisual.insert `ghosts[]` — AV asset video satırı + ses satırı).
+  +14 birim (editör 1393; karar tablosu, tek undo, yerleşim politikası, tavan, plan↔commit
+  ayrışmazlığı) + yeni gerçek-fare `e2e/auto-av-add.spec.ts` (2 test: çift doğum + ses
+  track'i en altta + notice balonu + tek Ctrl+Z + tekrar ekle→birlikte taşıma; sessiz
+  video/görsel negatifleri). Gerçek-medya spec varsayım taraması: media-upload, library-dnd,
+  detach-audio-silent (sesli senaryo artık oto-ayrılmış çift), export-flow,
+  export-progress-hub, progress-fallback, frame-grid, guard-paths (bölme 4 klip),
+  library-manage (kullanım sayacı 2 klip) yeni davranışa güncellendi. Negatif kontrol ×2
+  md5-birebir (çift üretim söküldü → 8 birim + e2e tam imza; kısmi-başarı muhafızı söküldü →
+  2 'tümü RED' birim testi kırmızı). Defter: `PROGRESS.md` §Özellik turu.
 - ozellik-2 — linkId çekirdeği: link/unlink + sil/böl/taşı kapanışı (özellik turu dilim 2):
   SAF kapanış yardımcısı `expandSelectionForOp` ('link' = eş; 'move' = grup üyeleri + eşler,
   K3 sayesinde tek geçiş) OP İÇİNDE uygulanır: deleteClips (eş kilitli track'teyse TÜM silme

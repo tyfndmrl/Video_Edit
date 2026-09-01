@@ -37,13 +37,14 @@ test.describe('Dışa aktarma — uçtan uca', () => {
     // --- hazırlık: gerçek medya + timeline'da gerçek bir klip ---
     await library.pickFiles([video.path]);
     await library.waitForReady(video.fileName);
+    // Sesli kaynak: otomatik AV ayrımı (ozellik-3) video + ses ikizi ekler.
     await library.doubleClickAsset(video.fileName);
     await expect
       .poll(async () => (await app.state()).clipCount, {
         timeout: 15_000,
-        message: 'Export için klip eklenemedi.',
+        message: 'Export için klipler eklenemedi (video + otomatik ses ikizi beklenir).',
       })
-      .toBe(1);
+      .toBe(2);
 
     // --- export: TopBar "Dışa Aktar" -> diyalog -> "Dışa aktar" ---
     const openExport = page.getByRole('button', { name: 'Dışa Aktar', exact: true });

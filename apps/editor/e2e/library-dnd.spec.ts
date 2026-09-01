@@ -144,12 +144,15 @@ test.describe('Kitaplık -> timeline sürükle-bırak (gerçek fare)', () => {
 
     await page.mouse.up();
 
+    // Kaynak SESLİ (worker ffprobe: hasAudio=true) → otomatik AV ayrımı
+    // (ozellik-3): bırakma video klip + linkli ses ikizi doğurur (2 klip).
     await expect
       .poll(async () => (await app.state()).clipCount, {
         timeout: 10_000,
-        message: 'Sürükleyip bırakma sonrası timeline\'a klip EKLENMEDİ.',
+        message:
+          'Sürükleyip bırakma sonrası 2 klip (video + otomatik ses ikizi) eklenmeliydi.',
       })
-      .toBe(1);
+      .toBe(2);
 
     // --- bırakma KONUMU gerçekten dikkate alındı mı? ---
     const after = await app.state();
@@ -159,6 +162,11 @@ test.describe('Kitaplık -> timeline sürükle-bırak (gerçek fare)', () => {
 
     const clip = track!.clips[0];
     expect(clip.kind).toBe('video');
+    // Ses ikizi EN ALTTA doğan yeni audio track'te, aynı linkId ile.
+    const audioTrack = after.tracks[after.tracks.length - 1];
+    expect(audioTrack.type, 'Ses ikizinin şeridi partisyon gereği en altta olmalı.').toBe('audio');
+    expect(audioTrack.clips).toHaveLength(1);
+    expect(audioTrack.clips[0].linkId).toBe(clip.linkId);
     // Tolerans: bir kare (ızgara yuvarlaması) + 2 px'lik imleç belirsizliği.
     const toleranceUs = FRAME_US + 2 / after.pxPerUs;
     expect(
@@ -263,19 +271,26 @@ test.describe('Kitaplık -> timeline sürükle-bırak (gerçek fare)', () => {
     await page.waitForTimeout(150);
     await page.mouse.up();
 
+    // Sesli kaynak + "yeni track" bölgesi: video için yeni track + otomatik
+    // ses ikizi için yeni audio track (ozellik-3) = toplam 3 track.
     await expect
       .poll(async () => (await app.state()).tracks.length, {
         timeout: 10_000,
-        message: '"Yeni track" bölgesine bırakma yeni bir track açmadı.',
+        message: '"Yeni track" bölgesine bırakma yeni track(ler) açmadı.',
       })
-      .toBe(2);
+      .toBe(3);
 
     const after = await app.state();
-    expect(after.clipCount, 'Yeni track açıldı ama klip eklenmedi.').toBe(1);
+    expect(after.clipCount, 'Yeni track açıldı ama klipler eklenmedi.').toBe(2);
     const original = after.tracks.find((t) => t.id === project.trackId);
     expect(original?.clips, 'Klip yeni track yerine mevcut track\'e düştü.').toHaveLength(0);
-    const created = after.tracks.find((t) => t.id !== project.trackId);
-    expect(created?.type).toBe('video');
-    expect(created?.clips).toHaveLength(1);
+    const createdVideo = after.tracks.find((t) => t.id !== project.trackId && t.type === 'video');
+    expect(createdVideo?.clips).toHaveLength(1);
+    expect(createdVideo?.clips[0].kind).toBe('video');
+    // Ses ikizi partisyon gereği EN ALTTAKİ yeni audio track'te.
+    const bottom = after.tracks[after.tracks.length - 1];
+    expect(bottom.type).toBe('audio');
+    expect(bottom.clips).toHaveLength(1);
+    expect(bottom.clips[0].linkId).toBe(createdVideo?.clips[0].linkId);
   });
 });

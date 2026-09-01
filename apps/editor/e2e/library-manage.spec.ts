@@ -240,13 +240,15 @@ test.describe('Kitaplık — silme ve kota', () => {
     await library.waitForReady(video.fileName);
 
     // --- timeline'a ekle (gerçek çift tık) ---
+    // Sesli kaynak: otomatik AV ayrımı (ozellik-3) video + ses ikizi ekler;
+    // İKİSİ de aynı asset'i kullanır (kullanım sayacı 2 klip görür).
     await library.doubleClickAsset(video.fileName);
     await expect
       .poll(async () => (await app.state()).clipCount, {
         timeout: 15_000,
-        message: 'Klip timeline\'a eklenemedi.',
+        message: 'Klipler (video + otomatik ses ikizi) timeline\'a eklenemedi.',
       })
-      .toBe(1);
+      .toBe(2);
 
     // Kullanım sorgusu SUNUCUDAKİ dokümana bakar: autosave inmeden sorulursa
     // "kullanılmıyor" der. Önce kaydı bekle, sonra sunucunun gerçekten öyle
@@ -270,13 +272,13 @@ test.describe('Kitaplık — silme ve kota', () => {
           const body = (await res.json()) as { projects: { clipCount: number }[] };
           return body.projects.reduce((sum, p) => sum + p.clipCount, 0);
         },
-        { timeout: 30_000, message: 'Sunucu kullanım sorgusu klibi görmedi (autosave inmedi mi?).' },
+        { timeout: 30_000, message: 'Sunucu kullanım sorgusu klipleri görmedi (autosave inmedi mi?).' },
       )
-      .toBe(1);
+      .toBe(2);
 
-    // Silmeden ÖNCEKİ klip görüntüsü: filmstrip çizili (çok renkli).
+    // Silmeden ÖNCEKİ klip görüntüsü: filmstrip çizili (çok renkli) — VİDEO klibi.
     const stateBefore = await app.state();
-    const clipId = stateBefore.tracks.flatMap((t) => t.clips)[0].id;
+    const clipId = stateBefore.tracks.flatMap((t) => t.clips).find((c) => c.kind === 'video')!.id;
     await app.ensureContentVisible(clipId);
     const box = await app.timeline.clipBox(clipId);
     await expect
@@ -292,7 +294,7 @@ test.describe('Kitaplık — silme ve kota', () => {
 
     const warning = page.getByTestId('asset-delete-usage-warning');
     await expect(warning).toBeVisible({ timeout: 15_000 });
-    await expect(warning).toContainText('1 projede 1 klipte kullanılıyor');
+    await expect(warning).toContainText('1 projede 2 klipte kullanılıyor');
     await expect(warning).toContainText('silinirse o klipler bozulur');
     await expect(warning).toContainText(project.projectName); // hangi proje olduğu YAZILI
     const confirm = page.getByTestId('asset-delete-confirm');
@@ -303,7 +305,7 @@ test.describe('Kitaplık — silme ve kota', () => {
     await expect(library.row(video.fileName)).toHaveCount(0, { timeout: 15_000 });
 
     // --- timeline: klip DURUYOR ama "medya eksik" olarak boyanıyor ---
-    expect((await app.state()).clipCount, 'Silme kullanıcının dokümanına dokunmamalı.').toBe(1);
+    expect((await app.state()).clipCount, 'Silme kullanıcının dokümanına dokunmamalı.').toBe(2);
     await expect
       .poll(
         async () => {

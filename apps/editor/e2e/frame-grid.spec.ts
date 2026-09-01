@@ -316,16 +316,18 @@ test.describe('Kare ızgarası — ızgara DIŞI süreli GERÇEK kaynak', () => 
     ).toBe(false);
 
     // --- 2. timeline'a ekle (gerçek çift tık) ---
+    // Kaynak SESLİ (sine) → otomatik AV ayrımı (ozellik-3): video + ses ikizi.
+    // Kırpma iddiaları VİDEO klibi üzerinde sürer (trim bağa dokunmaz).
     await library.doubleClickAsset(video.fileName);
     await expect
       .poll(async () => (await app.state()).clipCount, {
         timeout: 15_000,
-        message: 'Çift tık sonrası timeline\'a klip eklenmedi.',
+        message: 'Çift tık sonrası 2 klip (video + otomatik ses ikizi) eklenmeliydi.',
       })
-      .toBe(1);
+      .toBe(2);
 
     const st = await app.state();
-    const clipId = st.tracks.flatMap((t) => t.clips)[0].id;
+    const clipId = st.tracks.flatMap((t) => t.clips).find((c) => c.kind === 'video')!.id;
     const startUs = findClip(st, clipId).clip.timelineStartUs;
 
     /**

@@ -36,6 +36,7 @@ import {
   findTransitionCut,
   knownAssetDurations,
   moveClips,
+  planAddClipFromAsset,
   planMoveClips,
   projectEndUs,
   removeTransition,
@@ -48,6 +49,7 @@ import {
   trackRenameBlockReason,
   transitionAt,
   addTransitionBlockReason,
+  type AddClipTarget,
   type OpResult,
   type TrimEdge,
   type TrimMode,
@@ -1097,6 +1099,13 @@ export function TimelinePanel() {
   // Library drag-and-drop (pointer DnD from LibraryPanel)
   // ---------------------------------------------------------------------
 
+  /**
+   * Where a library drop at (clientX, clientY) would land — validity, the add
+   * target AND the ghost rectangles all come from planAddClipFromAsset, the
+   * SAME plan the drop commits. The ghost can therefore never promise what the
+   * drop refuses (and an AV asset honestly shows TWO ghosts: video row + the
+   * audio twin's row, 'new' when the twin needs a fresh bottom lane).
+   */
   const insertTargetFor = useCallback(
     (clientX: number, clientY: number, payload: LibraryDragPayload) => {
       const wrap = wrapRef.current;
@@ -1122,24 +1131,38 @@ export function TimelinePanel() {
         st.snappingEnabled,
       );
       const startUs = snap.timeUs;
-      const durationUs = payload.durationUs;
 
       if (row === null) return null;
-      if (row === 'new') {
-        return { trackIndex: 'new' as const, startUs, durationUs, valid: true, guideUs: snap.snappedTo };
+      const addTarget: AddClipTarget =
+        row === 'new' ? { newTrack: true } : { trackId: d.tracks[row].id };
+      const asset = useAssetStore.getState().getAsset(payload.assetId);
+      const plan = asset !== undefined ? planAddClipFromAsset(d, asset, addTarget, startUs) : null;
+
+      if (plan === null || !plan.ok) {
+        // Invalid drop: one red ghost under the pointer, as before.
+        return {
+          ghosts: [{ trackIndex: row, startUs, durationUs: payload.durationUs }],
+          valid: false as const,
+          guideUs: snap.snappedTo,
+          addTarget,
+          startUs,
+        };
       }
-      const track = d.tracks[row];
-      const required = payload.kind === 'audio' ? 'audio' : 'video';
-      let valid = track.type === required && !track.locked;
-      if (valid) {
-        for (const c of track.clips) {
-          if (startUs < clipEndUs(c) && c.timelineStartUs < startUs + durationUs) {
-            valid = false;
-            break;
-          }
-        }
+      const ghosts: { trackIndex: number | 'new'; startUs: MicroSec; durationUs: MicroSec }[] = [
+        {
+          trackIndex: plan.video.newTrack === true ? 'new' : plan.video.trackIndex!,
+          startUs: plan.video.clip.timelineStartUs,
+          durationUs: plan.video.clip.timelineDurationUs,
+        },
+      ];
+      if (plan.audio !== undefined) {
+        ghosts.push({
+          trackIndex: plan.newAudioTrack === true ? 'new' : plan.audio.trackIndex!,
+          startUs: plan.audio.clip.timelineStartUs,
+          durationUs: plan.audio.clip.timelineDurationUs,
+        });
       }
-      return { trackIndex: row, startUs, durationUs, valid, guideUs: snap.snappedTo };
+      return { ghosts, valid: true as const, guideUs: snap.snappedTo, addTarget, startUs };
     },
     [],
   );
@@ -1157,9 +1180,7 @@ export function TimelinePanel() {
     dragVisualRef.current = target
       ? {
           kind: 'insert',
-          trackIndex: target.trackIndex,
-          startUs: target.startUs,
-          durationUs: target.durationUs,
+          ghosts: target.ghosts,
           valid: target.valid,
           guideUs: target.guideUs,
         }
@@ -1176,16 +1197,15 @@ export function TimelinePanel() {
           if (useProjectSession.getState().status !== 'ready') return;
           const target = insertTargetFor(pos.clientX, pos.clientY, payload);
           if (!target || !target.valid) return;
-          const d = useDocStore.getState().doc;
-          if (target.trackIndex === 'new') {
-            addClipFromAsset(payload.assetId, { newTrack: true }, target.startUs);
-          } else {
-            const track = d.tracks[target.trackIndex];
-            if (track) addClipFromAsset(payload.assetId, { trackId: track.id }, target.startUs);
-          }
+          // Same target + same start the ghost's plan validated — the commit
+          // re-plans on the live document, so the two can never diverge.
+          const result = addClipFromAsset(payload.assetId, target.addTarget, target.startUs);
+          // Notice ("audio placed on a new track") flows through the same
+          // bubble every other op correction uses (TRANSITION_DROPPED path).
+          reportOp(result);
         },
       }),
-    [insertTargetFor],
+    [insertTargetFor, reportOp],
   );
 
   // ---------------------------------------------------------------------
