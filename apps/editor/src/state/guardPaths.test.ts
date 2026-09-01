@@ -47,10 +47,14 @@ import {
   clipHasVisualKeyframes,
   deleteClips,
   knownAssetDurations,
+  linkBlockReason,
+  linkClips,
   resetClipTransform,
   rotationBlockReason,
   setClipTransform,
   transitionChainSiblings,
+  unlinkBlockReason,
+  unlinkClips,
   type OpResult,
 } from './timelineOps';
 import {
@@ -810,5 +814,107 @@ describe('blockReason ile op sonucu hiçbir durumda ayrışmaz', () => {
         );
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (d) AV bağı (ozellik-2): linkClips/unlinkClips — aynı ayrışmazlık sözleşmesi
+// ---------------------------------------------------------------------------
+
+describe('(d) AV bağı: linkBlockReason/unlinkBlockReason ile op ayrışmaz', () => {
+  const A_TRACK = '01890000-0000-7000-8000-000000000901';
+  const AUD_CLIP = '01890000-0000-7000-8000-000000000902';
+  const LINK_ID = '01890000-0000-7000-8000-000000000903';
+
+  /** V1 [A, B, C] (threeAdjacent) + ses track'i [tek ses klibi 0..6 sn]. */
+  function withAudioLane(over?: { locked?: boolean; linkAWithAudio?: boolean }): TimelineDoc {
+    const d = threeAdjacent();
+    const aud: MediaClip = {
+      ...mediaClip({ id: AUD_CLIP, startUs: 0, sourceInUs: 0, sourceOutUs: 6 * US }),
+      kind: 'audio',
+    };
+    if (over?.linkAWithAudio === true) {
+      aud.linkId = LINK_ID;
+      (d.tracks[0].clips[0] as MediaClip).linkId = LINK_ID;
+    }
+    d.tracks.push({
+      id: A_TRACK,
+      type: 'audio',
+      muted: false,
+      hidden: false,
+      locked: over?.locked === true,
+      clips: [aud],
+    });
+    return d;
+  }
+
+  interface LinkCase {
+    name: string;
+    doc(): TimelineDoc;
+    selection: string[];
+    /** Beklenen ret kodu (null = op kabul etmeli). */
+    link: string | null;
+    unlink: string | null;
+  }
+
+  const cases: LinkCase[] = [
+    {
+      name: 'video + ses serbest -> bağla kabul, kaldır ret',
+      doc: () => withAudioLane(),
+      selection: [CLIP_A, AUD_CLIP],
+      link: null,
+      unlink: 'no linked clip in selection',
+    },
+    {
+      name: 'iki video -> çift şekli tutmuyor',
+      doc: () => withAudioLane(),
+      selection: [CLIP_A, CLIP_B],
+      link: 'select a video and an audio clip to link',
+      unlink: 'no linked clip in selection',
+    },
+    {
+      name: 'bağlı çiftin tek yarısı -> bağla "zaten bağlı", kaldır kabul',
+      doc: () => withAudioLane({ linkAWithAudio: true }),
+      selection: [CLIP_A],
+      link: 'clip is already linked',
+      unlink: null,
+    },
+    {
+      name: 'kilitli ses track\'inde bağlı çift -> bağla "zaten bağlı", kaldır kilidi söyler',
+      doc: () => withAudioLane({ locked: true, linkAWithAudio: true }),
+      selection: [CLIP_A, AUD_CLIP],
+      // Ret sırası: çift şekli -> zaten bağlı -> grup -> kilit. Bağlı çiftte
+      // "zaten bağlı" kilitten önce konuşur (çözüm yolu unlink'tir, o da
+      // kilidi ayrıca söyleyecek).
+      link: 'clip is already linked',
+      unlink: 'track is locked',
+    },
+    {
+      name: 'kilitli ses track\'i, bağsız klipler -> bağla da kilidi söyler',
+      doc: () => withAudioLane({ locked: true }),
+      selection: [CLIP_A, AUD_CLIP],
+      link: 'track is locked',
+      unlink: 'no linked clip in selection',
+    },
+  ];
+
+  it.each(cases)('$name', ({ doc, selection, link, unlink }) => {
+    // linkClips yarısı.
+    load(doc());
+    const linkReason = linkBlockReason(currentDoc(), selection);
+    const linkResult = linkClips(selection);
+    expect(linkResult.ok, `link: reason=${String(linkReason)}`).toBe(linkReason === null);
+    if (!linkResult.ok) expect(linkResult.reason).toBe(linkReason);
+    expect(linkReason).toBe(link);
+    expectDocValid();
+
+    // unlinkClips yarısı (taze doküman — link yarısı zemin kaydırmasın).
+    load(doc());
+    const unlinkReason = unlinkBlockReason(currentDoc(), selection);
+    const unlinkResult = unlinkClips(selection);
+    expect(unlinkResult.ok, `unlink: reason=${String(unlinkReason)}`).toBe(unlinkReason === null);
+    if (!unlinkResult.ok) expect(unlinkResult.reason).toBe(unlinkReason);
+    expect(unlinkReason).toBe(unlink);
+    expectDocValid();
   });
 });

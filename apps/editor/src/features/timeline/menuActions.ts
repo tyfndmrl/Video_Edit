@@ -27,6 +27,7 @@ import {
   deleteTrack,
   detachAudio,
   duplicateClips,
+  linkClips,
   moveTrack,
   pasteAtPlayhead,
   removeTransition,
@@ -36,6 +37,7 @@ import {
   toggleTrackLocked,
   toggleTrackMuted,
   trimSelectedToPlayhead,
+  unlinkClips,
   type OpResult,
 } from '../../state/timelineOps';
 import { useDocStore } from '../../state/docStore';
@@ -84,6 +86,11 @@ export function runTimelineMenuAction(
       return trimSelectedToPlayhead('right', playheadUs);
     case 'detachAudio':
       return target.kind === 'clip' ? detachAudio(target.clipId) : fail('no clip target');
+    // AV bağı: iki op da SEÇİM üzerinden çalışır (menü öğeleriyle aynı girdi).
+    case 'linkClips':
+      return linkClips(selection);
+    case 'unlinkClips':
+      return unlinkClips(selection);
     // Geçiş öğeleri: kenar seçimi buildTimelineMenu ile AYNI çözücüden gelir
     // (aynı doküman + aynı tık zamanı), yani etiketteki kesim ile değişen kesim
     // birebir aynıdır. Tip varsayılan (çapraz geçiş); kullanıcı kesim rozetine

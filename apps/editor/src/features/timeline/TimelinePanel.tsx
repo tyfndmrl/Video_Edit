@@ -32,6 +32,7 @@ import {
   applyTrimToDraft,
   assertDocValidDev,
   clipEndUs,
+  expandSelectionForOp,
   findTransitionCut,
   knownAssetDurations,
   moveClips,
@@ -772,14 +773,24 @@ export function TimelinePanel() {
         // is part of it, else just the grabbed clip. The grabbed anchor goes
         // FIRST — planMoveClips snaps the delta against clipIds[0], and the
         // snap guide (resolveMoveSnap) also anchors on the grabbed clip.
-        const ids = (st.selection.has(state.hit.clipId) ? [...st.selection] : [state.hit.clipId])
-          .filter((id) => {
-            for (const track of d.tracks) {
-              if (track.clips.some((c) => c.id === id)) return !track.locked;
-            }
-            return false;
-          })
-          .sort((a, b) => (a === state.hit.clipId ? -1 : b === state.hit.clipId ? 1 : 0));
+        // The lock filter runs on the RAW selection, then the link/group
+        // closure expands it — the same closure moveClips applies at entry, so
+        // the ghosts and the committed move can never disagree about the set.
+        // A partner the closure pulls back from a locked track stays in: the
+        // plan refuses it ('track is locked') and the drop shows the warning,
+        // exactly like the op would (all-or-nothing, same rule as delete).
+        const unlocked = (st.selection.has(state.hit.clipId)
+          ? [...st.selection]
+          : [state.hit.clipId]
+        ).filter((id) => {
+          for (const track of d.tracks) {
+            if (track.clips.some((c) => c.id === id)) return !track.locked;
+          }
+          return false;
+        });
+        const ids = expandSelectionForOp(d, unlocked, 'move').sort((a, b) =>
+          a === state.hit.clipId ? -1 : b === state.hit.clipId ? 1 : 0,
+        );
         if (ids.length === 0) return;
         const anchorTrackIndex = state.hit.trackIndex;
         const anchor = d.tracks[anchorTrackIndex]?.clips.find((c) => c.id === state.hit.clipId);
@@ -827,6 +838,14 @@ export function TimelinePanel() {
           reason: plan.ok ? null : plan.reason,
         };
 
+        // Ghost lanes come from the PLAN when it is valid: the section-scoped
+        // trackDelta (audio slides in its own lane while video changes lanes)
+        // lives in planMoveClips, and a ghost computed from the raw delta
+        // would show the audio half jumping to a lane the commit never uses.
+        // An invalid plan has no per-clip lanes, so the raw preview stays —
+        // red ghosts under the pointer, as before.
+        const laneByClip = new Map<string, number>();
+        if (plan.ok) for (const m of plan.moves) laneByClip.set(m.clipId, m.toTrackIndex);
         const ghosts: Extract<DragVisual, { kind: 'move' }>['ghosts'] = [];
         for (const id of state.clipIds) {
           for (let ti = 0; ti < d.tracks.length; ti++) {
@@ -834,7 +853,9 @@ export function TimelinePanel() {
             if (!clip) continue;
             ghosts.push({
               clipId: id,
-              trackIndex: Math.max(0, Math.min(d.tracks.length - 1, ti + trackDelta)),
+              trackIndex:
+                laneByClip.get(id) ??
+                Math.max(0, Math.min(d.tracks.length - 1, ti + trackDelta)),
               startUs: Math.max(0, clip.timelineStartUs + snap.deltaUs),
               durationUs: clip.timelineDurationUs,
             });

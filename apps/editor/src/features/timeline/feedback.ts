@@ -65,6 +65,12 @@ const REASONS: Record<string, string> = {
   // Sessiz kaynak: dosyada ses akışı hiç yok — ayrılacak ses de yok. Aynı
   // gerçeği export'un 'asset-clip-type' kapısı söylerdi; artık menü önden söylüyor.
   'source has no audio stream': 'Kaynak videoda ses akışı yok (sessiz video) — ayrılacak ses yok',
+  // AV bağı (linkClips/unlinkClips + sil/böl/taşı kapanışı — ozellik-2).
+  'select a video and an audio clip to link': 'Bağlamak için bir video ve bir ses klibi seçin',
+  'clip is already linked': 'Klip zaten bağlı — önce bağlantıyı kaldırın',
+  'clips are in different groups': 'Klipler farklı gruplarda — önce grupları dağıtın',
+  'no linked clip in selection': 'Seçimde bağlı klip yok',
+  'linked clip is on a locked track': "Bağlı klip kilitli bir track'te",
   // Kütüphaneden ekleme yolu (asset kapıları).
   'asset not found': 'Medya bulunamadı',
   'asset is not ready': 'Medya henüz hazır değil — işlenmesi bitince ekleyin',

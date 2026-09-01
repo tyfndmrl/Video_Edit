@@ -29,6 +29,7 @@ import {
   deleteBlockReason,
   detachAudioBlockReason,
   duplicateBlockReason,
+  linkBlockReason,
   pasteBlockReason,
   removeTransitionBlockReason,
   splitBlockReason,
@@ -36,6 +37,7 @@ import {
   trackMoveBlockReason,
   trackRenameBlockReason,
   trimToPlayheadBlockReason,
+  unlinkBlockReason,
 } from '../../state/timelineOps';
 import { resolveTransitionEdge } from './transitions';
 import {
@@ -150,13 +152,15 @@ describe('buildTimelineMenu — klip bağlamı', () => {
       'addTransition',
       'removeTransition',
       'detachAudio',
+      'linkClips',
+      'unlinkClips',
     ]);
     expect(entries.filter((e) => e.kind === 'separator')).toHaveLength(3);
     // Ayraç ripple sil ile kırpma çifti arasında.
     expect(entries.findIndex((e) => e.kind === 'separator')).toBe(6);
     // İkinci ayraç kırpma çifti ile geçiş çifti arasında.
     expect(entries.map((e) => e.kind).indexOf('separator', 7)).toBe(9);
-    // Üçüncü ayraç geçiş çifti ile "Sesi ayır" arasında.
+    // Üçüncü ayraç geçiş çifti ile "Sesi ayır" bloğu (ayır/bağla/kaldır) arasında.
     expect(entries.map((e) => e.kind).lastIndexOf('separator')).toBe(12);
   });
 
@@ -177,8 +181,15 @@ describe('buildTimelineMenu — klip bağlamı', () => {
    * geçiş çifti daima gri kalır. (Bitişik/paylı bir kesimde aktif olduklarını
    * kanıtlayan testler "geçiş öğeleri" describe'ında.)
    */
-  it('enables everything except the transition pair when the playhead is inside the clip', () => {
-    expect(disabledIds(buildTimelineMenu(ctx()))).toEqual(['addTransition', 'removeTransition']);
+  it('enables everything except the transition and link pairs when the playhead is inside the clip', () => {
+    // Bağ çifti tek-klip seçimde gridir: bağlamak video+ses SEÇİMİ ister,
+    // kaldırmaksa seçimde bağlı bir klip — baseDoc'ta ikisi de yok.
+    expect(disabledIds(buildTimelineMenu(ctx()))).toEqual([
+      'addTransition',
+      'removeTransition',
+      'linkClips',
+      'unlinkClips',
+    ]);
   });
 
   it('greys out playhead-relative actions when the playhead is outside the clip', () => {
@@ -189,6 +200,8 @@ describe('buildTimelineMenu — klip bağlamı', () => {
       'trimEndToPlayhead',
       'addTransition',
       'removeTransition',
+      'linkClips',
+      'unlinkClips',
     ]);
     // Silme/kopyalama playhead'den bağımsız çalışmaya devam eder.
     expect(find(entries, 'delete').disabled).toBe(false);
@@ -216,6 +229,8 @@ describe('buildTimelineMenu — klip bağlamı', () => {
       'addTransition',
       'removeTransition',
       'detachAudio',
+      'linkClips',
+      'unlinkClips',
     ] as const) {
       expect(find(entries, id).disabled, id).toBe(true);
     }
@@ -525,6 +540,10 @@ function reasonFromOps(id: TimelineMenuActionId, c: TimelineMenuContext): string
       return gate(trimToPlayheadBlockReason(c.doc, c.playheadUs, selection));
     case 'detachAudio':
       return gate(clipId === null ? 'no clip' : detachAudioBlockReason(c.doc, clipId));
+    case 'linkClips':
+      return gate(linkBlockReason(c.doc, c.selection));
+    case 'unlinkClips':
+      return gate(unlinkBlockReason(c.doc, c.selection));
     case 'paste':
       return gate(pasteBlockReason(c.doc, c.playheadUs));
     case 'toggleMuted':

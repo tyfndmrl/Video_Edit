@@ -1,7 +1,7 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-01, özellik turu dilim 0 + 1 (şema linkId/groupId + invariant pass +
-codegen; track partisyonu; plan: `capcut-ve-canva-gibi-hashed-penguin.md`,
-defter: `PROGRESS.md` §Özellik turu).
+Son güncelleme: 2026-09-01, özellik turu dilim 0 + 1 + 2 (şema linkId/groupId + invariant
+pass + codegen; track partisyonu; linkId çekirdeği — link/unlink + sil/böl/taşı kapanışı;
+plan: `capcut-ve-canva-gibi-hashed-penguin.md`, defter: `PROGRESS.md` §Özellik turu).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
@@ -65,9 +65,9 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   ölçütü 2026-09-01 kullanıcı kararıyla ≥1,8x'e daraltılıp KAPANDI — açık soru 6),
   örtülü sınıf 41,4→**20,1 s (2,99x)**, dikey 2,10x.
   Defter: `PROGRESS.md` §tur3 #3 + `performans-raporu.md` §12.
-- Son yeşil sayılar (2026-09-01, özellik turu dilim 1 kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1626/1626** (0 skip) · editör 1350 · şema 235 ·
-  Playwright **165/165** (42 spec, 10,5 dk) · build -warnaserror 0 uyarı · tsc + e2e tsc +
+- Son yeşil sayılar (2026-09-01, özellik turu dilim 2 kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1626/1626** (0 skip) · editör 1379 · şema 235 ·
+  Playwright **167/167** (43 spec) · build -warnaserror 0 uyarı · tsc + e2e tsc +
   prod build temiz.
 
 ## Devam edenler
@@ -76,10 +76,13 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   (şema `linkId`/`groupId` + `checkLinkAndGroupInvariants` kural 10-12 + codegen; eski
   dokümanlar değişmeden geçerli; şema testleri 222→235) + dilim 1 ✅ (track partisyonu:
   `insertTrackPositioned` op-politikası + `trackMoveBlockReason` partisyon kapısı + görsel
-  ayraç yükseklik eklemeden; editör testleri 1342→1350; iki dilimde de dört kapı + prod
-  build + negatif kontrol yeşil, backend 1626/1626 skip 0). Sıradaki dilimler: 2 (link
-  çekirdeği) → 3 (oto AV ayrımı) → 4 (gruplar) → 5a/5b (J shuttle).
-  Defter: `PROGRESS.md` §Özellik turu.
+  ayraç yükseklik eklemeden; editör testleri 1342→1350) + dilim 2 ✅ (linkId çekirdeği:
+  `expandSelectionForOp` kapanışı OP İÇİNDE — sil/böl/taşı eşle birlikte, eş kilitliyse
+  silme tümden RED; bölüm-kapsamlı trackDelta; linkClips/unlinkClips + menü + rozet;
+  remint kopyalarda; detachAudio bağlı çift doğurur; trim bağa dokunmaz — negatif pinli;
+  editör 1350→1379; yeni `e2e/link-clips.spec.ts`). Üç dilimde de dört kapı + prod build +
+  negatif kontrol yeşil, backend 1626/1626 skip 0. Sıradaki dilimler: 3 (oto AV ayrımı) →
+  4 (gruplar) → 5a/5b (J shuttle). Defter: `PROGRESS.md` §Özellik turu.
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
@@ -126,12 +129,13 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    (DECISIONS satırı gerekçe + geri-alma koşuluyla: kullanıcı hedefi yeniden yükseltirse
    kendi sözleşme turuyla).
 
-## Ortam notu (2026-09-01 sonu, özellik turu dilim 0-1)
+## Ortam notu (2026-09-01 sonu, özellik turu dilim 0-2)
 
 Servisler bu session'ın scratchpad'inden (`…\5fc88602-…\scratchpad`): API `api-run-oz1` +
-Worker `worker-run-oz1` (ikisi de ozellik-1 HEAD yayını; tazelik: yüklü modül yolu +
-Contracts.dll'de UTF-8 `LinkId`/`GroupId` iğnesi) + Vite :5173 (taze restart — schema dist
-yeniden kuruldu). Önceki session'ın `api-run-g31`/`worker-run-g3d` süreçleri DURDURULDU
+Worker `worker-run-oz1` (ikisi de ozellik-1 HEAD yayını; dilim 2 backend'e DOKUNMADI —
+yayın hâlâ HEAD-eşdeğeri; tazelik: yüklü modül yolu + Contracts.dll'de UTF-8
+`LinkId`/`GroupId` iğnesi) + Vite :5173 (dev server kaynaktan servis eder — dilim 2'nin
+editör değişiklikleri restart'sız canlı, sağlık `:5173` 200 ile doğrulandı). Önceki session'ın `api-run-g31`/`worker-run-g3d` süreçleri DURDURULDU
 (bayat Contracts taşıyorlardı). Docker üçlüsü healthy; kaçak ffmpeg yok. Perf fixtürleri
 `perf20@videoedit.test` hesabında duruyor. DİKKAT: yayın dizinleri session-scratchpad'te
 yaşar — yeni session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.

@@ -36,6 +36,10 @@ export interface ClipState {
   kind: string;
   timelineStartUs: number;
   timelineDurationUs: number;
+  /** AV bağı (ozellik-2): iki klipte aynı değer = birlikte taşınan çift. */
+  linkId?: string;
+  /** Grup üyeliği (ozellik-4 hazırlığı — şemada bugün var). */
+  groupId?: string;
 }
 
 export interface TrackState {
@@ -306,6 +310,8 @@ export async function readAppState(page: Page): Promise<AppState> {
             kind: string;
             timelineStartUs: number;
             timelineDurationUs: number;
+            linkId?: string;
+            groupId?: string;
           }[];
         }[];
       };
@@ -333,6 +339,8 @@ export async function readAppState(page: Page): Promise<AppState> {
         kind: c.kind,
         timelineStartUs: c.timelineStartUs,
         timelineDurationUs: c.timelineDurationUs,
+        linkId: c.linkId,
+        groupId: c.groupId,
       })),
     }));
     return {

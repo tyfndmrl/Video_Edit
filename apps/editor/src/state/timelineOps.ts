@@ -805,7 +805,26 @@ export function deleteTrack(trackId: Uuid): OpResult {
     track.clips.length > 0 ? `Track silindi (${track.clips.length} klip)` : 'Track silindi';
   useDocStore.getState().mutate('deleteTrack', label, (dd) => {
     const i = dd.tracks.findIndex((t) => t.id === trackId);
-    if (i >= 0) dd.tracks.splice(i, 1);
+    if (i < 0) return;
+    const [removed] = dd.tracks.splice(i, 1);
+    // A deleted clip's link partner lives on ANOTHER track and would be left
+    // holding a single-member linkId (invariant rule 10 violation). Breaking
+    // the bond is part of the same mutate: one undo restores track AND bonds.
+    const removedLinkIds = new Set<string>();
+    for (const c of removed.clips) {
+      if (isMediaClip(c) && c.linkId !== undefined) removedLinkIds.add(c.linkId);
+    }
+    if (removedLinkIds.size > 0) {
+      for (const t of dd.tracks) {
+        for (const c of t.clips) {
+          if (isMediaClip(c) && c.linkId !== undefined && removedLinkIds.has(c.linkId)) {
+            delete c.linkId;
+          }
+        }
+      }
+    }
+    // Groups that the deletion shrank below 2 members dissolve (rule 11).
+    cleanupShrunkenGroups(dd);
   });
 
   // Selection may not survive its clips.
@@ -1106,6 +1125,15 @@ function rippleFollowers(
  * non-anchor clips off the grid and their export to HTTP 422.
  *
  * Overlaps reject the whole move (MVP: no auto-ripple, per design §3.3).
+ *
+ * The vertical `trackDelta` is SECTION-SCOPED (CapCut behaviour): the stack has
+ * two sections — non-audio on top, audio below (`insertTrackPositioned`) — and
+ * only the clips in the ANCHOR's section change lanes; clips in the other
+ * section slide horizontally in their own lane (delta 0). Without this, a
+ * linked AV pair could never be dragged vertically at all: the video half's
+ * lane change would push the audio half onto a video track and the type gate
+ * below would refuse the whole move. That type gate STAYS — within a section a
+ * video clip still cannot land on an overlay track.
  */
 export function planMoveClips(
   d: TimelineDoc,
@@ -1124,6 +1152,8 @@ export function planMoveClips(
   // Negative targets are NOT clamped here — they must still reject below.
   const ref = locateClip(d, clipIds[0]);
   if (!ref) return { ok: false, reason: 'clip not found' };
+  const sectionOf = (track: Track): 0 | 1 => (track.type === 'audio' ? 1 : 0);
+  const anchorSection = sectionOf(ref.track);
   const refTargetUs = Math.round(ref.clip.timelineStartUs + deltaUs);
   const refSnappedUs = refTargetUs < 0 ? refTargetUs : snapUsToFrameGrid(refTargetUs, fps);
   deltaUs = refSnappedUs - ref.clip.timelineStartUs;
@@ -1136,7 +1166,8 @@ export function planMoveClips(
     const loc = locateClip(d, clipId);
     if (!loc) return { ok: false, reason: 'clip not found' };
     if (loc.track.locked) return { ok: false, reason: 'track is locked' };
-    const toTrackIndex = loc.trackIndex + trackDelta;
+    const toTrackIndex =
+      loc.trackIndex + (sectionOf(loc.track) === anchorSection ? trackDelta : 0);
     if (toTrackIndex < 0 || toTrackIndex >= d.tracks.length) {
       return { ok: false, reason: 'no track at target position' };
     }
@@ -1195,8 +1226,12 @@ export function planMoveClips(
 export function moveClips(clipIds: readonly Uuid[], deltaUs: MicroSec, trackDelta = 0): OpResult {
   if (deltaUs === 0 && trackDelta === 0) return OK;
   const d0 = doc();
+  // Closure INSIDE the op (not per panel): whoever calls moveClips — drag,
+  // menu, shortcut, a future nudge — moves the link partners and group members
+  // too. A caller that already expanded gets the identical set back.
+  const ids = expandSelectionForOp(d0, clipIds, 'move');
   const durations = knownAssetDurations();
-  const plan = planMoveClips(d0, clipIds, deltaUs, trackDelta, durations);
+  const plan = planMoveClips(d0, ids, deltaUs, trackDelta, durations);
   if (!plan.ok) return plan;
   // The grid snap may collapse the delta to zero — never pollute history then.
   const noop = plan.moves.every((m) => {
@@ -1209,10 +1244,10 @@ export function moveClips(clipIds: readonly Uuid[], deltaUs: MicroSec, trackDelt
   });
   if (noop) return OK;
 
-  const label = clipIds.length === 1 ? 'Klip taşındı' : `${clipIds.length} klip taşındı`;
+  const label = ids.length === 1 ? 'Klip taşındı' : `${ids.length} klip taşındı`;
   let report = NO_TRANSITION_CHANGE;
   useDocStore.getState().mutate('move', label, (dd) => {
-    const moving = new Set(clipIds);
+    const moving = new Set(ids);
     const extracted = new Map<Uuid, Clip>();
     const touched = new Set<number>();
     for (let ti = 0; ti < dd.tracks.length; ti++) {
@@ -1780,13 +1815,20 @@ export function splitKeyframes(
  * Splits a clip at an absolute timeline time (snapped to the fps grid).
  * Media clips get exact source continuity (B.sourceIn === A.sourceOut);
  * keyframes are divided per the schema rule via splitKeyframes.
+ *
+ * linkId rule: the SECOND half never inherits the bond. The left half plus the
+ * untouched partner are still exactly 2 members (invariant rule 10 holds even
+ * when only one side of a pair splits); when BOTH sides split, splitAtPlayhead
+ * mints one fresh shared linkId for the two right halves afterwards. groupId
+ * DOES stay on the second half — a group only grows, which rule 11 allows.
+ * `secondId` reports the freshly minted right half for that re-pairing.
  */
 function applySplitToDraft(
   d: TimelineDoc,
   clipId: Uuid,
   timeUs: MicroSec,
   assetDurations: ReadonlyMap<string, MicroSec> = knownAssetDurations(),
-): OpResult {
+): OpResult & { secondId?: Uuid } {
   const loc = locateClip(d, clipId);
   if (!loc) return fail('clip not found');
   if (loc.track.locked) return fail('track is locked');
@@ -1838,6 +1880,7 @@ function applySplitToDraft(
       transform: { ...clip.transform },
     };
     delete b.transitionIn;
+    delete b.linkId; // see the header note — the right half is born unlinked
     if (clip.transitionOut) b.transitionOut = { ...clip.transitionOut };
 
     clip.sourceOutUs = outA;
@@ -1890,7 +1933,7 @@ function applySplitToDraft(
   // UX nicety: keep the selection covering both halves.
   const selection = useEditorStore.getState().selection;
   if (selection.has(clipId)) useEditorStore.getState().addToSelection(second.id);
-  return okWith(transitionReconcileNotice(report));
+  return { ...okWith(transitionReconcileNotice(report)), secondId: second.id };
 }
 
 export function splitClipAt(clipId: Uuid, timeUs: MicroSec): OpResult {
@@ -1966,15 +2009,41 @@ export function splitAtPlayhead(timeUs?: MicroSec): OpResult {
   const d = doc();
   const t = timeUs ?? useEditorStore.getState().playheadUs;
   const selection = useEditorStore.getState().selection;
-  const targets = playheadTargets(d, t, selection);
+  // Link closure: splitting a clip splits its AV partner too — but only where
+  // the cut actually falls inside the partner (applySplitToDraft refuses the
+  // rest per clip, which is fine: one-sided splits keep the invariant, see its
+  // header note).
+  const targets = expandSelectionForOp(d, playheadTargets(d, t, selection), 'link');
   if (targets.length === 0) return fail('no clip under playhead');
 
+  const durations = knownAssetDurations();
   const tx = useDocStore.getState().beginTransaction('split', targets.length === 1 ? 'Klip bölündü' : `${targets.length} klip bölündü`);
   let any = false;
+  // linkId of the ORIGINAL pair -> ids of the right halves born from it.
+  const rightHalvesByLink = new Map<string, Uuid[]>();
   for (const id of targets) {
     tx.update((dd) => {
-      const r = applySplitToDraft(dd, id, t);
-      if (r.ok) any = true;
+      const loc = locateClip(dd, id);
+      const linkId = loc !== null && isMediaClip(loc.clip) ? loc.clip.linkId : undefined;
+      const r = applySplitToDraft(dd, id, t, durations);
+      if (r.ok) {
+        any = true;
+        if (linkId !== undefined && r.secondId !== undefined) {
+          rightHalvesByLink.set(linkId, [...(rightHalvesByLink.get(linkId) ?? []), r.secondId]);
+        }
+      }
+    });
+  }
+  // BOTH sides of a pair split -> the two right halves form a fresh pair of
+  // their own (CapCut behaviour). One-sided splits stay as they are.
+  for (const seconds of rightHalvesByLink.values()) {
+    if (seconds.length !== 2) continue;
+    const freshLinkId = uuidv7();
+    tx.update((dd) => {
+      for (const id of seconds) {
+        const loc = locateClip(dd, id);
+        if (loc !== null && isMediaClip(loc.clip)) loc.clip.linkId = freshLinkId;
+      }
     });
   }
   tx.commit();
@@ -2018,19 +2087,49 @@ function deletableClipIds(d: TimelineDoc, clipIds: readonly Uuid[]): Uuid[] {
 }
 
 /**
+ * 'linked clip is on a locked track' when deleting exactly `deletable` would
+ * orphan a link pair, else null.
+ *
+ * The deletable set is the CLOSED selection minus locked/missing clips, so a
+ * deletable clip whose partner is not in the set can only mean the partner
+ * sits on a locked track. Half-deleting the pair would leave a single-member
+ * linkId (invariant rule 10) — the whole delete refuses instead (all or
+ * nothing; a silent half-delete is exactly the forbidden quiet repair).
+ */
+function lockedLinkPartnerBlockReason(d: TimelineDoc, deletable: readonly Uuid[]): string | null {
+  const removing = new Set(deletable);
+  for (const id of deletable) {
+    const loc = locateClip(d, id);
+    if (loc === null || !isMediaClip(loc.clip) || loc.clip.linkId === undefined) continue;
+    const partner = findLinkPartner(d, loc.clip);
+    if (partner !== null && !removing.has(partner.clip.id)) {
+      return 'linked clip is on a locked track';
+    }
+  }
+  return null;
+}
+
+/**
  * Why `clipIds` cannot be deleted, or null.
  *
  * Same contract as trackDeleteBlockReason/detachAudioBlockReason: the context
- * menu greys the item out with EXACTLY the rule deleteClips enforces.
+ * menu greys the item out with EXACTLY the rule deleteClips enforces —
+ * including the link closure and its locked-partner refusal.
  */
 export function deleteBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string | null {
-  return deletableClipIds(d, clipIds).length === 0 ? 'nothing to delete' : null;
+  const deletable = deletableClipIds(d, expandSelectionForOp(d, clipIds, 'link'));
+  if (deletable.length === 0) return 'nothing to delete';
+  return lockedLinkPartnerBlockReason(d, deletable);
 }
 
 export function deleteClips(clipIds: readonly Uuid[], opts: { ripple?: boolean } = {}): OpResult {
   const d = doc();
-  const deletable = deletableClipIds(d, clipIds);
+  // Link closure inside the op: deleting one half of an AV pair deletes the
+  // other half too, whoever the caller is (Delete key, menu, cut).
+  const deletable = deletableClipIds(d, expandSelectionForOp(d, clipIds, 'link'));
   if (deletable.length === 0) return fail('nothing to delete');
+  const lockedPartner = lockedLinkPartnerBlockReason(d, deletable);
+  if (lockedPartner !== null) return fail(lockedPartner);
   const removing = new Set(deletable);
   const ripple = opts.ripple === true;
 
@@ -2063,12 +2162,203 @@ export function deleteClips(clipIds: readonly Uuid[], opts: { ripple?: boolean }
         reconcileTransitions(track, dd.settings.fps, durations),
       );
     }
+    // Same mutate = same undo entry: groups the deletion shrank below 2
+    // members dissolve here, not in a follow-up write (rule 11).
+    cleanupShrunkenGroups(dd);
   });
 
   const editor = useEditorStore.getState();
   const nextSelection = [...editor.selection].filter((id) => !removing.has(id));
   editor.setSelection(nextSelection);
   return okWith(transitionReconcileNotice(report));
+}
+
+// ---------------------------------------------------------------------------
+// Link (AV pair) ops: selection closure + linkClips / unlinkClips (ozellik-2)
+// ---------------------------------------------------------------------------
+
+/** Which relations an op's selection closure follows. */
+export type SelectionScope = 'move' | 'link';
+
+/**
+ * Closes `ids` over the document's link — and, for 'move', group — relations.
+ *
+ *  - 'link': adds the linkId partner of every given clip (delete/split/link).
+ *  - 'move': adds every member of the given clips' groups AND their link
+ *    partners. ONE document pass suffices: link partners carry an IDENTICAL
+ *    groupId (invariant rule 10), so a group member's partner is always inside
+ *    the same group and a given clip's partner never opens a new group —
+ *    there is nothing a second round could discover.
+ *
+ * Order contract: the given ids come first IN THEIR ORDER (the drag code puts
+ * the grabbed anchor at index 0 and planMoveClips snaps against clipIds[0]);
+ * discovered clips are APPENDED in document order. Unknown ids pass through
+ * untouched — whether a stale id blocks the op stays the op's own decision.
+ *
+ * Group ops land in a later slice, but the helper handles groupId NOW so the
+ * move path has one closure rule, not a versioned pair of them.
+ */
+export function expandSelectionForOp(
+  d: TimelineDoc,
+  ids: readonly Uuid[],
+  scope: SelectionScope,
+): Uuid[] {
+  const seen = new Set(ids);
+  const linkIds = new Set<string>();
+  const groupIds = new Set<string>();
+  for (const id of ids) {
+    const loc = locateClip(d, id);
+    if (loc === null) continue;
+    if (isMediaClip(loc.clip) && loc.clip.linkId !== undefined) linkIds.add(loc.clip.linkId);
+    if (scope === 'move' && loc.clip.groupId !== undefined) groupIds.add(loc.clip.groupId);
+  }
+  if (linkIds.size === 0 && groupIds.size === 0) return [...ids];
+  const out = [...ids];
+  for (const track of d.tracks) {
+    for (const clip of track.clips) {
+      if (seen.has(clip.id)) continue;
+      const linked = isMediaClip(clip) && clip.linkId !== undefined && linkIds.has(clip.linkId);
+      const grouped = clip.groupId !== undefined && groupIds.has(clip.groupId);
+      if (linked || grouped) {
+        seen.add(clip.id);
+        out.push(clip.id);
+      }
+    }
+  }
+  return out;
+}
+
+/** The OTHER member of `clip`'s link pair, or null (dangling = validation bug). */
+function findLinkPartner(d: TimelineDoc, clip: MediaClip): ClipLocation | null {
+  if (clip.linkId === undefined) return null;
+  for (let ti = 0; ti < d.tracks.length; ti++) {
+    const track = d.tracks[ti];
+    for (let ci = 0; ci < track.clips.length; ci++) {
+      const c = track.clips[ci];
+      if (c.id !== clip.id && isMediaClip(c) && c.linkId === clip.linkId) {
+        return { track, trackIndex: ti, clip: c, clipIndex: ci };
+      }
+    }
+  }
+  return null;
+}
+
+/** Deletes groupId from the members of groups that fell below 2 (rule 11). */
+function cleanupShrunkenGroups(dd: TimelineDoc): void {
+  const counts = new Map<string, number>();
+  for (const track of dd.tracks) {
+    for (const clip of track.clips) {
+      if (clip.groupId !== undefined) {
+        counts.set(clip.groupId, (counts.get(clip.groupId) ?? 0) + 1);
+      }
+    }
+  }
+  for (const track of dd.tracks) {
+    for (const clip of track.clips) {
+      if (clip.groupId !== undefined && (counts.get(clip.groupId) ?? 0) < 2) {
+        delete clip.groupId;
+      }
+    }
+  }
+}
+
+/**
+ * Why `clipIds` cannot be linked into an AV pair, or null.
+ *
+ * Judged on the CLOSED selection: a selected clip drags its existing partner
+ * into the count, so "video already linked elsewhere + some audio" reads as 3
+ * clips and fails the pair-shape rule, while selecting an intact pair (or one
+ * half of it) closes to exactly that pair and reports 'clip is already
+ * linked' — the message that tells the user the remedy is unlink first.
+ */
+export function linkBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string | null {
+  const ids = expandSelectionForOp(d, clipIds, 'link');
+  const locs: ClipLocation[] = [];
+  for (const id of ids) {
+    const loc = locateClip(d, id);
+    if (loc !== null) locs.push(loc);
+  }
+  if (locs.length !== 2) return 'select a video and an audio clip to link';
+  const [a, b] = locs;
+  const kinds = [a.clip.kind, b.clip.kind].sort();
+  if (
+    !isMediaClip(a.clip) ||
+    !isMediaClip(b.clip) ||
+    kinds[0] !== 'audio' ||
+    kinds[1] !== 'video'
+  ) {
+    return 'select a video and an audio clip to link';
+  }
+  if (a.clip.linkId !== undefined || b.clip.linkId !== undefined) return 'clip is already linked';
+  if (
+    a.clip.groupId !== undefined &&
+    b.clip.groupId !== undefined &&
+    a.clip.groupId !== b.clip.groupId
+  ) {
+    return 'clips are in different groups';
+  }
+  if (a.track.locked || b.track.locked) return 'track is locked';
+  return null;
+}
+
+/**
+ * Bonds one video and one audio clip into an AV pair (fresh shared linkId).
+ * Invariant rule 10's group-consistency arm is written here, not just checked:
+ * when exactly one of the two is grouped, the partner JOINS that group.
+ */
+export function linkClips(clipIds: readonly Uuid[]): OpResult {
+  const d = doc();
+  const blocked = linkBlockReason(d, clipIds);
+  if (blocked !== null) return fail(blocked);
+  // The block reason proved the closed set LOCATES exactly 2 clips — address
+  // those two (a stale id in the selection must not shift the pair).
+  const ids = expandSelectionForOp(d, clipIds, 'link').filter((id) => locateClip(d, id) !== null);
+  const linkId = uuidv7();
+  useDocStore.getState().mutate('link', 'Klipler bağlandı', (dd) => {
+    const a = locateClip(dd, ids[0])?.clip;
+    const b = locateClip(dd, ids[1])?.clip;
+    if (a === undefined || b === undefined || !isMediaClip(a) || !isMediaClip(b)) return;
+    a.linkId = linkId;
+    b.linkId = linkId;
+    const groupId = a.groupId ?? b.groupId;
+    if (groupId !== undefined) {
+      a.groupId = groupId;
+      b.groupId = groupId;
+    }
+  });
+  return OK;
+}
+
+/** Why `clipIds` cannot be unlinked, or null (same closure as unlinkClips). */
+export function unlinkBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string | null {
+  const ids = expandSelectionForOp(d, clipIds, 'link');
+  const linked: ClipLocation[] = [];
+  for (const id of ids) {
+    const loc = locateClip(d, id);
+    if (loc !== null && isMediaClip(loc.clip) && loc.clip.linkId !== undefined) linked.push(loc);
+  }
+  if (linked.length === 0) return 'no linked clip in selection';
+  if (linked.some((l) => l.track.locked)) return 'track is locked';
+  return null;
+}
+
+/**
+ * Dissolves every link pair the selection touches. The closure guarantees BOTH
+ * members are in the set, so no write can leave a single-member linkId behind.
+ * groupId is untouched — ungrouping is its own op (later slice).
+ */
+export function unlinkClips(clipIds: readonly Uuid[]): OpResult {
+  const d = doc();
+  const blocked = unlinkBlockReason(d, clipIds);
+  if (blocked !== null) return fail(blocked);
+  const ids = expandSelectionForOp(d, clipIds, 'link');
+  useDocStore.getState().mutate('unlink', 'Bağlantı kaldırıldı', (dd) => {
+    for (const id of ids) {
+      const loc = locateClip(dd, id);
+      if (loc !== null && isMediaClip(loc.clip)) delete loc.clip.linkId;
+    }
+  });
+  return OK;
 }
 
 // ---------------------------------------------------------------------------
@@ -2737,6 +3027,52 @@ export function pasteBlockReason(d: TimelineDoc, timeUs: MicroSec): string | nul
   return placementBlockReason(d, relocatedPlacements(plan.items));
 }
 
+/**
+ * Re-mints the shared ids of a freshly CLONED batch (paste/duplicate) so the
+ * copies bond with each other, never with the originals:
+ *
+ *  - a linkId/groupId seen >= 2 times in the batch maps to ONE fresh uuid —
+ *    a copied pair (or group) stays a pair among the copies;
+ *  - a value seen once is DELETED — half a pair was copied, and a copy that
+ *    still pointed at the original's bond would be a dangling linkId (rule 10)
+ *    or an uninvited group member.
+ *
+ * Runs on the materialized clones, batch-wide, so `cloneClip` itself keeps the
+ * ORIGINAL ids — the clipboard must carry them for exactly this remap to see
+ * which copies belong together.
+ */
+function remintLinkAndGroupIds(clips: readonly Clip[]): void {
+  const linkCounts = new Map<string, number>();
+  const groupCounts = new Map<string, number>();
+  for (const clip of clips) {
+    if (isMediaClip(clip) && clip.linkId !== undefined) {
+      linkCounts.set(clip.linkId, (linkCounts.get(clip.linkId) ?? 0) + 1);
+    }
+    if (clip.groupId !== undefined) {
+      groupCounts.set(clip.groupId, (groupCounts.get(clip.groupId) ?? 0) + 1);
+    }
+  }
+  const remap = (map: Map<string, string>, old: string): string => {
+    const hit = map.get(old);
+    if (hit !== undefined) return hit;
+    const fresh = uuidv7();
+    map.set(old, fresh);
+    return fresh;
+  };
+  const linkMap = new Map<string, string>();
+  const groupMap = new Map<string, string>();
+  for (const clip of clips) {
+    if (isMediaClip(clip) && clip.linkId !== undefined) {
+      if ((linkCounts.get(clip.linkId) ?? 0) >= 2) clip.linkId = remap(linkMap, clip.linkId);
+      else delete clip.linkId;
+    }
+    if (clip.groupId !== undefined) {
+      if ((groupCounts.get(clip.groupId) ?? 0) >= 2) clip.groupId = remap(groupMap, clip.groupId);
+      else delete clip.groupId;
+    }
+  }
+}
+
 /** Ctrl+V: paste the clipboard at the playhead (original tracks, frame offsets kept). */
 export function pasteAtPlayhead(timeUs?: MicroSec): OpResult {
   const d = doc();
@@ -2744,6 +3080,7 @@ export function pasteAtPlayhead(timeUs?: MicroSec): OpResult {
   const plan = planPasteAt(d, at);
   if (!plan.ok) return fail(plan.reason);
   const batch = plan.items.map((p) => ({ clip: materializeRelocatedClip(p), trackId: p.trackId }));
+  remintLinkAndGroupIds(batch.map((b) => b.clip));
   return insertBatch('paste', `${batch.length} klip yapıştırıldı`, batch);
 }
 
@@ -2793,6 +3130,7 @@ export function duplicateClips(clipIds: readonly Uuid[]): OpResult {
   const plan = planDuplicate(d, clipIds);
   if (!plan.ok) return fail(plan.reason);
   const batch = plan.items.map((p) => ({ clip: materializeRelocatedClip(p), trackId: p.trackId }));
+  remintLinkAndGroupIds(batch.map((b) => b.clip));
   return insertBatch('duplicate', `${batch.length} klip çoğaltıldı`, batch);
 }
 
@@ -3274,6 +3612,11 @@ export function detachAudioBlockReason(d: TimelineDoc, clipId: Uuid): string | n
   const clip = loc.clip;
   if (!isMediaClip(clip) || clip.kind !== 'video') return 'only a video clip has detachable audio';
   if (clip.audio === null) return 'clip has no embedded audio';
+  // A video that already has a link partner cannot detach: the op writes a
+  // FRESH linkId to the source, which would overwrite the existing bond and
+  // strand the old partner as a single-member linkId (invariant rule 10). The
+  // remedy the message names — unlink first — makes the detach legal again.
+  if (clip.linkId !== undefined) return 'clip is already linked';
   if (useAssetStore.getState().getAsset(clip.assetId)?.hasAudio === false) {
     return 'source has no audio stream';
   }
@@ -3313,6 +3656,10 @@ export function detachAudio(clipId: Uuid): OpResult {
   const target = placement.track;
 
   const volumeKeyframes = source.keyframes.volume;
+  // The detached audio is BORN LINKED to its video (ozellik-2): one fresh
+  // linkId on both halves, written inside the same mutate (one undo entry).
+  // The block reason above guarantees the source carried no previous bond.
+  const pairLinkId = uuidv7();
   const audioClip: MediaClip = {
     id: uuidv7(),
     kind: 'audio',
@@ -3330,6 +3677,9 @@ export function detachAudio(clipId: Uuid): OpResult {
         : {},
     effects: [],
     opacity: 1,
+    linkId: pairLinkId,
+    // Rule 10's group arm: link partners carry an identical groupId.
+    ...(source.groupId !== undefined ? { groupId: source.groupId } : {}),
   };
   const newTrack = target ? null : makeTrack('audio', 'Ses');
 
@@ -3337,6 +3687,7 @@ export function detachAudio(clipId: Uuid): OpResult {
     const loc = locateClip(dd, clipId);
     if (!loc || !isMediaClip(loc.clip)) return;
     loc.clip.audio = null;
+    loc.clip.linkId = pairLinkId;
     delete loc.clip.keyframes.volume;
     if (newTrack !== null) {
       newTrack.clips.push(audioClip);

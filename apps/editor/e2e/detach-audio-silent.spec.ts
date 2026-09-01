@@ -141,5 +141,9 @@ test.describe('"Sesi ayır" — sessiz kaynak kapısı (gerçek fare)', () => {
       { kind: 'audio', trackType: 'audio' },
       { kind: 'video', trackType: 'video' },
     ]);
+    // ozellik-2: ayrılan çift BAĞLI doğar — iki klipte aynı taze linkId.
+    const clips = after.tracks.flatMap((t) => t.clips);
+    expect(clips[0].linkId).toBeDefined();
+    expect(clips.every((c) => c.linkId === clips[0].linkId)).toBe(true);
   });
 });

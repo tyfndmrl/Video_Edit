@@ -23,9 +23,11 @@ import {
   deleteBlockReason,
   detachAudioBlockReason,
   duplicateBlockReason,
+  linkBlockReason,
   pasteBlockReason,
   removeTransitionBlockReason,
   splitBlockReason,
+  unlinkBlockReason,
   trackDeleteBlockReason,
   trackMoveBlockReason,
   trackRenameBlockReason,
@@ -43,6 +45,8 @@ export type TimelineMenuActionId =
   | 'trimStartToPlayhead'
   | 'trimEndToPlayhead'
   | 'detachAudio'
+  | 'linkClips'
+  | 'unlinkClips'
   | 'addTransition'
   | 'removeTransition'
   | 'paste'
@@ -260,6 +264,20 @@ function clipMenu(ctx: TimelineMenuContext, clipId: Uuid): TimelineMenuEntry[] {
       'Sesi ayır',
       undefined,
       gated(ctx, () => detachAudioBlockReason(ctx.doc, clipId)),
+    ),
+    // AV bağı çifti: ikisi de SEÇİM üzerinden çalışır (link kapanışlı op'lar),
+    // ret kuralı her zamanki sözleşmeyle op'un kendi blockReason'ıdır.
+    item(
+      'linkClips',
+      'Bağla',
+      undefined,
+      gated(ctx, () => linkBlockReason(ctx.doc, ctx.selection)),
+    ),
+    item(
+      'unlinkClips',
+      'Bağlantıyı kaldır',
+      undefined,
+      gated(ctx, () => unlinkBlockReason(ctx.doc, ctx.selection)),
     ),
   ];
 }

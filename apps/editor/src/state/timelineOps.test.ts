@@ -21,17 +21,24 @@ import {
   addTrack,
   clearClipboardForTests,
   copyClips,
+  deleteBlockReason,
   deleteClips,
   deleteTrack,
+  detachAudio,
+  detachAudioBlockReason,
   duplicateBlockReason,
   duplicateClips,
+  expandSelectionForOp,
   knownAssetDurations,
+  linkBlockReason,
+  linkClips,
   moveClips,
   moveTrack,
   pasteAtPlayhead,
   pasteBlockReason,
   planMoveClips,
   renameTrack,
+  splitAtPlayhead,
   splitClipAt,
   splitKeyframes,
   toggleTrackLocked,
@@ -39,6 +46,8 @@ import {
   trackMoveBlockReason,
   trackRenameBlockReason,
   trimClip,
+  unlinkBlockReason,
+  unlinkClips,
 } from './timelineOps';
 import { resolveVisualStack } from '../features/player/core/resolve';
 
@@ -1053,5 +1062,398 @@ describe('track partition (video above, audio below)', () => {
     expect(trackMoveBlockReason(currentDoc(), A2, 'up')).toBe('track is locked');
     // Kenar kurali da partisyondan once: en alttaki ses 'down' icin kenari soyler.
     expect(trackMoveBlockReason(currentDoc(), A1, 'down')).toBe('track already at the bottom');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AV bağı (linkId) çekirdeği — ozellik-2
+// ---------------------------------------------------------------------------
+
+describe('linkId core (ozellik-2)', () => {
+  const V1 = '01890000-0000-7000-8000-000000000301';
+  const V2 = '01890000-0000-7000-8000-000000000302';
+  const A1 = '01890000-0000-7000-8000-000000000303';
+  const O1 = '01890000-0000-7000-8000-000000000304';
+  const VID = '01890000-0000-7000-8000-000000000311';
+  const AUD = '01890000-0000-7000-8000-000000000312';
+  const OTHER = '01890000-0000-7000-8000-000000000313';
+  const AUD2 = '01890000-0000-7000-8000-000000000314';
+  const L1 = '01890000-0000-7000-8000-000000000401';
+  const G1 = '01890000-0000-7000-8000-000000000501';
+  const G2 = '01890000-0000-7000-8000-000000000502';
+
+  function clipOf(
+    id: string,
+    kind: 'video' | 'audio',
+    startUs: number,
+    durationUs: number,
+    extra: Partial<MediaClip> = {},
+  ): MediaClip {
+    return { ...mediaClip(id, ASSET_A, startUs, 0, durationUs), kind, ...extra };
+  }
+
+  function trackOf(
+    id: string,
+    type: Track['type'],
+    clips: MediaClip[],
+    flags: Partial<Track> = {},
+  ): Track {
+    return { id, type, muted: false, hidden: false, locked: false, clips, ...flags };
+  }
+
+  /** V1 [VID 0..4s] + A1 [AUD 0..4s], ikisi L1 ile bağlı. */
+  function linkedPairDoc(over?: {
+    audioLocked?: boolean;
+    audEndUs?: number;
+    groupId?: string;
+  }): TimelineDoc {
+    const g = over?.groupId !== undefined ? { groupId: over.groupId } : {};
+    return docWith([
+      trackOf(V1, 'video', [clipOf(VID, 'video', 0, 4 * US, { linkId: L1, ...g })]),
+      trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, over?.audEndUs ?? 4 * US, { linkId: L1, ...g })], {
+        locked: over?.audioLocked === true,
+      }),
+    ]);
+  }
+
+  describe('expandSelectionForOp', () => {
+    /** V1 [VID(L1,G1)], V2 [OTHER(G1)], A1 [AUD(L1,G1)] — K3: eşler aynı grupta. */
+    function richDoc(): TimelineDoc {
+      return docWith([
+        trackOf(V1, 'video', [clipOf(VID, 'video', 0, 4 * US, { linkId: L1, groupId: G1 })]),
+        trackOf(V2, 'video', [clipOf(OTHER, 'video', 0, 4 * US, { groupId: G1 })]),
+        trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 4 * US, { linkId: L1, groupId: G1 })]),
+      ]);
+    }
+
+    it("'link' scope adds ONLY the partner, appended after the given ids", () => {
+      const d = richDoc();
+      expect(expandSelectionForOp(d, [VID], 'link')).toEqual([VID, AUD]);
+      // Grup üyesi OTHER 'link' kapsamına GİRMEZ.
+      expect(expandSelectionForOp(d, [OTHER], 'link')).toEqual([OTHER]);
+      // İdempotent: kapalı küme kendini döndürür.
+      expect(expandSelectionForOp(d, [VID, AUD], 'link')).toEqual([VID, AUD]);
+    });
+
+    it("'move' scope closes over group members AND link partners in one pass", () => {
+      const d = richDoc();
+      // OTHER'dan başla: grubu (VID) ve grubun link eşini (AUD) tek geçişte bulur.
+      expect(expandSelectionForOp(d, [OTHER], 'move')).toEqual([OTHER, VID, AUD]);
+    });
+
+    it('keeps the anchor first and passes unknown ids through untouched', () => {
+      const d = richDoc();
+      const ghost = '01890000-0000-7000-8000-0000000009ff';
+      expect(expandSelectionForOp(d, [VID, ghost], 'move')).toEqual([VID, ghost, OTHER, AUD]);
+    });
+  });
+
+  describe('linkClips / unlinkClips', () => {
+    it('links a selected video+audio pair with ONE fresh shared linkId (single undo entry)', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [clipOf(VID, 'video', 0, 4 * US)]),
+          trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 4 * US)]),
+        ]),
+      );
+      const res = linkClips([VID, AUD]);
+      expect(res).toEqual({ ok: true });
+      const clips = currentDoc().tracks.flatMap((t) => t.clips) as MediaClip[];
+      expect(clips[0].linkId).toBeDefined();
+      expect(clips[1].linkId).toBe(clips[0].linkId);
+      expect(useDocStore.getState().history.at(-1)?.label).toBe('Klipler bağlandı');
+      expectValid();
+    });
+
+    it('writes the grouped side\'s groupId onto the partner (invariant rule 10, group arm)', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [
+            clipOf(VID, 'video', 0, 4 * US, { groupId: G1 }),
+            clipOf(OTHER, 'video', 5 * US, 4 * US, { groupId: G1 }),
+          ]),
+          trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 4 * US)]),
+        ]),
+      );
+      expect(linkClips([VID, AUD]).ok).toBe(true);
+      const aud = currentDoc().tracks[1].clips[0] as MediaClip;
+      expect(aud.groupId).toBe(G1);
+      expectValid();
+    });
+
+    it('block reasons: pair shape, already linked, different groups, locked track', () => {
+      // 1 klip / iki video -> çift şekli tutmuyor.
+      const plain = docWith([
+        trackOf(V1, 'video', [clipOf(VID, 'video', 0, 4 * US), clipOf(OTHER, 'video', 5 * US, 4 * US)]),
+        trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 4 * US)]),
+      ]);
+      expect(linkBlockReason(plain, [VID])).toBe('select a video and an audio clip to link');
+      expect(linkBlockReason(plain, [VID, OTHER])).toBe('select a video and an audio clip to link');
+
+      // Zaten bağlı: tek yarıdan bile kapanış çifti bulur ve doğru mesajı verir.
+      const linked = linkedPairDoc();
+      expect(linkBlockReason(linked, [VID])).toBe('clip is already linked');
+      expect(linkBlockReason(linked, [VID, AUD])).toBe('clip is already linked');
+
+      // Farklı gruplar.
+      const twoGroups = docWith([
+        trackOf(V1, 'video', [
+          clipOf(VID, 'video', 0, 4 * US, { groupId: G1 }),
+          clipOf(OTHER, 'video', 5 * US, 4 * US, { groupId: G1 }),
+        ]),
+        trackOf(A1, 'audio', [
+          clipOf(AUD, 'audio', 0, 4 * US, { groupId: G2 }),
+          clipOf(AUD2, 'audio', 5 * US, 4 * US, { groupId: G2 }),
+        ]),
+      ]);
+      expect(linkBlockReason(twoGroups, [VID, AUD])).toBe('clips are in different groups');
+
+      // Kilitli track.
+      const locked = docWith([
+        trackOf(V1, 'video', [clipOf(VID, 'video', 0, 4 * US)]),
+        trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 4 * US)], { locked: true }),
+      ]);
+      expect(linkBlockReason(locked, [VID, AUD])).toBe('track is locked');
+    });
+
+    it('unlink dissolves the bond from BOTH members even when only one is selected', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      const res = unlinkClips([VID]);
+      expect(res).toEqual({ ok: true });
+      const clips = currentDoc().tracks.flatMap((t) => t.clips) as MediaClip[];
+      expect(clips.every((c) => c.linkId === undefined)).toBe(true);
+      expect(useDocStore.getState().history.at(-1)?.label).toBe('Bağlantı kaldırıldı');
+      expectValid();
+    });
+
+    it('unlink block reasons: no linked clip / locked track', () => {
+      const plain = docWith([trackOf(V1, 'video', [clipOf(VID, 'video', 0, 4 * US)])]);
+      expect(unlinkBlockReason(plain, [VID])).toBe('no linked clip in selection');
+      expect(unlinkBlockReason(linkedPairDoc({ audioLocked: true }), [VID])).toBe('track is locked');
+    });
+  });
+
+  describe('linked pair moves TOGETHER (section-scoped trackDelta)', () => {
+    it('a horizontal drag of the video carries the audio half (closure inside the op)', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      const res = moveClips([VID], 2 * US, 0);
+      expect(res.ok, !res.ok ? res.reason : '').toBe(true);
+      const vid = currentDoc().tracks[0].clips[0];
+      const aud = currentDoc().tracks[1].clips[0];
+      expect(vid.timelineStartUs, 'Video 2 sn kaymalı.').toBe(2 * US);
+      expect(aud.timelineStartUs, 'Bağlı ses AYNI 2 sn kaymalı (kapanış).').toBe(2 * US);
+      expectValid();
+    });
+
+    it('a lane change moves the video vertically while the audio slides in its OWN lane', () => {
+      // [V1 boş, V2 (VID), A1 (AUD)] — video bir şerit yukarı, ses yerinde.
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', []),
+          trackOf(V2, 'video', [clipOf(VID, 'video', 0, 4 * US, { linkId: L1 })]),
+          trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 4 * US, { linkId: L1 })]),
+        ]),
+      );
+      const res = moveClips([VID], 0, -1);
+      // Bölüm-kapsamlı delta sökülürse ses de -1 şerit ister -> V2 (video)
+      // hedefi 'track type mismatch' ile TÜM taşımayı reddeder (negatif kontrol imzası).
+      expect(res, "Bölüm-kapsamlı trackDelta: ses kendi şeridinde kalmalı.").toEqual({ ok: true });
+      expect(currentDoc().tracks[0].clips.map((c) => c.id)).toEqual([VID]);
+      expect(currentDoc().tracks[2].clips.map((c) => c.id)).toEqual([AUD]);
+      expectValid();
+    });
+
+    it('within a section the type gate still refuses (video onto an overlay lane)', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [clipOf(VID, 'video', 0, 4 * US)]),
+          trackOf(O1, 'overlay', []),
+        ]),
+      );
+      expect(moveClips([VID], 0, 1)).toEqual({ ok: false, reason: 'track type mismatch' });
+    });
+  });
+
+  describe('linked pair deletes TOGETHER (all or nothing)', () => {
+    it('deleting one half deletes BOTH, and a single undo brings both back', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      const res = deleteClips([VID]);
+      expect(res.ok).toBe(true);
+      expect(
+        currentDoc().tracks.flatMap((t) => t.clips),
+        'Bağ kapanışı: eş (ses) de silinmeli.',
+      ).toHaveLength(0);
+      useDocStore.getState().undo();
+      expect(currentDoc().tracks.flatMap((t) => t.clips)).toHaveLength(2);
+      expectValid();
+    });
+
+    it('refuses the WHOLE delete when the partner sits on a locked track', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc({ audioLocked: true }));
+      expect(deleteBlockReason(currentDoc(), [VID])).toBe('linked clip is on a locked track');
+      expect(deleteClips([VID])).toEqual({
+        ok: false,
+        reason: 'linked clip is on a locked track',
+      });
+      expect(currentDoc().tracks.flatMap((t) => t.clips), 'Yarım silme yok.').toHaveLength(2);
+      expectValid();
+    });
+
+    it('strips the groupId from a group shrunk below 2 members', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [
+            clipOf(VID, 'video', 0, 4 * US, { groupId: G1 }),
+            clipOf(OTHER, 'video', 5 * US, 4 * US, { groupId: G1 }),
+          ]),
+        ]),
+      );
+      expect(deleteClips([VID]).ok).toBe(true);
+      const survivor = currentDoc().tracks[0].clips[0];
+      expect(survivor.groupId, 'Tek üyeli grup kalamaz (kural 11).').toBeUndefined();
+      expectValid();
+    });
+  });
+
+  describe('linked pair splits TOGETHER', () => {
+    it('both sides under the playhead -> 4 clips forming 2 pairs (left keeps the old id, right pair mints a fresh shared one)', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      useEditorStore.getState().setSelection([]);
+      const res = splitAtPlayhead(2 * US);
+      expect(res.ok).toBe(true);
+      const vids = currentDoc().tracks[0].clips as MediaClip[];
+      const auds = currentDoc().tracks[1].clips as MediaClip[];
+      expect(vids).toHaveLength(2);
+      expect(auds).toHaveLength(2);
+      // Sol yarılar eski bağı taşır...
+      expect(vids[0].linkId).toBe(L1);
+      expect(auds[0].linkId).toBe(L1);
+      // ...sağ yarılar TAZE ORTAK bir bağ alır.
+      expect(vids[1].linkId).toBeDefined();
+      expect(vids[1].linkId).toBe(auds[1].linkId);
+      expect(vids[1].linkId).not.toBe(L1);
+      expectValid();
+    });
+
+    it('a one-sided split keeps the old pair legal: left half + partner, right half unlinked', () => {
+      // Ses 0..2 sn: 3. saniyedeki kesim yalnız videoyu bölebilir.
+      useDocStore.getState().loadDoc(linkedPairDoc({ audEndUs: 2 * US }));
+      useEditorStore.getState().setSelection([]);
+      expect(splitAtPlayhead(3 * US).ok).toBe(true);
+      const vids = currentDoc().tracks[0].clips as MediaClip[];
+      const auds = currentDoc().tracks[1].clips as MediaClip[];
+      expect(vids).toHaveLength(2);
+      expect(auds).toHaveLength(1);
+      expect(vids[0].linkId).toBe(L1);
+      expect(auds[0].linkId).toBe(L1);
+      expect(vids[1].linkId, 'Sağ yarı bağsız doğar (kural 10 korunur).').toBeUndefined();
+      expectValid();
+    });
+
+    it('splitClipAt primitive: the second half is born unlinked but KEEPS its groupId', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc({ groupId: G1 }));
+      expect(splitClipAt(VID, 2 * US).ok).toBe(true);
+      const vids = currentDoc().tracks[0].clips as MediaClip[];
+      expect(vids[1].linkId).toBeUndefined();
+      expect(vids[1].groupId, 'groupId ikinci yarıda kalır.').toBe(G1);
+      expectValid();
+    });
+  });
+
+  describe('trim does NOT propagate over the bond (user decision, negative pin)', () => {
+    it('trimming the video edge leaves the audio half untouched and the bond intact', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      expect(trimClip(VID, 'right', 3 * US).ok).toBe(true);
+      const vid = currentDoc().tracks[0].clips[0] as MediaClip;
+      const aud = currentDoc().tracks[1].clips[0] as MediaClip;
+      expect(vid.timelineDurationUs).toBe(3 * US);
+      expect(aud.timelineDurationUs, 'Eş kırpılMAZ.').toBe(4 * US);
+      expect(vid.linkId, 'Bağ kopmaz.').toBe(L1);
+      expect(aud.linkId).toBe(L1);
+      expectValid();
+    });
+  });
+
+  describe('copy paths re-mint shared ids (remintLinkAndGroupIds)', () => {
+    it('duplicating the FULL pair -> the copies share ONE fresh linkId', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      expect(duplicateClips([VID, AUD]).ok).toBe(true);
+      const vids = currentDoc().tracks[0].clips as MediaClip[];
+      const auds = currentDoc().tracks[1].clips as MediaClip[];
+      expect(vids).toHaveLength(2);
+      expect(auds).toHaveLength(2);
+      expect(vids[1].linkId).toBeDefined();
+      expect(vids[1].linkId).toBe(auds[1].linkId);
+      expect(vids[1].linkId).not.toBe(L1);
+      expectValid();
+    });
+
+    it('duplicating HALF the pair -> the copy carries NO linkId (dangling forbidden)', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      expect(duplicateClips([VID]).ok).toBe(true);
+      const vids = currentDoc().tracks[0].clips as MediaClip[];
+      expect(vids).toHaveLength(2);
+      expect(vids[1].linkId).toBeUndefined();
+      expect(vids[0].linkId, 'Orijinalin bağı durur.').toBe(L1);
+      expectValid();
+    });
+
+    it('paste behaves the same: full pair -> fresh shared id, half -> none', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      expect(copyClips([VID, AUD])).toBe(true);
+      expect(pasteAtPlayhead(5 * US).ok).toBe(true);
+      const vids = currentDoc().tracks[0].clips as MediaClip[];
+      const auds = currentDoc().tracks[1].clips as MediaClip[];
+      expect(vids[1].linkId).toBeDefined();
+      expect(vids[1].linkId).toBe(auds[1].linkId);
+      expect(vids[1].linkId).not.toBe(L1);
+      expectValid();
+
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      expect(copyClips([VID])).toBe(true);
+      expect(pasteAtPlayhead(5 * US).ok).toBe(true);
+      const vids2 = currentDoc().tracks[0].clips as MediaClip[];
+      expect(vids2[1].linkId).toBeUndefined();
+      expectValid();
+    });
+  });
+
+  describe('detachAudio births a LINKED pair', () => {
+    it('writes one fresh shared linkId onto the video and the detached audio', () => {
+      useDocStore.getState().loadDoc(
+        docWith([trackOf(V1, 'video', [clipOf(VID, 'video', 0, 4 * US)])]),
+      );
+      expect(detachAudio(VID).ok).toBe(true);
+      const vid = currentDoc().tracks[0].clips[0] as MediaClip;
+      const aud = currentDoc().tracks[1].clips[0] as MediaClip;
+      expect(aud.kind).toBe('audio');
+      expect(vid.linkId).toBeDefined();
+      expect(aud.linkId).toBe(vid.linkId);
+      expectValid();
+    });
+
+    it('refuses on an ALREADY LINKED video — a fresh bond would strand the old partner', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      expect(detachAudioBlockReason(currentDoc(), VID)).toBe('clip is already linked');
+      expect(detachAudio(VID)).toEqual({ ok: false, reason: 'clip is already linked' });
+      expectValid();
+    });
+  });
+
+  describe('deleteTrack breaks bonds and dissolves shrunken groups', () => {
+    it("deleting the audio track strips the video partner's linkId (and its now-single group)", () => {
+      useDocStore.getState().loadDoc(linkedPairDoc({ groupId: G1 }));
+      expect(deleteTrack(A1).ok).toBe(true);
+      const vid = currentDoc().tracks[0].clips[0] as MediaClip;
+      expect(vid.linkId, 'Eşi silinen klip bağ taşıyamaz (kural 10).').toBeUndefined();
+      expect(vid.groupId, 'Tek üyeli grup kalamaz (kural 11).').toBeUndefined();
+      expectValid();
+      // Tek undo hem track'i hem bağı geri getirir (aynı mutate).
+      useDocStore.getState().undo();
+      const restored = currentDoc().tracks.flatMap((t) => t.clips) as MediaClip[];
+      expect(restored).toHaveLength(2);
+      expect(restored.every((c) => c.linkId === L1)).toBe(true);
+      expectValid();
+    });
   });
 });

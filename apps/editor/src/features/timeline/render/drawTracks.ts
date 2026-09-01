@@ -111,6 +111,8 @@ const COLORS = {
   transitionBadge: '#e8833a',
   transitionBadgeIdle: 'rgba(120,130,150,0.55)',
   transitionBadgeGlyph: '#12141a',
+  linkBadge: 'rgba(90,140,255,0.85)',
+  linkBadgeGlyph: '#12141a',
   missingWash: 'rgba(239,68,68,0.28)',
   missingStroke: '#ef4444',
   missingText: '#ffd7d7',
@@ -159,6 +161,51 @@ function clipFill(kind: Clip['kind']): { fill: string; stroke: string } {
     default:
       return { fill: COLORS.clipOther, stroke: COLORS.clipOtherStroke };
   }
+}
+
+/**
+ * Chain badge on a LINKED clip (ozellik-2) — the visual that says "this block
+ * moves/deletes/splits together with its AV partner".
+ *
+ * Same doctrine as the transition badge: a small fixed-size marker inside
+ * existing geometry, never a row-height change. It rides the name bar next to
+ * the speed pill (`offsetRight` = space the speed pill already took), and on a
+ * clip too narrow for both, the LINK pill yields — the bond is also visible on
+ * the partner, while a hidden "2x" has no second home (speed badge doctrine).
+ * Returns the horizontal space consumed (0 when nothing was drawn).
+ */
+function drawLinkBadge(
+  ctx: CanvasRenderingContext2D,
+  clip: Clip,
+  x: number,
+  y: number,
+  w: number,
+  barH: number,
+  offsetRight: number,
+): number {
+  if (!isMediaClip(clip) || clip.linkId === undefined) return 0;
+  const pillW = 14;
+  const pillH = barH - 4;
+  if (offsetRight + pillW + 9 > w) return 0;
+  const pillX = x + w - offsetRight - pillW - 3;
+  const pillY = y + 2;
+  ctx.save();
+  roundRect(ctx, pillX, pillY, pillW, pillH, Math.min(3, pillH / 2));
+  ctx.fillStyle = COLORS.linkBadge;
+  ctx.fill();
+  // Chain glyph: two interlocked rings.
+  ctx.strokeStyle = COLORS.linkBadgeGlyph;
+  ctx.lineWidth = 1.2;
+  const cy = pillY + pillH / 2;
+  const cx = pillX + pillW / 2;
+  ctx.beginPath();
+  ctx.arc(cx - 2, cy, 2.4, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx + 2, cy, 2.4, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+  return pillW + 3;
 }
 
 function roundRect(
@@ -531,13 +578,15 @@ export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState
         // Speed badge first: the name is what gets truncated when they collide
         // (a re-timed clip whose "2x" is hidden is the misleading case).
         const badgeW = drawSpeedBadge(ctx, clip, x, y + 2, w, NAME_BAR_H);
+        // Link (chain) badge stacks to its left; yields when space runs out.
+        const linkW = drawLinkBadge(ctx, clip, x, y + 2, w, NAME_BAR_H, badgeW);
         ctx.fillStyle = missing ? COLORS.missingText : COLORS.clipName;
         ctx.font = '10px system-ui, sans-serif';
         ctx.textBaseline = 'middle';
         const name = clipLabel(clip, assets);
         // On a narrow re-timed clip the badge WINS: the block length already
         // hides the speed, while the name is repeated in the inspector.
-        const nameMaxW = w - 10 - badgeW;
+        const nameMaxW = w - 10 - badgeW - linkW;
         if (nameMaxW >= 12) {
           ctx.fillText(name, x + 5, y + 2 + NAME_BAR_H / 2, nameMaxW);
         }

@@ -2,6 +2,22 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-01
+- ozellik-2 — linkId çekirdeği: link/unlink + sil/böl/taşı kapanışı (özellik turu dilim 2):
+  SAF kapanış yardımcısı `expandSelectionForOp` ('link' = eş; 'move' = grup üyeleri + eşler,
+  K3 sayesinde tek geçiş) OP İÇİNDE uygulanır: deleteClips (eş kilitli track'teyse TÜM silme
+  RED — yarım silme dangling linkId üretirdi; küçülen grup temizliği aynı mutate), deleteTrack
+  (eş bağı + grup temizliği), splitAtPlayhead (çift taraf bölünürse sağ yarılara taze ORTAK
+  linkId; ikinci yarı her zaman bağsız doğar, groupId kalır), moveClips (girişte 'move'
+  kapanışı + planMoveClips'te BÖLÜM-KAPSAMLI trackDelta: anchor'ın bölümü şerit değiştirir,
+  diğer bölüm kendi şeridinde yatay kayar — CapCut davranışı; tip kapısı kalır).
+  `linkClips`/`unlinkClips` + sağ tık 'Bağla'/'Bağlantıyı kaldır' (blockReason sözleşmesi +
+  5 Türkçe çeviri); duplicate/paste `remintLinkAndGroupIds` (çift kopya kendi içinde bağlı,
+  yarım kopya bağsız); detachAudio çifti bağlı doğurur (zaten-bağlı videoda detach RED —
+  invariant koruması); trim bağa DOKUNMAZ (kullanıcı kararı, negatif pinli); zincir rozeti
+  (drawTracks, yükseklik değişmedi); appBridge linkId/groupId. +29 birim (editör 1379) +
+  yeni gerçek-fare `e2e/link-clips.spec.ts` (2 test) + detach-audio-silent linkId satırı.
+  Negatif kontrol ×2 md5-birebir (delete kapanışı → birim+e2e tam imza; bölüm-deltası →
+  'track type mismatch'). Defter: `PROGRESS.md` §Özellik turu.
 - ozellik-1 — track partisyonu: video/overlay üstte, ses altta (özellik turu dilim 1):
   `insertTrackPositioned` op-politikası (audio→en alta, video/overlay→ilk audio'nun önüne;
   overlay klip-ekleme yolu bilinçli unshift'te — en üst katman kararı korunur, indeks 0
