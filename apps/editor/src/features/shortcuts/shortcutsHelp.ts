@@ -41,7 +41,7 @@ export const SHORTCUT_SECTIONS: ShortcutSection[] = [
     title: 'Oynatma',
     entries: [
       { keys: 'Space', label: 'Oynat / Duraklat' },
-      { keys: 'J / K / L', label: 'Geri sar / Duraklat / Oynat (L tekrar: 2x…8x hız)' },
+      { keys: 'J / K / L', label: 'Geri tara (J tekrar: 2x…8x, sessiz) / Duraklat / Oynat (L tekrar: 2x…8x)' },
       { keys: '← / →', label: '1 kare geri / ileri' },
       { keys: 'Shift + ← / →', label: '1 saniye geri / ileri' },
       { keys: '↑ / ↓', label: 'Önceki / sonraki kesme noktası' },

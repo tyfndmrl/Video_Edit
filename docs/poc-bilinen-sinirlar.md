@@ -836,6 +836,21 @@ karşılanmaz. Not: `AudioContext` sampleRate seçeneği tarayıcı/OS garantisi
 bir tarayıcı/donanım istenen hızı reddedip kendi hızına düşürebilir (bu depoda ölçülmedi —
 kapsam dışı). İlgili sözleşme: `rendering-semantics.md` §8.5.
 
+### 2.8 [DÜŞÜK] J geri "oynatma" değil: SESSİZ kare-adımlamalı tarama (v1 sınırı)
+
+`<video>` elementi negatif `playbackRate` oynatamaz; motor API'sine yön eklemek de
+reddedildi (DECISIONS: her rAF'ta sert re-seek fırtınası + saat/syncElements/ses-zarfı
+üç kritik bölge). J bu yüzden dispatcher-seviyesi bir shuttle döngüsüdür
+(`features/shortcuts/shuttle.ts`): motor `paused` kalır, playhead 33 ms'lik metronomla
+store üzerinden geri akar ve mevcut scrub yolu kareyi getirir. Sonuçları: **ses yoktur**
+(yapısal — hiçbir element `play()` almaz; oynatıcı rozeti 'Geri tarama {n}x — ses kapalı'
+bunu söyler), akıcılık scrub yolunun throttle'ına tabidir (gerçek geri oynatma değil,
+kare atlamalı YAKLAŞIK tarama) ve kademeler (J tekrar: 2x…8x) yalnız tarama hızını
+çarpar. Gerçek reverse oynatma v2 (WebCodecs) motorunun işidir; o gün J motora bağlanır
+(DECISIONS satırındaki geri alma koşulu). Kanıt: `shuttle.test.ts` (hız dürüstlüğü,
+fake timer) + `e2e/jkl-shuttle.spec.ts` (gerçek klavye: playhead azalır, `isPlaying`
+false kalır).
+
 ---
 
 ## 3. Şema / export motoru sınırları (tipli hata verir, sessiz bozulma yok)

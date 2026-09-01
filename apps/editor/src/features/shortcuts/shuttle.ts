@@ -48,6 +48,9 @@ export const useTransportStore = create<TransportStore>()((set) => ({
 /** Metronom aralığı — 30 fps karesinin (~33,3 ms) altında kalan en yakın tam sayı. */
 export const SHUTTLE_TICK_MS = 33;
 
+/** Kademe tavanı: J tekrar basışları 1→2→4→8 katlar ve burada doyar. */
+export const SHUTTLE_MAX_RATE = 8;
+
 let timer: ReturnType<typeof setInterval> | null = null;
 /** İç float akümülatör (µs) — store'a yazılan yapışık değerden BAĞIMSIZ. */
 let virtualUs = 0;
@@ -58,10 +61,16 @@ let lastOwnSeq = 0;
 
 /**
  * J basışı: shuttle kapalıysa mevcut playhead'den 1x geri taramayı başlatır;
- * açıksa hızı korur (tek-hız dilimi — kademe merdiveni ayrı dilimde).
+ * açıksa kademeyi ikiye katlar (1→2→4→8; tavanda kalır). Akümülatör ve
+ * metronom aynen sürer — hız değişimi bir SONRAKİ tikin deltasından itibaren
+ * işler (geçmiş dilim yeniden fiyatlanmaz).
  */
 export function startOrBumpShuttle(): void {
-  if (timer !== null) return;
+  if (timer !== null) {
+    const current = useTransportStore.getState().shuttleRate ?? 1;
+    useTransportStore.setState({ shuttleRate: Math.min(current * 2, SHUTTLE_MAX_RATE) });
+    return;
+  }
   const editor = useEditorStore.getState();
   virtualUs = editor.playheadUs;
   lastOwnSeq = editor.userSeekSeq;
@@ -84,11 +93,6 @@ export function stopShuttle(): boolean {
     useTransportStore.setState({ shuttleRate: null });
   }
   return wasActive;
-}
-
-/** Rozet/matris için: geri tarama şu an açık mı? */
-export function isShuttleActive(): boolean {
-  return timer !== null;
 }
 
 function tick(): void {

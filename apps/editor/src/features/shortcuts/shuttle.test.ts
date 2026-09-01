@@ -17,7 +17,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isOnFrameGrid } from '@videoedit/timeline-schema';
 import { createEmptyDoc, defaultProjectSettings, useDocStore } from '../../state/docStore';
 import { useEditorStore } from '../../state/editorStore';
-import { SHUTTLE_TICK_MS, startOrBumpShuttle, stopShuttle, useTransportStore } from './shuttle';
+import {
+  SHUTTLE_MAX_RATE,
+  SHUTTLE_TICK_MS,
+  startOrBumpShuttle,
+  stopShuttle,
+  useTransportStore,
+} from './shuttle';
 
 const PROJECT_ID = '01890000-0000-7000-8000-000000000001';
 const US = 1_000_000;
@@ -91,6 +97,40 @@ describe('shuttle — BOF kelepçesi', () => {
     unsub();
     expect(writes).toEqual([]);
     expect(useEditorStore.getState().playheadUs).toBe(0);
+  });
+});
+
+describe('shuttle — kademe merdiveni', () => {
+  it('J tekrarları hızı 1→2→4→8 katlar; tavandaki basış 8\'de kalır', () => {
+    useEditorStore.getState().setPlayheadUs(30 * US);
+    const rate = () => useTransportStore.getState().shuttleRate;
+
+    startOrBumpShuttle();
+    expect(rate()).toBe(1);
+    startOrBumpShuttle();
+    expect(rate()).toBe(2);
+    startOrBumpShuttle();
+    expect(rate()).toBe(4);
+    startOrBumpShuttle();
+    expect(rate()).toBe(SHUTTLE_MAX_RATE);
+    // 5. basış: tavanda kalır (fırlamaz, sıfırlanmaz).
+    startOrBumpShuttle();
+    expect(rate()).toBe(SHUTTLE_MAX_RATE);
+  });
+
+  it('2x kademede 1000 ms\'de ~2 saniye geriler (±1 kare) — hız çarpanı dürüst', () => {
+    const editor = useEditorStore.getState();
+    editor.setPlayheadUs(12 * US);
+
+    startOrBumpShuttle();
+    startOrBumpShuttle(); // 2x
+    vi.advanceTimersByTime(1000);
+
+    const playhead = useEditorStore.getState().playheadUs;
+    expect(
+      Math.abs(playhead - 10 * US),
+      `2x hızda 1000 ms sonra ~10 sn beklenirdi, ölçülen ${playhead} µs`,
+    ).toBeLessThanOrEqual(FRAME_US);
   });
 });
 

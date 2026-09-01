@@ -262,7 +262,7 @@ Hit-testing: DOM olmadığı için kendi hit-test'imiz — çizim sırasında ü
 | Kısayol | Eylem |
 |---|---|
 | Space | Oynat/Duraklat |
-| J / K / L | Geri oynat* / dur / ileri oynat (L tekrar = 2x) |
+| J / K / L | Geri tara* / dur / ileri oynat (J tekrar: 2x…8x sessiz; L tekrar: 2x…8x) |
 | ← / → | 1 frame geri/ileri (proje fps'ine göre) |
 | Shift+← / → | 1 s geri/ileri |
 | Home / End | Timeline başı / sonu |
@@ -279,7 +279,7 @@ Hit-testing: DOM olmadığı için kendi hit-test'imiz — çizim sırasında ü
 | Shift+Z | Timeline'ı sığdır (fit) |
 | Ctrl+A | Tümünü seç |
 
-*J (reverse play) v1 player'da desteklenmez — v1'de "hızlı geri scrub" olarak davranır; v2'de gerçek reverse. Kısayol motoru: input/textarea odaklıyken devre dışı; `useHotkeys` yerine tek merkezi `keydown` dispatcher (çakışma yönetimi ve context — timeline odaklı mı, player mı — için).
+*J v1'de kademeli **SESSİZ kare-adımlamalı geri tarama**dır (kullanıcı kararı 2026-09-01): motor `paused` kalır, `features/shortcuts/shuttle.ts` metronomu playhead'i store üzerinden kare kare geri akıtır ve mevcut scrub yolu kareyi getirir; ses yapısal olarak kapalıdır (oynatıcı rozeti bunu söyler), gerçek reverse oynatma v2 (WebCodecs) motorunda. Kısayol motoru: input/textarea odaklıyken devre dışı; `useHotkeys` yerine tek merkezi `keydown` dispatcher (çakışma yönetimi ve context — timeline odaklı mı, player mı — için).
 
 ### 3.5 Timecode
 

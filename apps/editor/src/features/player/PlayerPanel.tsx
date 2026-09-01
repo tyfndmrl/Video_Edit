@@ -73,7 +73,9 @@ export function PlayerPanel() {
   // akıtan döngü. Rozet, sessizliğin bir ARIZA değil taramanın doğası olduğunu
   // söyler — previewRate$ rozeti KULLANILMAZ (o "istenen hız elemente sığmadı"
   // der; buradaki mesaj farklı bir dürüstlüktür: oynatma yok, tarama var).
+  // Aynı bileşen L kademesini de gösterir: forwardRate>1 iken "İleri {n}x".
   const shuttleRate = useTransportStore((s) => s.shuttleRate);
+  const forwardRate = useTransportStore((s) => s.forwardRate);
   /**
    * The transition window under the playhead, as a rendered STRING so the
    * selector stays value-stable (a fresh object every doc change would
@@ -395,18 +397,24 @@ export function PlayerPanel() {
         )}
         {/* J geri taraması: motor duraklatılmış, ses yapısal olarak kapalı.
             Sessizliği söylemeyen bir geri tarama "sesim bozuldu" şikâyetinin
-            ta kendisi olurdu. */}
-        {shuttleRate !== null && (
+            ta kendisi olurdu. Aynı rozet, L kademesi 1x'in üstündeyken de
+            "İleri {n}x" der — iki durum aynı anda yaşayamaz (shuttle yalnız
+            motor paused'ken çalışır), öncelik geri taramanındır. */}
+        {(shuttleRate !== null || (forwardRate > 1 && isPlaying)) && (
           <div
             data-testid="transport-shuttle-note"
             role="status"
             className="pointer-events-none absolute bottom-2 right-2 rounded bg-black/70 px-2 py-1 text-[11px] text-white"
             title={
-              'Kare-adımlamalı yaklaşık geri tarama: motor duraklatılmışken playhead ' +
-              'kare kare geri taşınır; gerçek geri oynatma v2 (WebCodecs) motorunda.'
+              shuttleRate !== null
+                ? 'Kare-adımlamalı yaklaşık geri tarama: motor duraklatılmışken playhead ' +
+                  'kare kare geri taşınır; gerçek geri oynatma v2 (WebCodecs) motorunda.'
+                : 'İleri oynatma kademesi (L tekrar: 2x…8x).'
             }
           >
-            Geri tarama 1x — ses kapalı
+            {shuttleRate !== null
+              ? `Geri tarama ${shuttleRate}x — ses kapalı`
+              : `İleri ${forwardRate}x`}
           </div>
         )}
         {/* Speed honesty (M5): the element could not run at the rate the

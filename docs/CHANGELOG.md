@@ -2,6 +2,23 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-01
+- ozellik-5b — shuttle kademe merdiveni + rozet + kayıtlar (özellik turu dilim 5b,
+  TUR KAPANIŞI — 5 özellik / 7 dilim tamam): J tekrar basışları kademeyi 1→2→4→8 katlar
+  (5. basış 8'de kalır; katlama bir SONRAKİ tikin deltasından itibaren işler — geçmiş
+  dilim yeniden fiyatlanmaz); J VE L'ye e.repeat muhafızı (basılı tutmak OS
+  auto-repeat'iyle kademeyi fırlatmaz — L'de küçük savunulabilir davranış değişikliği,
+  DECISIONS satırında anıldı); rozet dinamik ('Geri tarama {n}x — ses kapalı') ve AYNI
+  bileşen L kademesinde 'İleri {n}x' der (yalnız oynarken); shortcutsHelp J/K/L satırı
+  güncel. +6 birim (shuttle merdiven matrisi + 2x hız dürüstlüğü; dispatcher: J merdiveni,
+  J(repeat)/L(repeat) bumplamaz ama true döner, L 4x'teyken J shuttle 1x'ten; editör
+  1423→1429) + e2e ikinci-J '2x' rozet iddiası. Negatif kontrol md5-birebir: katlama
+  sabit 1'e söküldü → 4 birim `expected 1 to be 2` + 2x hız dürüstlüğü tam imza + e2e
+  `unexpected value "Geri tarama 1x — ses kapalı"` KIRMIZI. Kayıtlar: DECISIONS satırı
+  (motor DEĞİL dispatcher-shuttle; reddedilenler: motor API'sine yön — <video> negatif
+  playbackRate oynatamaz + üç kritik bölge; SCRUB_THROTTLE_MS düşürmek; previewRate$
+  rozetini yeniden kullanmak; geri alma: v2 WebCodecs gerçek reverse getirince J motora
+  bağlanır), tasarım 01 §3.4 satır+dipnot güncel, poc-bilinen-sinirlar §2.8 yeni.
+  Defter: `PROGRESS.md` §Özellik turu.
 - ozellik-5a — J sessiz geri tarama: transport store + tek-hız shuttle (özellik turu
   dilim 5a, FRONTEND-only; `engineV1.ts` dokunulmadı): YENİ `shortcuts/shuttle.ts` —
   33 ms metronom, İÇ FLOAT akümülatör (kare-yapışık store değerinden geri hesap

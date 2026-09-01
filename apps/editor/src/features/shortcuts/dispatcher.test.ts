@@ -550,6 +550,76 @@ describe('J/K/L geçiş matrisi — sessiz shuttle (ozellik-5a)', () => {
     expect(handleShortcut(key({ key: 'j', target: { tagName: 'INPUT' } }))).toBe(false);
     expect(useTransportStore.getState().shuttleRate).toBeNull();
   });
+
+  it('J tekrar basışları kademeyi 1→2→4→8 katlar; 5. basış 8\'de kalır', () => {
+    useEditorStore.getState().setPlayheadUs(30 * US);
+    const rate = () => useTransportStore.getState().shuttleRate;
+
+    handleShortcut(key({ key: 'j' }));
+    expect(rate()).toBe(1);
+    handleShortcut(key({ key: 'j' }));
+    expect(rate()).toBe(2);
+    handleShortcut(key({ key: 'j' }));
+    expect(rate()).toBe(4);
+    handleShortcut(key({ key: 'j' }));
+    expect(rate()).toBe(8);
+    handleShortcut(key({ key: 'j' }));
+    expect(rate()).toBe(8);
+  });
+
+  it('J(e.repeat) kademeyi FIRLATMAZ ama yutulur (true döner)', () => {
+    useEditorStore.getState().setPlayheadUs(10 * US);
+    handleShortcut(key({ key: 'j' }));
+    expect(useTransportStore.getState().shuttleRate).toBe(1);
+
+    // Basılı tutma: OS auto-repeat olayları kademe basışı sayılmaz.
+    for (let i = 0; i < 3; i++) {
+      expect(handleShortcut(key({ key: 'j', repeat: true }))).toBe(true);
+    }
+    expect(useTransportStore.getState().shuttleRate).toBe(1);
+
+    // Gerçek ikinci basış kademeyi katlar.
+    handleShortcut(key({ key: 'j' }));
+    expect(useTransportStore.getState().shuttleRate).toBe(2);
+  });
+
+  it('L(e.repeat) kademeyi FIRLATMAZ ama yutulur (true döner)', () => {
+    const engine = makeEngine();
+    setPlaybackEngineForTests(engine);
+    useEditorStore.getState().setIsPlaying(true);
+
+    handleShortcut(key({ key: 'l' }));
+    expect(useTransportStore.getState().forwardRate).toBe(2);
+
+    for (let i = 0; i < 3; i++) {
+      expect(handleShortcut(key({ key: 'l', repeat: true }))).toBe(true);
+    }
+    expect(useTransportStore.getState().forwardRate).toBe(2);
+
+    handleShortcut(key({ key: 'l' }));
+    expect(useTransportStore.getState().forwardRate).toBe(4);
+  });
+
+  it('L kademesi 4x\'teyken J: shuttle 1x\'ten başlar (L kademesi DEVRALINMAZ)', async () => {
+    const engine = makeEngine();
+    setPlaybackEngineForTests(engine);
+    useEditorStore.getState().setIsPlaying(true);
+    handleShortcut(key({ key: 'l' })); // 2x
+    handleShortcut(key({ key: 'l' })); // 4x
+    expect(useTransportStore.getState().forwardRate).toBe(4);
+
+    useEditorStore.getState().setPlayheadUs(5 * US);
+    expect(handleShortcut(key({ key: 'j' }))).toBe(true);
+    expect(useTransportStore.getState().shuttleRate).toBe(1); // 4x devralınmadı
+    expect(useTransportStore.getState().forwardRate).toBe(1);
+
+    // pause'un motora inişini simüle et (mock motor setIsPlaying yazmaz);
+    // tarama 1x hızıyla akar ve kademesi değişmez.
+    useEditorStore.getState().setIsPlaying(false);
+    await vi.advanceTimersByTimeAsync(10 * SHUTTLE_TICK_MS);
+    expect(useEditorStore.getState().playheadUs).toBeLessThan(5 * US);
+    expect(useTransportStore.getState().shuttleRate).toBe(1);
+  });
 });
 
 /**

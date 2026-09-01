@@ -252,7 +252,10 @@ export function handleShortcut(e: KeyEventLike): boolean {
     case 'l': {
       // Shuttle'dan L: geri tarama durur, İLERİ oynatma 1x'ten başlar (shuttle
       // hızı devralınmaz — isPlaying false olduğu için alttaki kademe zaten
-      // 1'e düşer). Oynarken L: mevcut kademe (2x…8x) aynen işler.
+      // 1'e düşer). Oynarken L: mevcut kademe (2x…8x) aynen işler. e.repeat
+      // J'deki gibi YUTULUR — basılı tutmak OS auto-repeat'iyle kademeyi 8x'e
+      // fırlatmasın (küçük, savunulabilir davranış değişikliği; DECISIONS).
+      if (e.repeat) return true;
       stopShuttle();
       const playing = useEditorStore.getState().isPlaying;
       const transport = useTransportStore.getState();

@@ -64,6 +64,13 @@ test.describe('J/K/L — sessiz geri tarama', () => {
     // Sessiz TARAMA kanıtı: geri akış oynatma DEĞİLDİR.
     expect(await isPlaying(page), 'J oynatma başlatmamalı (sessiz tarama).').toBe(false);
 
+    // --- İkinci J: kademe merdiveni (1x → 2x) rozete yansır ---
+    await page.keyboard.press('j');
+    await expect(badge, 'İkinci J kademeyi 2x\'e katlamalı.').toHaveText(
+      'Geri tarama 2x — ses kapalı',
+    );
+    expect(await isPlaying(page), 'Kademe basışı oynatma başlatmamalı.').toBe(false);
+
     // --- K: tarama durur, playhead sabitlenir, rozet kalkar ---
     await page.keyboard.press('k');
     await expect(badge, 'K sonrası rozet kalkmalı.').toBeHidden();

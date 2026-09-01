@@ -1,8 +1,8 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-01, özellik turu dilim 0 + 1 + 2 + 3 + 4 (şema linkId/groupId +
-invariant pass + codegen; track partisyonu; linkId çekirdeği; otomatik AV ayrımlı ekleme;
-klip grupları Ctrl+G; plan: `capcut-ve-canva-gibi-hashed-penguin.md`, defter: `PROGRESS.md`
-§Özellik turu).
+Son güncelleme: 2026-09-01, özellik turu KAPANDI — 7 dilimin 7'si tamam (şema
+linkId/groupId + invariant pass + codegen; track partisyonu; linkId çekirdeği; otomatik
+AV ayrımlı ekleme; klip grupları Ctrl+G; J sessiz kademeli geri tarama 5a+5b; plan:
+`capcut-ve-canva-gibi-hashed-penguin.md`, defter: `PROGRESS.md` §Özellik turu).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
@@ -66,14 +66,16 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   ölçütü 2026-09-01 kullanıcı kararıyla ≥1,8x'e daraltılıp KAPANDI — açık soru 6),
   örtülü sınıf 41,4→**20,1 s (2,99x)**, dikey 2,10x.
   Defter: `PROGRESS.md` §tur3 #3 + `performans-raporu.md` §12.
-- Son yeşil sayılar (2026-09-01, özellik turu dilim 4 kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1626/1626** (0 skip) · editör 1414 · şema 235 ·
-  Playwright **171/171** (45 spec) · build -warnaserror 0 uyarı · tsc + e2e tsc +
+- Son yeşil sayılar (2026-09-01, özellik turu dilim 5b kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1626/1626** (0 skip) · editör 1429 · şema 235 ·
+  Playwright **173/173** (46 spec, 11,1 dk) · build -warnaserror 0 uyarı · tsc + e2e tsc +
   prod build temiz.
 
 ## Devam edenler
 
-- **Özellik turu (2026-09-01 onaylı plan — 5 timeline özelliği, 7 dilim)**: dilim 0 ✅
+- YOK — özellik turu 2026-09-01'de KAPANDI (aşağıdaki kayıt tur kapanış özetidir).
+
+- **Özellik turu (2026-09-01 onaylı plan — 5 timeline özelliği, 7 dilim) — TAMAMLANDI**: dilim 0 ✅
   (şema `linkId`/`groupId` + `checkLinkAndGroupInvariants` kural 10-12 + codegen; eski
   dokümanlar değişmeden geçerli; şema testleri 222→235) + dilim 1 ✅ (track partisyonu:
   `insertTrackPositioned` op-politikası + `trackMoveBlockReason` partisyon kapısı + görsel
@@ -93,9 +95,20 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   menü 'Grupla'/'Grubu dağıt' + Ctrl+G/Ctrl+Shift+G + shortcutsHelp; drawTracks 2px grup
   üst şeridi (geometri değişmedi); taşıma kod değişikliği GEREKMEDİ — dilim-2 'move'
   kapanışı grup-odaklı pinlerle sabitlendi; editör 1393→1414; yeni
-  `e2e/group-clips.spec.ts`). Beş dilimde de dört kapı + prod build + negatif kontrol
-  yeşil, backend 1626/1626 skip 0. Sıradaki dilimler: 5a/5b (J shuttle).
-  Defter: `PROGRESS.md` §Özellik turu.
+  `e2e/group-clips.spec.ts`) + dilim 5a ✅ + 5b ✅ (J SESSİZ kademeli geri tarama,
+  FRONTEND-only, `engineV1.ts` dokunulmadı: YENİ `shortcuts/shuttle.ts` — 33 ms
+  metronom + iç float akümülatör, kare-ızgara-yapışık `setPlayheadUs('user')` →
+  mevcut scrub yolu; sessizlik YAPISAL (motor paused, hiçbir element play() almaz);
+  `useTransportStore` ({forwardRate, shuttleRate} — forwardRate modül-let'ten taşındı);
+  iptal tik içinde: isPlaying / dış user seek (userSeekSeq farkı) / BOF'ta TAM 0 + dur;
+  matris: J=pause+shuttle (tekrar: 1→2→4→8, 8'de doyar; e.repeat J VE L'de yutulur),
+  K=dur+pause, L=dur+İLERİ 1x'ten (shuttle hızı devralınmaz), Space=dur AMA OYNATMAZ;
+  PlayerPanel rozeti `transport-shuttle-note` 'Geri tarama {n}x — ses kapalı' /
+  'İleri {n}x'; editör 1414→1429; yeni `e2e/jkl-shuttle.spec.ts` — gerçek klavye,
+  hız ölçümü e2e'de değil birim testte; DECISIONS satırı + tasarım 01 §3.4 dipnotu +
+  poc-bilinen-sinirlar §2.8). Yedi dilimde de dört kapı + prod build + negatif kontrol
+  yeşil (5a/5b'de ×2 md5-birebir), backend 1626/1626 skip 0, kapanış TAM Playwright
+  **173/173**. Defter: `PROGRESS.md` §Özellik turu.
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
@@ -142,12 +155,12 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    (DECISIONS satırı gerekçe + geri-alma koşuluyla: kullanıcı hedefi yeniden yükseltirse
    kendi sözleşme turuyla).
 
-## Ortam notu (2026-09-01 sonu, özellik turu dilim 0-4)
+## Ortam notu (2026-09-01 sonu, özellik turu dilim 0-5b — tur kapanışı)
 
 Servisler bu session'ın scratchpad'inden (`…\5fc88602-…\scratchpad`): API `api-run-oz1` +
-Worker `worker-run-oz1` (ikisi de ozellik-1 HEAD yayını; dilim 2, 3 ve 4 backend'e
+Worker `worker-run-oz1` (ikisi de ozellik-1 HEAD yayını; dilim 2, 3, 4, 5a ve 5b backend'e
 DOKUNMADI — yayın hâlâ HEAD-eşdeğeri; tazelik: yüklü modül yolu + Contracts.dll'de UTF-8
-`LinkId`/`GroupId` iğnesi) + Vite :5173 (dev server kaynaktan servis eder — dilim 2-4'ün
+`LinkId`/`GroupId` iğnesi) + Vite :5173 (dev server kaynaktan servis eder — dilim 2-5b'nin
 editör değişiklikleri restart'sız canlı, sağlık `:5173` 200 ile doğrulandı). Önceki session'ın `api-run-g31`/`worker-run-g3d` süreçleri DURDURULDU
 (bayat Contracts taşıyorlardı). Docker üçlüsü healthy; kaçak ffmpeg yok. Perf fixtürleri
 `perf20@videoedit.test` hesabında duruyor. DİKKAT: yayın dizinleri session-scratchpad'te
