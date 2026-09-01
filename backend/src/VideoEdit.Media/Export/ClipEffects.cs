@@ -203,7 +203,7 @@ public static class ColorPipeline
     /// kalır (kanallar-arası karışım tablo filtresiyle İFADE EDİLEMEZ). Eski zincir aşama başına
     /// ayrı filtre kuruyordu ve <c>exposure</c> float filtresi rgba↔gbrpf32 dönüşü + iki ek tablo
     /// geçişiyle 60 sn'lik gerçekçi 1080p bileşimde ölçülür maliyet taşıyordu (çıkar-koş-ölç rig'i,
-    /// 3 koşum p50: 40,4 → 33,3 s). Bileşik ifade DOUBLE'da değerlendirilir (lutrgb tabloyu 256
+    /// 3 koşum p50: 41,4 → 34,4 s). Bileşik ifade DOUBLE'da değerlendirilir (lutrgb tabloyu 256
     /// girdi için bir kez kurar), aşama BAŞINA <c>clip(…,0,255)</c> ifadede KORUNUR ve ara 8-bit
     /// niceleme kalkar — tek nihai niceleme kalır. Bu yön normatif matematik sütununa (= GLSL,
     /// aşama-başına float clamp) YAKINSAMADIR; eski zincire göre fark ölçülen zarfla sınırlıdır
@@ -281,8 +281,9 @@ public static class ColorPipeline
     /// EN DIŞTAKİ <c>round(…)</c> TEK NİHAİ NİCELEMEDİR ve ÖLÇÜMLE SEÇİLDİ: lutrgb tablo
     /// sonucunu <c>(int)</c> ile SIFIRA DOĞRU kırpar; çıplak ifade normatif double referansın
     /// yanına ±1 LSB bırakıyordu, <c>round</c> (yarım sıfırdan uzağa — referans Byte() ve GPU
-    /// UNORM nicelemesiyle aynı kural) taranan kümenin 33 vakasının HEPSİNDE 256 girişte
-    /// referansla FARKSIZ tablo verdi (ExportM5GoldenTests füzyon golden'ı bunu çiviler).
+    /// UNORM nicelemesiyle aynı kural) taranan kümenin 33 vakasından 24'ünde 256 girişin
+    /// TAMAMINDA referansla birebir, kalan 9'unda ±1 LSB içinde tablo verdi
+    /// (ExportM5GoldenTests füzyon golden'ı bu zarfı çiviler).
     /// </para>
     /// </summary>
     private static string? ChannelExpression(ColorAdjustParams p, char offsetSign, double offset)

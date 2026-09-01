@@ -837,7 +837,7 @@ ffmpeg gerçeklemesinde aynı clamp'ler bileşik ifadenin İÇİNDEDİR — aşa
 > Sınır golden'ı: `ExportM5GoldenTests.ColorAdjustFusion_StaysWithinTheMeasuredEnvelope_`
 > `AndConvergesToTheNormativeTable` (uyuşmazlık noktalarına BİLEREK düşer; eski zincir testin
 > içinde tarihsel referans olarak yeniden kurulur). Gerekçe ölçümü: çıkar-koş-ölç rig'i,
-> gerçekçi 60 sn 1080p bileşim 3 koşum p50 40,4 → 33,3 s (`exposure` float filtresi rgba↔float
+> gerçekçi 60 sn 1080p bileşim 3 koşum p50 41,4 → 34,4 s (`exposure` float filtresi rgba↔float
 > dönüşleriyle zincirin en pahalı halkasıydı). Tekil-parametre belgelerde üretilen filtre metni
 > eski zincirin ilgili `lutrgb`'siyle aynı çekirdek ifadeyi taşır (`round(…)` sargısı eklenir);
 > yalnız-exposure'da float filtre yerine aynı `in·2^v` çarpanının tablo hali yazılır.
