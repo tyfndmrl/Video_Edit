@@ -8,6 +8,7 @@ import { useProjectSession } from '../../state/projectSession';
 import { setTimelineMenuOpen } from '../timeline/contextMenuState';
 import { handleShortcut, isEditableTarget, type KeyEventLike } from './dispatcher';
 import { setPlaybackEngineForTests, type PlaybackEngineLike } from './playerBridge';
+import { SHUTTLE_TICK_MS, stopShuttle, useTransportStore } from './shuttle';
 
 const PROJECT_ID = '01890000-0000-7000-8000-000000000001';
 const ASSET_A = '01890000-0000-7000-8000-00000000000a';
@@ -89,6 +90,8 @@ beforeEach(() => {
 afterEach(() => {
   setPlaybackEngineForTests(undefined);
   setTimelineMenuOpen(false);
+  stopShuttle();
+  useTransportStore.setState({ forwardRate: 1, shuttleRate: null });
   useProjectSession.setState({ status: 'idle', projectId: null, projectName: null, error: null });
   useAutosaveStore.setState({ status: 'idle', conflict: null });
 });
@@ -448,6 +451,104 @@ describe('group shortcuts (Ctrl+G / Ctrl+Shift+G)', () => {
     expect(clipsNow().every((c) => c.groupId === undefined)).toBe(true);
     expect(useDocStore.getState().history).toHaveLength(0);
     void b;
+  });
+});
+
+/**
+ * J/K/L geçiş matrisi (ozellik-5a): J sessiz kademeli GERİ TARAMA başlatır —
+ * motor paused kalır, playhead STORE üzerinden geri akar (tek-yazım-yolu);
+ * K/L/Space shuttle'ı durdurur (Space shuttle'dayken = DUR, oynatma DEĞİL).
+ * Gerçek klavye kanıtı e2e/jkl-shuttle.spec.ts'te; burada saf dispatch tablosu
+ * fake timer'larla doğrulanır (metronom + Date birlikte sarılır).
+ */
+describe('J/K/L geçiş matrisi — sessiz shuttle (ozellik-5a)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({
+      toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'Date'],
+    });
+  });
+
+  afterEach(() => {
+    stopShuttle();
+    vi.useRealTimers();
+  });
+
+  it('J motoru duraklatır, HİÇ seek etmez; playhead STORE üzerinden geri akar ve oynatma kapalı kalır', async () => {
+    const engine = makeEngine();
+    setPlaybackEngineForTests(engine);
+    useEditorStore.getState().setPlayheadUs(2 * US);
+
+    expect(handleShortcut(key({ key: 'j' }))).toBe(true);
+    await vi.advanceTimersByTimeAsync(0); // withEngine microtask'ı
+    expect(engine.pause).toHaveBeenCalledTimes(1);
+    expect(useTransportStore.getState().shuttleRate).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(500);
+    const playhead = useEditorStore.getState().playheadUs;
+    expect(playhead, '500 ms shuttle sonrası playhead azalmış olmalı').toBeLessThan(2 * US);
+    expect(playhead, '1x hızda 500 ms\'de 1 saniyeden fazla gerilenmez').toBeGreaterThan(US);
+    // Tek-yazım-yolu: dispatcher/shuttle motoru ASLA doğrudan seek'lemez
+    // (PlayerPanel store aboneliğinden kendisi seek'ler).
+    expect(engine.seek).not.toHaveBeenCalled();
+    expect(engine.play).not.toHaveBeenCalled();
+    expect(useEditorStore.getState().isPlaying).toBe(false);
+  });
+
+  it('shuttle aktifken K: durdurur + duraklatır; playhead sabitlenir', async () => {
+    const engine = makeEngine();
+    setPlaybackEngineForTests(engine);
+    useEditorStore.getState().setPlayheadUs(5 * US);
+    handleShortcut(key({ key: 'j' }));
+    await vi.advanceTimersByTimeAsync(10 * SHUTTLE_TICK_MS);
+    expect(useTransportStore.getState().shuttleRate).toBe(1);
+
+    expect(handleShortcut(key({ key: 'k' }))).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useTransportStore.getState().shuttleRate).toBeNull();
+    expect(engine.pause).toHaveBeenCalledTimes(2); // J + K
+    expect(useTransportStore.getState().forwardRate).toBe(1);
+
+    const frozen = useEditorStore.getState().playheadUs;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(useEditorStore.getState().playheadUs).toBe(frozen);
+  });
+
+  it('shuttle aktifken L: durdurur ve İLERİ 1x oynatır (shuttle hızı devralınmaz)', async () => {
+    const engine = makeEngine();
+    setPlaybackEngineForTests(engine);
+    useEditorStore.getState().setPlayheadUs(5 * US);
+    handleShortcut(key({ key: 'j' }));
+    await vi.advanceTimersByTimeAsync(10 * SHUTTLE_TICK_MS);
+
+    expect(handleShortcut(key({ key: 'l' }))).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useTransportStore.getState().shuttleRate).toBeNull();
+    expect(engine.setPlaybackRate).toHaveBeenCalledWith(1);
+    expect(engine.play).toHaveBeenCalledTimes(1);
+    expect(useTransportStore.getState().forwardRate).toBe(1);
+  });
+
+  it('shuttle aktifken Space: DURDURUR ama oynatmaya GEÇMEZ (engine.play çağrılmaz)', async () => {
+    const engine = makeEngine();
+    setPlaybackEngineForTests(engine);
+    useEditorStore.getState().setPlayheadUs(5 * US);
+    handleShortcut(key({ key: 'j' }));
+    await vi.advanceTimersByTimeAsync(10 * SHUTTLE_TICK_MS);
+
+    expect(handleShortcut(key({ key: ' ' }))).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useTransportStore.getState().shuttleRate).toBeNull();
+    expect(engine.play).not.toHaveBeenCalled();
+    expect(useEditorStore.getState().isPlaying).toBe(false);
+
+    const frozen = useEditorStore.getState().playheadUs;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(useEditorStore.getState().playheadUs).toBe(frozen);
+  });
+
+  it('editable target\'ta j pasiftir — shuttle başlamaz', () => {
+    expect(handleShortcut(key({ key: 'j', target: { tagName: 'INPUT' } }))).toBe(false);
+    expect(useTransportStore.getState().shuttleRate).toBeNull();
   });
 });
 

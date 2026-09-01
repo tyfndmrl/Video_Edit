@@ -35,6 +35,7 @@ import { transitionTypeLabel } from '../timeline/transitions';
 import { readIsPlaying, readUserSeekSeq } from './editorBridge';
 import { previewSourceUrl } from './previewSource';
 import { TransformGizmo } from './TransformGizmo';
+import { useTransportStore } from '../shortcuts/shuttle';
 
 /**
  * AssetResolver backed by assetStore (presigned URLs from the media-urls sync).
@@ -68,6 +69,11 @@ export function PlayerPanel() {
   const settings = useDocStore((s) => s.doc.settings);
   const durationUs = useDocStore((s) => projectDurationUs(s.doc));
   const playheadUs = useEditorStore((s) => s.playheadUs);
+  // J geri taraması (shortcuts/shuttle): motor paused'ken playhead'i geriye
+  // akıtan döngü. Rozet, sessizliğin bir ARIZA değil taramanın doğası olduğunu
+  // söyler — previewRate$ rozeti KULLANILMAZ (o "istenen hız elemente sığmadı"
+  // der; buradaki mesaj farklı bir dürüstlüktür: oynatma yok, tarama var).
+  const shuttleRate = useTransportStore((s) => s.shuttleRate);
   /**
    * The transition window under the playhead, as a rendered STRING so the
    * selector stays value-stable (a fresh object every doc change would
@@ -385,6 +391,22 @@ export function PlayerPanel() {
             }
           >
             Geçiş: {transitionNote}
+          </div>
+        )}
+        {/* J geri taraması: motor duraklatılmış, ses yapısal olarak kapalı.
+            Sessizliği söylemeyen bir geri tarama "sesim bozuldu" şikâyetinin
+            ta kendisi olurdu. */}
+        {shuttleRate !== null && (
+          <div
+            data-testid="transport-shuttle-note"
+            role="status"
+            className="pointer-events-none absolute bottom-2 right-2 rounded bg-black/70 px-2 py-1 text-[11px] text-white"
+            title={
+              'Kare-adımlamalı yaklaşık geri tarama: motor duraklatılmışken playhead ' +
+              'kare kare geri taşınır; gerçek geri oynatma v2 (WebCodecs) motorunda.'
+            }
+          >
+            Geri tarama 1x — ses kapalı
           </div>
         )}
         {/* Speed honesty (M5): the element could not run at the rate the

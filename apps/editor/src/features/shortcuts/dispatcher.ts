@@ -30,6 +30,7 @@ import {
 import { isTimelineMenuOpen } from '../timeline/contextMenuState';
 import { getTimelineViewControl } from '../timeline/viewControl';
 import { withEngine } from './playerBridge';
+import { startOrBumpShuttle, stopShuttle, useTransportStore } from './shuttle';
 import {
   closeShortcutsOverlay,
   isShortcutsOverlayOpen,
@@ -54,9 +55,6 @@ export function isEditableTarget(target: unknown): boolean {
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
   return el.isContentEditable === true;
 }
-
-// L cycles 1x -> 2x while already playing (design: "L tekrar = 2x").
-let forwardRate = 1;
 
 /**
  * True when shortcuts that MUTATE the document may run. They are swallowed
@@ -116,7 +114,11 @@ function jumpToCutPoint(direction: -1 | 1): void {
 }
 
 function togglePlayback(): void {
-  forwardRate = 1;
+  // Shuttle'dayken Space = DUR (NLE uzlaşımı) — oynatmaya GEÇMEZ. Shuttle
+  // zaten motor-paused çalıştığı için durdurmak yeterlidir.
+  const wasShuttling = stopShuttle();
+  useTransportStore.getState().setForwardRate(1);
+  if (wasShuttling) return;
   const playing = useEditorStore.getState().isPlaying;
   withEngine((engine) => {
     if (playing) engine.pause();
@@ -233,19 +235,29 @@ export function handleShortcut(e: KeyEventLike): boolean {
 
   switch (e.key.toLowerCase()) {
     case 'j':
-      // v1: no reverse playback — J behaves as a fast back-scrub (design §3.4 note).
-      forwardRate = 1;
+      // SESSİZ kademeli geri tarama (shuttle.ts): motor DAİMA paused kalır,
+      // playhead store üzerinden geri akar (tek-yazım-yolu korunur — dispatcher
+      // motoru seek'lemez). Basılı tutmanın OS auto-repeat'i YUTULUR: repeat
+      // olayı shuttle'ı yeniden tetiklemez/kademe fırlatmaz ama yine true döner
+      // (tarayıcıya düşmesin).
+      useTransportStore.getState().setForwardRate(1);
       withEngine((engine) => engine.pause());
-      stepSeconds(-1);
+      if (!e.repeat) startOrBumpShuttle();
       return true;
     case 'k':
-      forwardRate = 1;
+      useTransportStore.getState().setForwardRate(1);
+      stopShuttle();
       withEngine((engine) => engine.pause());
       return true;
     case 'l': {
+      // Shuttle'dan L: geri tarama durur, İLERİ oynatma 1x'ten başlar (shuttle
+      // hızı devralınmaz — isPlaying false olduğu için alttaki kademe zaten
+      // 1'e düşer). Oynarken L: mevcut kademe (2x…8x) aynen işler.
+      stopShuttle();
       const playing = useEditorStore.getState().isPlaying;
-      forwardRate = playing ? Math.min(forwardRate * 2, 8) : 1;
-      const rate = forwardRate;
+      const transport = useTransportStore.getState();
+      const rate = playing ? Math.min(transport.forwardRate * 2, 8) : 1;
+      transport.setForwardRate(rate);
       withEngine((engine) => {
         engine.setPlaybackRate(rate);
         engine.play();

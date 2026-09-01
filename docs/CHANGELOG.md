@@ -2,6 +2,22 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-01
+- ozellik-5a — J sessiz geri tarama: transport store + tek-hız shuttle (özellik turu
+  dilim 5a, FRONTEND-only; `engineV1.ts` dokunulmadı): YENİ `shortcuts/shuttle.ts` —
+  33 ms metronom, İÇ FLOAT akümülatör (kare-yapışık store değerinden geri hesap
+  yuvarlanma-stall'ı üretirdi), her yazım kare-ızgara-yapışık `setPlayheadUs('user')`
+  → mevcut scrub yolu kareyi getirir; motor paused kaldığı için sessizlik YAPISAL.
+  `useTransportStore` ({forwardRate, shuttleRate}) — dispatcher'ın forwardRate
+  modül-let'i store'a taşındı. İptal tik içinde: isPlaying / dış user seek (userSeekSeq
+  farkı) / BOF'ta TAM 0 + dur. Geçiş matrisi: J=pause+shuttle (repeat yutulur; eski
+  stepSeconds(-1) dalı silindi), K=dur+pause, L=dur+ileri 1x'ten, Space=dur AMA
+  OYNATMAZ (NLE uzlaşımı). PlayerPanel rozeti `transport-shuttle-note` ('Geri tarama
+  1x — ses kapalı' + v2 dürüstlük title'ı; previewRate$ rozeti kullanılmadı — plan
+  reddi). +9 birim (shuttle 4 + dispatcher matrisi 5; editör 1414→1423) + YENİ gerçek
+  klavye `e2e/jkl-shuttle.spec.ts` (2 test: J iki örnekte kesin küçülme + isPlaying
+  false kalır + rozet; K sabitler; L ileri; BOF tam 0 + rozet kalkar). Negatif kontrol
+  md5-birebir: BOF kelepçesi söküldü → birim `expected 1 to be null` + e2e rozet
+  `unexpected value "visible"` kırmızı. Defter: `PROGRESS.md` §Özellik turu.
 - ozellik-4 — klip grupları: Ctrl+G grupla, grup birlikte taşınır (özellik turu dilim 4,
   FRONTEND-only): `groupClips`/`ungroupClips` + blockReason'ları (timelineOps — tek modül).
   Grupla: önce LINK kapanışı (linkli üyenin eşi OTOMATİK dahil — invariant kural 10'un grup
