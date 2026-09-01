@@ -77,6 +77,55 @@ test.describe('Track yönetimi (sağ tık menüsü + satır içi ad)', () => {
     expect(after.historyLabels).toEqual(before.historyLabels);
   });
 
+  test('partisyon: ses altta doğar, yeni video sesin ÜSTÜNE doğar, ses "Yukarı taşı" gridir', async ({
+    editor,
+    seed,
+  }) => {
+    const before = await editor.state();
+    expect(before.tracks.map((t) => t.type)).toEqual(['video', 'video']);
+
+    // "+A": ses track'i partisyon gereği EN ALTA doğar.
+    await editor.page.getByTitle("Ses track'i ekle").click();
+    await editor.page.waitForTimeout(120);
+    const withAudio = await editor.state();
+    expect(withAudio.tracks.map((t) => t.type)).toEqual(['video', 'video', 'audio']);
+    const audioId = withAudio.tracks[2].id;
+
+    // Ses başlığına sağ tık: 'Yukarı taşı' GRİDİR — gerekçe op'un partisyon
+    // kuralı, Türkçe ipucu aynı kuralın feedback çevirisi (menü sözleşmesi).
+    const box = await headerOf(editor, audioId).boundingBox();
+    expect(box, 'ses track başlığı DOM sütununda görünür olmalı').not.toBeNull();
+    await editor.timeline.click({ x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 }, 'right');
+    await expect(editor.contextMenu).toBeVisible();
+
+    const up = editor.page.getByTestId('timeline-menu-moveTrackUp');
+    await expect(up).toBeDisabled();
+    await expect(up).toHaveAttribute('data-block-reason', 'audio tracks stay below video tracks');
+    await expect(up).toHaveAttribute('title', "Ses track'leri video track'lerinin altında durur");
+    // En alttaki ses için 'Aşağı taşı' KENAR kuralıyla gri — partisyon kuralı
+    // mevcut kuralların önüne geçmiyor.
+    const down = editor.page.getByTestId('timeline-menu-moveTrackDown');
+    await expect(down).toBeDisabled();
+    await expect(down).toHaveAttribute('data-block-reason', 'track already at the bottom');
+    await editor.page.keyboard.press('Escape');
+    await expect(editor.contextMenu).toBeHidden();
+
+    // Gri öğe doküman değiştirmedi.
+    const unchanged = await editor.state();
+    expect(unchanged.tracks.map((t) => t.id)).toEqual(withAudio.tracks.map((t) => t.id));
+
+    // "+V": ses varken yeni video track SES BÖLÜMÜNÜN ÖNÜNE doğar (push değil).
+    await editor.page.getByTitle('Video track ekle').click();
+    await editor.page.waitForTimeout(120);
+    const withVideo = await editor.state();
+    expect(withVideo.tracks.map((t) => t.type)).toEqual(['video', 'video', 'video', 'audio']);
+    expect(withVideo.tracks[3].id, 'ses track en altta kalır').toBe(audioId);
+    // Seed'in iki video track'i göreli sırasını korur (yeni video en alta,
+    // ama sesin üstüne eklenir).
+    expect(withVideo.tracks[0].id).toBe(seed.trackTopId);
+    expect(withVideo.tracks[1].id).toBe(seed.trackBottomId);
+  });
+
   test('çift tık + gerçek klavye: track adı yazılır, Enter kaydeder, undo geri alır', async ({
     editor,
     seed,

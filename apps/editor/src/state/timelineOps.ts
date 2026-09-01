@@ -623,11 +623,34 @@ function makeTrack(type: TrackType, name?: string): Track {
   return { id: uuidv7(), type, name, muted: false, hidden: false, locked: false, clips: [] };
 }
 
-/** Appends a track at the end (bottom row = bottom-most render layer). */
+/**
+ * Inserts a freshly built track at its PARTITION position: audio tracks live
+ * at the BOTTOM of the stack, video/overlay tracks above them (CapCut's
+ * layout). This is an OP POLICY, not a document invariant — a legacy document
+ * with a mixed order stays loadable and is never auto-normalized; the user's
+ * own reorders are steered by `trackMoveBlockReason` instead.
+ *
+ * audio -> push (below everything); video/overlay -> spliced in FRONT of the
+ * first audio track (bottom of the non-audio section), or pushed when the
+ * document has no audio track. Audio tracks are z-order NEUTRAL (the export
+ * compiler never reads track.type for stacking; visuals come from clip.kind),
+ * so this placement changes no rendered output.
+ */
+function insertTrackPositioned(d: TimelineDoc, track: Track): void {
+  if (track.type === 'audio') {
+    d.tracks.push(track);
+    return;
+  }
+  const firstAudio = d.tracks.findIndex((t) => t.type === 'audio');
+  if (firstAudio < 0) d.tracks.push(track);
+  else d.tracks.splice(firstAudio, 0, track);
+}
+
+/** Adds a track at its partition position (see insertTrackPositioned). */
 export function addTrack(type: TrackType, name?: string): Uuid {
   const track = makeTrack(type, name);
   useDocStore.getState().mutate('addTrack', 'Track eklendi', (d) => {
-    d.tracks.push(track);
+    insertTrackPositioned(d, track);
   });
   return track.id;
 }
@@ -707,6 +730,19 @@ export function trackMoveBlockReason(
   if (d.tracks[index].locked) return 'track is locked';
   if (direction === 'up' && index === 0) return 'track already at the top';
   if (direction === 'down' && index === d.tracks.length - 1) return 'track already at the bottom';
+  // Partition policy (see insertTrackPositioned): an audio track never climbs
+  // above a non-audio track. After the neighbour swap the pair reads
+  // [upperAfter, lowerAfter]; it violates the partition exactly when the track
+  // ending up ON TOP is audio and the one ending up BELOW is not. The
+  // CORRECTIVE direction stays free on purpose: in a mixed legacy document,
+  // moving the audio down (or the video up) is precisely how the user repairs
+  // the layout, so only the violating swap is refused.
+  const neighbour = d.tracks[direction === 'up' ? index - 1 : index + 1];
+  const upperAfter = direction === 'up' ? d.tracks[index] : neighbour;
+  const lowerAfter = direction === 'up' ? neighbour : d.tracks[index];
+  if (upperAfter.type === 'audio' && lowerAfter.type !== 'audio') {
+    return 'audio tracks stay below video tracks';
+  }
   return null;
 }
 
@@ -879,7 +915,7 @@ export function addClipFromAsset(
   const newTrack = makeTrack(requiredType);
   useDocStore.getState().mutate('addClip', `${asset.name} eklendi`, (dd) => {
     newTrack.clips.push(clip);
-    dd.tracks.push(newTrack);
+    insertTrackPositioned(dd, newTrack);
   });
   useEditorStore.getState().setSelection([clip.id]);
   return { ok: true, clipId: clip.id, trackId: newTrack.id };
@@ -3440,7 +3476,10 @@ function insertOverlayClip(
     // contract, resolveVisualStack draws the array back-to-front), and an
     // overlay appended like a media track would be drawn BEHIND the footage —
     // the user would add a caption and see nothing, which is indistinguishable
-    // from "text does not work".
+    // from "text does not work". Deliberately NOT insertTrackPositioned (that
+    // would land the lane at the bottom of the non-audio section, i.e. behind
+    // the footage again); index 0 precedes every audio row, so the partition
+    // policy holds here by construction.
     dd.tracks.unshift(newTrack);
   });
   useEditorStore.getState().setSelection([clip.id]);

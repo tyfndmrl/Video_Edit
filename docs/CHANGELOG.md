@@ -2,6 +2,16 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-01
+- ozellik-1 — track partisyonu: video/overlay üstte, ses altta (özellik turu dilim 1):
+  `insertTrackPositioned` op-politikası (audio→en alta, video/overlay→ilk audio'nun önüne;
+  overlay klip-ekleme yolu bilinçli unshift'te — en üst katman kararı korunur, indeks 0
+  partisyonu zaten sağlar); `trackMoveBlockReason` ihlal takasına
+  'audio tracks stay below video tracks' (düzeltici yön serbest — karışık eski belge kullanıcı
+  taşımasıyla düzelir, otomatik normalize yok); görsel ayraç YÜKSEKLİK EKLEMEDEN (canvas'ta
+  TRACK_GAP içine 1px çizgi + DOM başlıkta border-top; geometri formülleri değişmedi).
+  +8 birim test (timelineOps 65) + track-manage.spec'e gerçek-fare partisyon senaryosu.
+  Negatif kontrol: partisyon düz push'a döndürüldü → 5 test tam imzayla kırmızı →
+  md5-birebir geri. Defter: `PROGRESS.md` §Özellik turu.
 - ozellik-0 — şema linkId/groupId + link-grup-kind invariant pass + codegen (özellik turu
   dilim 0): MediaClipSchema'ya opsiyonel `linkId` (AV çifti bağı), klip tabanına opsiyonel
   `groupId`; invariants.ts'e kural 10-12 + YENİ doküman-geçişli pass

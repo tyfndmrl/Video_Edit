@@ -77,11 +77,11 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
 - Ne zaman tetiklenir: Kapanış doğrulamaları; UI'a dokunan dilimler.
 - Ne zaman KULLANILMAZ: Ortamın TEK SAHİBİ değilsen — paralel ajan/koşum sahte kırmızı üretir (ölçülmüş ders).
 - Girdi: ortam-kaldirma tamam + ikili-tazelik doğrulanmış + kaçak ffmpeg yok (`Get-Process ffmpeg`).
-- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-08-31 (gelistirme-3 #2 sonu): 164 test / 42 spec / 10,4 dk.
+- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-09-01 (özellik turu dilim 1 sonu): 165 test / 42 spec / 10,5 dk.
 - Doğrulama: 0 failed, 0 skipped (ffmpeg PATH'teyse koşullu skip'ler tetiklenmez).
 - Bilinen sınırlar/tuzaklar: Sentetik girdi (dispatchEvent) YASAK — kanıt sayılmaz (review-gate kural 3).
   Süite testleri sadece Chromium'da.
-- Son doğrulanma: 2026-08-31
+- Son doğrulanma: 2026-09-01
 
 ### negatif-kontrol-protokolu
 - Amaç: Yeni/değişen her korumanın gerçekten yük taşıdığını kanıtlamak.
@@ -110,7 +110,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
 - Bilinen sınırlar/tuzaklar: Editör şemayı `dist`'ten çözer; "backend yayını + Vite restart" dist'i
   TAZELEMEZ — bayat dist, TS tarafındaki yeni davranışı sessizce yok sayar (canlıda yakalanmış ders).
   `pnpm install` prepare script'i dist'i kurar (temiz klonda otomatik).
-- Son doğrulanma: 2026-08-25
+- Son doğrulanma: 2026-09-01
 
 ### demo-seed
 - Amaç: Gerçek medyalı demo projesi kurmak.

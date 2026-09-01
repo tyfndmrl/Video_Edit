@@ -1,6 +1,7 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-01, özellik turu dilim 0 (şema linkId/groupId + invariant pass +
-codegen; plan: `capcut-ve-canva-gibi-hashed-penguin.md`, defter: `PROGRESS.md` §Özellik turu).
+Son güncelleme: 2026-09-01, özellik turu dilim 0 + 1 (şema linkId/groupId + invariant pass +
+codegen; track partisyonu; plan: `capcut-ve-canva-gibi-hashed-penguin.md`,
+defter: `PROGRESS.md` §Özellik turu).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
@@ -64,18 +65,21 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   ölçütü 2026-09-01 kullanıcı kararıyla ≥1,8x'e daraltılıp KAPANDI — açık soru 6),
   örtülü sınıf 41,4→**20,1 s (2,99x)**, dikey 2,10x.
   Defter: `PROGRESS.md` §tur3 #3 + `performans-raporu.md` §12.
-- Son yeşil sayılar (2026-09-01, gelistirme-3 #3 kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1626/1626** (0 skip) · editör 1342 · şema 222 ·
-  Playwright **164/164** (42 spec, 10,4 dk) · build -warnaserror 0 uyarı · tsc + e2e tsc +
+- Son yeşil sayılar (2026-09-01, özellik turu dilim 1 kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1626/1626** (0 skip) · editör 1350 · şema 235 ·
+  Playwright **165/165** (42 spec, 10,5 dk) · build -warnaserror 0 uyarı · tsc + e2e tsc +
   prod build temiz.
 
 ## Devam edenler
 
 - **Özellik turu (2026-09-01 onaylı plan — 5 timeline özelliği, 7 dilim)**: dilim 0 ✅
   (şema `linkId`/`groupId` + `checkLinkAndGroupInvariants` kural 10-12 + codegen; eski
-  dokümanlar değişmeden geçerli; dört kapı + prod build yeşil, backend 1626/1626 skip 0,
-  şema testleri 222→235). Sıradaki dilimler: 1 (track partisyonu) → 2 (link çekirdeği) →
-  3 (oto AV ayrımı) → 4 (gruplar) → 5a/5b (J shuttle). Defter: `PROGRESS.md` §Özellik turu.
+  dokümanlar değişmeden geçerli; şema testleri 222→235) + dilim 1 ✅ (track partisyonu:
+  `insertTrackPositioned` op-politikası + `trackMoveBlockReason` partisyon kapısı + görsel
+  ayraç yükseklik eklemeden; editör testleri 1342→1350; iki dilimde de dört kapı + prod
+  build + negatif kontrol yeşil, backend 1626/1626 skip 0). Sıradaki dilimler: 2 (link
+  çekirdeği) → 3 (oto AV ayrımı) → 4 (gruplar) → 5a/5b (J shuttle).
+  Defter: `PROGRESS.md` §Özellik turu.
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
@@ -122,13 +126,12 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    (DECISIONS satırı gerekçe + geri-alma koşuluyla: kullanıcı hedefi yeniden yükseltirse
    kendi sözleşme turuyla).
 
-## Ortam notu (2026-09-01 sonu, gelistirme-3 #3 dilimi)
+## Ortam notu (2026-09-01 sonu, özellik turu dilim 0-1)
 
-Servisler bu session'ın scratchpad'inden: API `api-run-g31` (HEAD 989ddd1 — API davranışı
-turda değişmedi) + Worker `worker-run-g3d` (üç bacaklı nihai kod; tazelik yüklü modül yolu +
-canlı yakalanan budanmış filtergraph ile kanıtlı) + Vite :5173. Ara yayınlar `worker-run-g3b`
-(yalnız füzyon) ve `worker-run-g3c` (füzyon+atlama) A/B sha256 kanıtlarının ikilileri olarak
-scratchpad'te duruyor. Docker üçlüsü healthy; kaçak ffmpeg yok. Perf fixtürleri
-`perf20@videoedit.test` hesabında (compReal/compCovered/compDikey — `g3perf/seed-fixtures.mjs`).
-DİKKAT: yayın dizinleri session-scratchpad'te yaşar — yeni session onları bulamaz/güvenemez,
-`ortam-kaldirma` ile kendi yayınını yapmalı.
+Servisler bu session'ın scratchpad'inden (`…\5fc88602-…\scratchpad`): API `api-run-oz1` +
+Worker `worker-run-oz1` (ikisi de ozellik-1 HEAD yayını; tazelik: yüklü modül yolu +
+Contracts.dll'de UTF-8 `LinkId`/`GroupId` iğnesi) + Vite :5173 (taze restart — schema dist
+yeniden kuruldu). Önceki session'ın `api-run-g31`/`worker-run-g3d` süreçleri DURDURULDU
+(bayat Contracts taşıyorlardı). Docker üçlüsü healthy; kaçak ffmpeg yok. Perf fixtürleri
+`perf20@videoedit.test` hesabında duruyor. DİKKAT: yayın dizinleri session-scratchpad'te
+yaşar — yeni session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.

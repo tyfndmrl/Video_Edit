@@ -17,6 +17,7 @@ import { isAssetMissing } from '../../library/missingMedia';
 import { splitLines } from '../../text/textLayout';
 import {
   NEW_TRACK_ZONE_H,
+  TRACK_GAP,
   TRACK_H,
   TRANSITION_BADGE_H,
   TRANSITION_BADGE_MIN_CLIP_W,
@@ -81,6 +82,7 @@ const COLORS = {
   laneAudio: '#171d1a',
   laneOverlay: '#1d1926',
   laneStroke: '#242936',
+  audioSectionDivider: '#3a4356',
   newTrackZone: '#12141a',
   newTrackText: '#525a6b',
   clipVideo: '#2b3a55',
@@ -438,6 +440,23 @@ export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState
     ctx.fillRect(0, y, widthPx, TRACK_H);
     ctx.strokeStyle = COLORS.laneStroke;
     ctx.strokeRect(0.5, y + 0.5, widthPx - 1, TRACK_H - 1);
+  }
+
+  // Audio-section divider (partition policy, insertTrackPositioned): a 1px
+  // line centred in the 6px TRACK_GAP above the FIRST audio row. Drawn inside
+  // the gap that already exists, so no row formula changes — geometry.ts (and
+  // its e2e twin) stay untouched. Skipped when audio sits at index 0 (mixed
+  // legacy document with no non-audio row above — there is no gap to draw in).
+  {
+    const firstAudio = doc.tracks.findIndex((t) => t.type === 'audio');
+    if (firstAudio > 0) {
+      const y = trackTop(firstAudio) - TRACK_GAP / 2 + 0.5;
+      ctx.strokeStyle = COLORS.audioSectionDivider;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(widthPx, y);
+      ctx.stroke();
+    }
   }
 
   // New-track drop zone below the rows.

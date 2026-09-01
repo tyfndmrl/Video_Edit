@@ -40,6 +40,10 @@ const REASONS: Record<string, string> = {
   'cannot delete the last video track': 'Son video track silinemez',
   'track already at the top': 'Track zaten en üstte',
   'track already at the bottom': 'Track zaten en altta',
+  // Partisyon politikası (ozellik-1): ses track'leri yığının altında yaşar;
+  // ihlal eden takas reddedilir, düzeltici yön (karışık eski belgede sesi
+  // aşağı / videoyu yukarı taşımak) serbesttir.
+  'audio tracks stay below video tracks': "Ses track'leri video track'lerinin altında durur",
   // Kırpma/bölme/kaydırma çözücüleri: istenen kenar için kare ızgarasında
   // uygulanabilir bir uzunluk bulunamadı (uç durum — tipik olarak 1 karelik
   // klipler ya da kaynak penceresi tükenmiş yavaşlatılmış klipler).

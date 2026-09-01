@@ -17,6 +17,7 @@ import { useAssetStore } from './assetStore';
 import { useEditorStore } from './editorStore';
 import {
   addClipFromAsset,
+  addTextClip,
   addTrack,
   clearClipboardForTests,
   copyClips,
@@ -922,5 +923,135 @@ describe('moveTrack / renameTrack', () => {
     expectValid();
     useDocStore.getState().undo();
     expect(currentDoc().tracks[1].name).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Track partisyonu (ozellik-1): video/overlay ustte, ses altta - OP POLITIKASI
+// (insertTrackPositioned + trackMoveBlockReason partisyon kapisi). Dokuman
+// INVARIANTI degildir: karisik eski belge yuklenir, otomatik normalize YOKTUR.
+// ---------------------------------------------------------------------------
+
+describe('track partition (video above, audio below)', () => {
+  const AUDIO_ASSET = '01890000-0000-7000-8000-00000000000c';
+
+  function audioTrack(id: string): Track {
+    return { id, type: 'audio', muted: false, hidden: false, locked: false, clips: [] };
+  }
+
+  function trackTypes(): string[] {
+    return currentDoc().tracks.map((t) => t.type);
+  }
+
+  it('addTrack(video) lands in FRONT of the audio section, audio appends below', () => {
+    const audioId = addTrack('audio');
+    const videoId = addTrack('video');
+    expect(currentDoc().tracks.map((t) => t.id)).toEqual([videoId, audioId]);
+
+    // Ikinci ses track'i EN ALTA, ikinci video track'i ses bolumunun ONUNE.
+    const audio2 = addTrack('audio');
+    const video2 = addTrack('video');
+    expect(currentDoc().tracks.map((t) => t.id)).toEqual([videoId, video2, audioId, audio2]);
+    expectValid();
+  });
+
+  it('addTrack(overlay) also lands in front of the audio section', () => {
+    addTrack('audio');
+    addTrack('overlay');
+    expect(trackTypes()).toEqual(['overlay', 'audio']);
+    expectValid();
+  });
+
+  it('addClipFromAsset newTrack: the fresh VIDEO track is born ABOVE the audio section', () => {
+    const audioId = addTrack('audio');
+    const res = addClipFromAsset(ASSET_A, { newTrack: true }, 0);
+    expect(res.ok).toBe(true);
+    expect(trackTypes()).toEqual(['video', 'audio']);
+    expect(currentDoc().tracks[1].id).toBe(audioId);
+    expectValid();
+  });
+
+  it('addClipFromAsset newTrack: a fresh AUDIO track still appends at the bottom', () => {
+    useAssetStore.getState().setAssets([
+      { id: ASSET_A, kind: 'video', name: 'a.mp4', status: 'ready', durationUs: 10 * US },
+      { id: AUDIO_ASSET, kind: 'audio', name: 'c.mp3', status: 'ready', durationUs: 6 * US },
+    ]);
+    addTrack('video');
+    const res = addClipFromAsset(AUDIO_ASSET, { newTrack: true }, 0);
+    expect(res.ok).toBe(true);
+    expect(trackTypes()).toEqual(['video', 'audio']);
+    expectValid();
+  });
+
+  it('a fresh overlay lane (newTrack clip add) stays on TOP - above video AND audio', () => {
+    addTrack('video');
+    addTrack('audio');
+    const res = addTextClip(
+      {
+        content: 'Merhaba',
+        fontId: 'inter-v1',
+        fontSizePx: 48,
+        fontWeight: 700,
+        italic: false,
+        fill: '#ffffff',
+        align: 'center',
+        lineHeight: 1.2,
+      },
+      { newTrack: true },
+      0,
+    );
+    expect(res.ok).toBe(true);
+    expect(trackTypes()).toEqual(['overlay', 'video', 'audio']);
+    expectValid();
+  });
+
+  it('blocks the swap that would lift an audio track above a non-audio track', () => {
+    const audioId = addTrack('audio');
+    const videoId = addTrack('video'); // -> [video, audio]
+    expect(trackMoveBlockReason(currentDoc(), audioId, 'up')).toBe(
+      'audio tracks stay below video tracks',
+    );
+    expect(moveTrack(audioId, 'up')).toEqual({
+      ok: false,
+      reason: 'audio tracks stay below video tracks',
+    });
+    expect(trackMoveBlockReason(currentDoc(), videoId, 'down')).toBe(
+      'audio tracks stay below video tracks',
+    );
+    expect(moveTrack(videoId, 'down')).toEqual({
+      ok: false,
+      reason: 'audio tracks stay below video tracks',
+    });
+    expect(currentDoc().tracks.map((t) => t.id)).toEqual([videoId, audioId]);
+    expect(useDocStore.getState().history.map((h) => h.label)).not.toContain('Track aşağı taşındı');
+  });
+
+  it('the CORRECTIVE direction stays free in a mixed legacy document', () => {
+    // Karisik eski belge: ses USTTE dogmus (partisyon oncesi kayit) - yuklenir.
+    const AUDIO_ID = '01890000-0000-7000-8000-000000000104';
+    useDocStore.getState().loadDoc(docWith([audioTrack(AUDIO_ID), videoTrack(TRACK_1, [])]));
+    // Duzeltici yon serbest: ses asagi / video yukari.
+    expect(trackMoveBlockReason(currentDoc(), AUDIO_ID, 'down')).toBeNull();
+    expect(moveTrack(AUDIO_ID, 'down').ok).toBe(true);
+    expect(trackTypes()).toEqual(['video', 'audio']);
+    // Duzeltildikten sonra ihlal yonu artik kapali.
+    expect(trackMoveBlockReason(currentDoc(), AUDIO_ID, 'up')).toBe(
+      'audio tracks stay below video tracks',
+    );
+  });
+
+  it('audio<->audio swaps stay free, and lock/edge rules keep their precedence', () => {
+    const A1 = addTrack('audio');
+    const A2 = addTrack('audio');
+    addTrack('video'); // -> [video, A1, A2]
+    expect(trackMoveBlockReason(currentDoc(), A2, 'up')).toBeNull();
+    expect(moveTrack(A2, 'up').ok).toBe(true);
+    expect(currentDoc().tracks.map((t) => t.id).slice(1)).toEqual([A2, A1]);
+
+    // Kilit, partisyondan ONCE konusur (mevcut kural bozulmadi).
+    toggleTrackLocked(A2);
+    expect(trackMoveBlockReason(currentDoc(), A2, 'up')).toBe('track is locked');
+    // Kenar kurali da partisyondan once: en alttaki ses 'down' icin kenari soyler.
+    expect(trackMoveBlockReason(currentDoc(), A1, 'down')).toBe('track already at the bottom');
   });
 });

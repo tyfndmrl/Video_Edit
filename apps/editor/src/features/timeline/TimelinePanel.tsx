@@ -1322,12 +1322,19 @@ export function TimelinePanel() {
             <div style={{ transform: `translateY(${-scrollY}px)` }}>
               {doc.tracks.map((track, i) => {
                 const derivedLabel = `${track.type === 'audio' ? 'Ses' : track.type === 'overlay' ? 'Overlay' : 'Video'} ${i + 1}`;
+                // Ses bölümü ayracı (partisyon politikası): İLK ses satırının
+                // başlığına border-top. box-sizing border-box olduğundan satır
+                // yüksekliği TRACK_H kalır — geometri formülleri değişmez;
+                // canvas gövdedeki 1px ayraç çizgisinin DOM ikizi (aynı koşul:
+                // ilk ses satırı, üstünde en az bir satır varken).
+                const isAudioSectionStart =
+                  i > 0 && i === doc.tracks.findIndex((t) => t.type === 'audio');
                 return (
                   <div
                     key={track.id}
                     data-testid="track-header"
                     data-track-id={track.id}
-                    className="flex items-center gap-1 px-2"
+                    className={`flex items-center gap-1 px-2${isAudioSectionStart ? ' border-t border-edge' : ''}`}
                     style={{ height: TRACK_H, marginBottom: TRACK_GAP }}
                     onContextMenu={(e) => {
                       e.preventDefault();
