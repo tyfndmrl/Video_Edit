@@ -1,6 +1,6 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-08-31, gelistirme-3 #2 (silme senkronu + revision retention + e2e hesap
-temizliği; üç commit) dilimiyle (öncesi #1 defter senkronu, main).
+Son güncelleme: 2026-09-01, gelistirme-3 #3 (export perf 2. turu — baş mimar sözleşme
+kararıyla üç bacak; öncesi #1 defter senkronu + #2 silme/retention/temizlik, main).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
@@ -53,19 +53,29 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   `scripts/cleanup-e2e.ps1`: 946 e2e hesabı + tüm verileri (15 435 proje, ~7 GiB obje)
   silindi, demo birebir korundu; elle koşum (teardown'a bağlanmadı — DECISIONS).
   Defter: `PROGRESS.md` §Geliştirme turu 3 #2.
-- Son yeşil sayılar (2026-08-31, gelistirme-3 #2 kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1591/1591** (0 skip) · editör 1342 · şema 222 ·
-  Playwright **164/164** (42 spec) · build -warnaserror 0 uyarı · tsc + e2e tsc + prod
-  build temiz.
+- **Geliştirme turu 3 #3 — export perf 2. turu** (2026-09-01, baş mimar sözleşme kararıyla;
+  üç commit `e364f2a`/`56abab7`/`6237fcf` + kapanış): kabul ölçütü GERÇEKÇİ fixtüre
+  demirlendi (eski perf fixtürü çifte dejenereydi: overlay'ler örtülü + tuval dışı);
+  (b) colorAdjust füzyonu (aşama 1-4 tek lutrgb, tek nihai round — normatif double tabloya
+  24/33 vakada birebir, zarf golden'la çivili), (c) taban-tuval atlaması + (a) örtülen-katman
+  budaması (§2.6: taze worker-probe olguları + tek-run kapsaması + BAYT-AYNILIK normu —
+  çift-varyant canlı golden'lar + iki A/B worker sha256 eşitliği; örtülenin SESİ korunur),
+  (d) N-paralel ERTELENDİ (DECISIONS). Sonuç: compReal-1080p 38,3→32,4 s (**1,85x** — hedef
+  2x'e ~2,4 s kala; açık soru 6), örtülü sınıf 41,4→**20,1 s (2,99x)**, dikey 2,10x.
+  Defter: `PROGRESS.md` §tur3 #3 + `performans-raporu.md` §12.
+- Son yeşil sayılar (2026-09-01, gelistirme-3 #3 kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1626/1626** (0 skip) · editör 1342 · şema 222 ·
+  Playwright **164/164** (42 spec, 10,4 dk) · build -warnaserror 0 uyarı · tsc + e2e tsc +
+  prod build temiz.
 
 ## Devam edenler
 
-- Yok. Çalışma ağacı gelistirme-3 #2c commit'iyle temiz.
+- Yok. Çalışma ağacı gelistirme-3 #3 kapanış commit'iyle temiz.
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
-1. **Geliştirme turu 3 devamı (kullanıcı onaylı):** #3 export perf 2. tur (baş mimar sözleşme
-   kararıyla) — `PROGRESS.md` §Geliştirme turu 3 (#1 ve #2 2026-08-31'de KAPANDI).
+1. **Export perf hedef kararı (açık soru 6):** compReal-1080p 1,85x'te — (d) N-paralel'i kendi
+   sözleşme turuyla açmak YA DA kapsam ölçütünü gerekçeli daraltmak; karar kullanıcının.
 2. `git push` — **kullanıcı onayı bekliyor** (origin 25+ commit geride; öncesinde ci.yml e2e
    redis boşluğu kapatılmalı — bkz. Bilinen sorunlar).
 3. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
@@ -103,15 +113,20 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    Tamamlananlar; DECISIONS satırı gerekçe + reddedilenlerle güncel).
 4. SkiaSharp yükseltme penceresi (golden yeniden-kalibrasyon maliyetiyle) planlansın mı?
 5. Import-yönü/katman kuralı (dep-cruiser sınıfı; lint'ten ayrı) istenir mi, mevcut gevşemeler kabul mü?
+6. **Export perf hedefi (2026-09-01, gelistirme-3 #3 kapanışı — baş mimar kararının şartı):**
+   gerçekçi fixtürde 1080p **1,85x** (32,4 s; hedef ≥2x = ≤30 s, fark ~2,4 s); örtülü sınıf
+   2,99x, dikey 2,10x, 720p 1,94x. (d) N-paralel dilimleme AÇILMADAN soruluyor: (i) (d)'yi
+   kendi sözleşme turuyla aç (dilim sınırları geçiş+örtme pencereleri dışında, closed-GOP,
+   bellek kapısı çarpanı — DECISIONS geri-alma satırı), (ii) kapsam ölçütünü gerekçeli daralt
+   (ör. "gerçekçi ≥1,8x + örtülü ≥2x" — bugünkü ölçülmüş durum), (iii) hedefi beklet.
 
-## Ortam notu (2026-08-31 sonu, gelistirme-3 #2 dilimi)
+## Ortam notu (2026-09-01 sonu, gelistirme-3 #3 dilimi)
 
-Servisler bu session'ın scratchpad'inden yayınlanan `api-run-g3`/`worker-run-g3` (Debug,
-HEAD kodu; tazelik yüklü modül yolları + iğnelerle kanıtlı: `AssetRemovedMessage` Api/
-Worker Contracts.dll UTF-8, `assetRemoved` UTF-16, `PublishAssetRemovedAsync` Api.dll,
-`ProjectRevisionRetentionJob` Worker.dll) + Vite :5173 (bu session'da taze başlatıldı)
-çalışır durumda bırakıldı; Docker üçlüsü healthy; Hangfire'da `asset-reaper` +
-`revision-retention` recurring kayıtlı. Redis kanalın taşıyıcısıdır ama ZORUNLU DEĞİLDİR
-(assetRemoved dahil değil — o zaten süreç-içi; hub yoksa silme/yeni-satır SignalR-öncesi
-davranışa düşer, polling sözleşmesi değişmedi). DİKKAT: yayın dizinleri session-scratchpad'te
-yaşar — yeni session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.
+Servisler bu session'ın scratchpad'inden: API `api-run-g31` (HEAD 989ddd1 — API davranışı
+turda değişmedi) + Worker `worker-run-g3d` (üç bacaklı nihai kod; tazelik yüklü modül yolu +
+canlı yakalanan budanmış filtergraph ile kanıtlı) + Vite :5173. Ara yayınlar `worker-run-g3b`
+(yalnız füzyon) ve `worker-run-g3c` (füzyon+atlama) A/B sha256 kanıtlarının ikilileri olarak
+scratchpad'te duruyor. Docker üçlüsü healthy; kaçak ffmpeg yok. Perf fixtürleri
+`perf20@videoedit.test` hesabında (compReal/compCovered/compDikey — `g3perf/seed-fixtures.mjs`).
+DİKKAT: yayın dizinleri session-scratchpad'te yaşar — yeni session onları bulamaz/güvenemez,
+`ortam-kaldirma` ile kendi yayınını yapmalı.

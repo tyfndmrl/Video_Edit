@@ -1289,20 +1289,26 @@ ve perf listesinden **media-urls paralelleştirmesi** (8'lik eşzamanlılık kap
   varsayılan zaten optimum (fc_threads 1→450,9 s … auto→68,7 s; encoder -threads etkisiz);
   (2) no-op scale/pad/fps — pad+fps kazanç 0,0 s, scale'i çıkarmak +1 s yavaş + BT.601
   kayması + §2.5 doktrin ihlali; (3) enable/etkin-aralık daraltması — ≤2-3 s üst sınır.
-  **AÇIK KALANLAR (sırayla, hepsi sözleşme/golden kararı ister):** (a) örtülen-katman
-  budaması — bu fixtürde −13,2 s ve BAYT-AYNI ölçüldü, ama muhafazakâr kapsama tespiti
-  probe boyutu (aspect==tuval) + alfa bilgisine muhtaç; `ExportAssetSource.SourceWidth`
-  sözleşmesi ("üretilen filtergraph'ı HİÇBİR biçimde etkilemez — geometri kaynaktan
-  bağımsız kalır, §2.5") değiştirilmeden yapılamaz ve yanlış probe'un bedeli sessiz eksik
-  katman olur → baş mimar sözleşme kararı (Ek: Sözleşme Değişiklik Kuralı) + gerçekçi
-  (overlay'leri ÜSTTE) bir fixtürle yeniden ölçüm şart — perf fixtüründe metin/şekil en
-  üst katmanın ALTINDA, gerçek bileşimde kazanç 0'a düşebilir; (b) colorAdjust zincir
-  füzyonu (exposure+2×lutrgb+colorchannelmixer → tek geçiş): pay 7,2 s, füzyon varyantı
-  ÖLÇÜLMEDİ, piksel LSB kayabilir (golden'lar yeniden temellenir); (c) tuval-atlama
-  genişletmesi: −3,1 s + belgeli tuval renk-kaybını da giderir ama ÇIKTI BAYTLARI değişir;
-  (d) zaman-dilimli N-paralel ffmpeg — tek grafik zaten ~13,5/20 çekirdek kullanıyor,
-  kazanç tavanı sınırlı. Hedef (1080p ≥2x) bu turda karşılanmadı (1,60x); (a)+(b)+(c)
-  birlikte bu fixtürde ~2,5x'e taşırdı (bench üst sınırı).
+  ~~AÇIK KALANLAR~~ **2. TURDA KAPANDI (2026-09-01, gelistirme-3 #3 — baş mimar sözleşme
+  kararıyla; ayrıntı `performans-raporu.md` §12 + PROGRESS §tur3 #3):** ÖNCE kabul ölçütü
+  GERÇEKÇİ fixtüre yeniden demirlendi — eski perf fixtüründe metin/şekil hem EN ÜST katmanın
+  altında (tam örtülü) hem transform'ları normalize aralık dışında (tuval DIŞI) idi; yeni
+  compReal (overlay'ler üstte + tuval içinde) / compCovered (tam-ekran cutaway sınıfı) /
+  compDikey fixtürleri kuruldu ve ≥2x ölçütü compReal-1080p'ye bağlandı (kapsam kayması
+  değil ölçüt DÜZELTMESİ — eski fixtür kazancı abartıyordu, review-gate kural 4 gereği
+  açıkça yazıldı). Sonra üç bacak ayrı commit'le uygulandı: **(b) colorAdjust füzyonu**
+  (aşama 1-4 tek lutrgb bileşik ifadesi, tek nihai round; rig p50 −7,1 s, canlı compReal
+  41,4→35,5 s; zarf golden'la çivili — rendering-semantics §4.1 yazılış kutusu);
+  **(c) taban-tuval atlaması** (§2.6 örtücü yüklemi; canlı 35,75→32,3 s ve g3b↔g3c MP4'leri
+  sha256-birebir — "bayt değiştirir" endişesi topoloji korunarak ÇÜRÜTÜLDÜ; tuval
+  renk-kaybı bu mekanizmada değişmedi, o hızlı-yol rejiminin işidir); **(a) örtülen-katman
+  budaması** (daraltılmış doktrin + taze worker-probe olguları + çift-varyant bayt-aynılık
+  normu; canlı compCovered 28,35→20,1 s = 2,99x ve g3c↔g3d sha256-birebir; örtülenin SESİ
+  korunur). **(d) N-paralel dilimleme ERTELENDİ** (DECISIONS satırı: çekirdek doygunluğu +
+  bellek çarpanı + bitstream karşılaştırılamazlığı; geri alma koşulu kullanıcı kararına
+  bağlı). SONUÇ (nihai matris §12.5): compReal 1080p 38,3 → 32,3 s aynı-gün zincirinde;
+  örtülü sınıf 41,4 → 20,1 s. compReal'de ≥2x'e kalan fark için karar kullanıcıya soruldu
+  (STATE açık soruları — (d) açılmadan).
 - **[ORTA — KAPANDI, 2026-08-24 yarim-is turu] media-urls manifest'i Assets satırına yazmak**
   (perf §"GET media-urls"): paralelleştirme önceki turda yapılmıştı; bu turda kalıcı çözüm
   teslim edildi. ÖNCE ölçüldü (perf yöntemi; 55 assetli proje ham API'yle kuruldu): mevcut

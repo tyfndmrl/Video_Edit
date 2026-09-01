@@ -37,7 +37,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   önce kabuğa yaz (`$env:VIDEOEDIT_FONT_ROOT=...`), süreç mirasla alır (2026-08-31'de ölçüldü).
   (7) Docker Desktop'ı komutla açarken engine ~1-3 dk sonra hazır olur; `docker version` o ana kadar
   pipe hatasıyla ASILIR — zaman aşımı verip yokla.
-- Son doğrulanma: 2026-08-31
+- Son doğrulanma: 2026-09-01
 
 ### ikili-tazelik-dogrulama
 - Amaç: Canlı API/Worker'ın gerçekten hedef commit'in kodunu koştuğunu kanıtlamak.
@@ -52,7 +52,10 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   eski `blend=all_expr='A*(1-` YOK; UTF-8 `ExportEstimateOptions`, `BezierValueExtrema`, `ExpectedOutputClockUs` VAR.
 - Bilinen sınırlar/tuzaklar: DLL md5 farkı TEK BAŞINA bayatlık kanıtı DEĞİL (PDB yolu/MVID değişir) —
   IL bölgesini ya da iğneyi karşılaştır. `Api.dll`'de eski iğnenin XML-doc literalinde görünmesi davranış değildir.
-- Son doğrulanma: 2026-08-31
+  Değişiklik yeni tanımlayıcı/dize üretmediyse (ör. yalnız mevcut metod gövdesi değişti) iğne YOKTUR —
+  o zaman kanıt yüklü modül yolu + DAVRANIŞSAL iğnedir (ör. canlı işten yakalanan filtergraph'ta yeni
+  satır şekli; 2026-09-01 budama yayınında böyle kanıtlandı).
+- Son doğrulanma: 2026-09-01
 
 ### test-paketleri
 - Amaç: Dört kapının tamamını koşmak (commit öncesi zorunlu).
@@ -64,10 +67,10 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   pnpm -r test                                           # editör + timeline-schema vitest
   pnpm --filter @videoedit/editor exec tsc -b            # + apps/editor'da: npx tsc -p e2e/tsconfig.json --noEmit
   ```
-- Doğrulama: 2026-08-31 (gelistirme-3 #2 sonu) yeşil sayıları: backend 1591 · editör 1342 · şema 222 (bunlar BÜYÜR; skip 0 sabittir).
+- Doğrulama: 2026-09-01 (gelistirme-3 #3 sonu) yeşil sayıları: backend 1626 · editör 1342 · şema 222 (bunlar BÜYÜR; skip 0 sabittir).
 - Bilinen sınırlar/tuzaklar: MinIO'suz koşumda MinIO+ffmpeg kapılı testler skip'lenir (2026-08-31 ölçümü: 41) —
   skip>0 görürsen önce Docker'a bak. Lint YOK (kullanıcı kararı); "bitti" tanımı: build + testler + tsc.
-- Son doğrulanma: 2026-08-31
+- Son doğrulanma: 2026-09-01
 
 ### playwright-tam-suite
 - Amaç: Gerçek fare/klavye e2e paketinin tamamı.
@@ -89,7 +92,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   DLL kullanır; geri yükleme sonrası dosyaya touch + rebuild ZORUNLU. (2) PowerShell `Get-Content` ANSI
   okuması Türkçe karakterleri bozar (mojibake) — dosya yazımı daima Write/Edit araçlarıyla. (3) `git checkout`
   autocrlf smudge'ı satır sonlarını değiştirebilir — bayt-birebirlik iddiasını hash'le kur.
-- Son doğrulanma: 2026-08-31
+- Son doğrulanma: 2026-09-01
 
 ### migration-uygulama
 - Amaç: EF migration'ını canlı DB'ye uygulamak.
@@ -124,9 +127,12 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   editör için gerçek tarayıcıda performance.now. Kalıcı muhafız: `MediaPipelinePerfTests`
   (oransal eşikler; SESSİZ ŞERİTTE koşar — paralel yük altında flake ölçülmüştü).
 - Doğrulama: Referans tablolar `docs/performans-raporu.md` + `docs/poc-bilinen-sinirlar.md` §0.1.
-- Bilinen sınırlar/tuzaklar: Sayılar bu makineye (20 mantıksal çekirdek) ve lokal loopback'e özgü —
-  ağ vaadi değil. Tepe RSS ölçümü sürekli örneklemle alt sınır verir (`PeakWorkingSet64` kullan).
-- Son doğrulanma: 2026-08-25
+- Bilinen sınırlar/tuzaklar: (1) Sayılar bu makineye (20 mantıksal çekirdek) ve lokal loopback'e özgü —
+  ağ vaadi değil. (2) Tepe RSS ölçümü sürekli örneklemle alt sınır verir (`PeakWorkingSet64` kullan).
+  (3) MAKİNE PENCERESİ KAYAR (2026-09-01'de ölçüldü: aynı config aynı gün ~1 saat arayla 37,8 → 41 s):
+  önce/sonra çifti BİTİŞİK pencerede alınmalı (eski ikiliyi sakla, arka arkaya koş — run27/run28 deseni);
+  varyant kıyası için en sağlamı round-robin çıkar-koş-ölç rig'idir (tur başına her varyanttan bir koşum).
+- Son doğrulanma: 2026-09-01
 
 ### e2e-hesap-temizligi
 - Amaç: Playwright koşumlarının biriktirdiği `e2e-*@videoedit.test` hesaplarını ve TÜM verilerini
@@ -162,4 +168,4 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   `| <no> | <iş> | ✅ YAPILDI | <önce-ölçüm> + <çözüm özeti> + <negatif kontrol> + <suite sayıları> |`;
   (7) takılırsan DUR ve kullanıcıya sor — varsayım yok.
 - Doğrulama: Kapanışta bağımsız doğrulayıcı maddeyi kendi reprodüksiyonuyla teyit eder (review-gate kural 2).
-- Son doğrulanma: 2026-08-31
+- Son doğrulanma: 2026-09-01

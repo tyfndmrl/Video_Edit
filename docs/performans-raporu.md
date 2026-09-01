@@ -362,7 +362,13 @@ için baş mimar sözleşme kararı olmadan yapılamaz), colorAdjust zincir füz
 füzyon varyantı ölçülmedi, piksel LSB riski), tuval-atlama genişletmesi (−3,1 s ama bayt
 değiştirir), (d) N-paralel dilimleme (tek grafik zaten ~13,5/20 çekirdek kullanıyor — tavan
 sanıldığından dar). Kabul ölçütü (≥2x) BU TURDA KARŞILANMADI: 0,87x → 1,60x'e gelindi;
-kalan yol yukarıdaki sözleşme kararlarına bağlı. Regresyon bekçileri:
+kalan yol yukarıdaki sözleşme kararlarına bağlı. **[2. TUR KAYDI — 2026-09-01, gelistirme-3
+#3 (§12):** kalan üç yön baş mimar sözleşme kararıyla uygulandı — colorAdjust füzyonu,
+taban-tuval atlaması, örtülen-katman budaması; (d) N-paralel ERTELENDİ (DECISIONS). Kabul
+ölçütü GERÇEKÇİ fixtüre yeniden demirlendi (eski fixtürün overlay'leri örtülü + tuval
+DIŞIYDI — §12.1); gerçekçi fixtürde 1080p **38,3 → 32,3 s** aynı-gün zincirinde (nihai
+matris §12.5), örtülü (cutaway) sınıfında **41,4 → 20,1 s (2,99x)**. Ayrıntı §12.]**
+Regresyon bekçileri:
 `ExportCompilerSnapshotTests.TheGraphNeverInvokesThePerPixelExprInterpreter` (tüm fixture
 grafiklerinde `all_expr`/`geq` yasağı) + `ExportM5GoldenTests`'in iki canlı-ffmpeg golden'ı
 (yarı-karışım pikseli + LSB sınır testi). Negatif kontrol YENİDEN ölçüldü (2026-08-25,
@@ -458,8 +464,9 @@ zaman; worker RSS ≤ 188 MB; editör heap'i 30 dk'da düz.
 - R2 / gerçek ağ / WAN; tarayıcı uploadManager'ının kendi yükleme yolu (upload ölçümleri
   Node istemcisiyle sunucu sözleşmesi üzerinden yapıldı).
 - Çok kullanıcılı / eşzamanlı yük; rate-limit kuyruklama davranışının kullanıcı etkisi.
-- "dikey" (1080x1920) export profili; 4 saatlik medya sınırı; keyframe örnek bütçesi (60 000)
-  sınırındaki belgeler; ses-ağırlıklı belgeler.
+- ~~"dikey" (1080x1920) export profili~~ (2026-09-01 §12.5'te İLK KEZ ölçüldü: 28,6 s / 2,10x);
+  4 saatlik medya sınırı; keyframe örnek bütçesi (60 000) sınırındaki belgeler;
+  ses-ağırlıklı belgeler.
 - Firefox/WebKit; mobil; farklı ekran tazeleme hızları.
 - Vite sunucu-soğuk (dönüşüm önbelleksiz) ilk açılış.
 
@@ -478,3 +485,95 @@ Ham çıktılar `perf20/out-*.json|jsonl|log|tsv` dosyalarındadır. Ölçüm ku
 kanıtları), `perfcost/verify/` (bağımsız doğrulama koşumları, önce/sonra canlı mp4'ler ve
 grafik diff'i); önce/sonra canlı koşum satırları `perf20/out-export.jsonl` içindeki
 "ONCE (run27" / "SONRA (run28" işaretli bloklardadır.
+
+---
+
+## 12. Export perf 2. turu (2026-09-01 — gelistirme-3 #3, baş mimar sözleşme kararıyla)
+
+Üç commit: `e364f2a` (b füzyon) · `56abab7` (c tuval-atlama) · `6237fcf` (a budama).
+Yöntem §6 ile aynı (POST /exports → sunucu duvar saati StartedAt→CompletedAt, 3'er koşum
+p50; ölçüm hesabı `perf20@videoedit.test`); ham satırlar scratchpad `g3perf/out-bench.jsonl`,
+çıkar-koş-ölç rig'i `g3perf/rig/` (yakalanan GERÇEK compReal grafiği + birebir girdiler +
+aynı PATH ffmpeg 8.0, round-robin 3 tur). İkili tazeliği her fazda yüklü modül yolu +
+iğne/davranışsal-iğne ile kanıtlandı; koşum pencerelerinde kaçak ffmpeg 0.
+
+### 12.1 Fixtür dürüstlüğü ve kabul ölçütünün yeniden demirlenmesi
+
+Eski bileşim fixtürünün İKİ kusuru KAYNAĞINDAN doğrulandı (`perf20/lib.mjs compDoc`):
+metin/şekil overlay'leri (1) EN ÜST video track'inin ALTINDA — yani tamamen örtülü — ve
+(2) transform'ları normalize aralığın çok dışında (y=−300 / x=500 → tuval DIŞI). Böyle bir
+fixtürle budama benchmark'ı kazanmak öz-aldatma olurdu (backlog 1297-1299 kaydı doğrulandı).
+ÜÇ yeni fixtür ham API'yle kuruldu (şema + frame-grid doğrulamalı): **compReal** (aynı
+içerik; overlay'ler EN ÜSTTE ve tuval İÇİNDE: metin y=−0.3, şekil x=0.25/y=0.3 opacity 0.8),
+**compCovered** ((a)'nın gerçek sınıfı: tam-ekran cutaway [20,40] altında metin [22,38] +
+şekil [24,36] + colorAdjust'lı alternatif-açı videosu [21,39]; taban run [0,60] kapsanmaz),
+**compDikey** (1080×1920, compReal içeriği). **≥2x kabul ölçütü compReal-1080p'ye
+demirlendi** — bu bir kapsam kayması değil ölçüt DÜZELTMESİDİR (review-gate kural 4 gereği
+açık beyan): eski fixtür örtülü+tuval-dışı overlay'leriyle kazançları abartırdı.
+
+### 12.2 Bacak 0 — aynı-gün taban (HEAD `989ddd1`, worker-run-g31; p50, n=3)
+
+| fixtür | 720p | 1080p | 2160p |
+|---|---|---|---|
+| comp (eski, dejenere) | 38,4 s | 40,9 s* | 51,8 s |
+| compReal (gerçekçi) | 36,2 s (1,66x) | **38,3 s (1,57x)** | 47,6 s (1,26x) |
+| compCovered (örtülü) | 36,1 s | 41,4 s (1,45x) | 51,6 s |
+
+*comp-1080p'nin ilk koşumu 37,8 idi; makine penceresi gün içinde ~%8 kaydı (SKILLS
+perf-olcum tuzağına işlendi) — bacak önce/sonra çiftleri bu yüzden BİTİŞİK pencerede alındı.
+
+### 12.3 Bacaklar (her biri bitişik-pencere canlı önce/sonra + rig kanıtı)
+
+**(b) colorAdjust füzyonu (`e364f2a`).** Rig (round-robin ×3): taban p50 41,4 → füzyon
+34,4 s (**−7,1 s**; CPU −80 s) — eski zincirin `exposure` float filtresi (rgba↔float dönüşleri)
+en pahalı halkaydı. Canlı compReal-1080p: 41,6/41,1 → 36,1/35,5/34,8 (p50 **41,4 → 35,5**).
+Piksel sözleşmesi: §4.1 yazılış kutusu — aşama 1-4 tek `lutrgb` bileşik ifadesi (DOUBLE +
+aşama-başına clip + tek nihai `round`); 33-vakalık 256-giriş taramasında füzyon↔normatif
+double referans ≤ ±1 LSB (24/33 vakada BİREBİR), eski↔füzyon ≤ ±3 LSB — sınır golden'ı
+`ColorAdjustFusion_StaysWithinTheMeasuredEnvelope_AndConvergesToTheNormativeTable`.
+
+**(c) taban-tuval atlaması (`56abab7`).** Mekanizma ölçümle çivilendi: eski −3,1 s sınıfını
+üreten şey, alt run tam-örtücüyken taban tuval + ilk overlay'in atlanmasıdır (rig
+g-real-nocanvas: p50 −2,1 s ve MP4 **SHA256-birebir** — "bayt değiştirir" endişesi topoloji
+korunduğu için geçersiz; 2026-08-24'ün bayt-farkı, overlay'siz düz çıkışın encoder'a farklı
+ara formattan inmesindendi, o rejime girilmiyor). Canlı compReal-1080p: 35,9/35,6 →
+32,7/32,0/32,3 (p50 **35,75 → 32,3**); g3b↔g3c worker'larının AYNI belge çıktıları
+sha256-birebir (`832ba5f3…`, 34 878 279 B). Tuval renk-kaybı (PSNR 35,87 sınıfı) bu
+mekanizmada NE AÇILDI NE KAPANDI — çıktı bayt-aynı; kaybın kapanışı tek-katman hızlı yol
+rejiminin işidir.
+
+**(a) örtülen-katman budaması (`6237fcf`).** §2.6 yüklemi (taze worker-probe olguları:
+tamsayı çapraz-çarpım aspect + SAR=1 + alfasız pix_fmt izin listesi + opaklık/animasyon +
+tek-run kapsaması; ses/girişler dokunulmaz). Canlı compCovered-1080p: 28,0/28,7 →
+20,1/20,1/20,0 (p50 **28,35 → 20,1 = 2,99x**); g3c↔g3d çıktıları sha256-birebir
+(`2566a184…`, 59 406 143 B); canlı yakalanan grafik örtülen üç zincirin ([2:v] alt-açı,
+[3:v] şekil, [4:v] metin) YOKLUĞUNU ve alt-açının SESİNİN ([2:a]) DURDUĞUNU gösteriyor.
+compReal'de budanacak örtülü katman yok — kazancı 0 (fixtür dürüstlüğünün amacı buydu).
+
+### 12.4 İptal/erteleme kayıtları
+
+(d) N-paralel dilimleme ERTELENDİ (DECISIONS 2026-09-01 satırı: ~13,5/20 çekirdek doygunluğu,
+örnek başına ~2,1-2,5 GB ek RSS × N bellek çarpanı, dilimli bitstream'in golden şasisiyle
+karşılaştırılamazlığı). §9-1'in eski İPTAL kayıtları (threads taraması, no-op normalize,
+enable daraltma) geçerli — yeniden denenMEDİ.
+
+### 12.5 Nihai profil matrisi (worker-run-g3d = üç bacak; p50, n=3, tek tur)
+
+| fixtür | 720p | 1080p | 2160p | dikey |
+|---|---|---|---|---|
+| compReal | 31,0 s (1,94x) | **32,4 s (1,85x)** | 42,7 s (1,41x) | — |
+| compCovered | 18,6 s (3,23x) | 20,1 s (2,99x)* | 30,6 s (1,96x) | — |
+| compDikey | — | — | — | 28,6 s (2,10x) |
+| comp (eski fixtür) | — | 20,7 s (2,90x)** | — | — |
+
+*compCovered-1080p hücresi (a)-bacağının aynı-ikili aynı-gün SONRA koşumudur.
+**Eski dejenere fixtür artık kendi örtülü metin/şekil zincirlerini budadığı için 2,90x —
+eski turun "budama −13,2 s" öngörüsü canlıda gerçekleşti; ama kabul ölçütü bilinçli olarak
+bu fixtüre DEĞİL compReal'e bağlı.
+
+**SONUÇ:** compReal-1080p aynı-gün zincirde 38,3 → 32,4 s (bitişik-pencere bacak çiftleri:
+41,4 → 35,5 → 32,3). Hedef (≥2x = ≤30 s) **KARŞILANMADI: 1,85x** — kalan fark ~2,4 s.
+Örtülü (cutaway/b-roll) sınıfı 2,99x, dikey 2,10x, 720p 1,94x. Baş mimar kararı gereği (d)
+açılmadan kullanıcıya soruluyor (STATE açık soruları): hedef ölçümle tutmadı; seçenekler
+(d) N-paralel'i kendi sözleşme turuyla açmak YA DA kapsam ölçütünü gerekçeli daraltmak
+(ör. "gerçekçi bileşim ≥1,8x + örtülü sınıf ≥2x" — mevcut ölçülmüş durum).

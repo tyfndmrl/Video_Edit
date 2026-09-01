@@ -1,6 +1,32 @@
 # CHANGELOG — ters kronolojik
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
+## 2026-09-01
+- gelistirme-3 #3 — export perf 2. turu (baş mimar sözleşme kararıyla; üç bacak, üç commit +
+  kapanış): **Bacak 0** — eski perf fixtürünün çifte kusuru (overlay'ler örtülü + tuval dışı)
+  kaynağından doğrulandı; compReal/compCovered/compDikey fixtürleri kuruldu, **≥2x ölçütü
+  gerçekçi compReal-1080p'ye yeniden demirlendi** (taban 38,3 s / 1,57x). **(b) colorAdjust
+  füzyonu** (`e364f2a`): aşama 1-4 kanal-başına TEK lutrgb bileşik ifadesi (DOUBLE +
+  aşama-başına clip + tek nihai round — ölçümle seçildi: normatif double tabloya 33 vakanın
+  24'ünde BİREBİR, kalanı ±1 LSB; eski↔füzyon ≤ ±3 LSB golden'la çivili); rig p50 −7,1 s,
+  canlı 41,4→35,5 s. **(c) taban-tuval atlaması** (`56abab7`): §2.6 örtücü yüklemi (taze
+  worker-probe olguları: aspect çapraz-çarpımı + SAR=1 + alfasız pix_fmt izin listesi) ile
+  en alt tam-örtücü run'da taban tuval + ilk overlay düşer — çıktı BAYT-AYNI (çift-varyant
+  canlı golden + g3b↔g3c sha256 eşitliği); canlı 35,75→32,3 s. **(a) örtülen-katman budaması**
+  (`6237fcf`): üstteki tek örtücünün penceresi kapsayan run'ın video zinciri üretilmez (ses +
+  girişler AYNEN — örtülen duyulur); daraltılmış SourceWidth doktrini + §2.6 bayt-aynılık
+  normu; canlı compCovered 28,35→**20,1 s (2,99x)** + g3c↔g3d sha256 eşit; canlı grafik
+  budanan zincirlerin yokluğunu gösteriyor. **(d) N-paralel ERTELENDİ** (DECISIONS).
+  Nihai matris (§12.5): compReal 1,94x/**1,85x**/1,41x, compCovered 3,23x/2,99x/1,96x,
+  dikey 2,10x (ilk ölçüm), eski fixtür 2,90x. Hedef compReal-1080p'de karşılanmadı (1,85x) —
+  (d) açılmadan kullanıcıya soruldu (STATE). Negatif kontroller: (b) clip düşürme → 2 kırmızı;
+  (c) koşul tersleme → 27 kırmızı; (a) kapsama→kesişme → 5 kırmızı (bayt golden'ı tam
+  sözleşme mesajıyla); hepsi md5-birebir geri. Yeni kalıcı muhafızlar: füzyon zarf golden'ı,
+  2 çift-varyant bayt-aynılık golden'ı, örtme yüklem envanteri (ExportCoverOptimizationTests),
+  pix_fmt/SAR parser testleri, 2 yeni snapshot fixtürü. Dokümanlar: rendering-semantics §4.1
+  yazılış kutusu + YENİ §2.6; CompiledExport daraltılmış doktrin; DECISIONS +3 satır;
+  performans-raporu §12; backlog "AÇIK KALANLAR" kapandı.
+
 ## 2026-08-31
 - gelistirme-3 #2 — üç alt iş, üç commit: **(2a) asset silme çapraz-sekme senkronu**: SoftDelete
   artık sahibinin `user:{id}` feed grubuna SÜREÇ-İÇİ `assetRemoved` yollar (Contracts tek tanım
