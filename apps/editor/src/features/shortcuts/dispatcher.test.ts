@@ -393,6 +393,65 @@ describe('doc-mutation gating while the 409 conflict dialog is open (finding 5)'
 });
 
 /**
+ * Grup kısayolları (ozellik-4): Ctrl+G / Ctrl+Shift+G, menüdeki 'Grupla' /
+ * 'Grubu dağıt' ile aynı seçim-tabanlı op'lara iner. Gerçek klavye kanıtı
+ * e2e/group-clips.spec.ts'te; burada saf dispatch tablosu doğrulanır.
+ */
+describe('group shortcuts (Ctrl+G / Ctrl+Shift+G)', () => {
+  function seedTwoClips(): [MediaClip, MediaClip] {
+    const a = seedClip();
+    const b: MediaClip = {
+      ...a,
+      id: '01890000-0000-7000-8000-000000000202',
+      timelineStartUs: 5 * US,
+    };
+    useDocStore.getState().loadDoc({
+      ...useDocStore.getState().doc,
+      tracks: [{ ...useDocStore.getState().doc.tracks[0], clips: [a, b] }],
+    });
+    return [a, b];
+  }
+
+  function clipsNow(): MediaClip[] {
+    return useDocStore.getState().doc.tracks.flatMap((t) => t.clips) as MediaClip[];
+  }
+
+  it('Ctrl+G groups the selection under one shared groupId; Ctrl+Shift+G dissolves it', () => {
+    const [a, b] = seedTwoClips();
+    useEditorStore.getState().setSelection([a.id, b.id]);
+
+    expect(handleShortcut(key({ key: 'g', ctrlKey: true }))).toBe(true);
+    let clips = clipsNow();
+    expect(clips[0].groupId).toBeDefined();
+    expect(clips[1].groupId).toBe(clips[0].groupId);
+
+    // Dağıtmak için grubun TEK üyesi bile yeter (op tüm grubu dağıtır).
+    useEditorStore.getState().setSelection([a.id]);
+    expect(handleShortcut(key({ key: 'G', ctrlKey: true, shiftKey: true }))).toBe(true);
+    clips = clipsNow();
+    expect(clips.every((c) => c.groupId === undefined)).toBe(true);
+  });
+
+  it('is passive on an editable target and gated while the session is not ready', () => {
+    const [a, b] = seedTwoClips();
+    useEditorStore.getState().setSelection([a.id, b.id]);
+
+    // Editable target: hiç işlenmez (tarayıcıya kalır).
+    expect(handleShortcut(key({ key: 'g', ctrlKey: true, target: { tagName: 'INPUT' } }))).toBe(
+      false,
+    );
+    expect(clipsNow().every((c) => c.groupId === undefined)).toBe(true);
+
+    // Oturum hazır değil: yutulur ama doküman DEĞİŞMEZ.
+    useProjectSession.setState({ status: 'loading' });
+    expect(handleShortcut(key({ key: 'g', ctrlKey: true }))).toBe(true);
+    expect(clipsNow().every((c) => c.groupId === undefined)).toBe(true);
+    expect(useDocStore.getState().history).toHaveLength(0);
+    void b;
+  });
+});
+
+/**
  * Sağ tık menüsü açıkken klavyenin sahibi menüdür (denetim bulgusu 2).
  * Gerçek klavye kanıtı e2e/context-menu.spec.ts'te; burada dispatch tablosunun
  * kapıyı tanıdığı doğrulanır.

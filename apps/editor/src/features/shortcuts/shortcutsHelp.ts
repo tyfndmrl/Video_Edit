@@ -60,6 +60,7 @@ export const SHORTCUT_SECTIONS: ShortcutSection[] = [
       { keys: 'Ctrl + A', label: 'Tüm klipleri seç' },
       { keys: 'Ctrl + C / X / V', label: 'Kopyala / Kes / Playhead\'e yapıştır' },
       { keys: 'Ctrl + D', label: 'Seçimi çoğalt' },
+      { keys: 'Ctrl + G / Ctrl + Shift + G', label: 'Seçimi grupla / Grubu dağıt' },
     ],
   },
   {

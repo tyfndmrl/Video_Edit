@@ -27,6 +27,7 @@ import {
   deleteTrack,
   detachAudio,
   duplicateClips,
+  groupClips,
   linkClips,
   moveTrack,
   pasteAtPlayhead,
@@ -37,6 +38,7 @@ import {
   toggleTrackLocked,
   toggleTrackMuted,
   trimSelectedToPlayhead,
+  ungroupClips,
   unlinkClips,
   type OpResult,
 } from '../../state/timelineOps';
@@ -91,6 +93,11 @@ export function runTimelineMenuAction(
       return linkClips(selection);
     case 'unlinkClips':
       return unlinkClips(selection);
+    // Grup çifti: aynı seçim-tabanlı sözleşme (Ctrl+G / Ctrl+Shift+G ikizi).
+    case 'groupClips':
+      return groupClips(selection);
+    case 'ungroupClips':
+      return ungroupClips(selection);
     // Geçiş öğeleri: kenar seçimi buildTimelineMenu ile AYNI çözücüden gelir
     // (aynı doküman + aynı tık zamanı), yani etiketteki kesim ile değişen kesim
     // birebir aynıdır. Tip varsayılan (çapraz geçiş); kullanıcı kesim rozetine

@@ -31,6 +31,8 @@ import {
   duplicateBlockReason,
   duplicateClips,
   expandSelectionForOp,
+  groupBlockReason,
+  groupClips,
   knownAssetDurations,
   linkBlockReason,
   linkClips,
@@ -49,6 +51,8 @@ import {
   trackMoveBlockReason,
   trackRenameBlockReason,
   trimClip,
+  ungroupBlockReason,
+  ungroupClips,
   unlinkBlockReason,
   unlinkClips,
 } from './timelineOps';
@@ -1456,6 +1460,346 @@ describe('linkId core (ozellik-2)', () => {
       const restored = currentDoc().tracks.flatMap((t) => t.clips) as MediaClip[];
       expect(restored).toHaveLength(2);
       expect(restored.every((c) => c.linkId === L1)).toBe(true);
+      expectValid();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Klip grupları (ozellik-4): groupClips/ungroupClips + grup-odaklı taşı/sil/
+// kopyala pinleri. Taşıma/silme/remint MEKANİĞİ dilim-2'de kuruldu; buradaki
+// testler o mekaniğin GRUP üzerinden çalıştığını sabitler (kod değişikliği
+// beklenmeyen pinler dahil).
+// ---------------------------------------------------------------------------
+
+describe('clip groups (ozellik-4)', () => {
+  const V1 = '01890000-0000-7000-8000-000000000701';
+  const V2 = '01890000-0000-7000-8000-000000000702';
+  const A1 = '01890000-0000-7000-8000-000000000703';
+  const C1 = '01890000-0000-7000-8000-000000000711';
+  const C2 = '01890000-0000-7000-8000-000000000712';
+  const C3 = '01890000-0000-7000-8000-000000000713';
+  const C4 = '01890000-0000-7000-8000-000000000714';
+  const C5 = '01890000-0000-7000-8000-000000000715';
+  const VID = '01890000-0000-7000-8000-000000000721';
+  const AUD = '01890000-0000-7000-8000-000000000722';
+  const L1 = '01890000-0000-7000-8000-000000000731';
+  const G1 = '01890000-0000-7000-8000-000000000741';
+  const G2 = '01890000-0000-7000-8000-000000000742';
+
+  function clipOf(
+    id: string,
+    kind: 'video' | 'audio',
+    startUs: number,
+    durationUs: number,
+    extra: Partial<MediaClip> = {},
+  ): MediaClip {
+    return { ...mediaClip(id, ASSET_A, startUs, 0, durationUs), kind, ...extra };
+  }
+
+  function trackOf(
+    id: string,
+    type: Track['type'],
+    clips: MediaClip[],
+    flags: Partial<Track> = {},
+  ): Track {
+    return { id, type, muted: false, hidden: false, locked: false, clips, ...flags };
+  }
+
+  function allClips(): MediaClip[] {
+    return currentDoc().tracks.flatMap((t) => t.clips) as MediaClip[];
+  }
+
+  function groupOf(id: string): string | undefined {
+    const clip = allClips().find((c) => c.id === id);
+    expect(clip, `klip yok: ${id}`).toBeDefined();
+    return clip?.groupId;
+  }
+
+  describe('groupClips', () => {
+    it('groups the selection under ONE fresh shared groupId (single undo entry)', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [clipOf(C1, 'video', 0, 2 * US), clipOf(C2, 'video', 3 * US, 2 * US)]),
+          trackOf(V2, 'video', [clipOf(C3, 'video', 0, 2 * US)]),
+        ]),
+      );
+      expect(groupClips([C1, C2, C3])).toEqual({ ok: true });
+      const g = groupOf(C1);
+      expect(g).toBeDefined();
+      expect(groupOf(C2)).toBe(g);
+      expect(groupOf(C3)).toBe(g);
+      expect(useDocStore.getState().history.at(-1)?.label).toBe('Klipler gruplandı');
+      expectValid();
+      // TEK undo üç üyeliği birden söker (tek mutate).
+      useDocStore.getState().undo();
+      expect(allClips().every((c) => c.groupId === undefined)).toBe(true);
+      expectValid();
+    });
+
+    it('pulls the link partner in automatically — rule 10 group arm (K3) is established, not just checked', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [
+            clipOf(VID, 'video', 0, 2 * US, { linkId: L1 }),
+            clipOf(C1, 'video', 3 * US, 2 * US),
+          ]),
+          trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 2 * US, { linkId: L1 })]),
+        ]),
+      );
+      // AUD seçimde YOK — link kapanışı onu da gruba alır.
+      expect(groupClips([VID, C1]).ok).toBe(true);
+      const g = groupOf(VID);
+      expect(g).toBeDefined();
+      expect(groupOf(C1)).toBe(g);
+      expect(groupOf(AUD), 'Link eşi aynı grubu taşımalı (kural 10).').toBe(g);
+      expectValid();
+    });
+
+    it('MERGE: members of two old groups fuse under a fresh id; single leftovers dissolve in the SAME mutate', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [
+            clipOf(C1, 'video', 0, 2 * US, { groupId: G1 }),
+            clipOf(C2, 'video', 3 * US, 2 * US, { groupId: G1 }),
+            clipOf(C3, 'video', 6 * US, 2 * US, { groupId: G2 }),
+            clipOf(C4, 'video', 9 * US, 2 * US, { groupId: G2 }),
+          ]),
+        ]),
+      );
+      expect(groupClips([C1, C3]).ok).toBe(true);
+      const g = groupOf(C1);
+      expect(g).toBeDefined();
+      expect(groupOf(C3)).toBe(g);
+      expect(g).not.toBe(G1);
+      expect(g).not.toBe(G2);
+      // Eski gruplardan tek başına kalanlar AYNI yazımda temizlenir (kural 11).
+      expect(groupOf(C2), 'G1 tek üyeyle yaşayamaz.').toBeUndefined();
+      expect(groupOf(C4), 'G2 tek üyeyle yaşayamaz.').toBeUndefined();
+      expectValid();
+      // Tek undo dört üyeliği de eski haline döndürür.
+      useDocStore.getState().undo();
+      expect(groupOf(C1)).toBe(G1);
+      expect(groupOf(C2)).toBe(G1);
+      expect(groupOf(C3)).toBe(G2);
+      expect(groupOf(C4)).toBe(G2);
+      expectValid();
+    });
+
+    it('an old group keeping >=2 members survives the merge untouched', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [
+            clipOf(C1, 'video', 0, 2 * US, { groupId: G1 }),
+            clipOf(C2, 'video', 3 * US, 2 * US, { groupId: G1 }),
+            clipOf(C3, 'video', 6 * US, 2 * US, { groupId: G1 }),
+            clipOf(C5, 'video', 9 * US, 2 * US),
+          ]),
+        ]),
+      );
+      expect(groupClips([C1, C5]).ok).toBe(true);
+      const g = groupOf(C1);
+      expect(g).not.toBe(G1);
+      expect(groupOf(C5)).toBe(g);
+      expect(groupOf(C2), 'İki üyeli kalan eski grup yaşar.').toBe(G1);
+      expect(groupOf(C3)).toBe(G1);
+      expectValid();
+    });
+
+    it('block reasons: fewer than two clips (closure-judged) / locked track', () => {
+      // Tek bağımsız klip -> çift bile yok.
+      const single = docWith([trackOf(V1, 'video', [clipOf(C1, 'video', 0, 2 * US)])]);
+      expect(groupBlockReason(single, [C1])).toBe('need at least two clips to group');
+
+      // Tek LINKLI klip gruplanabilir: kapanış eşi getirip minimumu tamamlar.
+      const linked = docWith([
+        trackOf(V1, 'video', [clipOf(VID, 'video', 0, 2 * US, { linkId: L1 })]),
+        trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 2 * US, { linkId: L1 })]),
+      ]);
+      expect(groupBlockReason(linked, [VID])).toBeNull();
+
+      // Kapanmış kümenin BİR üyesi kilitli şeritte -> tüm op reddedilir.
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [clipOf(C1, 'video', 0, 2 * US)]),
+          trackOf(V2, 'video', [clipOf(C2, 'video', 0, 2 * US)], { locked: true }),
+        ]),
+      );
+      expect(groupBlockReason(currentDoc(), [C1, C2])).toBe('track is locked');
+      expect(groupClips([C1, C2])).toEqual({ ok: false, reason: 'track is locked' });
+      expect(allClips().every((c) => c.groupId === undefined), 'Yarım gruplama yok.').toBe(true);
+    });
+  });
+
+  describe('ungroupClips', () => {
+    it('dissolves EVERY touched group whole; the untouched group stays', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [
+            clipOf(C1, 'video', 0, 2 * US, { groupId: G1 }),
+            clipOf(C2, 'video', 3 * US, 2 * US, { groupId: G1 }),
+            clipOf(C3, 'video', 6 * US, 2 * US, { groupId: G2 }),
+            clipOf(C4, 'video', 9 * US, 2 * US, { groupId: G2 }),
+          ]),
+        ]),
+      );
+      // Seçimde G1'in TEK üyesi var — grup yine TÜMDEN dağılır (üye çıkarma yok).
+      expect(ungroupClips([C1])).toEqual({ ok: true });
+      expect(groupOf(C1)).toBeUndefined();
+      expect(groupOf(C2), 'Grubun seçilmemiş üyesi de dağılır.').toBeUndefined();
+      expect(groupOf(C3), 'Dokunulmayan grup yaşar.').toBe(G2);
+      expect(groupOf(C4)).toBe(G2);
+      expect(useDocStore.getState().history.at(-1)?.label).toBe('Grup dağıtıldı');
+      expectValid();
+    });
+
+    it('block reasons: no group in selection / a locked member anywhere in the touched group', () => {
+      const plain = docWith([trackOf(V1, 'video', [clipOf(C1, 'video', 0, 2 * US)])]);
+      expect(ungroupBlockReason(plain, [C1])).toBe('no group in selection');
+
+      // Kilitli üye SEÇİMDE DEĞİL — op tüm üyeleri yeniden yazacağı için yine ret.
+      const locked = docWith([
+        trackOf(V1, 'video', [clipOf(C1, 'video', 0, 2 * US, { groupId: G1 })]),
+        trackOf(V2, 'video', [clipOf(C2, 'video', 0, 2 * US, { groupId: G1 })], { locked: true }),
+      ]);
+      expect(ungroupBlockReason(locked, [C1])).toBe('track is locked');
+    });
+
+    it('leaves linkId untouched — the AV bond outlives its group', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [clipOf(VID, 'video', 0, 2 * US, { linkId: L1, groupId: G1 })]),
+          trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 2 * US, { linkId: L1, groupId: G1 })]),
+        ]),
+      );
+      expect(ungroupClips([VID]).ok).toBe(true);
+      const clips = allClips();
+      expect(clips.every((c) => c.groupId === undefined)).toBe(true);
+      expect(clips.every((c) => c.linkId === L1), 'Bağ gruptan bağımsız yaşar.').toBe(true);
+      expectValid();
+    });
+  });
+
+  describe('a group moves TOGETHER (slice-2 mechanics driven through groupId)', () => {
+    it('dragging one member carries the whole mixed AV group: the video leg changes lane, the audio leg slides horizontally', () => {
+      // [V1 boş, V2 (C1,G1), A1 (AUD,G1)] — bağ YOK, yalnız grup.
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', []),
+          trackOf(V2, 'video', [clipOf(C1, 'video', 0, 2 * US, { groupId: G1 })]),
+          trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 2 * US, { groupId: G1 })]),
+        ]),
+      );
+      const res = moveClips([C1], 2 * US, -1);
+      expect(res, 'Bölüm-kapsamlı delta: ses kendi şeridinde yatay kaymalı.').toEqual({ ok: true });
+      expect(currentDoc().tracks[0].clips.map((c) => c.id)).toEqual([C1]);
+      expect(currentDoc().tracks[0].clips[0].timelineStartUs).toBe(2 * US);
+      expect(currentDoc().tracks[2].clips.map((c) => c.id)).toEqual([AUD]);
+      expect(currentDoc().tracks[2].clips[0].timelineStartUs, 'Grup üyesi ses de kaydı.').toBe(2 * US);
+      expectValid();
+    });
+
+    it('a conflicting group move is all-or-nothing: one blocked member refuses the WHOLE move', () => {
+      // C2'nin hedefi (5..7 sn) V2'deki sabit engelle (6..8 sn) çakışır.
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [clipOf(C1, 'video', 0, 2 * US, { groupId: G1 })]),
+          trackOf(V2, 'video', [
+            clipOf(C2, 'video', 0, 2 * US, { groupId: G1 }),
+            clipOf(C3, 'video', 6 * US, 2 * US),
+          ]),
+        ]),
+      );
+      expect(moveClips([C1], 5 * US, 0)).toEqual({ ok: false, reason: 'overlaps an existing clip' });
+      expect(currentDoc().tracks[0].clips[0].timelineStartUs, 'Hiçbir üye kıpırdamaz.').toBe(0);
+      expect(currentDoc().tracks[1].clips[0].timelineStartUs).toBe(0);
+      expectValid();
+    });
+  });
+
+  describe('delete and copy paths stay member-scoped (slice-2 pins, group-focused)', () => {
+    it('deleting one member of a 3-group: only it goes, the surviving pair keeps the group', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [
+            clipOf(C1, 'video', 0, 2 * US, { groupId: G1 }),
+            clipOf(C2, 'video', 3 * US, 2 * US, { groupId: G1 }),
+            clipOf(C3, 'video', 6 * US, 2 * US, { groupId: G1 }),
+          ]),
+        ]),
+      );
+      expect(deleteClips([C1]).ok).toBe(true);
+      expect(allClips().map((c) => c.id)).toEqual([C2, C3]);
+      expect(groupOf(C2), '>=2 üyeli grup yaşar.').toBe(G1);
+      expect(groupOf(C3)).toBe(G1);
+      expectValid();
+    });
+
+    it('deleting a linked member takes the partner too; the group left with ONE member dissolves', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [
+            clipOf(VID, 'video', 0, 2 * US, { linkId: L1, groupId: G1 }),
+            clipOf(C1, 'video', 3 * US, 2 * US, { groupId: G1 }),
+          ]),
+          trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 2 * US, { linkId: L1, groupId: G1 })]),
+        ]),
+      );
+      expect(deleteClips([VID]).ok).toBe(true);
+      expect(allClips().map((c) => c.id), 'Bağ eşi de gider, grup komşusu kalır.').toEqual([C1]);
+      expect(groupOf(C1), 'Tek üyeli grup kalamaz (kural 11).').toBeUndefined();
+      expectValid();
+    });
+
+    it('duplicate re-mints the group: a full copy shares ONE fresh groupId, a half copy carries none', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [
+            clipOf(C1, 'video', 0, 2 * US, { groupId: G1 }),
+            clipOf(C2, 'video', 3 * US, 2 * US, { groupId: G1 }),
+          ]),
+        ]),
+      );
+      expect(duplicateClips([C1, C2]).ok).toBe(true);
+      const copies = allClips().filter((c) => c.id !== C1 && c.id !== C2);
+      expect(copies).toHaveLength(2);
+      expect(copies[0].groupId).toBeDefined();
+      expect(copies[0].groupId).toBe(copies[1].groupId);
+      expect(copies[0].groupId).not.toBe(G1);
+      expectValid();
+
+      // Yarım kopya: tek görülen groupId kopyadan SİLİNİR.
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [
+            clipOf(C1, 'video', 0, 2 * US, { groupId: G1 }),
+            clipOf(C2, 'video', 10 * US, 2 * US, { groupId: G1 }),
+          ]),
+        ]),
+      );
+      expect(duplicateClips([C1]).ok).toBe(true);
+      const half = allClips().filter((c) => c.id !== C1 && c.id !== C2);
+      expect(half).toHaveLength(1);
+      expect(half[0].groupId, 'Tek başına kopyalanan üyelik dangling olurdu.').toBeUndefined();
+      expectValid();
+    });
+
+    it('paste re-mints the group the same way', () => {
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [
+            clipOf(C1, 'video', 0, 2 * US, { groupId: G1 }),
+            clipOf(C2, 'video', 3 * US, 2 * US, { groupId: G1 }),
+          ]),
+        ]),
+      );
+      expect(copyClips([C1, C2])).toBe(true);
+      expect(pasteAtPlayhead(6 * US).ok).toBe(true);
+      const copies = allClips().filter((c) => c.id !== C1 && c.id !== C2);
+      expect(copies).toHaveLength(2);
+      expect(copies[0].groupId).toBeDefined();
+      expect(copies[0].groupId).toBe(copies[1].groupId);
+      expect(copies[0].groupId).not.toBe(G1);
       expectValid();
     });
   });

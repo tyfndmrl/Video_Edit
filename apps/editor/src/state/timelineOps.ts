@@ -2560,6 +2560,111 @@ export function unlinkClips(clipIds: readonly Uuid[]): OpResult {
 }
 
 // ---------------------------------------------------------------------------
+// Group ops: groupClips / ungroupClips (ozellik-4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Why `clipIds` cannot be grouped, or null.
+ *
+ * Judged on the LINK-closed selection — grouping one half of an AV pair pulls
+ * the partner in, which is exactly how invariant rule 10's group arm ("link
+ * partners carry an identical groupId") is established rather than merely
+ * checked. The closure also means a lone linked clip IS groupable: its partner
+ * completes the two-member minimum.
+ */
+export function groupBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string | null {
+  const ids = expandSelectionForOp(d, clipIds, 'link');
+  const locs: ClipLocation[] = [];
+  for (const id of ids) {
+    const loc = locateClip(d, id);
+    if (loc !== null) locs.push(loc);
+  }
+  if (locs.length < 2) return 'need at least two clips to group';
+  if (locs.some((l) => l.track.locked)) return 'track is locked';
+  return null;
+}
+
+/**
+ * Groups the closed selection under ONE fresh groupId — MERGE semantics: the
+ * members' previous memberships are overwritten, never joined. Selecting clips
+ * from two different groups therefore fuses them into a new group, and an old
+ * group left with a single member dissolves IN THE SAME mutate (rule 11 —
+ * cleanupShrunkenGroups), so no write ever publishes a one-member group.
+ *
+ * Always a fresh id, even when the selection is exactly an existing group:
+ * re-minting an identical membership is harmless, while special-casing it
+ * would be a second grouping rule to keep consistent.
+ */
+export function groupClips(clipIds: readonly Uuid[]): OpResult {
+  const d = doc();
+  const blocked = groupBlockReason(d, clipIds);
+  if (blocked !== null) return fail(blocked);
+  const ids = expandSelectionForOp(d, clipIds, 'link').filter((id) => locateClip(d, id) !== null);
+  const groupId = uuidv7();
+  useDocStore.getState().mutate('group', 'Klipler gruplandı', (dd) => {
+    for (const id of ids) {
+      const loc = locateClip(dd, id);
+      if (loc !== null) loc.clip.groupId = groupId;
+    }
+    cleanupShrunkenGroups(dd);
+  });
+  return OK;
+}
+
+/** groupIds of the groups the (located) selection touches. */
+function touchedGroupIds(d: TimelineDoc, clipIds: readonly Uuid[]): Set<string> {
+  const groupIds = new Set<string>();
+  for (const id of clipIds) {
+    const loc = locateClip(d, id);
+    if (loc !== null && loc.clip.groupId !== undefined) groupIds.add(loc.clip.groupId);
+  }
+  return groupIds;
+}
+
+/**
+ * Why `clipIds` cannot be ungrouped, or null.
+ *
+ * No link closure is needed to FIND the touched groups: link partners carry an
+ * identical groupId (rule 10), so a selected clip's partner can never point at
+ * a group the clip itself does not. The lock check runs over EVERY member of
+ * the touched groups — the op rewrites all of them, so one locked member
+ * refuses the whole dissolve (no half-ungrouped state).
+ */
+export function ungroupBlockReason(d: TimelineDoc, clipIds: readonly Uuid[]): string | null {
+  const groupIds = touchedGroupIds(d, clipIds);
+  if (groupIds.size === 0) return 'no group in selection';
+  for (const track of d.tracks) {
+    for (const clip of track.clips) {
+      if (clip.groupId !== undefined && groupIds.has(clip.groupId) && track.locked) {
+        return 'track is locked';
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Dissolves EVERY group the selection touches — whole groups, not members:
+ * removing single members would have to answer what a shrinking group means
+ * (rule 11 forbids one member), so partial removal does not exist as an op.
+ * linkId is untouched — the AV bond outlives its group.
+ */
+export function ungroupClips(clipIds: readonly Uuid[]): OpResult {
+  const d = doc();
+  const blocked = ungroupBlockReason(d, clipIds);
+  if (blocked !== null) return fail(blocked);
+  const groupIds = touchedGroupIds(d, clipIds);
+  useDocStore.getState().mutate('ungroup', 'Grup dağıtıldı', (dd) => {
+    for (const track of dd.tracks) {
+      for (const clip of track.clips) {
+        if (clip.groupId !== undefined && groupIds.has(clip.groupId)) delete clip.groupId;
+      }
+    }
+  });
+  return OK;
+}
+
+// ---------------------------------------------------------------------------
 // Transition ops (add / remove / retype / retime)
 // ---------------------------------------------------------------------------
 

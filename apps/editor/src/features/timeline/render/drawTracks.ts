@@ -116,12 +116,21 @@ const COLORS = {
   transitionBadgeGlyph: '#12141a',
   linkBadge: 'rgba(90,140,255,0.85)',
   linkBadgeGlyph: '#12141a',
+  groupStrip: 'rgba(186,132,255,0.9)',
   missingWash: 'rgba(239,68,68,0.28)',
   missingStroke: '#ef4444',
   missingText: '#ffd7d7',
 };
 
 const NAME_BAR_H = 15;
+
+/**
+ * Height of the group membership strip (ozellik-4) — a thin band along the
+ * clip's TOP edge. Same doctrine as the chain badge: a marker inside existing
+ * geometry, never a row-height change. 2px keeps it clear of the chain badge,
+ * whose pill starts one pixel lower on the name bar.
+ */
+const GROUP_STRIP_H = 2;
 
 /**
  * Name-bar text. Overlay clips have no asset to name them after, and the raw
@@ -593,6 +602,19 @@ export function drawTracks(ctx: CanvasRenderingContext2D, state: BodyRenderState
         if (nameMaxW >= 12) {
           ctx.fillText(name, x + 5, y + 2 + NAME_BAR_H / 2, nameMaxW);
         }
+        ctx.restore();
+      }
+
+      // Group strip (ozellik-4): a grouped clip carries a thin band along its
+      // top edge — the visual for "this block moves together with its group".
+      // Drawn AFTER the name bar so the band stays visible on top of it, and
+      // clipped by the block's rounded rect so the corners stay rounded.
+      if (clip.groupId !== undefined && w > 8) {
+        ctx.save();
+        roundRect(ctx, x, y + 2, w, TRACK_H - 4, 4);
+        ctx.clip();
+        ctx.fillStyle = COLORS.groupStrip;
+        ctx.fillRect(x, y + 2, w, GROUP_STRIP_H);
         ctx.restore();
       }
 

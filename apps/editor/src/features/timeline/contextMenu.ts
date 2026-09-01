@@ -23,10 +23,12 @@ import {
   deleteBlockReason,
   detachAudioBlockReason,
   duplicateBlockReason,
+  groupBlockReason,
   linkBlockReason,
   pasteBlockReason,
   removeTransitionBlockReason,
   splitBlockReason,
+  ungroupBlockReason,
   unlinkBlockReason,
   trackDeleteBlockReason,
   trackMoveBlockReason,
@@ -47,6 +49,8 @@ export type TimelineMenuActionId =
   | 'detachAudio'
   | 'linkClips'
   | 'unlinkClips'
+  | 'groupClips'
+  | 'ungroupClips'
   | 'addTransition'
   | 'removeTransition'
   | 'paste'
@@ -278,6 +282,20 @@ function clipMenu(ctx: TimelineMenuContext, clipId: Uuid): TimelineMenuEntry[] {
       'Bağlantıyı kaldır',
       undefined,
       gated(ctx, () => unlinkBlockReason(ctx.doc, ctx.selection)),
+    ),
+    // Grup çifti: bağ çiftiyle aynı bloktadır (ikisi de "klipler birlikte
+    // hareket etsin" ailesinden) ve aynı sözleşmeyle op'un blockReason'ını okur.
+    item(
+      'groupClips',
+      'Grupla',
+      'Ctrl+G',
+      gated(ctx, () => groupBlockReason(ctx.doc, ctx.selection)),
+    ),
+    item(
+      'ungroupClips',
+      'Grubu dağıt',
+      'Ctrl+Shift+G',
+      gated(ctx, () => ungroupBlockReason(ctx.doc, ctx.selection)),
     ),
   ];
 }

@@ -19,11 +19,13 @@ import {
   cutClips,
   deleteClips,
   duplicateClips,
+  groupClips,
   pasteAtPlayhead,
   projectEndUs,
   selectAllClips,
   splitAtPlayhead,
   trimSelectedToPlayhead,
+  ungroupClips,
 } from '../../state/timelineOps';
 import { isTimelineMenuOpen } from '../timeline/contextMenuState';
 import { getTimelineViewControl } from '../timeline/viewControl';
@@ -152,6 +154,14 @@ function handleCtrlShortcut(e: KeyEventLike): boolean {
       return true;
     case 'd':
       if (docMutationAllowed()) duplicateClips([...selection]);
+      return true;
+    case 'g':
+      // Grup çifti (ozellik-4): Ctrl+G grupla, Ctrl+Shift+G dağıt — menüdeki
+      // 'Grupla'/'Grubu dağıt' ile AYNI seçim-tabanlı op'lar.
+      if (docMutationAllowed()) {
+        if (e.shiftKey) ungroupClips([...selection]);
+        else groupClips([...selection]);
+      }
       return true;
     default:
       return false;

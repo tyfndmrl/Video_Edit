@@ -29,6 +29,7 @@ import {
   deleteBlockReason,
   detachAudioBlockReason,
   duplicateBlockReason,
+  groupBlockReason,
   linkBlockReason,
   pasteBlockReason,
   removeTransitionBlockReason,
@@ -37,6 +38,7 @@ import {
   trackMoveBlockReason,
   trackRenameBlockReason,
   trimToPlayheadBlockReason,
+  ungroupBlockReason,
   unlinkBlockReason,
 } from '../../state/timelineOps';
 import { resolveTransitionEdge } from './transitions';
@@ -154,6 +156,8 @@ describe('buildTimelineMenu — klip bağlamı', () => {
       'detachAudio',
       'linkClips',
       'unlinkClips',
+      'groupClips',
+      'ungroupClips',
     ]);
     expect(entries.filter((e) => e.kind === 'separator')).toHaveLength(3);
     // Ayraç ripple sil ile kırpma çifti arasında.
@@ -174,6 +178,8 @@ describe('buildTimelineMenu — klip bağlamı', () => {
     expect(find(entries, 'rippleDelete').shortcut).toBe('Shift+Delete');
     expect(find(entries, 'trimStartToPlayhead').shortcut).toBe('Q');
     expect(find(entries, 'trimEndToPlayhead').shortcut).toBe('W');
+    expect(find(entries, 'groupClips').shortcut).toBe('Ctrl+G');
+    expect(find(entries, 'ungroupClips').shortcut).toBe('Ctrl+Shift+G');
   });
 
   /**
@@ -183,12 +189,15 @@ describe('buildTimelineMenu — klip bağlamı', () => {
    */
   it('enables everything except the transition and link pairs when the playhead is inside the clip', () => {
     // Bağ çifti tek-klip seçimde gridir: bağlamak video+ses SEÇİMİ ister,
-    // kaldırmaksa seçimde bağlı bir klip — baseDoc'ta ikisi de yok.
+    // kaldırmaksa seçimde bağlı bir klip — baseDoc'ta ikisi de yok. Grup çifti
+    // de aynı nedenle gri: gruplamak ≥2 klip ister, dağıtmaksa gruplu bir klip.
     expect(disabledIds(buildTimelineMenu(ctx()))).toEqual([
       'addTransition',
       'removeTransition',
       'linkClips',
       'unlinkClips',
+      'groupClips',
+      'ungroupClips',
     ]);
   });
 
@@ -202,6 +211,8 @@ describe('buildTimelineMenu — klip bağlamı', () => {
       'removeTransition',
       'linkClips',
       'unlinkClips',
+      'groupClips',
+      'ungroupClips',
     ]);
     // Silme/kopyalama playhead'den bağımsız çalışmaya devam eder.
     expect(find(entries, 'delete').disabled).toBe(false);
@@ -231,6 +242,8 @@ describe('buildTimelineMenu — klip bağlamı', () => {
       'detachAudio',
       'linkClips',
       'unlinkClips',
+      'groupClips',
+      'ungroupClips',
     ] as const) {
       expect(find(entries, id).disabled, id).toBe(true);
     }
@@ -544,6 +557,10 @@ function reasonFromOps(id: TimelineMenuActionId, c: TimelineMenuContext): string
       return gate(linkBlockReason(c.doc, c.selection));
     case 'unlinkClips':
       return gate(unlinkBlockReason(c.doc, c.selection));
+    case 'groupClips':
+      return gate(groupBlockReason(c.doc, c.selection));
+    case 'ungroupClips':
+      return gate(ungroupBlockReason(c.doc, c.selection));
     case 'paste':
       return gate(pasteBlockReason(c.doc, c.playheadUs));
     case 'toggleMuted':

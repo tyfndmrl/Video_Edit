@@ -46,6 +46,8 @@ import {
   clipEndUs,
   clipHasVisualKeyframes,
   deleteClips,
+  groupBlockReason,
+  groupClips,
   knownAssetDurations,
   linkBlockReason,
   linkClips,
@@ -53,6 +55,8 @@ import {
   rotationBlockReason,
   setClipTransform,
   transitionChainSiblings,
+  ungroupBlockReason,
+  ungroupClips,
   unlinkBlockReason,
   unlinkClips,
   type OpResult,
@@ -915,6 +919,109 @@ describe('(d) AV bağı: linkBlockReason/unlinkBlockReason ile op ayrışmaz', (
     expect(unlinkResult.ok, `unlink: reason=${String(unlinkReason)}`).toBe(unlinkReason === null);
     if (!unlinkResult.ok) expect(unlinkResult.reason).toBe(unlinkReason);
     expect(unlinkReason).toBe(unlink);
+    expectDocValid();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (e) Klip grupları (ozellik-4): groupClips/ungroupClips — aynı ayrışmazlık
+// sözleşmesi (menü gri === op ret, birebir aynı gerekçeyle)
+// ---------------------------------------------------------------------------
+
+describe('(e) grup: groupBlockReason/ungroupBlockReason ile op ayrışmaz', () => {
+  const LOCKED_TRACK = '01890000-0000-7000-8000-000000000911';
+  const LOCKED_CLIP = '01890000-0000-7000-8000-000000000912';
+  const GROUP_ID = '01890000-0000-7000-8000-000000000913';
+
+  /** V1 [A, B, C]; istenirse A+B gruplu, istenirse kilitli şeritte ek klip. */
+  function groupsDoc(over?: { groupAB?: boolean; lockedExtra?: boolean }): TimelineDoc {
+    const d = threeAdjacent();
+    if (over?.groupAB === true) {
+      d.tracks[0].clips[0].groupId = GROUP_ID;
+      d.tracks[0].clips[1].groupId = GROUP_ID;
+    }
+    if (over?.lockedExtra === true) {
+      d.tracks.push({
+        id: LOCKED_TRACK,
+        type: 'video',
+        muted: false,
+        hidden: false,
+        locked: true,
+        clips: [mediaClip({ id: LOCKED_CLIP, startUs: 0, sourceInUs: 0, sourceOutUs: 6 * US })],
+      });
+    }
+    return d;
+  }
+
+  interface GroupCase {
+    name: string;
+    doc(): TimelineDoc;
+    selection: string[];
+    /** Beklenen ret kodu (null = op kabul etmeli). */
+    group: string | null;
+    ungroup: string | null;
+  }
+
+  const cases: GroupCase[] = [
+    {
+      name: 'iki bağımsız klip -> grupla kabul, dağıt ret',
+      doc: () => groupsDoc(),
+      selection: [CLIP_A, CLIP_B],
+      group: null,
+      ungroup: 'no group in selection',
+    },
+    {
+      name: 'tek klip -> gruplamak için az, dağıtacak grup yok',
+      doc: () => groupsDoc(),
+      selection: [CLIP_A],
+      group: 'need at least two clips to group',
+      ungroup: 'no group in selection',
+    },
+    {
+      name: 'mevcut grubun tek üyesi -> grupla (yeniden bas) da dağıt da kabul',
+      doc: () => groupsDoc({ groupAB: true }),
+      selection: [CLIP_A],
+      // Kapanış grup üyelerini GETİRMEZ ('link' kapsamı) ama üye zaten C ile
+      // değil B ile gruplu; tek üye <2 kuralına takılır. Bilinçli: gruplamak
+      // İKİ şey ister, mevcut üyelik onu değiştirmez.
+      group: 'need at least two clips to group',
+      ungroup: null,
+    },
+    {
+      name: 'gruplu çift + üçüncü -> birleştirme kabul, dağıt kabul',
+      doc: () => groupsDoc({ groupAB: true }),
+      selection: [CLIP_A, CLIP_C],
+      group: null,
+      ungroup: null,
+    },
+    {
+      name: 'kilitli şeritteki üye seçimde -> ikisi de kilidi söyler',
+      doc: () => groupsDoc({ lockedExtra: true }),
+      selection: [CLIP_A, LOCKED_CLIP],
+      group: 'track is locked',
+      ungroup: 'no group in selection',
+    },
+  ];
+
+  it.each(cases)('$name', ({ doc, selection, group, ungroup }) => {
+    // groupClips yarısı.
+    load(doc());
+    const groupReason = groupBlockReason(currentDoc(), selection);
+    const groupResult = groupClips(selection);
+    expect(groupResult.ok, `group: reason=${String(groupReason)}`).toBe(groupReason === null);
+    if (!groupResult.ok) expect(groupResult.reason).toBe(groupReason);
+    expect(groupReason).toBe(group);
+    expectDocValid();
+
+    // ungroupClips yarısı (taze doküman — group yarısı zemin kaydırmasın).
+    load(doc());
+    const ungroupReason = ungroupBlockReason(currentDoc(), selection);
+    const ungroupResult = ungroupClips(selection);
+    expect(ungroupResult.ok, `ungroup: reason=${String(ungroupReason)}`).toBe(
+      ungroupReason === null,
+    );
+    if (!ungroupResult.ok) expect(ungroupResult.reason).toBe(ungroupReason);
+    expect(ungroupReason).toBe(ungroup);
     expectDocValid();
   });
 });

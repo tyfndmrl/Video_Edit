@@ -2,6 +2,27 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-01
+- ozellik-4 — klip grupları: Ctrl+G grupla, grup birlikte taşınır (özellik turu dilim 4,
+  FRONTEND-only): `groupClips`/`ungroupClips` + blockReason'ları (timelineOps — tek modül).
+  Grupla: önce LINK kapanışı (linkli üyenin eşi OTOMATİK dahil — invariant kural 10'un grup
+  kolu böyle KURULUR), kapanış sonrası <2 klip → 'need at least two clips to group', kilitli
+  üye → 'track is locked'; kapanmış kümeye TAZE tek groupId (BİRLEŞTİRME semantiği: üyelerin
+  eski üyelikleri ezilir; eski gruplardan tek kalan üyenin groupId'si AYNI mutate'te
+  temizlenir — kural 11, tek undo). Dağıt: seçimin dokunduğu HER grubun TÜM üyelerinden
+  groupId silinir (üye çıkarma değil grup dağıtma — tek üyeli ara durum hiç doğmaz); linkId
+  DOKUNULMAZ (bağ gruptan bağımsız yaşar). Menü: 'Grupla' (Ctrl+G) + 'Grubu dağıt'
+  (Ctrl+Shift+G) Bağla bloğunda, gated sözleşme (disabled = op blockReason'ı); dispatcher
+  Ctrl+G/Ctrl+Shift+G (docMutationAllowed kapısından) + shortcutsHelp satırı; drawTracks
+  gruplu klipte 2px ÜST ŞERİT (satır yüksekliği/geometri değişmedi). Taşıma kod değişikliği
+  GEREKMEDİ: dilim-2 'move' kapanışı groupId'yi zaten işliyordu — karışık AV grupta bölüm
+  kapsamlı delta dahil grup-odaklı birim pinleriyle sabitlendi. +21 birim (timelineOps +14,
+  guardPaths (e) ayrışmazlık çiftleri +5, dispatcher +2; editör 1393→1414) + yeni gerçek
+  fare/klavye `e2e/group-clips.spec.ts` (2 test: böl→marquee→Grupla→ortak groupId; TEK
+  seçili üye sürüklenince ÜÇÜ kayar; tek üye Delete → kalan ikili grup yaşar; Ctrl+Shift+G
+  sonrası yalnız biri kayar; Ctrl+A+Ctrl+G klavye yolu; gri öğe data-block-reason + Türkçe
+  title). Negatif kontrol ×2 md5-birebir (kapanış genişletmesi söküldü → 4 birim + e2e tam
+  imza; eski-grup temizliği söküldü → MERGE birimi dev doc kapısının kural-11 ihlaliyle
+  kırmızı). Defter: `PROGRESS.md` §Özellik turu.
 - ozellik-3 — otomatik AV ayrımı: video ekleme linkli çift klip (özellik turu dilim 3,
   FRONTEND-only): SAF planlayıcı `planAddClipFromAsset` EXPORT edildi — commit
   (`addClipFromAsset`), timeline ekleme hayaleti (insertTargetFor) ve blok gerekçeleri AYNI
