@@ -2,6 +2,15 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-02
+- ozellik-fix-pin — dip-cover sahiplik bekçisi birim pinleri (bağımsız denetim bulgusu):
+  `ownedSlotFrame`'in clipId+epoch kontrolü `!frame`'e zayıflatıldığında 4 mevcut birim +
+  e2e jkl-shuttle-frames YEŞİL kalıyordu (bekçi kanıtsızdı — denetçi ölçümü). engineV1
+  DEĞİŞMEDİ; `engineV1.scrub.test.ts`'e blok 5 (+3 test, 4→7): yabancı clipId → null,
+  eski epoch (slot geri dönüşümü) → null, doğru sahiplik → kare kullanılır (pozitif).
+  Negatif kontrol ×2 (md5-birebir `25c79aed…25aa`): clipId dalı söküldü → yalnız clipId
+  pini, epoch dalı söküldü → yalnız epoch pini tam imzayla KIRMIZI. Kapılar: editör
+  vitest 1445 (1442→1445) · tsc -b + prod build temiz · Playwright jkl-shuttle-frames +
+  jkl-shuttle 3/3. Defter: `PROGRESS.md` §Özellik turu satır F (EK PİN notu).
 - ozellik-fix — J geri taramada "yabancı kare" (kullanıcı hata bildirimi; teşhis ayrı ajanın
   ölçümü, repro + düzeltme + doğrulama bu session'ın KENDİ koşumu): her scrub seek'i elementin
   readyState'ini 62-86 ms HAVE_CURRENT_DATA altına düşürüyor ve `videoDrawItem` o pencerede

@@ -18,6 +18,8 @@
  * 4. BOUNDARY BASELINE: sınırda ısınmış (geriye-preload) element aktifleşirken
  *    kendi kaynak penceresindeki mevcut karesi seek'ten ÖNCE taban olarak
  *    yakalanır — ilk aktivasyon çukuru da örtülüdür.
+ * 5. OWNERSHIP UNIT PINS: sahiplik bekçisinin (ownedSlotFrame) iki dalı —
+ *    clipId ve epoch — AYRI AYRI yük altında (blok 5'in gerekçesine bak).
  *
  * engineV1.seek.test.ts harness ailesi: node ortamı, Compositor/AudioGraph
  * modül-mock'lu, GERÇEK VideoPool sahte <video> elementleriyle.
@@ -395,5 +397,93 @@ describe('sınırda geriye tarama (geriye-preload + taban yakalama)', () => {
     a.finishSeek();
     stepFrame();
     expect(harness.lastRender).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. Ownership guard unit pins — ownedSlotFrame'in iki dalı AYRI AYRI
+// ---------------------------------------------------------------------------
+//
+// Neden var (2026-09-02 bağımsız denetim ölçümü): bekçi `if (!frame) return
+// null;`'a zayıflatıldığında blok 1-3 VE e2e jkl-shuttle-frames YEŞİL
+// kalıyordu — kamusal akışta HER slot ataması/bırakması epoch'u artırdığından
+// (videoPool.apply/dispose) iki dal birbirini örter ve mevcut senaryolar ya
+// kaydı hiç bulamaz ya iki dalı birden tetikler. Bu blok her dalı TEK BAŞINA
+// yükler; dalları ayrıştıran durumlar kamusal yoldan üretilemediği için (tam
+// da savunma-derinliği oldukları için) mevcut `engine['...']` test-erişim
+// deseniyle slot/kayıt üstünde kurulur — yeni export açılmadı.
+
+describe('sahiplik bekçisi birim pinleri (ownedSlotFrame)', () => {
+  /** Isınmış motor: c1'in GERÇEK karesi slot kaydında (kamusal yoldan). */
+  function warmedSlot(engine: VideoPlaybackEngine) {
+    engine.load(singleClipDoc(), videoAsset);
+    stepFrame();
+    expect(harness.lastRender, 'ısınma karesi çizilmeli').toHaveLength(1);
+    const slot = engine['pool'].slotForClip('c1');
+    expect(slot, 'c1 bir pool slotuna sahip olmalı').not.toBeNull();
+    expect(engine['slotFrames'].get(slot!.index), 'ısınma kaydı var olmalı').toBeDefined();
+    return slot!;
+  }
+
+  it('kayıt BAŞKA klibin karesiyse (clipId ≠, epoch =) dip-cover onu ASLA kullanmaz', () => {
+    const engine = makeEngine();
+    const slot = warmedSlot(engine);
+
+    // Kayıt "başka klibin karesi" yapılır; epoch'a DOKUNULMAZ. Kamusal akış bu
+    // kombinasyonu üretemez (her el değiştirme epoch'u da artırır) — clipId
+    // dalı tam bu bozulmaya karşı savunma-derinliğidir.
+    engine['slotFrames'].get(slot.index)!.clipId = 'yabanci-klip';
+
+    expect(
+      engine['ownedSlotFrame'](slot, 'c1'),
+      'clipId uyuşmazlığı TEK BAŞINA kareyi reddettirmeli (epoch hâlâ eşit)',
+    ).toBeNull();
+
+    // Render yüzeyi: çukurda yabancı kayıt c1 adına çizilmez — katman arka
+    // plana düşer (kısa arka plan yanlış içerikten iyidir).
+    elementOf(engine, 'c1').readyState = 1;
+    stepFrame();
+    expect(
+      harness.lastRender,
+      'yabancı clipId kaydı dip-cover olarak ASLA çizilmemeli',
+    ).toHaveLength(0);
+  });
+
+  it('aynı klip ama ESKİ epoch (slot geri dönüşümü) dip-cover onu ASLA kullanmaz', () => {
+    const engine = makeEngine();
+    const slot = warmedSlot(engine);
+
+    // videoPool her atama/bırakmada epoch'u artırır — aynı artış slota
+    // uygulanır, kayıt ESKİ atamanın karesi olarak yerinde kalır (doku ve
+    // slotFrames girdisi silinmez; gerçek geri dönüşümde de silinmezler).
+    slot.epoch++;
+
+    expect(
+      engine['ownedSlotFrame'](slot, 'c1'),
+      'epoch uyuşmazlığı TEK BAŞINA kareyi reddettirmeli (clipId hâlâ eşit)',
+    ).toBeNull();
+
+    elementOf(engine, 'c1').readyState = 1;
+    stepFrame();
+    expect(
+      harness.lastRender,
+      'eski-epoch kaydı dip-cover olarak ASLA çizilmemeli',
+    ).toHaveLength(0);
+  });
+
+  it('doğru clipId + doğru epoch: kayıt dip-cover olarak KULLANILIR (pozitif kontrol)', () => {
+    const engine = makeEngine();
+    const slot = warmedSlot(engine);
+    const frame = engine['slotFrames'].get(slot.index);
+
+    expect(
+      engine['ownedSlotFrame'](slot, 'c1'),
+      'sahiplik tamken bekçi kaydın KENDİSİNİ geri vermeli',
+    ).toBe(frame);
+
+    elementOf(engine, 'c1').readyState = 1;
+    stepFrame();
+    expect(harness.lastRender, 'sahipli kare çukurda çizilmeli').toHaveLength(1);
+    expect(harness.lastRender[0]).toMatchObject({ srcW: 640, srcH: 360 });
   });
 });
