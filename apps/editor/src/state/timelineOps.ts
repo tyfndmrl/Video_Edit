@@ -786,6 +786,17 @@ export function trackDeleteBlockReason(d: TimelineDoc, trackId: Uuid): string | 
   if (track.type === 'video' && d.tracks.filter((t) => t.type === 'video').length <= 1) {
     return 'cannot delete the last video track';
   }
+  // deleteClips symmetry: a clip here whose link partner sits on a LOCKED
+  // other track cannot lose its bond — stripping the partner's linkId would
+  // silently write into locked content (the forbidden quiet repair). The
+  // whole track delete refuses instead, with deleteClips' own message.
+  for (const c of track.clips) {
+    if (!isMediaClip(c) || c.linkId === undefined) continue;
+    const partner = findLinkPartner(d, c);
+    if (partner !== null && partner.track.id !== trackId && partner.track.locked) {
+      return 'linked clip is on a locked track';
+    }
+  }
   return null;
 }
 
@@ -810,6 +821,8 @@ export function deleteTrack(trackId: Uuid): OpResult {
     // A deleted clip's link partner lives on ANOTHER track and would be left
     // holding a single-member linkId (invariant rule 10 violation). Breaking
     // the bond is part of the same mutate: one undo restores track AND bonds.
+    // A partner on a LOCKED track never reaches this point — the block reason
+    // above refused the whole delete (deleteClips symmetry).
     const removedLinkIds = new Set<string>();
     for (const c of removed.clips) {
       if (isMediaClip(c) && c.linkId !== undefined) removedLinkIds.add(c.linkId);
@@ -3132,8 +3145,17 @@ export function copyClips(clipIds: readonly Uuid[]): boolean {
 }
 
 export function cutClips(clipIds: readonly Uuid[]): OpResult {
-  if (!copyClips(clipIds)) return fail('nothing to cut');
-  return deleteClips(clipIds);
+  // Cut MOVES content, so both halves of the op run on the same LINK-closed
+  // set the delete applies anyway: cutting one half of an AV pair puts BOTH
+  // halves on the clipboard, and paste re-mints the fresh shared linkId
+  // (remintLinkAndGroupIds). Without the closure the delete still removed the
+  // partner while the clipboard kept only the selection — the audio content
+  // vanished from an ordinary cut+paste. Plain copy (Ctrl+C) intentionally
+  // stays selection-only: a copy removes nothing from the document, so a
+  // half-pair copy pasting as an unlinked single is the user's choice.
+  const ids = expandSelectionForOp(doc(), clipIds, 'link');
+  if (!copyClips(ids)) return fail('nothing to cut');
+  return deleteClips(ids);
 }
 
 /**

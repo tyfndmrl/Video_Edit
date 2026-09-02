@@ -23,6 +23,7 @@ import {
   addTrack,
   clearClipboardForTests,
   copyClips,
+  cutClips,
   deleteBlockReason,
   deleteClips,
   deleteTrack,
@@ -1425,6 +1426,63 @@ describe('linkId core (ozellik-2)', () => {
     });
   });
 
+  describe('cut carries the LINK-closed set to the clipboard (copy stays selection-only)', () => {
+    beforeEach(() => clearClipboardForTests());
+
+    it('cutting HALF the pair moves the WHOLE pair: doc loses 2, paste returns 2 re-bonded', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      expect(cutClips([VID]).ok).toBe(true);
+      expect(
+        currentDoc().tracks.flatMap((t) => t.clips),
+        'Kes, çifti BİRLİKTE belgeden düşürmeli (silme kapanışıyla aynı küme).',
+      ).toHaveLength(0);
+
+      expect(pasteAtPlayhead(0).ok).toBe(true);
+      const vids = currentDoc().tracks[0].clips as MediaClip[];
+      const auds = currentDoc().tracks[1].clips as MediaClip[];
+      expect(vids, 'Pano çifti BİRLİKTE taşımalı: video yarısı yapışmalı.').toHaveLength(1);
+      expect(auds, 'Pano çifti BİRLİKTE taşımalı: ses yarısı yapışmalı.').toHaveLength(1);
+      expect(vids[0].linkId, 'Yapıştırılan çift bağlı doğar.').toBeDefined();
+      expect(vids[0].linkId).toBe(auds[0].linkId);
+      expect(vids[0].linkId, 'Remint: taze ortak id, eskisi değil.').not.toBe(L1);
+      expectValid();
+    });
+
+    it('cutting the FULL pair behaves identically (closure is idempotent)', () => {
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      expect(cutClips([VID, AUD]).ok).toBe(true);
+      expect(currentDoc().tracks.flatMap((t) => t.clips)).toHaveLength(0);
+
+      expect(pasteAtPlayhead(0).ok).toBe(true);
+      const vids = currentDoc().tracks[0].clips as MediaClip[];
+      const auds = currentDoc().tracks[1].clips as MediaClip[];
+      expect(vids).toHaveLength(1);
+      expect(auds).toHaveLength(1);
+      expect(vids[0].linkId).toBeDefined();
+      expect(vids[0].linkId).toBe(auds[0].linkId);
+      expect(vids[0].linkId).not.toBe(L1);
+      expectValid();
+    });
+
+    it('copy asymmetry pin: half-pair Ctrl+C removes nothing and pastes ONE unlinked clip', () => {
+      // BİLİNÇLİ asimetri: kopya belgeden bir şey eksiltmez, kullanıcı yalnız
+      // seçtiğini çoğaltmak isteyebilir — remint tekil-görülen bağı siler.
+      useDocStore.getState().loadDoc(linkedPairDoc());
+      expect(copyClips([VID])).toBe(true);
+      expect(
+        currentDoc().tracks.flatMap((t) => t.clips),
+        'Kopya belgeye dokunmaz.',
+      ).toHaveLength(2);
+
+      expect(pasteAtPlayhead(5 * US).ok).toBe(true);
+      const all = currentDoc().tracks.flatMap((t) => t.clips) as MediaClip[];
+      expect(all, 'Yarım kopya TEK klip yapıştırır (eş panoya alınmaz).').toHaveLength(3);
+      const pasted = (currentDoc().tracks[0].clips as MediaClip[])[1];
+      expect(pasted.linkId, 'Yarım kopyanın yapıştırması bağsız doğar.').toBeUndefined();
+      expectValid();
+    });
+  });
+
   describe('detachAudio births a LINKED pair', () => {
     it('writes one fresh shared linkId onto the video and the detached audio', () => {
       useDocStore.getState().loadDoc(
@@ -1448,6 +1506,31 @@ describe('linkId core (ozellik-2)', () => {
   });
 
   describe('deleteTrack breaks bonds and dissolves shrunken groups', () => {
+    it('refuses the WHOLE track delete when a linked partner sits on a LOCKED track', () => {
+      // Eş kilitli şeritte: bağı sessizce silmek kilitli içeriğe yazım olurdu
+      // (deleteClips simetrisi) — track silme TÜMDEN reddeder, menü de aynı
+      // gerekçeyle gri (trackDeleteBlockReason = op reddi, gated sözleşmesi).
+      useDocStore.getState().loadDoc(
+        docWith([
+          trackOf(V1, 'video', [clipOf(VID, 'video', 0, 4 * US, { linkId: L1 })], {
+            locked: true,
+          }),
+          trackOf(V2, 'video', []),
+          trackOf(A1, 'audio', [clipOf(AUD, 'audio', 0, 4 * US, { linkId: L1 })]),
+        ]),
+      );
+      const before = JSON.stringify(currentDoc());
+
+      expect(trackDeleteBlockReason(currentDoc(), A1)).toBe('linked clip is on a locked track');
+      expect(deleteTrack(A1)).toEqual({ ok: false, reason: 'linked clip is on a locked track' });
+      expect(
+        JSON.stringify(currentDoc()),
+        'Belge dokunulmadan kalmalı (sessiz bağ silme yok).',
+      ).toBe(before);
+      expect(useDocStore.getState().history).toHaveLength(0);
+      expectValid();
+    });
+
     it("deleting the audio track strips the video partner's linkId (and its now-single group)", () => {
       useDocStore.getState().loadDoc(linkedPairDoc({ groupId: G1 }));
       expect(deleteTrack(A1).ok).toBe(true);

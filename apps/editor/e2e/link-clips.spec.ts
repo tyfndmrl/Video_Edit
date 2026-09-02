@@ -16,6 +16,7 @@
  * serbesttir (detach-audio-silent.spec bu kapının iki yönünü ayrıca sabitler).
  */
 import { test, expect } from './fixtures/test';
+import { SEED_TIMES, SECOND_US } from './fixtures/seed';
 import { findClip, type AppState } from './support/appBridge';
 
 /** Dokümandaki tek ses klibi (yoksa test kırmızı). */
@@ -127,6 +128,72 @@ test.describe('AV bağı — link/unlink + taşı/sil/undo kapanışı', () => {
         return v.linkId !== undefined && v.linkId === a.linkId;
       }, { message: '"Bağla" iki klibe AYNI taze linkId\'yi yazmalı.' })
       .toBe(true);
+  });
+
+  test('Ctrl+X çifti panoya BİRLİKTE alır: yarım seçimle kes-yapıştır bağlı çifti taşır', async ({
+    editor,
+    seed,
+  }) => {
+    test.setTimeout(120_000);
+    await editor.ensureContentVisible(seed.clipAId);
+
+    // Çifti kur: gerçek sağ tık -> "Sesi ayır".
+    await editor.timeline.click(await editor.timeline.clipCenter(seed.clipAId), 'right');
+    await expect(editor.contextMenu).toBeVisible();
+    await editor.page.getByTestId('timeline-menu-detachAudio').click();
+    await expect
+      .poll(async () => (await editor.state()).clipCount, {
+        message: '"Sesi ayır" ses klibi doğurmalıydı.',
+      })
+      .toBe(3);
+    let st = await editor.state();
+    const oldLinkId = findClip(st, seed.clipAId).clip.linkId;
+    expect(oldLinkId, 'Ayrılan çift bağlı doğar.').toBeDefined();
+
+    // YALNIZ videoyu seç, GERÇEK klavye Ctrl+X: çift BİRLİKTE belgeden düşer.
+    await editor.timeline.click(await editor.timeline.clipCenter(seed.clipAId));
+    await editor.page.keyboard.press('Control+x');
+    await expect
+      .poll(async () => (await editor.state()).clipCount, {
+        message: 'Ctrl+X bağlı çifti (video+ses) birlikte kesmeliydi.',
+      })
+      .toBe(1);
+
+    // Boşluğa yapıştır (klip A'nın eski yeri artık boş; aralık 66-76 sn).
+    await editor.timeline.scrubTo(SEED_TIMES.gapStartUs + SECOND_US);
+    await editor.page.keyboard.press('Control+v');
+    await expect
+      .poll(async () => (await editor.state()).clipCount, {
+        message: 'Ctrl+V panodaki çifti (2 klip) yapıştırmalıydı — pano yarım kalmış olabilir.',
+      })
+      .toBe(3);
+
+    st = await editor.state();
+    expect(st.selection, 'Yapıştırma yeni çifti seçili bırakır.').toHaveLength(2);
+    const pasted = st.tracks.flatMap((t) => t.clips).filter((c) => st.selection.includes(c.id));
+    const pastedVideo = pasted.find((c) => c.kind === 'video');
+    const pastedAudio = pasted.find((c) => c.kind === 'audio');
+    expect(pastedVideo, 'Yapıştırılan kümede video yarısı olmalı.').toBeDefined();
+    expect(pastedAudio, 'Yapıştırılan kümede ses yarısı olmalı.').toBeDefined();
+    expect(pastedVideo!.linkId, 'Yapıştırılan çift bağlı doğar (remint).').toBeDefined();
+    expect(pastedAudio!.linkId, 'İki yarı AYNI taze linkId\'yi taşımalı.').toBe(
+      pastedVideo!.linkId,
+    );
+    expect(pastedVideo!.linkId, 'Taze id: eski bağın kendisi değil.').not.toBe(oldLinkId);
+
+    // Bağ CANLI: yapıştırılan videoyu gerçek fareyle sürükle -> İKİSİ kayar.
+    // Delta 2 sn: yapıştırma noktası cetvel tıkı hassasiyetiyle ~67 sn'dir,
+    // 2 sn sonrası bile klip B'nin (76 sn) gerisinde kalır — çakışma reddi yok.
+    const startBefore = pastedVideo!.timelineStartUs;
+    await editor.timeline.dragClipByTime(pastedVideo!.id, 2_000_000);
+    st = await editor.state();
+    const movedVideo = findClip(st, pastedVideo!.id).clip;
+    const movedAudio = findClip(st, pastedAudio!.id).clip;
+    expect(movedVideo.timelineStartUs, 'Video sürüklemeyle kaymalı.').toBeGreaterThan(startBefore);
+    expect(
+      movedAudio.timelineStartUs,
+      'Yapıştırılan çiftin bağı canlı: ses videoyla birlikte kaymalı.',
+    ).toBe(movedVideo.timelineStartUs);
   });
 
   test('tek klip seçiliyken "Bağla" gri: data-block-reason + Türkçe title asılı', async ({

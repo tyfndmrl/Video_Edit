@@ -46,6 +46,7 @@ import {
   clipEndUs,
   clipHasVisualKeyframes,
   deleteClips,
+  deleteTrack,
   groupBlockReason,
   groupClips,
   knownAssetDurations,
@@ -54,6 +55,7 @@ import {
   resetClipTransform,
   rotationBlockReason,
   setClipTransform,
+  trackDeleteBlockReason,
   transitionChainSiblings,
   ungroupBlockReason,
   ungroupClips,
@@ -1022,6 +1024,77 @@ describe('(e) grup: groupBlockReason/ungroupBlockReason ile op ayrışmaz', () =
     );
     if (!ungroupResult.ok) expect(ungroupResult.reason).toBe(ungroupReason);
     expect(ungroupReason).toBe(ungroup);
+    expectDocValid();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (f) Track silme + AV bağı: trackDeleteBlockReason ile deleteTrack ayrışmaz
+// (menü gri === op ret; kilitli-eş reddi deleteClips simetrisi)
+// ---------------------------------------------------------------------------
+
+describe('(f) track silme: trackDeleteBlockReason ile op ayrışmaz', () => {
+  const AUDIO_TRACK = '01890000-0000-7000-8000-000000000921';
+  const AUD_CLIP = '01890000-0000-7000-8000-000000000922';
+  const LINK_ID = '01890000-0000-7000-8000-000000000923';
+
+  /** V1 [A, B, C] + ses track'i [AUD]; A↔AUD bağlı; istenirse V1 kilitli. */
+  function linkedLaneDoc(over?: { videoLocked?: boolean }): TimelineDoc {
+    const d = threeAdjacent();
+    d.tracks[0].locked = over?.videoLocked === true;
+    (d.tracks[0].clips[0] as MediaClip).linkId = LINK_ID;
+    d.tracks.push({
+      id: AUDIO_TRACK,
+      type: 'audio',
+      muted: false,
+      hidden: false,
+      locked: false,
+      clips: [
+        {
+          ...mediaClip({ id: AUD_CLIP, startUs: 0, sourceInUs: 0, sourceOutUs: 6 * US }),
+          kind: 'audio',
+          linkId: LINK_ID,
+        },
+      ],
+    });
+    return d;
+  }
+
+  interface TrackDeleteCase {
+    name: string;
+    doc(): TimelineDoc;
+    /** Beklenen ret kodu (null = op kabul etmeli). */
+    reason: string | null;
+  }
+
+  const cases: TrackDeleteCase[] = [
+    {
+      name: 'eş KİLİTSİZ şeritte -> silme kabul (bağ temizliği op içinde)',
+      doc: () => linkedLaneDoc(),
+      reason: null,
+    },
+    {
+      name: 'eş KİLİTLİ şeritte -> ikisi de deleteClips mesajıyla reddeder',
+      doc: () => linkedLaneDoc({ videoLocked: true }),
+      reason: 'linked clip is on a locked track',
+    },
+  ];
+
+  it.each(cases)('$name', ({ doc, reason }) => {
+    load(doc());
+    const blockReason = trackDeleteBlockReason(currentDoc(), AUDIO_TRACK);
+    const result = deleteTrack(AUDIO_TRACK);
+    expect(result.ok, `deleteTrack: reason=${String(blockReason)}`).toBe(blockReason === null);
+    if (!result.ok) expect(result.reason).toBe(blockReason);
+    expect(blockReason).toBe(reason);
+    if (result.ok) {
+      // Kabul dalında bağ temizliği: eş dangling linkId taşıyamaz (kural 10).
+      expect(clipById(CLIP_A).linkId).toBeUndefined();
+    } else {
+      // Ret dalında kilitli eşin bağına DOKUNULMAZ (sessiz bağ silme yok).
+      expect(clipById(CLIP_A).linkId).toBe(LINK_ID);
+      expect(clipById(AUD_CLIP).linkId).toBe(LINK_ID);
+    }
     expectDocValid();
   });
 });

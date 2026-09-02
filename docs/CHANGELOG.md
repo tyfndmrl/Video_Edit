@@ -2,7 +2,17 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-01
-- ozellik-5b — shuttle kademe merdiveni + rozet + kayıtlar (özellik turu dilim 5b,
+- ozellik-duzeltme — özellik turu kapanış denetimi bulguları (ONAY + 3 bulgu, üçü KAPANDI):
+  (1) deleteTrack kilitli link-eşin bağını sessizce siliyordu → kilitli-eş varsa track silme
+  TÜMDEN RED `'linked clip is on a locked track'` (deleteClips simetrisi; `trackDeleteBlockReason`'a
+  kural — menü gated sözleşmesiyle otomatik gri; kilitsiz-eş bağ temizliği AYNEN; +1 birim +
+  guardPaths (f) ayrışmazlık çifti; negatif kontrol md5-birebir). (2) Ctrl+X yarım-çift: pano
+  yalnız seçileni alıyor, silme çifti düşürüyordu (ses içeriği kes-yapıştır akışında kayıptı) →
+  cutClips kopyayı da LINK-kapanışlı kümeden yapar: pano 2 klip, yapıştırmada remint taze ortak
+  linkId; Ctrl+C BİLİNÇLİ asimetrik — kopya belgeden eksiltmez (+3 birim + gerçek-klavye
+  Ctrl+X→Ctrl+V e2e `link-clips.spec.ts`; negatif kontrol md5-birebir). (3) CLAUDE.md yetenek
+  haritası 5 timeline özelliğiyle senkronlandı (davranış sıfır). DECISIONS 2 satır. Defter:
+  `PROGRESS.md` §Özellik turu satır D.
   TUR KAPANIŞI — 5 özellik / 7 dilim tamam): J tekrar basışları kademeyi 1→2→4→8 katlar
   (5. basış 8'de kalır; katlama bir SONRAKİ tikin deltasından itibaren işler — geçmiş
   dilim yeniden fiyatlanmaz); J VE L'ye e.repeat muhafızı (basılı tutmak OS

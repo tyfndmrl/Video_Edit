@@ -1,5 +1,6 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-01, özellik turu KAPANDI — 7 dilimin 7'si tamam (şema
+Son güncelleme: 2026-09-01, özellik turu KAPANDI + kapanış denetimi ONAY, 3 bulgu
+`ozellik-duzeltme` commit'iyle kapatıldı — 7 dilimin 7'si tamam (şema
 linkId/groupId + invariant pass + codegen; track partisyonu; linkId çekirdeği; otomatik
 AV ayrımlı ekleme; klip grupları Ctrl+G; J sessiz kademeli geri tarama 5a+5b; plan:
 `capcut-ve-canva-gibi-hashed-penguin.md`, defter: `PROGRESS.md` §Özellik turu).
@@ -74,6 +75,12 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 ## Devam edenler
 
 - YOK — özellik turu 2026-09-01'de KAPANDI (aşağıdaki kayıt tur kapanış özetidir).
+  Kapanış denetimi ONAY verdi; 3 bulgusu (deleteTrack kilitli-eş sessiz bağ silme →
+  tümden RED; Ctrl+X yarım-çift → kes LINK-kapanışlı pano, Ctrl+C bilinçli asimetrik;
+  CLAUDE.md yetenek haritası senkronu) `ozellik-duzeltme` commit'iyle kapatıldı —
+  defter: `PROGRESS.md` §Özellik turu satır D. Denetim-sonrası yeşil: editör
+  1429→**1435** (+4 timelineOps, +2 guardPaths (f)), e2e link-clips 2→3 test;
+  backend/şema değişmedi.
 
 - **Özellik turu (2026-09-01 onaylı plan — 5 timeline özelliği, 7 dilim) — TAMAMLANDI**: dilim 0 ✅
   (şema `linkId`/`groupId` + `checkLinkAndGroupInvariants` kural 10-12 + codegen; eski
