@@ -851,6 +851,25 @@ kare atlamalı YAKLAŞIK tarama) ve kademeler (J tekrar: 2x…8x) yalnız tarama
 fake timer) + `e2e/jkl-shuttle.spec.ts` (gerçek klavye: playhead azalır, `isPlaying`
 false kalır).
 
+**2026-09-02 düzeltmesi (yabancı kare):** kullanıcı bildirimi "J ile geri sararken
+kareler arasına başka içerik giriyor" ölçümle doğrulandı — her scrub seek'i elementin
+`readyState`'ini 62-86 ms `HAVE_CURRENT_DATA` altına düşürüyor ve motor o pencerede
+katmanı ÇİZMEYİP arka planı (çok katmanlıda alt katmanı) basıyordu (geri taramalarda
+örneklerin %55-61'i siyah flaş; kusur J'ye özgü değil, fare ile geri scrub'da da aynı).
+Düzeltme motorun scrub/pool yolunda: (1) çukurda slotun SON YÜKLENEN karesi çizilmeye
+devam eder — sahiplik `clipId+epoch` ile bağlı, el değiştiren slot HİÇBİR ŞEY çizmez
+(kısa arka plan, yabancı kareden iyidir); (2) paused upload damgası `'seeked'` ile
+düşürülür (taze kare artık bir scrub adımı geride kalmaz); (3) scheduler ileri
+double-buffer'ın aynası olarak az önce biten klibi ~1 sn kendi SONUNDA ılık tutar
+(`PRELOAD_LOOKBEHIND_US`) ve aktifleşen ısınmış elementin karesi seek'ten ÖNCE taban
+alınır — sınır geçişi de flaşsız. Düzeltme sonrası aynı probe 6 rejimde 6/6 SIFIR ihlal.
+Kalan dürüst maliyet: 8x taramada rAF kadansı ~25 fps'e inebilir (her tamamlanan seek'in
+GERÇEK karesi artık yükleniyor — decoder maliyeti; içerik yenileme hızı zaten 80 ms
+scrub throttle'ıyla ~12,5 Hz olduğundan görünür kayıp yok). Kalıcı kalkan:
+`engineV1.scrub.test.ts` (dip-cover / sahiplik bekçisi / one-behind / sınır tabanı) +
+scheduler lookbehind pinleri + `e2e/jkl-shuttle-frames.spec.ts` (gerçek klavye,
+renk-ayrımlı gerçek medya, siyah=0 + yanlisRenk=0 taraması).
+
 ---
 
 ## 3. Şema / export motoru sınırları (tipli hata verir, sessiz bozulma yok)

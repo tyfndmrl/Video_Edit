@@ -173,6 +173,38 @@ interface OverlayEntry {
 }
 
 /**
+ * The last frame UPLOADED to a pool slot's texture, with its OWNER identity.
+ *
+ * Why ownership travels with the stamp (J-shuttle foreign-frame fix): every
+ * scrub seek dips the element's readyState below HAVE_CURRENT_DATA while the
+ * decoder works (measured 62-86 ms per seek in Chromium, ~52% of wall time
+ * under a continuous backward shuttle), and a draw path that refuses to draw
+ * in that window flashes the BACKGROUND — or the layer below — on every other
+ * scrub step. videoDrawItem therefore keeps showing the slot's last uploaded
+ * texture through the dip, but ONLY while it provably belongs to the same
+ * clip and pool assignment (clipId + epoch): at a clip boundary the slot is
+ * re-assigned/re-loaded, and drawing the previous clip's leftover texture
+ * there would turn a brief background flash into a genuinely WRONG frame.
+ */
+interface SlotFrame {
+  /** Clip whose material produced the texture content. */
+  clipId: Uuid;
+  /** PoolSlot.epoch at upload time — any reassignment invalidates the frame. */
+  epoch: number;
+  /**
+   * video.currentTime at upload (paused redundant-upload skip). NaN = force
+   * re-upload on the next draw: currentTime already reads the TARGET while a
+   * seek is still decoding, so a set-time stamp would mark the stale frame
+   * "fresh" and the really-decoded frame (arriving with 'seeked') would never
+   * be uploaded — the preview then trails one scrub step behind.
+   */
+  stamp: number;
+  /** Decoded frame size at upload — the dip-cover draw uses its own geometry. */
+  width: number;
+  height: number;
+}
+
+/**
  * The clip's own transition durations (§5.4 audio ramps), or undefined when it
  * sits on hard cuts. Read off the clip itself: the schema keeps both sides of a
  * cut deep-equal (symmetry invariant), so no neighbour lookup is needed.
@@ -228,8 +260,8 @@ export class VideoPlaybackEngine implements PlaybackEngine {
 
   private assignments: PoolAssignment[] = [];
   private slotTextures = new Map<number, WebGLTexture>();
-  /** Last uploaded video time per slot — skips redundant uploads while paused. */
-  private slotUploadedAt = new Map<number, number>();
+  /** Last uploaded frame per slot, with owner identity (see SlotFrame). */
+  private slotFrames = new Map<number, SlotFrame>();
   private imageTextures = new Map<Uuid, ImageEntry>();
   /** 3D LUT tabloları, LUT ASSET id'siyle (see LutEntry). */
   private lutTextures = new Map<Uuid, LutEntry>();
@@ -280,6 +312,16 @@ export class VideoPlaybackEngine implements PlaybackEngine {
       (el) => this.audio.attachElement(el),
       () => this.handleMediaError(),
     );
+    // Paused-upload freshness: the element itself says when a seeked-to frame
+    // is really presentable — invalidate the stamp exactly then, so the next
+    // rAF uploads the NEW frame (see SlotFrame.stamp for why a set-time stamp
+    // cannot work). While playing this is redundant (uploads run every rAF).
+    for (const slot of this.pool.slots) {
+      slot.video.addEventListener('seeked', () => {
+        const frame = this.slotFrames.get(slot.index);
+        if (frame) frame.stamp = Number.NaN;
+      });
+    }
     const loop = () => {
       if (this.disposed) return;
       this.tick();
@@ -497,6 +539,7 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     this.audio.dispose();
     for (const [, tex] of this.slotTextures) this.compositor.deleteTexture(tex);
     this.slotTextures.clear();
+    this.slotFrames.clear();
     for (const [, entry] of this.imageTextures) this.compositor.deleteTexture(entry.texture);
     this.imageTextures.clear();
     for (const [, entry] of this.lutTextures) this.compositor.deleteTexture(entry.texture);
@@ -603,6 +646,10 @@ export class VideoPlaybackEngine implements PlaybackEngine {
       if (!isMediaClip(clip) || clip.kind === 'image') continue;
       const slot = this.pool.slotForClip(clip.id);
       if (!slot) continue;
+      // Freshly-activated element (warm preload at a boundary): capture its
+      // decoded frame as the dip-cover baseline BEFORE the seek below dips
+      // readyState — without it the first activation still flashes.
+      this.captureSlotBaseline(slot, clip);
       const srcSec = this.elementSourceUs(clip, target, transition) / 1e6;
       if (slot.video.readyState >= HTMLMediaElement.HAVE_METADATA) {
         try {
@@ -614,6 +661,42 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     }
     if (!this.playing) this.renderFrame(target);
     // CONTRACT: no clock$ emit from scrubbing (see seek()).
+  }
+
+  /**
+   * Upload the element's CURRENT decoded frame as this clip's last-good
+   * baseline — only when the slot has no owned frame yet AND the element is
+   * presenting material from this clip's own source window. The source-window
+   * guard keeps a reused element's leftover frame (same asset, ANOTHER clip's
+   * material) from being claimed as this clip's picture.
+   */
+  private captureSlotBaseline(slot: PoolSlot, clip: MediaClip): void {
+    const video = slot.video;
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+    if (video.videoWidth <= 0 || video.videoHeight <= 0) return;
+    if (this.ownedSlotFrame(slot, clip.id) !== null) return; // already covered
+    const posUs = video.currentTime * 1e6;
+    if (posUs < clip.sourceInUs - 1_000 || posUs > clip.sourceOutUs + 1_000) return;
+    let texture = this.slotTextures.get(slot.index);
+    if (!texture) {
+      texture = this.compositor.createTexture();
+      this.slotTextures.set(slot.index, texture);
+    }
+    this.compositor.upload(texture, video);
+    this.slotFrames.set(slot.index, {
+      clipId: clip.id,
+      epoch: slot.epoch,
+      stamp: video.currentTime,
+      width: video.videoWidth,
+      height: video.videoHeight,
+    });
+  }
+
+  /** The slot's last uploaded frame IF it still belongs to this clip+assignment. */
+  private ownedSlotFrame(slot: PoolSlot, clipId: Uuid): SlotFrame | null {
+    const frame = this.slotFrames.get(slot.index);
+    if (!frame || frame.clipId !== clipId || frame.epoch !== slot.epoch) return null;
+    return frame;
   }
 
   private frameDurationUs(): number {
@@ -641,7 +724,15 @@ export class VideoPlaybackEngine implements PlaybackEngine {
       if (!isMediaClip(clip) || clip.kind !== 'video') continue;
       const slot = this.pool.slotForClip(clip.id);
       if (!slot) continue;
-      this.slotUploadedAt.delete(slot.index);
+      const frame = this.ownedSlotFrame(slot, clip.id);
+      if (frame) {
+        // The landing frame must upload even if the currentTime stamp happens
+        // to collide (this preserves the old delete-forces-upload semantics
+        // WITHOUT dropping the dip-cover baseline during the seek).
+        frame.stamp = Number.NaN;
+      } else {
+        this.captureSlotBaseline(slot, clip);
+      }
       jobs.push(
         preciseSeekElement(
           slot.video,
@@ -698,7 +789,9 @@ export class VideoPlaybackEngine implements PlaybackEngine {
       return asset?.url ?? null;
     });
     for (const slot of changed) {
-      this.slotUploadedAt.delete(slot.index);
+      // Assignment changed: whatever the texture holds is no longer this
+      // slot's clip — the dip-cover must not claim it (foreign-frame guard).
+      this.slotFrames.delete(slot.index);
       if (slot.clipId === null) continue;
       const req = bySlotRequest.get(slot.clipId);
       if (!req) continue;
@@ -1220,21 +1313,60 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     const slot = this.pool.slotForClip(clip.id);
     if (!slot) return null;
     const video = slot.video;
-    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null;
-    if (video.videoWidth <= 0 || video.videoHeight <= 0) return null;
+    if (
+      video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+      video.videoWidth <= 0 ||
+      video.videoHeight <= 0
+    ) {
+      // Mid-seek dip: every scrub seek drops readyState for a frame or two
+      // while the decoder works. Keep showing the slot's last uploaded frame
+      // of THIS clip instead of dropping the layer to the background — that
+      // periodic background flash was the J-shuttle "foreign content" defect.
+      // Ownership (clipId + epoch, see SlotFrame) is the foreign-frame guard:
+      // a re-assigned or re-loaded slot draws NOTHING until its own first
+      // frame arrives, because a brief background beats somebody else's
+      // picture.
+      const owned = this.ownedSlotFrame(slot, clip.id);
+      const texture = owned !== null ? this.slotTextures.get(slot.index) : undefined;
+      if (!owned || !texture) return null;
+      return {
+        texture,
+        srcW: owned.width,
+        srcH: owned.height,
+        transform: effectiveTransform(clip, tUs),
+        opacity: effectiveOpacity(clip, tUs),
+        colorAdjust: colorAdjustOf(clip),
+        lut: this.lutFor(clip),
+      };
+    }
 
     let texture = this.slotTextures.get(slot.index);
     if (!texture) {
       texture = this.compositor.createTexture();
       this.slotTextures.set(slot.index, texture);
-      this.slotUploadedAt.delete(slot.index);
+      this.slotFrames.delete(slot.index); // fresh texture holds no frame yet
     }
-    // While playing: fresh frame every rAF. While paused: only re-upload when
-    // the element's time actually changed (seek landed).
+    // While playing: fresh frame every rAF. While paused: re-upload when the
+    // element's time changed, when the frame belongs to another clip/epoch
+    // (slot handover), or when 'seeked' invalidated the stamp (NaN never
+    // compares equal — see SlotFrame.stamp).
     const stamp = video.currentTime;
-    if (this.playing || this.slotUploadedAt.get(slot.index) !== stamp) {
+    const owned = this.ownedSlotFrame(slot, clip.id);
+    if (this.playing || owned === null || owned.stamp !== stamp) {
       this.compositor.upload(texture, video);
-      this.slotUploadedAt.set(slot.index, stamp);
+      if (owned !== null) {
+        owned.stamp = stamp;
+        owned.width = video.videoWidth;
+        owned.height = video.videoHeight;
+      } else {
+        this.slotFrames.set(slot.index, {
+          clipId: clip.id,
+          epoch: slot.epoch,
+          stamp,
+          width: video.videoWidth,
+          height: video.videoHeight,
+        });
+      }
     }
     return {
       texture,

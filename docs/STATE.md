@@ -1,9 +1,13 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-01, özellik turu KAPANDI + kapanış denetimi ONAY, 3 bulgu
-`ozellik-duzeltme` commit'iyle kapatıldı — 7 dilimin 7'si tamam (şema
-linkId/groupId + invariant pass + codegen; track partisyonu; linkId çekirdeği; otomatik
-AV ayrımlı ekleme; klip grupları Ctrl+G; J sessiz kademeli geri tarama 5a+5b; plan:
-`capcut-ve-canva-gibi-hashed-penguin.md`, defter: `PROGRESS.md` §Özellik turu).
+Son güncelleme: 2026-09-02, `ozellik-fix` — kullanıcının bildirdiği "J geri sararken
+yabancı kare" hatası ölçümle doğrulanıp KAPANDI (scrub çukurunda katman arka plana
+düşüyordu; sahiplik-bağlı son-iyi-kare + seeked tazeliği + geriye-preload; 6 probe
+rejiminde 6/6 sıfır ihlal — defter: `PROGRESS.md` §Özellik turu satır F). Öncesi:
+özellik turu 2026-09-01'de KAPANDI + kapanış denetimi ONAY, 3 bulgu `ozellik-duzeltme`
+commit'iyle kapatıldı — 7 dilimin 7'si tamam (şema linkId/groupId + invariant pass +
+codegen; track partisyonu; linkId çekirdeği; otomatik AV ayrımlı ekleme; klip grupları
+Ctrl+G; J sessiz kademeli geri tarama 5a+5b; plan: `capcut-ve-canva-gibi-hashed-penguin.md`,
+defter: `PROGRESS.md` §Özellik turu).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
@@ -67,10 +71,20 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   ölçütü 2026-09-01 kullanıcı kararıyla ≥1,8x'e daraltılıp KAPANDI — açık soru 6),
   örtülü sınıf 41,4→**20,1 s (2,99x)**, dikey 2,10x.
   Defter: `PROGRESS.md` §tur3 #3 + `performans-raporu.md` §12.
-- Son yeşil sayılar (2026-09-01, özellik turu dilim 5b kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1626/1626** (0 skip) · editör 1429 · şema 235 ·
-  Playwright **173/173** (46 spec, 11,1 dk) · build -warnaserror 0 uyarı · tsc + e2e tsc +
-  prod build temiz.
+- **ozellik-fix — J geri taramada yabancı kare** (2026-09-02, kullanıcı hata bildirimi):
+  kök neden ölçümle: her scrub seek'i readyState'i 62-86 ms çukura düşürür ve motor katmanı
+  ÇİZMEYİP arka planı basardı (geri taramalarda örneklerin %55-61'i siyah; fare geri scrub'ı
+  aynı — kusur scrub yolunun); ek olarak paused upload damgası taze kareyi hiç yüklemiyordu
+  (one-behind) ve sınırda geriye-preload yoktu (~240 ms soğuk pencere). Düzeltme frontend-only
+  (`engineV1` SlotFrame sahiplikli dip-cover + `'seeked'` damga düşürme; scheduler
+  `PRELOAD_LOOKBEHIND_US` + seek-öncesi taban yakalama). Sonuç: aynı 6-rejimli probe 6/6
+  SIFIR ihlal; 8x'te rAF ~25 fps dürüst maliyet (poc §2.8). Kalkanlar: `engineV1.scrub.test.ts`
+  + scheduler lookbehind pinleri + `e2e/jkl-shuttle-frames.spec.ts`; negatif kontrol ×3
+  md5-birebir. Defter: `PROGRESS.md` §Özellik turu satır F.
+- Son yeşil sayılar (2026-09-02, `ozellik-fix` kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 38 sn) · editör 1442 ·
+  şema 235 · Playwright **175/175** (47 spec, 11,7 dk) · build -warnaserror 0 uyarı ·
+  tsc + e2e tsc + prod build temiz.
 
 ## Devam edenler
 
@@ -162,13 +176,14 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    (DECISIONS satırı gerekçe + geri-alma koşuluyla: kullanıcı hedefi yeniden yükseltirse
    kendi sözleşme turuyla).
 
-## Ortam notu (2026-09-01 sonu, özellik turu dilim 0-5b — tur kapanışı)
+## Ortam notu (2026-09-02 sonu, `ozellik-fix` kapanışı)
 
 Servisler bu session'ın scratchpad'inden (`…\5fc88602-…\scratchpad`): API `api-run-oz1` +
-Worker `worker-run-oz1` (ikisi de ozellik-1 HEAD yayını; dilim 2, 3, 4, 5a ve 5b backend'e
-DOKUNMADI — yayın hâlâ HEAD-eşdeğeri; tazelik: yüklü modül yolu + Contracts.dll'de UTF-8
-`LinkId`/`GroupId` iğnesi) + Vite :5173 (dev server kaynaktan servis eder — dilim 2-5b'nin
-editör değişiklikleri restart'sız canlı, sağlık `:5173` 200 ile doğrulandı). Önceki session'ın `api-run-g31`/`worker-run-g3d` süreçleri DURDURULDU
-(bayat Contracts taşıyorlardı). Docker üçlüsü healthy; kaçak ffmpeg yok. Perf fixtürleri
-`perf20@videoedit.test` hesabında duruyor. DİKKAT: yayın dizinleri session-scratchpad'te
-yaşar — yeni session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.
+Worker `worker-run-oz1` (ozellik-1 HEAD yayını; dilim 2-5b, denetim düzeltmesi ve
+`ozellik-fix` backend'e DOKUNMADI — yayın hâlâ HEAD-eşdeğeri; tazelik: yüklü modül yolu,
+PID 235316/217172) + Vite :5173 (dev server kaynaktan servis eder — fix'in editör
+değişiklikleri restart'sız canlı, sağlık `:5173` 200 ile doğrulandı). Docker üçlüsü
+healthy; kaçak ffmpeg yok. Perf fixtürleri `perf20@videoedit.test` hesabında duruyor;
+e2e hesap birikimi 2026-09-02'de süpürüldü (64 hesap, demo korundu). DİKKAT: yayın
+dizinleri session-scratchpad'te yaşar — yeni session onları bulamaz/güvenemez,
+`ortam-kaldirma` ile kendi yayınını yapmalı.

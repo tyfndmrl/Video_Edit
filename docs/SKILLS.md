@@ -1,5 +1,5 @@
 # SKILLS — operasyonel prosedür envanteri
-Son güncelleme: 2026-08-31. Bu dosya, oturum hafızasında yaşayıp tekrar tekrar keşfedilen
+Son güncelleme: 2026-09-02. Bu dosya, oturum hafızasında yaşayıp tekrar tekrar keşfedilen
 prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutlardan türetildi.
 
 ### ortam-kaldirma
@@ -37,7 +37,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   önce kabuğa yaz (`$env:VIDEOEDIT_FONT_ROOT=...`), süreç mirasla alır (2026-08-31'de ölçüldü).
   (7) Docker Desktop'ı komutla açarken engine ~1-3 dk sonra hazır olur; `docker version` o ana kadar
   pipe hatasıyla ASILIR — zaman aşımı verip yokla.
-- Son doğrulanma: 2026-09-01
+- Son doğrulanma: 2026-09-02
 
 ### ikili-tazelik-dogrulama
 - Amaç: Canlı API/Worker'ın gerçekten hedef commit'in kodunu koştuğunu kanıtlamak.
@@ -55,7 +55,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   Değişiklik yeni tanımlayıcı/dize üretmediyse (ör. yalnız mevcut metod gövdesi değişti) iğne YOKTUR —
   o zaman kanıt yüklü modül yolu + DAVRANIŞSAL iğnedir (ör. canlı işten yakalanan filtergraph'ta yeni
   satır şekli; 2026-09-01 budama yayınında böyle kanıtlandı).
-- Son doğrulanma: 2026-09-01
+- Son doğrulanma: 2026-09-02
 
 ### test-paketleri
 - Amaç: Dört kapının tamamını koşmak (commit öncesi zorunlu).
@@ -67,21 +67,21 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   pnpm -r test                                           # editör + timeline-schema vitest
   pnpm --filter @videoedit/editor exec tsc -b            # + apps/editor'da: npx tsc -p e2e/tsconfig.json --noEmit
   ```
-- Doğrulama: 2026-09-01 (özellik turu dilim 5b sonu) yeşil sayıları: backend 1626 · editör 1429 · şema 235 (bunlar BÜYÜR; skip 0 sabittir).
+- Doğrulama: 2026-09-02 (ozellik-fix sonu) yeşil sayıları: backend 1626 · editör 1442 · şema 235 (bunlar BÜYÜR; skip 0 sabittir).
 - Bilinen sınırlar/tuzaklar: MinIO'suz koşumda MinIO+ffmpeg kapılı testler skip'lenir (2026-08-31 ölçümü: 41) —
   skip>0 görürsen önce Docker'a bak. Lint YOK (kullanıcı kararı); "bitti" tanımı: build + testler + tsc.
-- Son doğrulanma: 2026-09-01
+- Son doğrulanma: 2026-09-02
 
 ### playwright-tam-suite
 - Amaç: Gerçek fare/klavye e2e paketinin tamamı.
 - Ne zaman tetiklenir: Kapanış doğrulamaları; UI'a dokunan dilimler.
 - Ne zaman KULLANILMAZ: Ortamın TEK SAHİBİ değilsen — paralel ajan/koşum sahte kırmızı üretir (ölçülmüş ders).
 - Girdi: ortam-kaldirma tamam + ikili-tazelik doğrulanmış + kaçak ffmpeg yok (`Get-Process ffmpeg`).
-- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-09-01 (özellik turu dilim 5b sonu): 173 test / 46 spec / 11,1 dk.
+- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-09-02 (ozellik-fix sonu): 175 test / 47 spec / 11,7 dk.
 - Doğrulama: 0 failed, 0 skipped (ffmpeg PATH'teyse koşullu skip'ler tetiklenmez).
 - Bilinen sınırlar/tuzaklar: Sentetik girdi (dispatchEvent) YASAK — kanıt sayılmaz (review-gate kural 3).
   Süite testleri sadece Chromium'da.
-- Son doğrulanma: 2026-09-01
+- Son doğrulanma: 2026-09-02
 
 ### negatif-kontrol-protokolu
 - Amaç: Yeni/değişen her korumanın gerçekten yük taşıdığını kanıtlamak.
@@ -92,7 +92,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   DLL kullanır; geri yükleme sonrası dosyaya touch + rebuild ZORUNLU. (2) PowerShell `Get-Content` ANSI
   okuması Türkçe karakterleri bozar (mojibake) — dosya yazımı daima Write/Edit araçlarıyla. (3) `git checkout`
   autocrlf smudge'ı satır sonlarını değiştirebilir — bayt-birebirlik iddiasını hash'le kur.
-- Son doğrulanma: 2026-09-01
+- Son doğrulanma: 2026-09-02
 
 ### migration-uygulama
 - Amaç: EF migration'ını canlı DB'ye uygulamak.
@@ -155,7 +155,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   ölçüm/idor-* hesapları desen DIŞIDIR ve bilerek silinmez. (4) Betik ASCII'dir — repo ps1
   kuralı: BOM'suz UTF-8'i PS 5.1 ANSI okur, Türkçe karakter/em-dash akıllı tırnağa dönüşüp
   parse'ı KIRAR (2026-08-31'de ölçüldü).
-- Son doğrulanma: 2026-08-31
+- Son doğrulanma: 2026-09-02 (ozellik-fix kapanışı: 64 hesap / 1893 proje süpürüldü, demo korundu)
 
 ### borc-kapama-protokolu
 - Amaç: Bir işi kullanıcının yerleşik disipliniyle kapatmak.

@@ -1,6 +1,32 @@
 # CHANGELOG — ters kronolojik
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
+## 2026-09-02
+- ozellik-fix — J geri taramada "yabancı kare" (kullanıcı hata bildirimi; teşhis ayrı ajanın
+  ölçümü, repro + düzeltme + doğrulama bu session'ın KENDİ koşumu): her scrub seek'i elementin
+  readyState'ini 62-86 ms HAVE_CURRENT_DATA altına düşürüyor ve `videoDrawItem` o pencerede
+  null dönüp katmanı ARKA PLANA düşürüyordu (geri taramalarda örneklerin %55-61'i siyah flaş,
+  ~160 ms periyot; kusur J'ye özgü değil — gerçek fare geri scrub'ı aynı, İLERİ oynatma 0);
+  ek: paused upload damgası currentTime'ın set-anı değerini okuduğundan taze kare hiç
+  yüklenmiyordu (one-behind) ve geriye preload olmadığından sınırda ~240 ms soğuk pencere.
+  ÇÖZÜM (frontend-only; engineV1 + scheduler): (1) `SlotFrame` sahipliği (clipId+epoch+damga+boyut)
+  ile DIP-COVER — çukurda slotun son yüklenen karesi çizilir, sahiplik el değiştirdiyse ASLA
+  (kısa arka plan > yabancı kare); (2) `'seeked'` damga düşürme (NaN) — taze kare sonraki rAF'ta
+  yüklenir; (3) `PRELOAD_LOOKBEHIND_US` (1 sn, ileri double-buffer'ın aynası) — az önce biten
+  klip kendi SONUNDA ılık + applyScrub/preciseSeek aktifleşen ısınmış elementten seek-ÖNCESİ
+  taban yakalama (kaynak-penceresi bekçili). SONUÇ: teşhis probunun 6 rejiminde (sınır/orta ×
+  1x-8x + iki kontrol) siyah=0 yanlisRenk=0 koşu=0 (önce: sinir-2x 127/202 … fare-scrub-geri
+  64/106); dürüst kalan maliyet 8x'te rAF ~25 fps (içerik yeniliği zaten 80 ms throttle'la
+  12,5 Hz — poc §2.8). Kalıcı kalkan: `engineV1.scrub.test.ts` (4 pin) + scheduler lookbehind
+  3 pin + gerçek-klavye `e2e/jkl-shuttle-frames.spec.ts` (renk-ayrımlı gerçek medya, 12,8 sn).
+  Negatif kontrol ×3 (md5-birebir): dip-cover söküldü → 2 birim + e2e '148 örnekte siyah=90'
+  KIRMIZI; seeked-düşürme söküldü → one-behind birimi 'expected 2 to be 3' KIRMIZI; lookbehind
+  söküldü → 3 scheduler pini + sınır birimi KIRMIZI. Güncellenen eski pinler (yeni politika):
+  transition negatif kontrolü ('a elementini kaybeder' → 'handle materyaline İLERLETİLMEZ,
+  element geriye-preload olarak ılık') + scheduler transition negatif kontrolü (yalnız
+  priority-0 pinlenir). DECISIONS satırı + poc-bilinen-sinirlar §2.8 düzeltme paragrafı.
+  Defter: `PROGRESS.md` §Özellik turu satır F.
+
 ## 2026-09-01
 - ozellik-duzeltme — özellik turu kapanış denetimi bulguları (ONAY + 3 bulgu, üçü KAPANDI):
   (1) deleteTrack kilitli link-eşin bağını sessizce siliyordu → kilitli-eş varsa track silme

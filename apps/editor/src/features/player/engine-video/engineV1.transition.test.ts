@@ -287,12 +287,20 @@ describe('element scheduling inside the window (§5.3 handles)', () => {
     expect(elementOf(engine, 'b')!.currentTime).toBeCloseTo(1.4, 3);
   });
 
-  it('NEGATIVE CONTROL: with no transition the outgoing clip loses its element at the cut', () => {
+  it('NEGATIVE CONTROL: with no transition the outgoing clip is NOT scheduled on handle material', () => {
     const engine = makeEngine();
     engine.load(transitionDoc(false), videoAsset);
     scrubTo(engine, CUT_US + 400_000);
 
-    expect(elementOf(engine, 'a'), 'nothing to show it any more').toBeNull();
+    // The backward double-buffer keeps A's element warm for reverse scrubbing…
+    const a = elementOf(engine, 'a');
+    expect(a, 'the just-ended clip stays warm (backward preload)').not.toBeNull();
+    // …but the §5.3 HANDLE scheduling is off: A is not advanced to 6.4 s the
+    // way the with-transition test above requires, and its picture is not part
+    // of the composition (hard cut draws the single incoming clip).
+    expect(a!.currentTime).not.toBeCloseTo(6.4, 3);
+    expect(harness.lastRender).toHaveLength(1);
+    expect(harness.lastRender[0]!.kind, 'hard cut: single picture, no pair').toBeUndefined();
     expect(elementOf(engine, 'b')).not.toBeNull();
   });
 });

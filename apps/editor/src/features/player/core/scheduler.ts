@@ -26,6 +26,16 @@ import {
 export const POOL_SIZE = 4;
 /** Start preparing the next clip ~1 s before the cut (design §4.2). */
 export const PRELOAD_LOOKAHEAD_US = 1_000_000;
+/**
+ * Keep the PREVIOUS clip of a track warm for ~1 s after its end — the mirror
+ * of the forward double-buffer. Backward scrubbing (J shuttle, mouse drag)
+ * crosses cuts in the other direction, and without this the just-left clip's
+ * element is torn down immediately: re-entering it costs a cold src load
+ * (measured ~240 ms to HAVE_CURRENT_DATA even from cache), which the preview
+ * shows as a background flash at every cut. Same 1 s budget as the forward
+ * window keeps the pool pressure symmetric.
+ */
+export const PRELOAD_LOOKBEHIND_US = 1_000_000;
 
 export interface SlotRequest {
   clipId: Uuid;
@@ -95,10 +105,13 @@ export function computeSlotRequests(
   doc: TimelineDoc,
   tUs: MicroSec,
   lookaheadUs: MicroSec = PRELOAD_LOOKAHEAD_US,
+  lookbehindUs: MicroSec = PRELOAD_LOOKBEHIND_US,
 ): SlotRequest[] {
   const requests: SlotRequest[] = [];
   for (let trackIndex = 0; trackIndex < doc.tracks.length; trackIndex++) {
     const track = doc.tracks[trackIndex]!;
+    /** Nearest clip that already ENDED within the lookbehind (backward preload). */
+    let prevClip: MediaClip | null = null;
     /**
      * Inside a transition window BOTH clips are on screen and audible
      * (rendering-semantics §5.3/§5.4), so both are priority 0 — a transition
@@ -144,8 +157,25 @@ export function computeSlotRequests(
           rate: clip.speed.rate,
         });
         break; // one preload per track is enough (double-buffer)
+      } else if (clipEndUs(clip) <= tUs && tUs - clipEndUs(clip) <= lookbehindUs) {
+        // Clips are start-sorted, so the LAST one seen here is the nearest
+        // previous clip — the only one worth a backward double-buffer.
+        prevClip = clip;
       }
       if (clipEndUs(clip) > tUs + lookaheadUs) break; // sorted — rest is far future
+    }
+    if (prevClip !== null) {
+      requests.push({
+        clipId: prevClip.id,
+        assetId: prevClip.assetId,
+        // Same urgency encoding as the forward preload: sooner = smaller.
+        priority: 1 + (tUs - clipEndUs(prevClip)),
+        hidden: track.hidden,
+        trackIndex,
+        // Warm the decoder at the clip's END — where backward entry lands.
+        sourceTimeUs: sourceTimeUs(prevClip, clipEndUs(prevClip)),
+        rate: prevClip.speed.rate,
+      });
     }
   }
   requests.sort(compareSlotRequests);

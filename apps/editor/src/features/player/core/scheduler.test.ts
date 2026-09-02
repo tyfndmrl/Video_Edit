@@ -121,6 +121,56 @@ describe('computeSlotRequests', () => {
   });
 });
 
+describe('computeSlotRequests backward preload (reverse-scrub double-buffer)', () => {
+  // A=[0,5 s) kaynak [1,6 s), B=[5,10 s): J/fare GERİ taraması B'den A'ya
+  // girerken A'nın decoder'ı soğuk kurulur (ölçülen ~240 ms) — ileri preload'un
+  // aynası olarak az önce biten klip ~1 sn ılık tutulur.
+  const a = mkMediaClip({
+    id: 'a',
+    assetId: 'A',
+    startUs: 0,
+    durationUs: 5 * SEC,
+    sourceInUs: 1 * SEC,
+    sourceOutUs: 6 * SEC,
+  });
+  const b = mkMediaClip({
+    id: 'b',
+    assetId: 'B',
+    startUs: 5 * SEC,
+    durationUs: 5 * SEC,
+    sourceInUs: 0,
+    sourceOutUs: 5 * SEC,
+  });
+
+  it('the just-left clip is wanted for ~1 s after its end, positioned at ITS end', () => {
+    const doc = mkDoc([mkTrack('t', [a, b])]);
+    const requests = computeSlotRequests(doc, 5_400_000, 1 * SEC, 1 * SEC);
+    expect(requests[0]).toMatchObject({ clipId: 'b', priority: 0 });
+    // Aciliyet kodlaması ileri preload'la aynı (yakın = küçük); konum, geri
+    // girişin ineceği yer olan klibin KENDİ SONU (kaynak 6 s).
+    expect(requests[1]).toMatchObject({
+      clipId: 'a',
+      priority: 1 + 400_000,
+      sourceTimeUs: 6 * SEC,
+    });
+  });
+
+  it('farther than the lookbehind: not wanted (negative control)', () => {
+    const doc = mkDoc([mkTrack('t', [a, b])]);
+    const requests = computeSlotRequests(doc, 6_200_000, 1 * SEC, 1 * SEC);
+    expect(requests.map((r) => r.clipId)).toEqual(['b']);
+  });
+
+  it('only the NEAREST previous clip per track is kept warm', () => {
+    const p1 = mkMediaClip({ id: 'p1', assetId: 'P1', startUs: 0, durationUs: 1_800_000 });
+    const p2 = mkMediaClip({ id: 'p2', assetId: 'P2', startUs: 1_800_000, durationUs: 200_000 });
+    const act = mkMediaClip({ id: 'act', assetId: 'ACT', startUs: 2 * SEC, durationUs: 8 * SEC });
+    const doc = mkDoc([mkTrack('t', [p1, p2, act])]);
+    const requests = computeSlotRequests(doc, 2_500_000, 1 * SEC, 1 * SEC);
+    expect(requests.map((r) => r.clipId).sort()).toEqual(['act', 'p2']);
+  });
+});
+
 describe('computeSlotRequests inside a transition window (§5.3)', () => {
   /** A/B cut at 5 s with a 1 s crossfade -> window [4.5 s, 5.5 s). */
   function fixture() {
@@ -163,12 +213,17 @@ describe('computeSlotRequests inside a transition window (§5.3)', () => {
     expect(after.find((r) => r.clipId === 'b')!.sourceTimeUs).toBe(2_400_000);
   });
 
-  it('without the transition the same instant wants ONE element (negative control)', () => {
+  it('without the transition the same instant wants ONE ACTIVE element (negative control)', () => {
     const { doc } = fixture();
     delete (doc.tracks[0]!.clips[0] as { transitionOut?: unknown }).transitionOut;
     delete (doc.tracks[0]!.clips[1] as { transitionIn?: unknown }).transitionIn;
     const requests = computeSlotRequests(doc, 5_400_000, 1 * SEC);
-    expect(requests.map((r) => r.clipId)).toEqual(['b']);
+    // The PAIR mechanism is off: only B is urgent. A is still wanted, but as a
+    // backward PRELOAD (warm decoder for reverse scrubbing) — never priority 0,
+    // so it can never outrank a real layer the way a transition side does.
+    expect(requests.filter((r) => r.priority === 0).map((r) => r.clipId)).toEqual(['b']);
+    const a = requests.find((r) => r.clipId === 'a');
+    expect(a!.priority).toBe(1 + 400_000);
   });
 
   it('the pair survives an over-subscribed pool (planPool keeps both)', () => {
