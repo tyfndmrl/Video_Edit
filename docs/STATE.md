@@ -1,8 +1,13 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-02, `ozellik-fix` — kullanıcının bildirdiği "J geri sararken
-yabancı kare" hatası ölçümle doğrulanıp KAPANDI (scrub çukurunda katman arka plana
-düşüyordu; sahiplik-bağlı son-iyi-kare + seeked tazeliği + geriye-preload; 6 probe
-rejiminde 6/6 sıfır ihlal — defter: `PROGRESS.md` §Özellik turu satır F). Öncesi:
+Son güncelleme: 2026-09-03, `panel-1a`+`panel-1b` — **panel turu dilim 1 (elle zaman kodu
+girişi) KAPANDI**: transport çubuğundaki playhead göstergesi düzenlenebilir alan oldu
+(saat okuması, ceil'li ters dönüşüm, tipli ret/bildirim kodları) ve proje sonu kelepçesi
+TEK tanımdan alan + ok/step tuşları + cetvel scrub'ına yayıldı. FRONTEND-only. Defter:
+`PROGRESS.md` §Özellik turu 2 dilim 1. Öncesi: 2026-09-02 `ozellik-fix` — kullanıcının
+bildirdiği "J geri sararken yabancı kare" hatası ölçümle doğrulanıp KAPANDI (scrub
+çukurunda katman arka plana düşüyordu; sahiplik-bağlı son-iyi-kare + seeked tazeliği +
+geriye-preload; 6 probe rejiminde 6/6 sıfır ihlal — `PROGRESS.md` §Özellik turu satır F).
+Öncesi:
 özellik turu 2026-09-01'de KAPANDI + kapanış denetimi ONAY, 3 bulgu `ozellik-duzeltme`
 commit'iyle kapatıldı — 7 dilimin 7'si tamam (şema linkId/groupId + invariant pass +
 codegen; track partisyonu; linkId çekirdeği; otomatik AV ayrımlı ekleme; klip grupları
@@ -81,14 +86,26 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   SIFIR ihlal; 8x'te rAF ~25 fps dürüst maliyet (poc §2.8). Kalkanlar: `engineV1.scrub.test.ts`
   + scheduler lookbehind pinleri + `e2e/jkl-shuttle-frames.spec.ts`; negatif kontrol ×3
   md5-birebir. Defter: `PROGRESS.md` §Özellik turu satır F.
-- Son yeşil sayılar (2026-09-02, `ozellik-fix` kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 38 sn) · editör 1442 ·
-  şema 235 · Playwright **175/175** (47 spec, 11,7 dk) · build -warnaserror 0 uyarı ·
-  tsc + e2e tsc + prod build temiz.
+- Son yeşil sayılar (2026-09-03, `panel-1b` kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 42 sn) · editör **1493** ·
+  şema 235 · Playwright **185/185** (48 spec, 11,7 dk, 0 skip) · build -warnaserror 0 uyarı ·
+  tsc -b + e2e tsc + prod build temiz. (Önceki taban 2026-09-02: editör 1445 · Playwright
+  175/175 / 47 spec.)
 
 ## Devam edenler
 
-- YOK — özellik turu 2026-09-01'de KAPANDI (aşağıdaki kayıt tur kapanış özetidir).
+- **Panel turu (2026-09-02 onaylı plan — 3 panel özelliği + kapanış denetimi): dilim 1 ✅,
+  dilim 2-3 + denetim SIRADA.** Dilim 1 (elle zaman kodu girişi) iki commit'te kapandı:
+  `panel-1a` saf ayrıştırıcı + Türkçe sözlük (`features/player/timecodeInput.ts` +
+  `playerFeedback.ts`; saat okuması, ceil'li ters dönüşüm, `feedbackCoverage` muhafızı
+  genişletildi), `panel-1b` tel + kelepçe (`TransportTimecode.tsx`, `PlayerPanel` teli,
+  `timelineOps.clampPlayheadUs` ile alan + ok/step + cetvel scrub'ı TEK üst sınırdan).
+  FRONTEND-only: backend/şema DEĞİŞMEDİ. Negatif kontrol ×4 (md5-birebir). Doküman:
+  `rendering-semantics §1.5` sözde-kodu floor'a düzeltildi (kod doğruydu). Defter:
+  `PROGRESS.md` §Özellik turu 2 dilim 1. **Sıradaki iş: dilim 2 — timeline dikey
+  boyutlandırma; 2a `scrollY` kelepçe kusuru AYRI ve ÖNCE gelen commit.**
+
+- Önceki tur: özellik turu 2026-09-01'de KAPANDI (aşağıdaki kayıt tur kapanış özetidir).
   Kapanış denetimi ONAY verdi; 3 bulgusu (deleteTrack kilitli-eş sessiz bağ silme →
   tümden RED; Ctrl+X yarım-çift → kes LINK-kapanışlı pano, Ctrl+C bilinçli asimetrik;
   CLAUDE.md yetenek haritası senkronu) `ozellik-duzeltme` commit'iyle kapatıldı —
@@ -175,15 +192,22 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    1,85x) + örtülü sınıf 2,99x + dikey 2,10x + 720p 1,94x. (d) N-paralel AÇILMADI
    (DECISIONS satırı gerekçe + geri-alma koşuluyla: kullanıcı hedefi yeniden yükseltirse
    kendi sözleşme turuyla).
+7. **Zaman kodu büyüklük sınırı (panel-1a, ONAY BEKLİYOR):** ayrıştırıcı sonucu 24 saatle
+   sınırlar ve aşanı `'timecode too large'` ile TİPLİ olarak reddeder. Bu kural onaylı planın
+   `100:00:00` (100 saat) örneğiyle ÇELİŞİR — plan o örneği "baştaki alan takvim sınırına
+   uymaz" serbestliğinin örneği olarak verir; büyüklük kapısı görev talimatındaki ayrı bir
+   kuraldır ve öyle uygulandı (gerekçe: `docs/DECISIONS.md` panel-1a satırı). 24 saat altındaki
+   her hedef zaten proje sonuna kelepçelenir, yani sınır yalnız absürt girdileri görünür kılar.
+   Kullanıcı tavanı kaldırmak ya da değiştirmek isterse tek sabit (`MAX_TIMECODE_US`) ve iki
+   test satırı değişir.
 
-## Ortam notu (2026-09-02 sonu, `ozellik-fix` kapanışı)
+## Ortam notu (2026-09-03, `panel-1b` kapanışı)
 
-Servisler bu session'ın scratchpad'inden (`…\5fc88602-…\scratchpad`): API `api-run-oz1` +
-Worker `worker-run-oz1` (ozellik-1 HEAD yayını; dilim 2-5b, denetim düzeltmesi ve
-`ozellik-fix` backend'e DOKUNMADI — yayın hâlâ HEAD-eşdeğeri; tazelik: yüklü modül yolu,
-PID 235316/217172) + Vite :5173 (dev server kaynaktan servis eder — fix'in editör
-değişiklikleri restart'sız canlı, sağlık `:5173` 200 ile doğrulandı). Docker üçlüsü
-healthy; kaçak ffmpeg yok. Perf fixtürleri `perf20@videoedit.test` hesabında duruyor;
-e2e hesap birikimi 2026-09-02'de süpürüldü (64 hesap, demo korundu). DİKKAT: yayın
-dizinleri session-scratchpad'te yaşar — yeni session onları bulamaz/güvenemez,
-`ortam-kaldirma` ile kendi yayınını yapmalı.
+Önceki turun süreçleri (`api-run-oz1`/`worker-run-oz1`, PID 235316/217172) ÖLMÜŞ bulundu —
+bu session kendi yayınını yaptı: `api-run-p1` + `worker-run-p1` (HEAD'den `dotnet publish`,
+scratchpad `…\5fc88602-…\scratchpad`). Tazelik kanıtı: API PID 352088'in YÜKLÜ modül yolu
+`…\api-run-p1\VideoEdit.Api.dll`, worker PID 304040; font parmak izi API `/health` ile
+worker açılış satırında BİREBİR (`f8620403…861d`, 16/16 dosya). Vite :5173 (200; dev server
+kaynaktan servis eder — bu dilim FRONTEND-only, restart gerekmedi). Docker üçlüsü healthy;
+kaçak ffmpeg 0 (suite öncesi ve sonrası sayıldı). DİKKAT: yayın dizinleri session-scratchpad'te
+yaşar — yeni session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.

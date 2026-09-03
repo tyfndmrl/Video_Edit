@@ -4060,6 +4060,22 @@ export function projectEndUs(d: TimelineDoc): MicroSec {
   return end;
 }
 
+/**
+ * Playhead'in gidebileceği aralık: `[0, projectEndUs]`.
+ *
+ * Kullanıcı kararı (plan §Dilim 1): "hepsi kelepçelensin" — zaman kodu alanı,
+ * ok/step tuşları ve cetvel scrub'ı AYNI üst sınırı okur. Sınır TEK yerden
+ * gelir; her çağıran kendi `Math.min`'ini yazsaydı biri güncellenip öteki
+ * unutulduğunda playhead içeriğin ötesine yalnız BAZI yollardan kaçardı.
+ *
+ * Boş projede (içerik yok) üst sınır 0'dır: playhead başta kalır. Bu bilinçli —
+ * boş bir belgede "ileri" gidilecek bir yer yoktur ve motor da orada tek kare
+ * üretemez.
+ */
+export function clampPlayheadUs(timeUs: MicroSec, d: TimelineDoc): MicroSec {
+  return Math.min(projectEndUs(d), Math.max(0, Math.round(timeUs)));
+}
+
 export function selectAllClips(): void {
   const ids: Uuid[] = [];
   for (const track of doc().tracks) for (const clip of track.clips) ids.push(clip.id);

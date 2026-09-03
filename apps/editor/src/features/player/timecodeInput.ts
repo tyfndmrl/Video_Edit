@@ -168,7 +168,8 @@ export function parseTimecode(raw: unknown, fps: Rational): ParsedTimecode {
 
   // İç alanlar takvim-KATI: `1:75` yazan kullanıcı 2 dk 15 sn demek istemiş
   // olabilir ama zaman kodu okuması değildir; sessizce taşırmak yerine söyle.
-  // (Baştaki alan bilinçle serbesttir: `90` = 90 sn, `100:00:00` = 100 saat.)
+  // Baştaki alan bilinçle serbesttir (`90` = 90 sn, `100:00` = 100 dk); onun
+  // sınırı takvim değil, aşağıdaki büyüklük kapısıdır.
   if (fields.length >= 2 && ss > 59) return reject(TIMECODE_FIELD_OUT_OF_RANGE);
   if (fields.length >= 3 && mm > 59) return reject(TIMECODE_FIELD_OUT_OF_RANGE);
   if (fields.length === 4 && ff >= fpsTC) {

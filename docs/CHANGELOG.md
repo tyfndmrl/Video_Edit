@@ -1,6 +1,33 @@
 # CHANGELOG — ters kronolojik
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
+## 2026-09-03
+- panel-1a / panel-1b — **elle zaman kodu girişi** (panel turu dilim 1, FRONTEND-only):
+  transport çubuğundaki playhead göstergesi düzenlenebilir bir alan oldu; yazılan zaman kodu
+  playhead'i o ana götürür. **1a (saf çekirdek):** yeni `features/player/timecodeInput.ts`
+  (`parseTimecode` / `commitTimecodeText` / `displayTimecode` — DOM'suz, hiçbir girdide
+  fırlatmaz) + `playerFeedback.ts` Türkçe tablosu. Dilbilgisi kullanıcı kararına göre SAAT
+  okumasıdır (`1:30:00` = 1 sa 30 dk); baştaki alan takvim-serbest (`90` = 90 sn), iç alanlar
+  katı (MM/SS ≤ 59, FF < nominal fps — `maxFrame` mesajda söylenir), `;` ayrı kod alır,
+  sonuç 24 saati aşamaz. Hedef µs = `formatTimecode`'u metne eşitleyen EN KÜÇÜK tamsayı
+  (`ceil(kare·den·1e6/num)`, taşma-güvenli): `frameToUs` half-up olduğu için 30/1'de kare 1'i
+  33 333 µs yapar ve `formatTimecode(33333)` "00:00:00:00" der (`time-vectors.json` pini) —
+  alan yazılanı kaybederdi. `feedbackCoverage` muhafızına yeni kaynak+tablo dosyası eklendi.
+  **1b (tel + kelepçe):** yeni `TransportTimecode.tsx` (Fragment döndürür — transport çubuğuna
+  YENİ SATIR eklemez, sahne yüksekliği ve gizmo kökeni kaymaz); odakta ayna DONAR, Enter
+  commit eder ve odak kalır, dokunulmamış blur commit ETMEZ (userSeekSeq artışı shuttle'ı
+  iptal ederdi), Escape geri alır, Enter'da ret metni KORUR + kırmızı gerekçe yazar.
+  Yazım `setPlayheadUs(t, 'user')` ile (tek yazım yolu; `'engine'` duraklamışken sessizce
+  düşer — negatif kontrolde ölçüldü). Kelepçe kullanıcı kararıyla TÜM yollara yayıldı:
+  yeni `timelineOps.clampPlayheadUs` (üst sınır `projectEndUs`) alan + dispatcher ok/step +
+  cetvel scrub'ı için TEK tanım; boş projede üst sınır 0'dır (bilinçli, teste çivili).
+  Negatif kontrol ×4 (hepsi md5-birebir geri): ceil→half-up → e2e off-by-one `Expected 33334 /
+  Received 33333`; `'user'`→`'engine'` → e2e `Expected 5000000 / Received 10000000` (yazım
+  sessizce düştü); kelepçe söküldü → `Expected 82000000 / Received 90000000`; notice kodu
+  tablodan silindi → `feedbackCoverage` 2 test kırmızı. Doküman: `rendering-semantics §1.5`
+  sözde-kodu `frameFromUs` (half-up) diyordu — kod/C#/vektör FLOOR kullanıyor, satır düzeltildi
+  ve ters yön (girişte ceil) yazıldı; kod DEĞİŞMEDİ. Defter: `PROGRESS.md` §Özellik turu 2.
+
 ## 2026-09-02
 - ozellik-fix-pin — dip-cover sahiplik bekçisi birim pinleri (bağımsız denetim bulgusu):
   `ownedSlotFrame`'in clipId+epoch kontrolü `!frame`'e zayıflatıldığında 4 mevcut birim +

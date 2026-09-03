@@ -154,12 +154,40 @@ describe('playback keys', () => {
 
 describe('playhead navigation', () => {
   it('ArrowRight/Left step exactly one project frame (30 fps grid)', () => {
+    // Content is REQUIRED for a forward step: the playhead is clamped to
+    // projectEndUs (panel-1b), and an empty document's end is 0.
+    seedClip();
     handleShortcut(key({ key: 'ArrowRight' }));
     expect(useEditorStore.getState().playheadUs).toBe(33_333); // frameToUs(1, 30/1)
     handleShortcut(key({ key: 'ArrowRight' }));
     expect(useEditorStore.getState().playheadUs).toBe(66_667); // frameToUs(2)
     handleShortcut(key({ key: 'ArrowLeft' }));
     expect(useEditorStore.getState().playheadUs).toBe(33_333);
+  });
+
+  /**
+   * Kelepçe yayılımı (panel-1b, kullanıcı kararı "hepsi kelepçelensin"):
+   * ok/step yolları içeriğin sonunu AŞAMAZ. Üst sınır zaman kodu alanı ve
+   * cetvel scrub'ı ile aynı tanımdan (`timelineOps.clampPlayheadUs`) gelir.
+   */
+  it('ok/step tuşları proje sonunu aşamaz; boş projede playhead 0\'da kalır', () => {
+    seedClip(); // içerik [0, 4 sn)
+    handleShortcut(key({ key: 'End' }));
+    expect(useEditorStore.getState().playheadUs).toBe(4 * US);
+    handleShortcut(key({ key: 'ArrowRight' }));
+    expect(useEditorStore.getState().playheadUs).toBe(4 * US);
+    handleShortcut(key({ key: 'ArrowRight', shiftKey: true }));
+    expect(useEditorStore.getState().playheadUs).toBe(4 * US);
+    // Geri adım hâlâ serbest (kelepçe yalnız üst sınırdır).
+    handleShortcut(key({ key: 'ArrowLeft' }));
+    expect(useEditorStore.getState().playheadUs).toBeLessThan(4 * US);
+
+    // Boş belge: gidilecek yer yok — BİLİNÇLİ davranış.
+    useDocStore.getState().loadDoc(createEmptyDoc(PROJECT_ID, { ...defaultProjectSettings }));
+    useEditorStore.getState().setPlayheadUs(0);
+    handleShortcut(key({ key: 'ArrowRight' }));
+    handleShortcut(key({ key: 'ArrowRight', shiftKey: true }));
+    expect(useEditorStore.getState().playheadUs).toBe(0);
   });
 
   it('Shift+Arrow steps one second; Home/End jump to bounds', () => {

@@ -98,6 +98,10 @@ test.describe('Erişilebilirlik — klavye ve roller', () => {
       'Oturumu kapat', // TopBar "Çıkış"
       'Dosya seç',
       'Oynat',
+      // panel-1b: transport zaman kodu artık düzenlenebilir bir alan. Fareye
+      // erişemeyen kullanıcı playhead'i buradan yazabilmeli — alanı odak
+      // sırasının dışına almak (tabIndex=-1) bu iddiayı kırar.
+      'Playhead zaman kodu',
       'Video track ekle',
       'Sığdır (Shift+Z)',
     ]) {

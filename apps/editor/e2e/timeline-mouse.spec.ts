@@ -318,6 +318,13 @@ test.describe('Timeline — gerçek fare', () => {
    * Neden sadece tek tık değil SÜRÜKLEME de: cetvelde basılı tutup gezinmek
    * pointer capture'a bağlıdır ve imleç canvas'ın dışına çıktığında da
    * sürmelidir — "ıskalama" en çok orada beklenirdi.
+   *
+   * PANEL-1B UYARLAMASI: cetvel scrub'ı artık proje sonunda KELEPÇELENİR
+   * (kullanıcı kararı "hepsi kelepçelensin"). Uzak zoom'da içerik cetvelin
+   * yalnız ilk ~%7'sini kaplar, gerisi kelepçe bölgesidir — "tıklanan piksele
+   * oturur" iddiası ancak playhead'in GERÇEKTEN gidebildiği bölgede ölçülebilir.
+   * Bu yüzden hem tıklama noktaları hem sürükleme hedefi kelepçe sınırından
+   * türetilir; kelepçenin kendisi `timecode-input.spec.ts`te ölçülür.
    */
   test("cetvel scrub'ı zoom uçlarında da tıklanan piksele oturur", async ({ editor }) => {
     const page = editor.page;
@@ -333,18 +340,31 @@ test.describe('Timeline — gerçek fare', () => {
       const wrap = await editor.timeline.wrapBox();
       const y = wrap.y + 14; // cetvel şeridi (RULER_H = 28)
 
+      // Kelepçe sınırının ekran koordinatı ve altındaki kullanılabilir şerit.
+      const zoomState = await editor.state();
+      const capX = wrap.x + (SEED_TIMES.contentEndUs - zoomState.scrollUs) * zoomState.pxPerUs;
+      expect(
+        capX - wrap.x,
+        `zoom=${direction}: proje sonu görünür alanda değil — ölçüm ön koşulu yok`,
+      ).toBeGreaterThan(40);
+      const usableWidth = Math.min(wrap.width, capX - wrap.x);
+
       for (const fraction of [0.1, 0.3, 0.5, 0.7, 0.9]) {
-        const x = wrap.x + wrap.width * fraction;
+        const x = wrap.x + usableWidth * fraction;
         await page.mouse.move(x, y);
         await page.mouse.down();
         await page.mouse.up();
         await page.waitForTimeout(140);
         const state = await editor.state();
         // Beklenen değer uygulamanın TEK KAYNAK dönüşümünden türetilir
-        // (geometry.xToTime + scrubTo'nun ızgara oturtması).
-        const expected = snapUsToFrameGrid(
-          Math.max(0, Math.round(state.scrollUs + (x - wrap.x) / state.pxPerUs)),
-          fps as Rational,
+        // (geometry.xToTime + scrubTo'nun ızgara oturtması + panel-1b kelepçesi
+        // clampPlayheadUs; kelepçe ızgara oturtmasından SONRA uygulanır).
+        const expected = Math.min(
+          SEED_TIMES.contentEndUs,
+          snapUsToFrameGrid(
+            Math.max(0, Math.round(state.scrollUs + (x - wrap.x) / state.pxPerUs)),
+            fps as Rational,
+          ),
         );
         expect(
           Math.abs(state.playheadUs - expected),
@@ -354,16 +374,26 @@ test.describe('Timeline — gerçek fare', () => {
       }
 
       // Basılı tutup gezinme: canvas'ın SAĞINA taşsa bile playhead takip eder.
-      const startX = wrap.x + 60;
-      const endX = wrap.x + wrap.width - 60;
+      // Hedef KELEPÇENİN ALTINDA seçilir — kelepçe bölgesinde "takip etti"
+      // ölçülemez (playhead orada zaten proje sonunda durur, kopmuş bir pointer
+      // capture ile aynı değeri verirdi).
+      const endX = Math.min(wrap.x + wrap.width - 60, capX - 8);
+      const startX = Math.max(wrap.x + 5, endX - 200);
+      expect(
+        endX - startX,
+        `zoom=${direction}: kelepçe altında sürüklenecek yer kalmadı`,
+      ).toBeGreaterThan(20);
       await page.mouse.move(startX, y);
       await page.mouse.down();
       await page.mouse.move(endX, y, { steps: 12 });
       await page.waitForTimeout(140);
       const dragged = await editor.state();
-      const draggedExpected = snapUsToFrameGrid(
-        Math.max(0, Math.round(dragged.scrollUs + (endX - wrap.x) / dragged.pxPerUs)),
-        fps as Rational,
+      const draggedExpected = Math.min(
+        SEED_TIMES.contentEndUs,
+        snapUsToFrameGrid(
+          Math.max(0, Math.round(dragged.scrollUs + (endX - wrap.x) / dragged.pxPerUs)),
+          fps as Rational,
+        ),
       );
       expect(
         Math.abs(dragged.playheadUs - draggedExpected),

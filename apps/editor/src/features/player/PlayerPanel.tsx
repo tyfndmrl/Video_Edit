@@ -16,10 +16,11 @@
  *   captured target.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { formatTimecode, snapUsToFrameGrid } from '@videoedit/timeline-schema';
+import { snapUsToFrameGrid } from '@videoedit/timeline-schema';
 import { useDocStore } from '../../state/docStore';
 import { useEditorStore } from '../../state/editorStore';
 import { useAssetStore } from '../../state/assetStore';
+import { projectEndUs } from '../../state/timelineOps';
 import {
   getPlaybackEngine,
   registerPlaybackEngine,
@@ -29,12 +30,13 @@ import {
   type SourceSize,
 } from './engine';
 import { VideoPlaybackEngine } from './engine-video/engineV1';
-import { projectDurationUs, transitionAtPlayhead } from './core/resolve';
+import { transitionAtPlayhead } from './core/resolve';
 import { previewShortfallNote } from './core/scheduler';
 import { transitionTypeLabel } from '../timeline/transitions';
 import { readIsPlaying, readUserSeekSeq } from './editorBridge';
 import { previewSourceUrl } from './previewSource';
 import { TransformGizmo } from './TransformGizmo';
+import { TransportTimecode } from './TransportTimecode';
 import { useTransportStore } from '../shortcuts/shuttle';
 
 /**
@@ -67,7 +69,15 @@ export function PlayerPanel() {
   const engineRef = useRef<VideoPlaybackEngine | null>(null);
 
   const settings = useDocStore((s) => s.doc.settings);
-  const durationUs = useDocStore((s) => projectDurationUs(s.doc));
+  /**
+   * Proje sonu — hem "/" göstergesi hem de zaman kodu alanının kelepçe ÜST
+   * SINIRI. Kaynak bilinçle `timelineOps.projectEndUs`: playhead'i kelepçeleyen
+   * öteki iki yol (dispatcher End/ok tuşları, timeline cetvel scrub'ı) zaten
+   * onu okuyor; `core/resolve.projectDurationUs` ise motorun KENDİ model
+   * süresidir (engineV1 iç kelepçesi) ve orada kalır. İkinci bir "son" tanımı
+   * doğsaydı alan bir yerde durur, ok tuşu başka bir yerde dururdu.
+   */
+  const durationUs = useDocStore((s) => projectEndUs(s.doc));
   const playheadUs = useEditorStore((s) => s.playheadUs);
   // J geri taraması (shortcuts/shuttle): motor paused'ken playhead'i geriye
   // akıtan döngü. Rozet, sessizliğin bir ARIZA değil taramanın doğası olduğunu
@@ -291,6 +301,19 @@ export function PlayerPanel() {
   );
   const flushPreviewLoad = useCallback(() => flushLoadRef.current(), []);
 
+  /**
+   * Zaman kodu alanının kabul ettiği hedefi yazar.
+   *
+   * Kaynak `'user'` ZORUNLU: `'engine'` yazımı duraklamışken ve araya bir user
+   * seek girmişken store tarafından SESSİZCE DÜŞÜRÜLÜR (intersection contract A),
+   * yani alan bazen çalışır bazen çalışmaz görünürdü. Doğrudan `engine.seek`
+   * çağırmak da dispatcher'ın "playhead'in tek yazım yolu store'dur" kuralını
+   * bozardı; store yazımını PlayerPanel'in kendi aboneliği zaten seek'e çevirir.
+   */
+  const seekFromTimecode = useCallback((timeUs: number) => {
+    useEditorStore.getState().setPlayheadUs(timeUs, 'user');
+  }, []);
+
   /** Motoru yeniden kurmayı dener (tuval yeniden bağlandıktan sonra effect koşar). */
   const retryEngine = useCallback(() => {
     setEngineError(null);
@@ -442,13 +465,12 @@ export function PlayerPanel() {
         >
           {isPlaying ? <PauseIcon /> : <PlayIcon />}
         </button>
-        <span className="font-mono text-fg" title="Playhead (proje fps zaman kodu)">
-          {formatTimecode(Math.max(0, Math.round(playheadUs)), settings.fps)}
-        </span>
-        <span className="text-fg-muted">/</span>
-        <span className="font-mono" title="Proje süresi">
-          {formatTimecode(durationUs, settings.fps)}
-        </span>
+        <TransportTimecode
+          playheadUs={playheadUs}
+          durationUs={durationUs}
+          fps={settings.fps}
+          onSeek={seekFromTimecode}
+        />
         <span className="ml-auto text-[10px] tracking-wide uppercase" title="Oynatma motoru">
           v1
         </span>

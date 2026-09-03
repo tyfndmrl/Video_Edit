@@ -14,6 +14,7 @@ import { useEditorStore } from '../../state/editorStore';
 import { useProjectSession } from '../../state/projectSession';
 import {
   addMarkerAtPlayhead,
+  clampPlayheadUs,
   collectCutPoints,
   copyClips,
   cutClips,
@@ -79,7 +80,13 @@ function setPlayhead(timeUs: number): void {
   // Single write path (finding 2): the store is the ONLY playhead authority.
   // PlayerPanel subscribes to userSeekSeq/playheadUs and runs its own
   // fast+settle seek — no direct engine.seek from the dispatcher.
-  useEditorStore.getState().setPlayheadUs(Math.max(0, Math.round(timeUs)));
+  //
+  // Üst kelepçe BURADA, tek yerde: ok/step yolları içeriğin sonunu aşamaz
+  // (kullanıcı kararı "hepsi kelepçelensin"). Home/End ve kesim-noktası
+  // atlamaları zaten aralık içindedir — bu satır onların davranışını
+  // değiştirmez, yalnız ikinci bir kelepçe kopyası doğmasını engeller.
+  const doc = useDocStore.getState().doc;
+  useEditorStore.getState().setPlayheadUs(clampPlayheadUs(timeUs, doc));
 }
 
 function stepFrames(delta: number): void {

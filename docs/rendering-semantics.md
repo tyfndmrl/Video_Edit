@@ -107,10 +107,25 @@ Timecode daima **non-drop** `HH:MM:SS:FF` (iki nokta ayraçlı, noktalı virgül
 
 ```
 fpsTC = roundHalfUp(num / den)      // 30000/1001 -> 30
-FF    = n mod fpsTC                 // n: frameFromUs(playheadUs)
+n     = floor(us * num / (den * 1e6))   // FLOOR — frameFromUs (half-up) DEĞİL
+FF    = n mod fpsTC
 totalS= floor(n / fpsTC)
 SS = totalS mod 60; MM = floor(totalS/60) mod 60; HH = floor(totalS/3600)
 ```
+
+Kare sayısı **floor** ile türetilir, §1.4'ün half-up `frameFromUs`'u ile DEĞİL: 30 fps'te
+33 333 µs hâlâ kare 0'dır. Üç taraf da bunu böyle uygular ve birbirini çiviler —
+`time.ts formatTimecode`, `Timecode.ToTimecodeString` (C#) ve çapraz-dil vektörü
+`time-vectors.json` (`33333 -> "00:00:00:00"`). (Bu satır 2026-09-03'e kadar
+`frameFromUs` diyordu; kod/vektör doğruydu, doküman yanlıştı — CLAUDE.md kuralı:
+gerçek dosya kazanır, çelişki bildirilir.)
+
+**Ters yön (girdi).** Editörün transport alanı yazılan `HH:MM:SS:FF`'i µs'ye çevirirken
+o metni üreten EN KÜÇÜK eşdeğer µs'yi seçer — `ceil(n * den * 1e6 / num)` — çünkü tek
+tersleyici koşul "formatTimecode geri aynı metni versin"dir. Half-up `usFromFrame`
+kullanılsaydı 30 fps'te 1. kare 33 333 µs olur ve alan yazılanı (`:01`) tazelenince
+kaybederdi. Ayrıştırıcı app-yereldir (`apps/editor/.../timecodeInput.ts`); C# zaman kodu
+üretir ama AYRIŞTIRMAZ, bu yüzden ters yön çapraz-dil sözleşmesinin parçası değildir.
 
 29.97'de non-drop timecode gerçek saat zamanından yavaşça sapar — bu bilinçli üründür,
 drop-frame MVP'de yoktur.

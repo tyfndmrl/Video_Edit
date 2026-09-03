@@ -31,6 +31,7 @@ import {
   addTransitionAtEdge,
   applyTrimToDraft,
   assertDocValidDev,
+  clampPlayheadUs,
   clipEndUs,
   expandSelectionForOp,
   findTransitionCut,
@@ -574,7 +575,10 @@ export function TimelinePanel() {
     const st = useEditorStore.getState();
     const d = useDocStore.getState().doc;
     const t = snapUsToFrameGrid(xToTime(localX, st.scrollUs, st.pxPerUs), d.settings.fps);
-    st.setPlayheadUs(t);
+    // Cetvel içeriğin bittiği yerden SONRASINI da gösterir (boş şerit); oraya
+    // tıklamak playhead'i içeriğin ötesine götürürdü. Üst sınır ok tuşlarıyla
+    // ve zaman kodu alanıyla AYNI (timelineOps.clampPlayheadUs).
+    st.setPlayheadUs(clampPlayheadUs(t, d));
   }, []);
 
   const marqueeSelect = useCallback(

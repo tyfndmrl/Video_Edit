@@ -7,6 +7,12 @@
  * Burada kanıtlanan: oynat/duraklat düğmesi gerçek tıkla çalışır, zaman kodu
  * GERÇEKTEN ilerler, duraklatınca durur ve kare ızgarasına oturur; ve önizleme
  * kapasitesi yetmediğinde kullanıcı bunu EKRANDA görür (sessiz kayıp yok).
+ *
+ * NOT (panel-1b): playhead zaman kodu artık DÜZENLENEBİLİR bir alandır
+ * (`<input>`), metin düğümü değil — bu dosyadaki iddialar bu yüzden
+ * `toHaveValue`/`inputValue()` okur. Locator `title` özniteliğine bağlı olduğu
+ * için DEĞİŞMEDİ. Alanın kendi davranışı (yazma/ret/kelepçe/Escape)
+ * `timecode-input.spec.ts`te ölçülür.
  */
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures/test';
@@ -43,7 +49,7 @@ test.describe('Player — transport', () => {
     const page = editor.page;
     const button = transportButton(page);
     await expect(button).toHaveAttribute('aria-label', 'Oynat');
-    await expect(playheadTimecode(page)).toHaveText('00:00:00:00');
+    await expect(playheadTimecode(page)).toHaveValue('00:00:00:00');
 
     // Gerçek fare tıklaması (düğmenin ortasına).
     const box = await button.boundingBox();
@@ -59,7 +65,7 @@ test.describe('Player — transport', () => {
 
     // Zaman kodu GERÇEKTEN ilerliyor mu (motor saati playhead'e bağlı mı)?
     await expect
-      .poll(async () => (await playheadTimecode(page).innerText()).trim(), {
+      .poll(async () => (await playheadTimecode(page).inputValue()).trim(), {
         timeout: 10_000,
         message: 'Oynatma başladı ama zaman kodu 00:00:00:00\'da kaldı.',
       })
@@ -73,10 +79,10 @@ test.describe('Player — transport', () => {
 
     // Duraklatınca playhead SABİT kalır ve kare ızgarasına oturur
     // (PlayerPanel playState$ -> snapUsToFrameGrid; 30 fps -> kare < 30).
-    const frozen = (await playheadTimecode(page).innerText()).trim();
+    const frozen = (await playheadTimecode(page).inputValue()).trim();
     await page.waitForTimeout(600);
     expect(
-      (await playheadTimecode(page).innerText()).trim(),
+      (await playheadTimecode(page).inputValue()).trim(),
       'Duraklatıldığı halde zaman kodu ilerliyor.',
     ).toBe(frozen);
     expect(frozen).toMatch(/^\d{2}:\d{2}:\d{2}:\d{2}$/);
