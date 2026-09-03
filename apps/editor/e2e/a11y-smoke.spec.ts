@@ -105,9 +105,9 @@ test.describe('Erişilebilirlik — klavye ve roller', () => {
       // panel-2b: timeline'ın dikey boyutlandırma tutamağı (role="separator").
       // Fareye erişemeyen kullanıcı yüksekliği ok tuşlarıyla değiştirebilmeli —
       // tutamağı odak sırasından çıkarmak (tabIndex=-1) bu iddiayı kırar.
-      // ÖLÇÜLDÜ (2026-09-03): tutamak Tab sırasında 11. sıraya girer (zaman
-      // kodu alanından hemen sonra); 24'lük bütçe DEĞİŞMEDEN yetiyor —
-      // listenin son öğesi "Sığdır" 17. sırada.
+      // Bütçe (24 durak) yeni odaklanabilir kontrollerden SONRA da yetiyor;
+      // sıra NUMARASI yazılmıyor: ilk odaklanabilir öğe eklendiğinde bayatlar
+      // ve testin iddiası zaten sıra değil KAPSAMA (hepsine ulaşılabilirlik).
       'Timeline yüksekliği',
       'Video track ekle',
       'Sığdır (Shift+Z)',

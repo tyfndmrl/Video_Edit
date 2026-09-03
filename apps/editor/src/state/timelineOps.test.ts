@@ -15,9 +15,12 @@ import {
 import { createEmptyDoc, defaultProjectSettings, useDocStore } from './docStore';
 import { useAssetStore } from './assetStore';
 import { useEditorStore } from './editorStore';
+import { commitTimecodeText } from '../features/player/timecodeInput';
 import {
   AUDIO_PLACED_ON_NEW_TRACK,
   MAX_TRACKS,
+  clampPlayheadUs,
+  projectEndUs,
   addClipFromAsset,
   addTextClip,
   addTrack,
@@ -2169,5 +2172,27 @@ describe('automatic AV split on add (ozellik-3)', () => {
         if (plan.ok) expectValid();
       }
     });
+  });
+});
+
+describe('playhead üst sınırı — iki yol, tek değer', () => {
+  // clampPlayheadUs (ok/step + cetvel scrub) ile commitTimecodeText (zaman kodu
+  // alanı) AYRI kod yollarıdır; paylaştıkları şey `projectEndUs` DEĞERİDİR.
+  // Bu test o ikizliği çiviler: biri güncellenip öteki unutulursa kırmızı olur.
+  it('yazılan zaman kodu ile ok tuşu AYNI sonda durur', () => {
+    const doc = docWith([
+      videoTrack(TRACK_1, [mediaClip('01890000-0000-7000-8000-000000000901', ASSET_A, 0, 0, 4_000_000)]),
+    ]);
+    const end = projectEndUs(doc);
+    expect(end).toBe(4_000_000);
+
+    const viaArrows = clampPlayheadUs(9_999_000_000, doc);
+    const viaField = commitTimecodeText('00:10:00:00', { fps: FPS30, durationUs: end });
+
+    expect(viaArrows).toBe(end);
+    expect(viaField.kind).toBe('seek');
+    if (viaField.kind !== 'seek') return;
+    expect(viaField.timeUs, "Alan ve ok tuşu aynı üst sınırda durmalı.").toBe(viaArrows);
+    expect(viaField.notice, 'Kelepçe sessiz olmamalı.').not.toBeNull();
   });
 });

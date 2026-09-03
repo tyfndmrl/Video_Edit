@@ -21,7 +21,7 @@
  * bildirimle söylenir (metinler `playerFeedback.ts`, ayrıştırma `timecodeInput.ts`).
  */
 import { useCallback, useRef, useState } from 'react';
-import { formatTimecode, type MicroSec, type Rational } from '@videoedit/timeline-schema';
+import { type MicroSec, type Rational } from '@videoedit/timeline-schema';
 import { timecodeFailureMessage, timecodeNoticeMessage } from './playerFeedback';
 import { commitTimecodeText, displayTimecode } from './timecodeInput';
 
@@ -133,7 +133,7 @@ export function TransportTimecode({
       />
       <span className="text-fg-muted">/</span>
       <span className="font-mono" title="Proje süresi">
-        {formatTimecode(durationUs, fps)}
+        {displayTimecode(durationUs, fps)}
       </span>
       {message !== null && (
         <span

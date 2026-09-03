@@ -4063,10 +4063,12 @@ export function projectEndUs(d: TimelineDoc): MicroSec {
 /**
  * Playhead'in gidebileceği aralık: `[0, projectEndUs]`.
  *
- * Kullanıcı kararı (plan §Dilim 1): "hepsi kelepçelensin" — zaman kodu alanı,
- * ok/step tuşları ve cetvel scrub'ı AYNI üst sınırı okur. Sınır TEK yerden
- * gelir; her çağıran kendi `Math.min`'ini yazsaydı biri güncellenip öteki
- * unutulduğunda playhead içeriğin ötesine yalnız BAZI yollardan kaçardı.
+ * Kullanıcı kararı (plan §Dilim 1): "hepsi kelepçelensin". Ok/step tuşları ve
+ * cetvel scrub'ı bu fonksiyondan geçer. Zaman kodu ALANI ise saf kalması için
+ * (DOM'suz, fırlatmayan modül) kelepçeyi kendi içinde uygular — paylaşılan şey
+ * FONKSİYON değil SINIR DEĞERİDİR: iki yol da `projectEndUs`'u okur. Bu ikizlik
+ * varsayım olarak bırakılmadı: `timelineOps.test.ts` içindeki "aynı üst sınır"
+ * testi iki yolun aynı belgede aynı değerde durduğunu çiviler.
  *
  * Boş projede (içerik yok) üst sınır 0'dır: playhead başta kalır. Bu bilinçli —
  * boş bir belgede "ileri" gidilecek bir yer yoktur ve motor da orada tek kare

@@ -354,6 +354,17 @@ export function solveSpeedChange(
 }
 
 /**
+ * Nominal (integer) fps used to split SS/FF in timecode: round(num/den), so
+ * 30000/1001 reads as 30. Exported because four call sites need the SAME
+ * rounding — the ruler labels, formatTimecode and the editor's timecode input
+ * parser; a private copy in any of them is how two clocks silently disagree.
+ */
+export function nominalFpsOf(fps: Rational): number {
+  assertRational(fps);
+  return Math.max(1, roundHalfUp(fps.num / fps.den));
+}
+
+/**
  * Non-drop timecode "HH:MM:SS:FF" on the project fps grid.
  * Frame count is derived with floor (not round) per the UI contract; the
  * nominal fps used for the FF/SS split is round(num/den) (e.g. 29.97 -> 30).
@@ -366,7 +377,7 @@ export function formatTimecode(timeUs: MicroSec, fps: Rational): string {
     throw new RangeError(`timeUs must be non-negative, got ${timeUs}`);
   }
   const totalFrames = Math.floor((timeUs * fps.num) / (fps.den * US_PER_SECOND));
-  const nominalFps = Math.max(1, roundHalfUp(fps.num / fps.den));
+  const nominalFps = nominalFpsOf(fps);
   const ff = totalFrames % nominalFps;
   const totalSeconds = Math.floor(totalFrames / nominalFps);
   const ss = totalSeconds % 60;

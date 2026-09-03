@@ -144,6 +144,66 @@ test.describe('Ses ölçer — gerçek girdi, gerçek miks', () => {
     await page.keyboard.press('k');
   });
 
+  test('0 dBFS aşımı mandalı yakar; gerçek tık mandalı söndürür', async ({ page, account }) => {
+    test.skip(ffmpegVersion() === null, FFMPEG_SKIP_REASON);
+    test.setTimeout(180_000);
+
+    const music = ensureTestAudio();
+    const project = await createEmptyProject(
+      account.context.request,
+      account.accessToken,
+      'E2E ölçer klip mandalı',
+    );
+    const app = new EditorApp(page);
+    await app.open(project.projectId, { email: account.email, password: account.password });
+
+    const library = new LibraryPanelHarness(page);
+    await library.pickFiles([music.path]);
+    await library.waitForReady(music.fileName);
+    await doubleClickRow(page, library, music.fileName);
+    await expect.poll(async () => (await app.state()).clipCount).toBe(1);
+
+    // Klibi seç ve ses seviyesini GERÇEK fareyle tavana çek: kaynak zaten
+    // yüksek (volume=5 ile üretilmiş sinüs), 2.0 kazançla önizleme tepesi
+    // 0 dBFS'i aşar. Önizlemede limiter YOKTUR (rendering-semantics §8.3) —
+    // mandalın yanması tam olarak bu asimetrinin görünür hâlidir.
+    const state = await app.state();
+    const clipId = state.tracks.flatMap((t) => t.clips)[0]?.id;
+    expect(clipId, 'Klip kimliği okunamadı.').toBeTruthy();
+    await app.timeline.click(await app.timeline.clipCenter(clipId as string));
+
+    const slider = page.getByTestId('clip-volume');
+    await expect(slider).toBeVisible();
+    const box = await slider.boundingBox();
+    expect(box, "Ses seviyesi slider'ı görünmüyor.").not.toBeNull();
+    const y = box!.y + box!.height / 2;
+    await page.mouse.move(box!.x + box!.width / 2, y);
+    await page.mouse.down();
+    await page.mouse.move(box!.x + box!.width, y, { steps: 8 });
+    await page.mouse.up();
+
+    const transport = page.getByRole('button', { name: /^(Oynat|Duraklat)$/ });
+    await transport.click();
+    await expect
+      .poll(() => meterAttr(page, 'data-meter-clip'), {
+        timeout: 25_000,
+        message: '0 dBFS aşımında klip mandalı yanmalıydı.',
+      })
+      .toBe('true');
+
+    const reset = page.getByTestId('audio-meter-reset');
+    await expect(reset).toBeVisible();
+    await transport.click(); // durdur: yeni aşım mandalı yeniden yakmasın
+    await reset.click();
+    await expect
+      .poll(() => meterAttr(page, 'data-meter-clip'), {
+        timeout: 10_000,
+        message: 'Sıfırlama düğmesi mandalı söndürmeliydi.',
+      })
+      .toBe('false');
+    await expect(reset).toHaveCount(0);
+  });
+
   test('klip mandalı yokken sıfırlama düğmesi Tab sırasında DEĞİLDİR', async ({
     page,
     account,

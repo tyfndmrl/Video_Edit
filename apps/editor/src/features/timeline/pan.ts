@@ -117,6 +117,8 @@ export function panScrollY(
   currentY: number,
   maxScrollY: number,
 ): number {
-  const limit = Math.max(0, maxScrollY);
-  return Math.min(limit, Math.max(0, startScrollY - (currentY - startY)));
+  // Kelepçenin KENDİSİ clampScrollY'dir: burada ikinci bir Math.min/max yazmak
+  // dejenere girdide (NaN/Infinity limit) iki fonksiyonun sessizce ayrışması
+  // demekti — jest matematiği burada, sınır orada.
+  return clampScrollY(startScrollY - (currentY - startY), maxScrollY);
 }

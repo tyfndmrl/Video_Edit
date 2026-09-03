@@ -4,10 +4,13 @@
  * Everything numeric and every sentence comes from core/meter.ts so it can be
  * unit-tested; this file is the wire and the paint. Two rules shape it:
  *
- * 1. NO React state per sample. The engine emits at 30 Hz; bars go to a canvas
+ * 1. NO RE-RENDER per sample. The engine emits at 30 Hz; bars go to a canvas
  *    and the readout is written with textContent, the same discipline the
- *    transport timecode already follows. Only genuinely low-frequency facts
- *    (why the meter is idle, whether the clip latch is lit) are React state.
+ *    transport timecode already follows. Two low-frequency facts DO live in
+ *    React state (why the meter is idle, whether the clip latch is lit) and
+ *    their setters run on every sample on purpose: they are called in updater
+ *    form and return `prev` unchanged, so React bails out without rendering —
+ *    an explicit equality check here would just duplicate that bail-out.
  * 2. Silence and "no mix at all" are DIFFERENT. When the engine has no audio
  *    context (before the first play), is blocked by autoplay policy, or is
  *    paused/shuttling, the meter says so in words instead of drawing a zero.
@@ -221,6 +224,10 @@ export function AudioMeter(): React.JSX.Element {
   const clearLatch = (): void => {
     stateRef.current = resetMeter(stateRef.current, performance.now());
     setClipped(false);
+    // Prob yüzeyini HEMEN düzelt: öznitelikler 100 ms'lik pencerede yazılıyor
+    // ve motor bu arada dispose edilirse "mandal yanıyor" yalanı asılı kalırdı.
+    rootRef.current?.setAttribute('data-meter-clip', 'false');
+    attrRef.current = { atMs: 0, text: '' };
     // Repaint immediately so the cleared latch is visible before the next tick.
     const ctx = canvasRef.current?.getContext('2d') ?? null;
     if (ctx !== null) drawMeter(ctx, sizeRef.current, stateRef.current, reason === 'running');
@@ -252,7 +259,12 @@ export function AudioMeter(): React.JSX.Element {
             data-testid="audio-meter-reset"
             aria-label="Klip uyarısını sıfırla (0 dBFS aşıldı)"
             className="rounded bg-red-500/90 px-1 text-[9px] font-semibold text-black"
-            onClick={clearLatch}
+            onClick={(e) => {
+              // Kök div de mandal varken clearLatch dinliyor (pointer kolaylığı);
+              // kabarcıklanma iki kez koşmasın diye burada durduruluyor.
+              e.stopPropagation();
+              clearLatch();
+            }}
           >
             KLİP
           </button>

@@ -20,6 +20,7 @@
  * kullanıcı kendi ekranının tercihini görür.
  */
 import { create } from 'zustand';
+import { browserStorage } from '../../lib/browserStorage';
 import { NEW_TRACK_ZONE_H, RULER_H, TRACK_GAP, TRACK_H } from './geometry';
 
 /**
@@ -100,17 +101,9 @@ export function clampTimelineHeight(state: TimelineHeightState): number {
 }
 
 // ---------------------------------------------------------------------------
-// localStorage (fontCatalogue.ts'teki storage() sarmalayıcısının aynısı)
+// localStorage (fontCatalogue.ts'teki browserStorage() sarmalayıcısının aynısı)
 // ---------------------------------------------------------------------------
 
-function storage(): Storage | null {
-  try {
-    return typeof localStorage === 'undefined' ? null : localStorage;
-  } catch {
-    // Safari gizli mod / engellenmiş depolama — yükseklik varsayılana düşer.
-    return null;
-  }
-}
 
 /**
  * Kayıtlı yükseklik ya da null. Bozuk/aralık dışı değer YOK SAYILIR: eksi,
@@ -119,7 +112,7 @@ function storage(): Storage | null {
  * bilinen iyi düzen).
  */
 export function readStoredTimelineHeight(): number | null {
-  const store = storage();
+  const store = browserStorage();
   if (!store) return null;
   try {
     const raw = store.getItem(TIMELINE_HEIGHT_STORAGE_KEY);
@@ -140,7 +133,7 @@ export function readStoredTimelineHeight(): number | null {
 export function writeStoredTimelineHeight(px: number): void {
   if (!Number.isFinite(px)) return;
   try {
-    storage()?.setItem(TIMELINE_HEIGHT_STORAGE_KEY, String(Math.round(px)));
+    browserStorage()?.setItem(TIMELINE_HEIGHT_STORAGE_KEY, String(Math.round(px)));
   } catch {
     // Kota / gizli mod: kalıcılık bir kolaylıktır, sözleşme değil.
   }

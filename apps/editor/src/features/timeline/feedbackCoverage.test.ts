@@ -61,7 +61,10 @@ function collectSourceCodes(): Set<string> {
   const codes = new Set<string>();
   for (const rel of CODE_SOURCES) {
     const src = readFileSync(join(SRC_ROOT, rel), 'utf8');
-    for (const m of src.matchAll(/\bfail\(\s*'([^']+)'\s*\)/g)) codes.add(m[1]);
+    // `fail(...)` deponun ana kalıbı; `reject(...)` timecode ayrıştırıcısının yerel
+    // adı. İkisini birden taramak, muhafızın "elle tutulan liste DEĞİL" vaadini bir
+    // dosya kendi ret yardımcısını başka adla yazdığında da korur.
+    for (const m of src.matchAll(/\b(?:fail|reject)\(\s*'([^']+)'\s*\)/g)) codes.add(m[1]);
     for (const m of src.matchAll(/\breason:\s*'([^']+)'/g)) codes.add(m[1]);
     for (const m of src.matchAll(/const [A-Z][A-Z_0-9]* =\s*\r?\n?\s*'([a-z][^']*)';/g)) {
       codes.add(m[1]);

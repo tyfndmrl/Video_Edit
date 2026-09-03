@@ -21,7 +21,12 @@
  * alanı YALNIZ dört alanlı yazımda vardır. Baştaki alan takvim sınırına
  * uymak zorunda değildir (`90`, `100:00:00`); iç alanlar katıdır.
  */
-import { formatTimecode, type MicroSec, type Rational } from '@videoedit/timeline-schema';
+import {
+  formatTimecode,
+  nominalFpsOf,
+  type MicroSec,
+  type Rational,
+} from '@videoedit/timeline-schema';
 
 // ---------------------------------------------------------------------------
 // Ret / bildirim kodları
@@ -49,7 +54,16 @@ export const TIMECODE_CLAMPED_EMPTY = 'timecode clamped on empty project';
 const MAX_TIMECODE_US = 24 * 60 * 60 * 1_000_000;
 /** Baştaki alanın en çok basamağı (takvim sınırı yok ama sonsuz da değil). */
 const MAX_LEAD_DIGITS = 6;
-/** İç alanların (MM/SS/FF) en çok basamağı. */
+/**
+ * İç alanların (MM/SS/FF) en çok basamağı.
+ *
+ * KAPSAM SINIRI: bu, kare alanını iki basamakla sınırlar, yani nominal fps
+ * 100 ve üstündeyse `formatTimecode`'un ürettiği metin (ör. 120 fps'te
+ * "00:00:00:119") bu ayrıştırıcıya geri yazılamaz. Ürün bugün o rejime
+ * giremiyor (proje fps'i UI'dan seçilmiyor, varsayılan 30/1) ve sınanmamış
+ * rejim KAPSAM DIŞI ilan edilir — fps penceresi açılırsa bu sabit
+ * `String(fpsTC - 1).length`'ten türetilmelidir.
+ */
 const MAX_INNER_DIGITS = 2;
 /** Dilbilgisinin kabul ettiği en çok alan (`HH:MM:SS:FF`). */
 const MAX_FIELDS = 4;
@@ -80,8 +94,11 @@ export type TimecodeCommit =
 function nominalFps(fps: Rational | null | undefined): number {
   const num = fps?.num ?? 0;
   const den = fps?.den ?? 0;
+  // Kapı burada: geçersiz fps 0 döner ve çağıran ayrıştırmayı reddeder.
+  // Kural geçerli fps'te paylaşılan `nominalFpsOf`'un ta kendisidir — ikinci
+  // bir yuvarlama yazmak, gösterimle girişin sessizce ayrışması demekti.
   if (!Number.isInteger(num) || !Number.isInteger(den) || num <= 0 || den <= 0) return 0;
-  return Math.max(1, Math.floor(num / den + 0.5));
+  return nominalFpsOf({ num, den });
 }
 
 /** Tamsayı tavan bölmesi (x, y > 0) — float `Math.ceil` yuvarlama hatası yok. */

@@ -4,7 +4,7 @@
  */
 import {
   frameToUs,
-  roundHalfUp,
+  nominalFpsOf,
   usToFrame,
   type MicroSec,
   type Rational,
@@ -37,7 +37,7 @@ const COLORS = {
 export function chooseRulerStepUs(pxPerUs: number, fps: Rational): MicroSec {
   const targetPx = 80;
   const frameUs = Math.max(1, frameToUs(1, fps));
-  const nominalFps = Math.max(1, roundHalfUp(fps.num / fps.den));
+  const nominalFps = nominalFpsOf(fps);
   const steps: MicroSec[] = [];
   for (const f of [1, 2, 5, 10]) {
     if (f < nominalFps) steps.push(f * frameUs);
@@ -60,7 +60,7 @@ export function formatRulerLabel(timeUs: MicroSec, stepUs: MicroSec, fps: Ration
   const h = Math.floor(totalSeconds / 3600);
   const p2 = (n: number): string => String(n).padStart(2, '0');
   if (stepUs < 1_000_000) {
-    const nominalFps = Math.max(1, roundHalfUp(fps.num / fps.den));
+    const nominalFps = nominalFpsOf(fps);
     const ff = usToFrame(timeUs, fps) % nominalFps;
     const base = h > 0 ? `${h}:${p2(m)}:${p2(s)}` : `${m}:${p2(s)}`;
     return `${base}:${p2(ff)}`;

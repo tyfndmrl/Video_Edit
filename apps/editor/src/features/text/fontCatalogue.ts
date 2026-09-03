@@ -21,6 +21,7 @@
  * preview falls back to a generic family), never the id.
  */
 import { useEffect, useState } from 'react';
+import { browserStorage } from '../../lib/browserStorage';
 import { useQuery } from '@tanstack/react-query';
 import { queryClient } from '../../app/queryClient';
 import { apiFetch } from '../../entities/apiClient';
@@ -77,17 +78,9 @@ export function toEntries(response: FontCatalogueResponse): FontManifestEntry[] 
 // localStorage cache (branch 2 of the failure policy)
 // ---------------------------------------------------------------------------
 
-function storage(): Storage | null {
-  try {
-    return typeof localStorage === 'undefined' ? null : localStorage;
-  } catch {
-    // Safari private mode / blocked storage — the compiled-in fallback covers us.
-    return null;
-  }
-}
 
 export function readCachedCatalogue(): FontCatalogueResponse | null {
-  const store = storage();
+  const store = browserStorage();
   if (!store) return null;
   try {
     const raw = store.getItem(CACHE_STORAGE_KEY);
@@ -102,7 +95,7 @@ export function readCachedCatalogue(): FontCatalogueResponse | null {
 
 function writeCachedCatalogue(response: FontCatalogueResponse): void {
   try {
-    storage()?.setItem(CACHE_STORAGE_KEY, JSON.stringify(response));
+    browserStorage()?.setItem(CACHE_STORAGE_KEY, JSON.stringify(response));
   } catch {
     // Quota / private mode: the cache is an optimisation, not a requirement.
   }
