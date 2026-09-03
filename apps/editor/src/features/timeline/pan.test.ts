@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { clampScrollUs, maxPanScrollUs, PAN_TAIL_FRACTION, panScrollUs, panScrollY } from './pan';
+import { NEW_TRACK_ZONE_H, TRACK_GAP, TRACK_H, tracksContentHeight } from './geometry';
+import {
+  clampScrollUs,
+  clampScrollY,
+  maxPanScrollUs,
+  maxScrollY,
+  PAN_TAIL_FRACTION,
+  panScrollUs,
+  panScrollY,
+} from './pan';
 
 describe('panScrollUs (orta tuşla yatay kaydırma)', () => {
   it('drag right shows earlier time (scrollUs decreases by the pixel delta)', () => {
@@ -143,6 +152,70 @@ describe('panScrollUs — üst sınır', () => {
 
   it('clamps the degraded (invalid zoom) path too', () => {
     expect(panScrollUs(9_000_000, 0, 100, 0, 1_000_000)).toBe(1_000_000);
+  });
+});
+
+/**
+ * Dikey sınırın kendi evi. Kusur şuydu: bu formül wheel ve orta-tuş pan
+ * gövdelerine KOPYALANMIŞTI, dolayısıyla yalnız bir jest sırasında
+ * uygulanabiliyordu; track sayısı ya da gövde yüksekliği değiştiğinde eski
+ * scrollY sınırın dışında kalıyordu.
+ */
+describe('maxScrollY (dikey kaydırmanın üst sınırı)', () => {
+  const ROW = TRACK_H + TRACK_GAP;
+
+  it('is the content overflow below the visible body', () => {
+    // 5 satır + yeni-track bölgesi, 200 px gövde.
+    expect(maxScrollY(5, 200)).toBe(5 * ROW + NEW_TRACK_ZONE_H - 200);
+    expect(maxScrollY(5, 200)).toBe(tracksContentHeight(5) - 200);
+  });
+
+  it('is 0 when the content fits into the body (nothing to scroll)', () => {
+    expect(maxScrollY(2, 400)).toBe(0);
+    expect(maxScrollY(0, 100)).toBe(0);
+    // Tam sığma sınırı: bir piksel bile taşma yok.
+    expect(maxScrollY(3, tracksContentHeight(3))).toBe(0);
+  });
+
+  it('grows by exactly one row per added track', () => {
+    expect(maxScrollY(6, 200) - maxScrollY(5, 200)).toBe(ROW);
+  });
+
+  it('degrades safely on a negative/non-finite body height', () => {
+    // Negatif gövde (viewport henüz ölçülmedi / RULER_H çıkarımı eksiye düştü)
+    // 0 gövde gibi ele alınır: sınır sonlu ve negatif olmayan kalır.
+    expect(maxScrollY(3, -50)).toBe(tracksContentHeight(3));
+    expect(maxScrollY(3, Number.NaN)).toBe(tracksContentHeight(3));
+    expect(maxScrollY(Number.NaN, 200)).toBe(0);
+    expect(maxScrollY(-4, 200)).toBe(0);
+  });
+});
+
+describe('clampScrollY', () => {
+  it('clamps into [0, max]', () => {
+    expect(clampScrollY(-5, 300)).toBe(0);
+    expect(clampScrollY(120, 300)).toBe(120);
+    expect(clampScrollY(900, 300)).toBe(300);
+  });
+
+  it('treats a negative/NaN limit as 0 and never returns NaN', () => {
+    expect(clampScrollY(120, -10)).toBe(0);
+    expect(clampScrollY(120, Number.NaN)).toBe(0);
+    expect(clampScrollY(Number.NaN, 300)).toBe(0);
+    // Sonsuz bir istek "sona kaydır" DEĞİL, bozuk girdidir — yatay ikizle
+    // (clampScrollUs) aynı sözleşme: sonlu olmayan değer 0'a düşer.
+    expect(clampScrollY(Number.POSITIVE_INFINITY, 300)).toBe(0);
+  });
+
+  it('is idempotent and does NOT round (fractional pixel scroll survives)', () => {
+    expect(clampScrollY(clampScrollY(123.5, 300), 300)).toBe(123.5);
+  });
+
+  it('re-clamps a stale value after the limit shrinks (the fixed defect)', () => {
+    // 5 track'lik belgede 132 px'e kaydırıldı; undo 2 track'e döndü -> sınır 0.
+    const stale = clampScrollY(132, maxScrollY(5, 222));
+    expect(stale).toBe(132);
+    expect(clampScrollY(stale, maxScrollY(2, 222))).toBe(0);
   });
 });
 

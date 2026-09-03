@@ -65,7 +65,7 @@ import {
 import { MOVE_CONFLICT_MESSAGE, WARNING_TTL_MS, opFailureMessage, opNoticeMessage } from './feedback';
 import { runTimelineMenuAction } from './menuActions';
 import { TransitionEditor } from './TransitionEditor';
-import { clampScrollUs, maxPanScrollUs, panScrollUs, panScrollY } from './pan';
+import { clampScrollUs, clampScrollY, maxPanScrollUs, maxScrollY, panScrollUs, panScrollY } from './pan';
 import { TimelineContextMenu } from './TimelineContextMenu';
 import {
   RULER_H,
@@ -76,7 +76,6 @@ import {
   timeToX,
   trackIndexAtY,
   trackTop,
-  tracksContentHeight,
   xToTime,
 } from './geometry';
 import { hitTestClips, type ClipHitRect } from './hitTest';
@@ -477,6 +476,36 @@ export function TimelinePanel() {
     st.setScrollUs(clampScrollUs(next, max));
   }, []);
 
+  /**
+   * TEK dikey kaydırma yazma yolu — applyScrollUs'un dikey simetriği; her
+   * yazım [0, maxScrollY] arasına kelepçelenir. Wheel, orta-tuş pan'i ve
+   * aşağıdaki yeniden kelepçeleme efekti buradan geçer.
+   *
+   * Neden fonksiyon da kabul eder: wheel bir DELTA uygular ve o deltanın
+   * uygulanacağı taban, React'in en güncel scrollY'sidir (setState'in
+   * güncelleyici biçimi). Aynı imza, değeri değiştirmeyen `(y) => y`
+   * çağrısıyla saf "yeniden kelepçele" anlamına da gelir.
+   */
+  const applyScrollY = useCallback((next: number | ((y: number) => number)) => {
+    const max = maxScrollY(
+      useDocStore.getState().doc.tracks.length,
+      viewportRef.current.h - RULER_H,
+    );
+    setScrollY((y) => clampScrollY(typeof next === 'function' ? next(y) : next, max));
+  }, []);
+
+  /**
+   * Sınır DEĞİŞTİĞİNDE yeniden kelepçele: gövde yüksekliği (panel boyu) ya da
+   * track sayısı değişince eski scrollY sınırın dışında kalabilir — undo ile
+   * silinen track'ler ya da büyütülen panel altta boş şerit ve BİR SATIR KAYMIŞ
+   * hit-test üretiyordu (kaydırma jesti olmadan kendini düzeltmiyordu).
+   * Değer zaten sınır içindeyse setState aynı değeri döndürür ve React render'ı
+   * atlar — bedava.
+   */
+  useEffect(() => {
+    applyScrollY((y) => y);
+  }, [viewport.h, doc.tracks.length, applyScrollY]);
+
   const zoomAt = useCallback(
     (anchorX: number, factor: number) => {
       const st = useEditorStore.getState();
@@ -550,15 +579,12 @@ export function TimelinePanel() {
         // Orta tuş pan'iyle AYNI üst sınır — iki yol da içeriği ekrandan atamaz.
         applyScrollUs(st.scrollUs + delta / st.pxPerUs);
       } else {
-        const trackCount = useDocStore.getState().doc.tracks.length;
-        const bodyH = Math.max(0, viewportRef.current.h - RULER_H);
-        const maxScroll = Math.max(0, tracksContentHeight(trackCount) - bodyH);
-        setScrollY((y) => Math.min(maxScroll, Math.max(0, y + e.deltaY)));
+        applyScrollY((y) => y + e.deltaY);
       }
     };
     wrap.addEventListener('wheel', onWheel, { passive: false });
     return () => wrap.removeEventListener('wheel', onWheel);
-  }, [zoomAt, applyScrollUs]);
+  }, [zoomAt, applyScrollUs, applyScrollY]);
 
   // ---------------------------------------------------------------------
   // Pointer interactions
@@ -766,9 +792,16 @@ export function TimelinePanel() {
             maxPanScrollUs(projectEndUs(d), viewportRef.current.w, st.pxPerUs),
           ),
         );
-        const bodyH = Math.max(0, viewportRef.current.h - RULER_H);
-        const maxScroll = Math.max(0, tracksContentHeight(d.tracks.length) - bodyH);
-        setScrollY(panScrollY(state.startScrollY, state.startY, y, maxScroll));
+        // Sınır AYNI fonksiyondan (pan.maxScrollY); panScrollY kendi saf delta
+        // matematiğini korur, applyScrollY'nin ikinci kelepçesi idempotenttir.
+        applyScrollY(
+          panScrollY(
+            state.startScrollY,
+            state.startY,
+            y,
+            maxScrollY(d.tracks.length, viewportRef.current.h - RULER_H),
+          ),
+        );
         return;
       }
 
@@ -916,7 +949,7 @@ export function TimelinePanel() {
         marqueeSelect(state, x, contentY);
       }
     },
-    [localPoint, marqueeSelect, requestDraw, scrubTo],
+    [applyScrollY, localPoint, marqueeSelect, requestDraw, scrubTo],
   );
 
   const onPointerUp = useCallback(

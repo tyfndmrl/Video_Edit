@@ -225,6 +225,35 @@ export class TimelineHarness {
     await this.settle();
   }
 
+  /**
+   * Modifier'sız wheel: DİKEY kaydırma. (Bekleme gerekçesi için bkz. ctrlWheel.)
+   * Pozitif deltaY aşağı kaydırır (alttaki track'ler görünür).
+   */
+  async wheel(deltaY: number, at?: { x: number; y: number }): Promise<void> {
+    const point = at ?? (await this.centerOfBody());
+    await this.page.mouse.move(point.x, point.y);
+    await this.page.mouse.wheel(0, deltaY);
+    await this.settle();
+  }
+
+  /**
+   * `index` numaralı track başlığı satırının EKRAN üstü (px).
+   *
+   * Başlık kolonu canvas gövdesiyle AYNI scrollY'yi paylaşır (translateY):
+   * kelepçe doğru çalışıyorsa scrollY 0 iken ilk satırın üstü, sarmalayıcının
+   * üstü + RULER_H'dir. Kelepçe yoksa bayat scrollY kolonu yukarıda tutar ve
+   * bu sayı küçülür — hem kullanıcının gördüğü hem hit-test'in kullandığı kayma.
+   */
+  async trackHeaderTop(index: number): Promise<number> {
+    const top = await this.page.evaluate((i: number) => {
+      const rows = document.querySelectorAll('[data-testid="track-header"]');
+      const el = rows[i] as HTMLElement | undefined;
+      return el ? el.getBoundingClientRect().top : null;
+    }, index);
+    expect(top, `Track başlığı satırı bulunamadı (index ${index}).`).not.toBeNull();
+    return top as number;
+  }
+
   /** Shift+wheel: yatay pan. (Bekleme gerekçesi için bkz. ctrlWheel.) */
   async shiftWheel(deltaY: number, at?: { x: number; y: number }): Promise<void> {
     const point = at ?? (await this.centerOfBody());

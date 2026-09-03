@@ -12,8 +12,18 @@
  * 82 000 000 µs) ve kullanıcı "timeline boşaldı" diyordu — bu dilimin kök
  * nedeni buydu. Sınır artık TEK yerde tanımlı ve orta-tuş pan'i, Shift+wheel
  * ve zoom dahil her scrollUs yazımına uygulanır.
+ *
+ * DİKEY SINIR (maxScrollY/clampScrollY): yatay ikizin aynısı, piksel
+ * uzayında. Dikey kelepçe "vardı" ama JESTİN İÇİNDEYDİ — wheel ve orta-tuş
+ * pan'i formülü ayrı ayrı kopyalamıştı, dolayısıyla scrollY yalnız kullanıcı
+ * kaydırdığında sınıra çekiliyordu. Track sayısı ya da gövde yüksekliği
+ * DEĞİŞTİĞİNDE (undo ile track silme, panelin büyümesi) eski scrollY sınırın
+ * dışında kalıyor, altta boş şerit ve kaymış hit-test üretiyordu. Sınır artık
+ * burada tanımlı ve TimelinePanel'deki tek yazma yolundan (applyScrollY) her
+ * scrollY yazımına — jest olmayan yeniden kelepçelemeye de — uygulanır.
  */
 import type { MicroSec } from '@videoedit/timeline-schema';
+import { tracksContentHeight } from './geometry';
 
 /**
  * İçeriğin sonundan sonra bırakılabilecek boşluk, görünür genişliğin oranı
@@ -71,6 +81,33 @@ export function panScrollUs(
   }
   const deltaUs = (currentX - startX) / pxPerUs;
   return Math.min(limit, Math.max(0, Math.round(startScrollUs - deltaUs)));
+}
+
+/**
+ * İzin verilen en büyük scrollY: son track satırı (+ yeni-track bölgesi)
+ * gövdenin altına yapıştığında durur.
+ *
+ * İçerik gövdeye sığıyorsa 0 döner — kaydıracak bir şey yoktur. Geçersiz
+ * (NaN/negatif) girdide sayısal olarak güvenli davranır: track sayısı 0'a,
+ * gövde yüksekliği 0'a çekilir; sonsuz/NaN bir sınır kelepçeyi anlamsız
+ * kılardı.
+ */
+export function maxScrollY(trackCount: number, bodyHeightPx: number): number {
+  const count = Number.isFinite(trackCount) ? Math.max(0, Math.floor(trackCount)) : 0;
+  const body = Number.isFinite(bodyHeightPx) ? Math.max(0, bodyHeightPx) : 0;
+  return Math.max(0, tracksContentHeight(count) - body);
+}
+
+/**
+ * scrollY'yi [0, maxScrollY] aralığına kelepçeler. TimelinePanel'deki TÜM
+ * scrollY yazımları (wheel, orta-tuş pan, yeniden kelepçeleme) buradan geçer.
+ * Piksel uzayı: yatay ikizinin aksine yuvarlama YAPILMAZ (kesirli translateY
+ * geçerlidir ve panScrollY'nin kesirli sonucunu bozmayız).
+ */
+export function clampScrollY(scrollY: number, maxScrollYPx: number): number {
+  const limit = Number.isFinite(maxScrollYPx) ? Math.max(0, maxScrollYPx) : 0;
+  if (!Number.isFinite(scrollY)) return 0;
+  return Math.min(limit, Math.max(0, scrollY));
 }
 
 /** Dikey pan: [0, maxScrollY] aralığına kırpılmış piksel kaydırma. */
