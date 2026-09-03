@@ -102,6 +102,13 @@ test.describe('Erişilebilirlik — klavye ve roller', () => {
       // erişemeyen kullanıcı playhead'i buradan yazabilmeli — alanı odak
       // sırasının dışına almak (tabIndex=-1) bu iddiayı kırar.
       'Playhead zaman kodu',
+      // panel-2b: timeline'ın dikey boyutlandırma tutamağı (role="separator").
+      // Fareye erişemeyen kullanıcı yüksekliği ok tuşlarıyla değiştirebilmeli —
+      // tutamağı odak sırasından çıkarmak (tabIndex=-1) bu iddiayı kırar.
+      // ÖLÇÜLDÜ (2026-09-03): tutamak Tab sırasında 11. sıraya girer (zaman
+      // kodu alanından hemen sonra); 24'lük bütçe DEĞİŞMEDEN yetiyor —
+      // listenin son öğesi "Sığdır" 17. sırada.
+      'Timeline yüksekliği',
       'Video track ekle',
       'Sığdır (Shift+Z)',
     ]) {

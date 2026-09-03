@@ -2,6 +2,48 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-03
+- panel-2a / panel-2b — **timeline dikey yeniden boyutlandırma** (panel turu dilim 2,
+  FRONTEND-only). **2a (mevcut kusurun düzeltmesi):** `scrollY` YALNIZ iki jestte (wheel +
+  orta-tuş pan) yazılıyordu ve üst sınır formülü ikisine KOPYALANMIŞTI; sınırın kendisi
+  değişince (track sayısı / gövde yüksekliği) yeniden kelepçeleme YOKTU — Ctrl+Z ile track
+  silince altta boş şerit ve BİR SATIR kaymış hit-test doğuyordu. `pan.ts`'e yatay ikizin
+  dikey karşılığı iki saf fonksiyon (`maxScrollY`, `clampScrollY`), `TimelinePanel`'e TEK
+  yazma yolu `applyScrollY` + `[viewport.h, tracks.length]` bağımlı yeniden-kelepçe efekti;
+  iki kopya formül silindi (`panScrollY` korundu — sınırı artık aynı fonksiyondan alır).
+  Yeni `e2e/timeline-scroll-clamp.spec.ts` commit ÖNCESİ kırmızıydı (HEAD koduyla koşuldu:
+  başlık kolonu `Expected 684.5 / Received 545.5` — 139 px bayat kaydırma; hit-test
+  `Expected ["a723dc55-…"] / Received []`). **2b (özellik):** yeni
+  `features/timeline/timelineHeight.ts` — ÜÇ ALAN AYRIMI: `preferredPx` KULLANICI NİYETİ
+  (localStorage `videoedit.timelineHeight.v1`, YALNIZ commit anında yazılır), `headerPx` ve
+  `availablePx` ÖLÇÜLEN efemeral değerler; efektif yükseklik saf `clampTimelineHeight`'ten
+  gelir (min = ölçülen başlık + cetvel + bir tam satır + yeni-track bölgesi; max = alan −
+  160 px oynatıcı payı; sonuç ayrıca alanı aşamaz; depolama boşken 280 px = eski grid satırı).
+  Pencere küçülünce efektif değer kelepçelenir ama NİYETE dokunulmaz. Yeni
+  `TimelineResizeHandle.tsx` (panelin içinde, canvas sarmalayıcısının DIŞINDA; pointer-capture
+  + üçlü çıkış: pointerup/lostpointercapture = commit, pointercancel/Escape = abort;
+  pointermove'lar rAF ile birleştirilir — kare başına ≤1 store yazımı, sürükleme boyunca
+  localStorage I/O YOK; `role="separator"` + ok/Shift+ok/Home/End, yalnız ele alınan tuşlarda
+  preventDefault+stopPropagation). `App.tsx`: `AppContent` → `EditorGrid` children-as-props
+  (yükseklik selector'ı yalnız grid'de; panel elementlerinin kimliği değişmediği için dört
+  panel yeniden render OLMAZ), `grid-rows-[…280px]` sınıfı yerine inline `gridTemplateRows`
+  (Tailwind JIT çalışma zamanı değeri üretemez); yatay düzlem (grid-cols + tüm yerleşimler)
+  AYNEN korundu. `TimelinePanel`: başlık RO ile ölçülür, wrap `data-testid="timeline-canvas"`
+  aldı (dört e2e yerinde aranan ama kodda olmayan dal canlandırıldı), `measure()` DEĞİŞMEYEN
+  canvas boyutunu yeniden atamaz ve `setViewport` kimlik korur. Yeni `e2e/timeline-resize.spec.ts`
+  (8 test, gerçek fare/klavye): asıl sözleşme — 120 px büyütmede klibin x/genişliği ve
+  pxPerUs/scrollUs DEĞİŞMEDİ; min/max'ta durma; reload sonrası korunma + anahtarın değeri;
+  boyut sonrası sürükleme/tıklama doğru hedefi vuruyor; scrollY yeniden kelepçeleniyor;
+  klavye adımları playhead'i OYNATMIYOR; varsayılan 280. Sızıntı önlemi: e2e context'i
+  worker-scope olduğu için anahtar her testin önünde ve sonunda silinir (spec paketin
+  ortasında koşarken sonrası yeşil). NEGATİF KONTROL ×3 (hepsi md5-birebir geri):
+  (1) `clampTimelineHeight`'ten `Math.max(min,…)` çıktı → T2 `Expected 170 / Received 3.75`
+  (+1 birim kırmızı); (2) 2a yeniden-kelepçe efekti söküldü → `timeline-scroll-clamp`
+  (`Expected 684.5 / Received 545.5`) ve T6 (`Expected 484.5 / Received 345.5`) kırmızı;
+  (3) tutamağın `stopPropagation`'ı silindi → T7 `"ArrowUp" dispatcher'a SIZDI:
+  Expected 5000000 / Received 0`. PERF (başlı Edge, 165 Hz — `performans-raporu §3.2`
+  yöntemi): boyutlandırma fazı 3 tekrar, n=555/534/529 kare, p50 6,1 ms · p95 6,1-6,3 ms ·
+  max 6,6 ms · >33,3 ms 0 (bütçe p95 ≤ 16,7 ms ve ≤%1 — karşılandı, M1 gerekmedi).
+  Defter: `PROGRESS.md` §Özellik turu 2 dilim 2.
 - panel-1a / panel-1b — **elle zaman kodu girişi** (panel turu dilim 1, FRONTEND-only):
   transport çubuğundaki playhead göstergesi düzenlenebilir bir alan oldu; yazılan zaman kodu
   playhead'i o ana götürür. **1a (saf çekirdek):** yeni `features/player/timecodeInput.ts`

@@ -1,6 +1,11 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-03, `panel-1a`+`panel-1b` — **panel turu dilim 1 (elle zaman kodu
-girişi) KAPANDI**: transport çubuğundaki playhead göstergesi düzenlenebilir alan oldu
+Son güncelleme: 2026-09-03, `panel-2a`+`panel-2b` — **panel turu dilim 2 (timeline dikey
+yeniden boyutlandırma) KAPANDI**: timeline satırı tutamaktan sürüklenerek (ve klavyeyle)
+büyütülüp küçültülüyor, tercih TARAYICIDA kalıcı (belgeye yazılmaz), yatay düzlem
+dokunulmadan korunuyor; öncesinde keşifte bulunan `scrollY` kelepçe kusuru AYRI commit'le
+kapatıldı (kelepçe artık jestlerde değil TEK yazma yolunda ve sınır değişince yeniden
+uygulanıyor). FRONTEND-only. Defter: `PROGRESS.md` §Özellik turu 2 dilim 2. Öncesi:
+`panel-1a`+`panel-1b` — **panel turu dilim 1 (elle zaman kodu girişi)**: transport çubuğundaki playhead göstergesi düzenlenebilir alan oldu
 (saat okuması, ceil'li ters dönüşüm, tipli ret/bildirim kodları) ve proje sonu kelepçesi
 TEK tanımdan alan + ok/step tuşları + cetvel scrub'ına yayıldı. FRONTEND-only. Defter:
 `PROGRESS.md` §Özellik turu 2 dilim 1. Öncesi: 2026-09-02 `ozellik-fix` — kullanıcının
@@ -86,24 +91,34 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   SIFIR ihlal; 8x'te rAF ~25 fps dürüst maliyet (poc §2.8). Kalkanlar: `engineV1.scrub.test.ts`
   + scheduler lookbehind pinleri + `e2e/jkl-shuttle-frames.spec.ts`; negatif kontrol ×3
   md5-birebir. Defter: `PROGRESS.md` §Özellik turu satır F.
-- Son yeşil sayılar (2026-09-03, `panel-1b` kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 42 sn) · editör **1493** ·
-  şema 235 · Playwright **185/185** (48 spec, 11,7 dk, 0 skip) · build -warnaserror 0 uyarı ·
-  tsc -b + e2e tsc + prod build temiz. (Önceki taban 2026-09-02: editör 1445 · Playwright
-  175/175 / 47 spec.)
+- Son yeşil sayılar (2026-09-03, `panel-2b` kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 39 sn) · editör **1516** ·
+  şema 235 · Playwright **194/194** (50 spec, 12,2 dk, 0 skip) · build -warnaserror 0 uyarı ·
+  tsc -b + e2e tsc + prod build temiz. (Önceki taban 2026-09-03 `panel-1b`: editör 1493 ·
+  Playwright 185/185 / 48 spec.)
 
 ## Devam edenler
 
 - **Panel turu (2026-09-02 onaylı plan — 3 panel özelliği + kapanış denetimi): dilim 1 ✅,
-  dilim 2-3 + denetim SIRADA.** Dilim 1 (elle zaman kodu girişi) iki commit'te kapandı:
+  dilim 2 ✅, dilim 3 + denetim SIRADA.** Dilim 2 (timeline dikey boyutlandırma) iki
+  commit'te kapandı: `panel-2a` `scrollY` kelepçesi TEK yazma yoluna (`pan.maxScrollY` +
+  `clampScrollY` saf ikizler, `TimelinePanel.applyScrollY`, `[viewport.h, tracks.length]`
+  bağımlı yeniden-kelepçe; iki kopya formül silindi) — kusur commit ÖNCESİ gerçek girdiyle
+  kırmızı gösterildi; `panel-2b` sürüklenebilir yükseklik (`features/timeline/timelineHeight.ts`
+  niyet/ölçüm ayrımı + localStorage `videoedit.timelineHeight.v1`, `TimelineResizeHandle.tsx`
+  pointer-capture + üçlü çıkış + rAF birleştirme + `role="separator"` klavyesi, `App.tsx`
+  `EditorGrid` children-as-props + inline `gridTemplateRows`). Negatif kontrol ×3
+  (md5-birebir), perf ölçümü `performans-raporu §3.6` (resize p95 6,1-6,3 ms, >33,3 ms 0).
+  **Sıradaki iş: dilim 3 — ses ölçer paneli (3a ölçüm hattı: `audioGraph.ts`'e paralel yaprak
+  tap + saf `core/meter.ts`; 3b `AudioMeter.tsx` + kanıt).**
+  Dilim 1 (elle zaman kodu girişi) iki commit'te kapandı:
   `panel-1a` saf ayrıştırıcı + Türkçe sözlük (`features/player/timecodeInput.ts` +
   `playerFeedback.ts`; saat okuması, ceil'li ters dönüşüm, `feedbackCoverage` muhafızı
   genişletildi), `panel-1b` tel + kelepçe (`TransportTimecode.tsx`, `PlayerPanel` teli,
   `timelineOps.clampPlayheadUs` ile alan + ok/step + cetvel scrub'ı TEK üst sınırdan).
   FRONTEND-only: backend/şema DEĞİŞMEDİ. Negatif kontrol ×4 (md5-birebir). Doküman:
   `rendering-semantics §1.5` sözde-kodu floor'a düzeltildi (kod doğruydu). Defter:
-  `PROGRESS.md` §Özellik turu 2 dilim 1. **Sıradaki iş: dilim 2 — timeline dikey
-  boyutlandırma; 2a `scrollY` kelepçe kusuru AYRI ve ÖNCE gelen commit.**
+  `PROGRESS.md` §Özellik turu 2 dilim 1.
 
 - Önceki tur: özellik turu 2026-09-01'de KAPANDI (aşağıdaki kayıt tur kapanış özetidir).
   Kapanış denetimi ONAY verdi; 3 bulgusu (deleteTrack kilitli-eş sessiz bağ silme →
@@ -201,13 +216,15 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    Kullanıcı tavanı kaldırmak ya da değiştirmek isterse tek sabit (`MAX_TIMECODE_US`) ve iki
    test satırı değişir.
 
-## Ortam notu (2026-09-03, `panel-1b` kapanışı)
+## Ortam notu (2026-09-03, `panel-2b` kapanışı)
 
-Önceki turun süreçleri (`api-run-oz1`/`worker-run-oz1`, PID 235316/217172) ÖLMÜŞ bulundu —
-bu session kendi yayınını yaptı: `api-run-p1` + `worker-run-p1` (HEAD'den `dotnet publish`,
-scratchpad `…\5fc88602-…\scratchpad`). Tazelik kanıtı: API PID 352088'in YÜKLÜ modül yolu
-`…\api-run-p1\VideoEdit.Api.dll`, worker PID 304040; font parmak izi API `/health` ile
-worker açılış satırında BİREBİR (`f8620403…861d`, 16/16 dosya). Vite :5173 (200; dev server
-kaynaktan servis eder — bu dilim FRONTEND-only, restart gerekmedi). Docker üçlüsü healthy;
-kaçak ffmpeg 0 (suite öncesi ve sonrası sayıldı). DİKKAT: yayın dizinleri session-scratchpad'te
-yaşar — yeni session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.
+`panel-1b` turunun yayınları AYAKTA bulundu ve tazeliği doğrulandı: API PID 352088'in YÜKLÜ
+modül yolu `…\api-run-p1\VideoEdit.Api.dll`, worker PID 304040 `…\worker-run-p1\…`; ikisi de
+HEAD'den (`d0f3a3f`) yayınlanmıştı ve bu dilim FRONTEND-only olduğu için yeniden yayın
+GEREKMEDİ. `/health` fonts `f8620403…861d` (16/16). Vite :5173 (200; dev server kaynaktan
+servis eder). Docker üçlüsü healthy; kaçak ffmpeg 0 (TAM suite öncesi sayıldı).
+Perf ölçümü için başlı tarayıcı: ms-playwright Chromium bu ortamda başlı modda HÂLÂ
+spawn edilemiyor (`spawn UNKNOWN`) — ölçüm `channel: 'msedge'` ile başlı Edge'de yapıldı
+(geçici config + geçici spec, ölçümden sonra SİLİNDİ; sonuç `performans-raporu §3.6`).
+DİKKAT: yayın dizinleri session-scratchpad'te yaşar (`…\5fc88602-…\scratchpad`) — yeni
+session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.

@@ -67,6 +67,8 @@ import { runTimelineMenuAction } from './menuActions';
 import { TransitionEditor } from './TransitionEditor';
 import { clampScrollUs, clampScrollY, maxPanScrollUs, maxScrollY, panScrollUs, panScrollY } from './pan';
 import { TimelineContextMenu } from './TimelineContextMenu';
+import { TimelineResizeHandle } from './TimelineResizeHandle';
+import { setTimelineHeaderPx } from './timelineHeight';
 import {
   RULER_H,
   TRACK_GAP,
@@ -216,6 +218,7 @@ export function TimelinePanel() {
   const sessionError = useProjectSession((s) => s.error);
   const sessionLoading = sessionStatus === 'loading';
 
+  const headerRef = useRef<HTMLElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const rulerRef = useRef<HTMLCanvasElement | null>(null);
   const bodyRef = useRef<HTMLCanvasElement | null>(null);
@@ -418,19 +421,45 @@ export function TimelinePanel() {
       const dpr = window.devicePixelRatio || 1;
       const size = (canvas: HTMLCanvasElement | null, cssH: number): void => {
         if (!canvas) return;
-        canvas.width = Math.max(1, Math.round(w * dpr));
-        canvas.height = Math.max(1, Math.round(cssH * dpr));
-        canvas.style.width = `${w}px`;
-        canvas.style.height = `${cssH}px`;
+        const backingW = Math.max(1, Math.round(w * dpr));
+        const backingH = Math.max(1, Math.round(cssH * dpr));
+        // DEĞİŞMEYEN boyutu yeniden atamak backing store'u SIFIRLAR (canvas
+        // sözleşmesi: width/height yazımı tuvali temizler). Dikey
+        // sürüklemede cetvelin boyu sabittir; her karede temizlenip yeniden
+        // çizilmesi bedava değildir.
+        if (canvas.width !== backingW || canvas.height !== backingH) {
+          canvas.width = backingW;
+          canvas.height = backingH;
+        }
+        const cssWidth = `${w}px`;
+        const cssHeight = `${cssH}px`;
+        if (canvas.style.width !== cssWidth) canvas.style.width = cssWidth;
+        if (canvas.style.height !== cssHeight) canvas.style.height = cssHeight;
       };
       size(rulerRef.current, RULER_H);
       size(bodyRef.current, Math.max(0, h - RULER_H));
       size(overlayRef.current, h);
-      setViewport({ w, h });
+      // Kimlik koruması: ölçüm değişmediyse AYNI nesne döner -> React render'ı
+      // ve ona bağlı yeniden çizim zinciri hiç tetiklenmez.
+      setViewport((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(wrap);
+    return () => ro.disconnect();
+  }, []);
+
+  // Panel başlığının ÖLÇÜLEN yüksekliği: boyutlandırmanın alt sınırı buna
+  // bağlı (başlık + bir tam track satırı + yeni-track bölgesi hep görünür
+  // kalır). Sabit yazmak yerine ölçülür — başlık sarılırsa/büyürse sınır
+  // kendiliğinden doğru kalır.
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const measure = (): void => setTimelineHeaderPx(header.getBoundingClientRect().height);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(header);
     return () => ro.disconnect();
   }, []);
 
@@ -1307,7 +1336,16 @@ export function TimelinePanel() {
 
   return (
     <div className="relative flex h-full flex-col">
-      <header className="flex items-center gap-2 border-b border-edge bg-surface-2 px-3 py-1.5">
+      {/*
+        Dikey boyutlandırma tutamağı: panelin İÇİNDE, canvas sarmalayıcısının
+        DIŞINDA (bkz. TimelineResizeHandle başlığı). Başlığın üst dolgusunun
+        içinde durur, düğmeleri örtmez.
+      */}
+      <TimelineResizeHandle />
+      <header
+        ref={headerRef}
+        className="flex items-center gap-2 border-b border-edge bg-surface-2 px-3 py-1.5"
+      >
         <span className="text-xs font-semibold tracking-wide text-fg-muted uppercase">Timeline</span>
         <button
           type="button"
@@ -1472,6 +1510,10 @@ export function TimelinePanel() {
         {/* Canvas stack. */}
         <div
           ref={wrapRef}
+          // e2e sözleşmesi: harness öncelikle bu testid'yi arar, yoksa
+          // "3 canvas içeren div" sezgisine düşer. Etiketlenen öğe sezginin
+          // bulduğuyla AYNI öğedir (canvas sırası: ruler, body, overlay).
+          data-testid="timeline-canvas"
           className="relative min-w-0 flex-1 touch-none overflow-hidden select-none"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}

@@ -133,6 +133,31 @@ Klibe gerçek tıklama → `clip-inspector` panelinin dolu boyanması (pointerdo
 
 - n=15, p50 27.3 ms, p95 40.9 ms, max 63.9 ms (ilk açılış). 100 ms eşiğinin altında.
 
+### 3.6 Timeline dikey boyutlandırma — sürükleme fazı (2026-09-03, `panel-2b`)
+
+Yeni özellik: timeline satırı tutamaktan sürüklenerek büyütülüp küçültülüyor. Her kare CSS
+grid satırını (`gridTemplateRows`) değiştirdiği için canvas yığını yeniden ölçülüyor —
+bu fazın kare maliyeti §3.2 YÖNTEMİYLE ölçüldü (rAF delta, ısınma + 3 tekrar, gerçek CDP
+fare girdisi, etkinin gerçekleştiği DOM'dan doğrulandı: her tekrarda satır 280 → 580 px'e
+çıkıp 280'e döndü). Ortam farkları: seed projesi (2 track / 2 klip; §3.2'nin 50-500 klipli
+belgeleri DEĞİL), başlı Edge, 165 Hz ekran, Vite dev sunucusu, 1440×900. Jest: tutamak
+300 px yukarı + 300 px aşağı, yön başına 60 kademe (~8 ms arayla).
+
+| Faz | n (kare) | p50 ms | p95 ms | max ms | >33.3 ms |
+|---|---|---|---|---|---|
+| idle (taban) | 497 | 6.1 | 6.4 | 7.4 | 0 |
+| resize — tekrar 1 | 555 | 6.1 | 6.3 | 6.6 | 0 |
+| resize — tekrar 2 | 534 | 6.1 | 6.1 | 6.3 | 0 |
+| resize — tekrar 3 | 529 | 6.1 | 6.1 | 6.2 | 0 |
+
+**Sonuç: sürükleme fazı boşta beklemekten AYRIŞMIYOR** (p50 = 6.1 ms = 165 Hz kare süresi);
+1 618 karenin hiçbiri 33.3 ms'i aşmadı. Dilim için konan bütçe (p95 ≤ 16.7 ms ve >33.3 ms
+oranı ≤ %1) karşılandı, ek iyileştirme (M1) GEREKMEDİ. Maliyeti düşük tutan üç şey uygulamada
+zaten var: pointermove'ların rAF ile birleştirilmesi (kare başına ≤1 store yazımı),
+panellerin children-as-props ile yeniden render dışında kalması, ve `measure()`'ın
+DEĞİŞMEYEN canvas boyutunu yeniden atamaması (atamak backing store'u sıfırlar).
+Headless ölçüm KAPSAM DIŞI (rAF ~12 Hz'e kısılıyor — §1 tarayıcı notu).
+
 ---
 
 ## 4. Belge boyutu, kaydetme ve DEV kapısı

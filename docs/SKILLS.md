@@ -1,5 +1,5 @@
 # SKILLS — operasyonel prosedür envanteri
-Son güncelleme: 2026-09-02. Bu dosya, oturum hafızasında yaşayıp tekrar tekrar keşfedilen
+Son güncelleme: 2026-09-03. Bu dosya, oturum hafızasında yaşayıp tekrar tekrar keşfedilen
 prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutlardan türetildi.
 
 ### ortam-kaldirma
@@ -67,21 +67,28 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   pnpm -r test                                           # editör + timeline-schema vitest
   pnpm --filter @videoedit/editor exec tsc -b            # + apps/editor'da: npx tsc -p e2e/tsconfig.json --noEmit
   ```
-- Doğrulama: 2026-09-02 (ozellik-fix sonu) yeşil sayıları: backend 1626 · editör 1442 · şema 235 (bunlar BÜYÜR; skip 0 sabittir).
+- Doğrulama: 2026-09-03 (panel-2b sonu) yeşil sayıları: backend 1626 · editör 1516 · şema 235 (bunlar BÜYÜR; skip 0 sabittir).
 - Bilinen sınırlar/tuzaklar: MinIO'suz koşumda MinIO+ffmpeg kapılı testler skip'lenir (2026-08-31 ölçümü: 41) —
   skip>0 görürsen önce Docker'a bak. Lint YOK (kullanıcı kararı); "bitti" tanımı: build + testler + tsc.
-- Son doğrulanma: 2026-09-02
+- Son doğrulanma: 2026-09-03
 
 ### playwright-tam-suite
 - Amaç: Gerçek fare/klavye e2e paketinin tamamı.
 - Ne zaman tetiklenir: Kapanış doğrulamaları; UI'a dokunan dilimler.
 - Ne zaman KULLANILMAZ: Ortamın TEK SAHİBİ değilsen — paralel ajan/koşum sahte kırmızı üretir (ölçülmüş ders).
 - Girdi: ortam-kaldirma tamam + ikili-tazelik doğrulanmış + kaçak ffmpeg yok (`Get-Process ffmpeg`).
-- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-09-02 (ozellik-fix sonu): 175 test / 47 spec / 11,7 dk.
+- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-09-03 (panel-2b sonu): 194 test / 50 spec / 12,2 dk.
 - Doğrulama: 0 failed, 0 skipped (ffmpeg PATH'teyse koşullu skip'ler tetiklenmez).
 - Bilinen sınırlar/tuzaklar: Sentetik girdi (dispatchEvent) YASAK — kanıt sayılmaz (review-gate kural 3).
-  Süite testleri sadece Chromium'da.
-- Son doğrulanma: 2026-09-02
+  Süite testleri sadece Chromium'da. TARAYICI DEPOLAMASI SPEC'LER ARASINDA YAŞAR: context
+  worker-scope'tur (fixtures/test.ts, workers:1), yani bir spec'in bıraktığı localStorage
+  değeri sonrakilerin düzenini/geometrisini sessizce değiştirir — kalıcı tercih yazan her
+  yeni spec before/afterEach'te anahtarı SİLMELİ (desen: `timeline-resize.spec.ts` +
+  `TimelineHarness.clearStoredHeight`; kabul ölçütü: spec paketin ORTASINDA koşarken
+  sonrakiler yeşil). BAŞLI (headed) mod: ms-playwright Chromium bu makinede başlı
+  spawn edilemiyor (`spawn UNKNOWN`); rAF kadansı gereken ölçümlerde `channel: 'msedge'`
+  ile başlı Edge kullanılır (headless rAF'ı ~12 Hz'e kısar — ölçüm artefaktı).
+- Son doğrulanma: 2026-09-03
 
 ### negatif-kontrol-protokolu
 - Amaç: Yeni/değişen her korumanın gerçekten yük taşıdığını kanıtlamak.
@@ -92,7 +99,9 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   DLL kullanır; geri yükleme sonrası dosyaya touch + rebuild ZORUNLU. (2) PowerShell `Get-Content` ANSI
   okuması Türkçe karakterleri bozar (mojibake) — dosya yazımı daima Write/Edit araçlarıyla. (3) `git checkout`
   autocrlf smudge'ı satır sonlarını değiştirebilir — bayt-birebirlik iddiasını hash'le kur.
-- Son doğrulanma: 2026-09-02
+  (4) `git stash push/pop` de AYNI smudge'ı yapar: dosyayı Edit ile boz + Edit ile geri al
+  (git'e uğratmadan) — md5 birebir kalır; 2026-09-03'te ölçüldü.
+- Son doğrulanma: 2026-09-03
 
 ### migration-uygulama
 - Amaç: EF migration'ını canlı DB'ye uygulamak.

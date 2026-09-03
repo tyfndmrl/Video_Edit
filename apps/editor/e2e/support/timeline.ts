@@ -10,8 +10,9 @@
  * Piksel geometrisi uygulamanın KENDİ geometry modülünden gelir (tek kaynak):
  * xPx = (timeUs - scrollUs) * pxPerUs, satır yüksekliği TRACK_H + TRACK_GAP.
  */
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { RULER_H, TRACK_H, TRACK_GAP } from '../../src/features/timeline/geometry';
+import { TIMELINE_HEIGHT_STORAGE_KEY } from '../../src/features/timeline/timelineHeight';
 import { findClip, readAppState, type AppState } from './appBridge';
 
 export interface Box {
@@ -49,6 +50,77 @@ export class TimelineHarness {
 
   async state(): Promise<AppState> {
     return readAppState(this.page);
+  }
+
+  // ---------------------------------------------------------------------
+  // Dikey boyutlandırma (panel-2b)
+  // ---------------------------------------------------------------------
+
+  /** Timeline'ı barındıran grid hücresi (yükseklik sözleşmesinin ölçüldüğü kutu). */
+  async sectionBox(): Promise<Box> {
+    const box = await this.page.evaluate(() => {
+      const el = document.getElementById('timeline-section');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left, y: r.top, width: r.width, height: r.height };
+    });
+    expect(box, 'Timeline grid hücresi bulunamadı (#timeline-section).').not.toBeNull();
+    return box as Box;
+  }
+
+  /** Boyutlandırma tutamağı (role="separator"). */
+  resizeHandle(): Locator {
+    return this.page.locator('[data-testid="timeline-resize-handle"]');
+  }
+
+  async resizeHandleBox(): Promise<Box> {
+    const box = await this.resizeHandle().boundingBox();
+    expect(box, 'Boyutlandırma tutamağı görünür değil.').not.toBeNull();
+    return box as Box;
+  }
+
+  /**
+   * Tutamağı `dy` piksel sürükler (negatif = YUKARI = timeline büyür).
+   * Gerçek fare: bas -> kademeli hareket -> bırak.
+   */
+  async dragHandleBy(dy: number): Promise<void> {
+    const box = await this.resizeHandleBox();
+    const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    await this.page.mouse.move(from.x, from.y);
+    await this.page.mouse.down();
+    // İlk küçük hareket (jest tanınsın), sonra kademeli tam mesafe.
+    await this.page.mouse.move(from.x, from.y + Math.sign(dy || 1) * 4, { steps: 2 });
+    await this.page.mouse.move(from.x, from.y + dy, { steps: DRAG_STEPS });
+    await this.page.mouse.move(from.x, from.y + dy);
+    await this.page.mouse.up();
+    await this.settle();
+  }
+
+  /**
+   * Kalıcı yükseklik anahtarını SİLER. E2E context'i worker-scope olduğu için
+   * localStorage spec'ler ARASINDA yaşar: yükseklik tercihini bırakan bir
+   * spec, sonraki spec'lerin timeline geometrisini sessizce değiştirirdi.
+   */
+  static async clearStoredHeight(page: Page): Promise<void> {
+    await page.evaluate((key: string) => {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        // Engellenmiş depolama: silinecek bir şey de yok.
+      }
+    }, TIMELINE_HEIGHT_STORAGE_KEY);
+  }
+
+  /** Kalıcı yükseklik anahtarının ham değeri (yoksa null). */
+  static async readStoredHeight(page: Page): Promise<string | null> {
+    return page.evaluate((key: string) => {
+      try {
+        return localStorage.getItem(key);
+      } catch {
+        // Engellenmiş depolama: okunamayan değer "yok" sayılır.
+        return null;
+      }
+    }, TIMELINE_HEIGHT_STORAGE_KEY);
   }
 
   /**

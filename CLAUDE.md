@@ -1,5 +1,5 @@
 # VideoEdit
-Son güncelleme: 2026-09-01
+Son güncelleme: 2026-09-03
 
 ## Nedir
 
@@ -15,7 +15,9 @@ Redis (canlı ilerleme pub/sub'ı — zorunlu değil, yoklama yedeği durur).
 **Yapar:** çoklu katman timeline (ses/video track partisyonu; otomatik AV ayrımlı ekleme +
 link/unlink; klip grupları Ctrl+G; J sessiz kademeli geri tarama — özellik turu 2026-09-01);
 kırpma/kesme/ayırma/taşıma; frame/zoom/timecode/player/kısayollar (transport zaman koduna
-ELLE değer yazıp atlama + proje sonu kelepçesi — panel turu dilim 1, 2026-09-03);
+ELLE değer yazıp atlama + proje sonu kelepçesi — panel turu dilim 1, 2026-09-03; timeline'ın
+sürükle/klavye ile DİKEY boyutlandırılması — dilim 2, yükseklik tarayıcıda kalıcı, belgeye
+YAZILMAZ);
 undo-redo + işlem geçmişi; geçişler; metin/şekil/sticker; colorAdjust + LUT (.cube); hız; keyframe;
 ses/müzik miksi; export profilleri (720p/1080p/2160p/dikey); hesap + kota + versiyon geçmişi;
 SignalR canlı ilerleme (worker→Redis→`/hubs/progress`; polling YEDEK — 2026-08-31; `user:{id}`

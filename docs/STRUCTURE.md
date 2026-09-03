@@ -1,5 +1,5 @@
 # STRUCTURE — dizin haritası
-Son güncelleme: 2026-08-25. (İşaret: `[G]` = üretilen/derlenen, elle düzenlenmez.)
+Son güncelleme: 2026-09-03. (İşaret: `[G]` = üretilen/derlenen, elle düzenlenmez.)
 
 ```
 CLAUDE.md                    Giriş noktası (süreklilik seti)
@@ -15,6 +15,12 @@ apps/editor/
   src/app/                   Kabuk: App.tsx, TopBar, queryClient
   src/features/              Dilimler: timeline/ player/ inspector/ library/ export/ text/
                              keyframes/ shortcuts/ auth/ projects/ versions/ history/
+  …/timeline/timelineHeight.ts        Timeline satırının yüksekliği: KALICI kullanıcı niyeti
+                             (localStorage `videoedit.timelineHeight.v1`) + ÖLÇÜLEN efemeral
+                             alanlar ayrı; efektif değer saf `clampTimelineHeight`ten (belgeye
+                             YAZILMAZ — DECISIONS)
+  …/timeline/TimelineResizeHandle.tsx Sürükle-boyutlandır tutamağı (`role="separator"`,
+                             pointer-capture + üçlü çıkış, rAF birleştirme, ok/Home/End)
   src/state/                 docStore (patch-undo) · editorStore · assetStore · timelineOps
                              (TÜM doküman mutasyonları tek kapıdan — 4600+ satır, bilinçli)
   src/entities/              API istemci sarmalayıcıları (assets/exports/auth) + progressHub.ts

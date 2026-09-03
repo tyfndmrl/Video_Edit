@@ -1375,3 +1375,25 @@ ve perf listesinden **media-urls paralelleştirmesi** (8'lik eşzamanlılık kap
   (ölçüldü: satır flip'inden sonra render 10 sn'lik yoklamadan önce doğal bitince). Üretimde
   reaper yalnız 6 saat kalp-atışsız satırı çevirdiğinden pencere pratikte açılmaz; yine de
   tamamlanma UPDATE'ine durum-koşulu eklemek ayrı bir sözleşme kararı olarak durur.
+
+## Panel turu dilim 2 (2026-09-03) — `scrollY` kelepçe kusurunun tarihçesi
+
+- **[KAPANDI — `panel-2a`] Dikey kaydırma kelepçesi yalnız JESTİN İÇİNDEYDİ.** Keşif turunda
+  (2026-09-02, plan §Context) bulundu ve düzeltmeden ÖNCE gerçek girdiyle üretildi.
+  Kök neden: `TimelinePanel`'de `setScrollY` YALNIZ iki yerde çağrılıyordu (modifier'sız
+  wheel ve orta-tuş pan) ve üst sınır formülü —
+  `Math.max(0, tracksContentHeight(trackCount) - bodyH)` — ikisine KOPYALANMIŞTI. Sınırın
+  KENDİSİ değiştiğinde (track sayısı ya da gövde yüksekliği) hiçbir yol yeniden kelepçe
+  uygulamıyordu; bayat `scrollY` iki hasarı birden veriyordu: (a) başlık kolonu ve canvas
+  gövdesi `translateY(-scrollY)` ile yukarıda takılı kalıp altta boş şerit bırakıyor,
+  (b) `contentY = y - RULER_H + scrollY` bayat okunduğu için tıklamalar BİR SATIR kayıyordu
+  (kullanıcı klibe tıklıyor, seçim olmuyordu). Üretim yolu: `+V` ile track ekle → wheel ile
+  dibe kaydır → Ctrl+Z (kaydırma 139 px'te kalıyor, sınır 0'a düşüyor).
+  Ölçülen imza (HEAD `d0f3a3f`): başlık kolonu `Expected 684.5 / Received 545.5`; satır 0
+  tıklaması `Expected ["a723dc55-…"] / Received []`.
+  Neden AYRI commit: kusur özellikten bağımsızdı ve bugün de üretilebiliyordu; dikey
+  boyutlandırma (2b) onu HER büyütmede tetikleyeceği için düzeltme ÖNCE geldi.
+  Düzeltme: sınır tanımı `pan.maxScrollY`/`clampScrollY` (saf, birim testli), yazım tek yol
+  `TimelinePanel.applyScrollY`, ayrıca `[viewport.h, doc.tracks.length]` değişiminde yeniden
+  kelepçe. Kalkan: `e2e/timeline-scroll-clamp.spec.ts` (+ `timeline-resize.spec.ts` T6 aynı
+  davranışı büyütme yönünden bağlar). DECISIONS'ta satırı var (reddedilen alternatifleriyle).
