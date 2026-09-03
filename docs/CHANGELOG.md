@@ -2,17 +2,58 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-03
+- panel-denetim-1 / panel-denetim-2 — **panel turunun üç rollü kapanış denetimi** (baş mimar +
+  baş mühendis + baş geliştirici; her biri kendi koşumlarıyla — review-gate kural 2: rapor kanıt
+  değildir, iddia bizzat koşularak doğrulandı). **denetim-1 (baş geliştirici, ONAY + 3 ORTA +
+  6 DÜŞÜK):** `feedbackCoverage` muhafızı YENİ dosyada KÖRDÜ (`fail('…')` arıyordu, `timecodeInput`
+  ret yardımcısını `reject(…)` diye adlandırmıştı → çevirisiz kod eklenebilirdi); tarama
+  `\b(?:fail|reject)\(` yapıldı ve kendi probumla İKİ iddiada birden kırmızı görüldü.
+  "Playhead kelepçesi TEK FONKSİYONDAN" iddiası zaman kodu alanı için YANLIŞTI — alan saf kalmak
+  için kelepçeyi kendi içinde uygular; docstring/DECISIONS gerçeğe uyduruldu (paylaşılan şey
+  FONKSİYON değil SINIR DEĞERİ) ve iki yolun aynı belgede aynı sayıda durduğu birim testiyle
+  çivilendi. `nominalFps` formülünün 4. kopyası şemaya `nominalFpsOf()` olarak çıkarıldı.
+  DÜŞÜK'ler: fps ≥ 100 KAPSAM SINIRI yazıldı (`poc §2.10` + `rendering-semantics §1.5`),
+  `storage()` sarmalayıcısı `lib/browserStorage.ts`'e çıktı, `clearLatch` prob yüzeyini de
+  sıfırlıyor, klip mandalının POZİTİF yolu ilk kez sınandı (gerçek fareyle volume tavana → mandal
+  → gerçek tıkla söndü), düğme tıkında çift `clearLatch` (stopPropagation), `panScrollY`
+  dejenere girdide `clampScrollY`'den ayrışıyordu → devrediyor, `TransportTimecode` süreyi
+  fırlatmayan `displayTimecode` ile basıyor, bayatlayan ordinal yorumlar silindi.
+  **denetim-2 (baş mimar + baş mühendis, İKİ RED → kapatıldı):** (1) **Boş kanıt cümlesi** —
+  "`audio-parity.spec.ts` dosyaya dokunulmadan yeşil kaldı = yaprak tap duyulan çıkışı
+  değiştirmedi" iddiası VAKUMDU: o spec AudioGraph'ı bilinçli kullanmaz (offline context'te
+  `createMediaElementSource` yok), topolojiyi sayfada yeniden kurar — denetimde gerçek
+  `master.gain` 0'a çekilip (TAM SESSİZLİK) spec'in bit-birebir yeşil kaldığı ÖLÇÜLDÜ. Cümle
+  DECISIONS/CHANGELOG/`poc §2.9`/PROGRESS'ten kaldırıldı, yerine YENİ `audioGraphTopology.test.ts`
+  (kaynak-yapısal muhafız: master→destination tap'ten ÖNCE; tap gövdesinde `destination` YOK;
+  bağlantı zinciri tam olarak master→tap→splitter→(L,R); `getFloatTimeDomainData` var,
+  `getByteTimeDomainData` yok) + kanıtın SINIRINI söyleyen dürüst beyan kondu. Muhafız tap seri
+  yapılarak KIRMIZI görüldü, md5-birebir geri (`30e6ad89…ff35`). (2) **Klip mandalı e2e'si ~%50
+  kırılgandı** — ölçüldü: normal test sesi klip kazancı 2,0'da bile önizleme tepesini eşiğin
+  0,5 dB ALTINDA bırakıyordu, test ancak bir decode transient'iyle yeşile dönüyordu; yeni
+  `LOUD_AUDIO_SPEC` fikstürü (`volume=8,pan=stereo|c0=c0|c1=c0`; ffmpeg `sine` −18,1 dBFS
+  ölçüldü) + ön koşullar AYRI AYRI iddia ediliyor (isPlaying, `db-l > -6`) → kırmızı artık
+  NEDENİNİ söylüyor. Ayrıca: ölçerin dürüstlük notu 0,70 dB diyordu ama §2.6 tablosunun ölçülen
+  MAKSİMUMU hız 2x rejiminde 1,24 dB'dir (limiter 1,20) — üçü de nota ve birim testine kondu;
+  tepe tutucunun düşüşü artık TABANDA duruyor (denetimde prob yüzeyinde −401 dBFS ölçüldü);
+  "kadans 30 Hz" iddiası düzeltildi (33 ms bir TABANDIR, gerçek kadans rAF'e yuvarlanır:
+  60 Hz ekranda 30 Hz, 165 Hz'de 27,5 Hz — ölçüldü); e2e'nin "no-context" iddiası STATİK JSX
+  özniteliğiyle karşılanıyordu (sıfır yayınla da yeşildi) → varsayılanlar kaldırıldı, iddia
+  gerçek bir yayını POLL ediyor; cetvel menüsünün "işaret ekle" hedefi de proje sonu kelepçesine
+  bağlandı; `jkl-shuttle-frames` örnek ön koşulu ölçülmüş gerekçeyle 60→40.
 - panel-3a / panel-3b — **ses ölçer paneli** (panel turu dilim 3, FRONTEND-only).
   **3a (ölçüm hattı, DOM'a sıfır dokunuş):** `audioGraph`'ta master'a PARALEL yaprak tap
   (`master → meterTap(explicit stereo) → ChannelSplitter(2) → analyserL/R`, çıkışlar
   bağlanmaz); `master → destination` aynen kalır — §8.3'ün "önizleme zincirine seri node
-  konmaz" kuralı korunur ve `audio-parity.spec.ts` DOSYAYA DOKUNULMADAN yeşil kalarak
-  çıkışın değişmediğini kanıtlar. `readMeter()` ctx yok/çalışmıyorken NULL döner (sıfır
+  konmaz" kuralı korunur. Yerleşimin muhafızı YENİ `audioGraphTopology.test.ts`'tir
+  (master→destination tap'ten önce; tap gövdesinde `destination` yok; analyser'lar yaprak).
+  `audio-parity.spec.ts`'in yeşil kalması bu iddianın kanıtı DEĞİLDİR ve öyle sunulmaz:
+  o spec AudioGraph'ı kullanmaz, denetimde `master.gain=0` ile (tam sessizlik) yeşil
+  kaldığı ÖLÇÜLDÜ (bkz. panel-denetim-2). `readMeter()` ctx yok/çalışmıyorken NULL döner (sıfır
   döndürmek "miks sessiz" yalanı olurdu). Yeni saf `core/meter.ts`: dBFS/bar/format,
   tepe tutucu (hold 1 s + 20 dB/s, DUVAR SAATİYLE — rAF kısılınca kare-tabanlı düşüş yalan
   söylerdi), klip mandalı (>1.0, tek pencere, duraklatma silmez) ve TÜM kullanıcı metinleri;
   §8.1 `linearToDb`/`dbToLinear` `core/gain.ts`'e taşındı (inspector re-export'la aynen
-  çalışır). `engine.meter$` sözleşmesi + engineV1'de LOOP içinde 30 Hz örnekleme (tick model
+  çalışır). `engine.meter$` sözleşmesi + engineV1'de LOOP içinde ≥33 ms aralıklı örnekleme (TABAN; rAF'e bindiği için gerçek kadans 60 Hz ekranda 30 Hz, 165 Hz'de 27,5 Hz — ölçüldü) (tick model
   yokken erken döndüğü için gövdeye konmadı). Altı motor mock'u önce KIRMIZI görülüp
   güncellendi (`readMeter is not a function`).
   **3b (panel + kanıt):** `AudioMeter.tsx` timeline gövde satırının 3. hücresi (canvas wrap'ın

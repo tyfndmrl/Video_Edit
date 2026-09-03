@@ -537,9 +537,11 @@ export class VideoPlaybackEngine implements PlaybackEngine {
   }
 
   /**
-   * Sample the preview master bus at METER_INTERVAL_MS (30 Hz). The analyser
-   * window is longer than the step, so the reads OVERLAP and no audio falls
-   * between two samples; sampling every frame would re-read the same window.
+   * Sample the preview master bus no faster than METER_INTERVAL_MS. The real
+   * cadence is that interval rounded up to a rAF frame (measured: 30 Hz on a
+   * 60 Hz display, 27.5 Hz on a 165 Hz one). The analyser window is longer
+   * than the step either way, so reads OVERLAP and no audio falls between two
+   * samples; sampling every frame would re-read the same window.
    *
    * `live: false` is not "silence": while paused/scrubbing the engine zeroes
    * every element gain, so there is genuinely no mix to measure, and before

@@ -13,7 +13,12 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures/test';
 import { EditorApp } from './support/editor';
 import { LibraryPanelHarness } from './support/library';
-import { FFMPEG_SKIP_REASON, ensureTestAudio, ffmpegVersion } from './support/media';
+import {
+  FFMPEG_SKIP_REASON,
+  ensureLoudAudio,
+  ensureTestAudio,
+  ffmpegVersion,
+} from './support/media';
 import { createEmptyProject } from './support/projects';
 
 const METER = '[data-testid="audio-meter"]';
@@ -72,14 +77,19 @@ test.describe('Ses ölçer — gerçek girdi, gerçek miks', () => {
     // Ses motoru tarayıcı kuralı gereği ilk oynatmaya kadar kurulmaz; bunu
     // sıfır seviye göstererek gizlemek "miks sessiz" yalanı olurdu.
     await expect(page.locator(METER)).toBeVisible();
+    // Öznitelikler JSX'te STATİK DEĞİL: yalnız gerçek bir meter$ yayını yazar.
+    // Bu yüzden poll ediyoruz — iddia hem değeri hem ÖLÇÜM HATTININ ÇALIŞTIĞINI
+    // kanıtlar (statik varsayılanla ikisi ayrışırdı; denetim bulgusu).
+    await expect
+      .poll(() => meterAttr(page, 'data-meter-reason'), {
+        timeout: 10_000,
+        message: 'Ölçer hiç yayın yapmadı ya da gerekçe "no-context" değil.',
+      })
+      .toBe('no-context');
     expect(
       await meterAttr(page, 'data-meter-live'),
       'Jestten önce ölçer CANLI görünmemeli.',
     ).toBe('false');
-    expect(
-      await meterAttr(page, 'data-meter-reason'),
-      'Ses motoru kurulmadan önceki gerekçe "no-context" olmalı.',
-    ).toBe('no-context');
     await expect(page.getByTestId('audio-meter-readout')).toHaveText('Ölçüm yok');
 
     // --- 2. GERÇEK yükleme + gerçek çift tık: sesli klip timeline'a ---
@@ -148,7 +158,11 @@ test.describe('Ses ölçer — gerçek girdi, gerçek miks', () => {
     test.skip(ffmpegVersion() === null, FFMPEG_SKIP_REASON);
     test.setTimeout(180_000);
 
-    const music = ensureTestAudio();
+    // TAM ÖLÇEKLİ kaynak: normal test sesiyle (kaynak -3,7 dBFS, proxy'de
+    // mono→stereo matrisiyle -6,5 dBFS) klip kazancı 2,0 bile önizleme tepesini
+    // -0,5 dBFS'te bırakıyor, yani mandalın eşiğinin ALTINDA — test ancak bir
+    // decode transient'i eşiği aşarsa yeşil oluyordu (denetimde ~%50 kırılgan).
+    const music = ensureLoudAudio();
     const project = await createEmptyProject(
       account.context.request,
       account.accessToken,
@@ -184,6 +198,20 @@ test.describe('Ses ölçer — gerçek girdi, gerçek miks', () => {
 
     const transport = page.getByRole('button', { name: /^(Oynat|Duraklat)$/ });
     await transport.click();
+    // ÖN KOŞULLAR AYRI AYRI İDDİA EDİLİR: biri tutmazsa kırmızı NEDENİNİ söyler,
+    // 'mandal yanmadı' diye yanlış yere bakmayız (denetim dersi).
+    await expect
+      .poll(() => isPlaying(page), {
+        timeout: 15_000,
+        message: 'Ön koşul: transport düğmesi oynatmayı başlatmadı.',
+      })
+      .toBe(true);
+    await expect
+      .poll(() => meterDb(page, 'data-meter-db-l'), {
+        timeout: 20_000,
+        message: 'Ön koşul: ölçer sinyali görmüyor (kaynak/kazanç yolu kırık).',
+      })
+      .toBeGreaterThan(-6);
     await expect
       .poll(() => meterAttr(page, 'data-meter-clip'), {
         timeout: 25_000,

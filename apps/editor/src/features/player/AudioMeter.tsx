@@ -11,6 +11,12 @@
  *    their setters run on every sample on purpose: they are called in updater
  *    form and return `prev` unchanged, so React bails out without rendering —
  *    an explicit equality check here would just duplicate that bail-out.
+ * 3. The data-meter-* attributes are written ONLY by a real meter$ frame —
+ *    never as static JSX defaults. A static default would let the e2e claim
+ *    "before any gesture the meter says no-context" pass with the engine
+ *    emitting nothing at all (measured in review), i.e. the attributes would
+ *    stop being evidence of a live sampling path.
+ *
  * 2. Silence and "no mix at all" are DIFFERENT. When the engine has no audio
  *    context (before the first play), is blocked by autoplay policy, or is
  *    paused/shuttling, the meter says so in words instead of drawing a zero.
@@ -242,8 +248,6 @@ export function AudioMeter(): React.JSX.Element {
       role="group"
       aria-label="Ses seviyesi ölçer (önizleme miksi)"
       data-testid="audio-meter"
-      data-meter-live="false"
-      data-meter-reason="no-context"
       className="flex w-16 shrink-0 flex-col border-l border-edge bg-surface-1"
       title={inactiveHint ?? meterHonestyNote()}
       onClick={clipped ? clearLatch : undefined}

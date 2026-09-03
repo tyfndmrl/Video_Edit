@@ -129,8 +129,10 @@ export class AudioGraph {
    *   master -> destination                (audible path, UNCHANGED)
    *     \--> meterTap -> splitter -> analyserL / analyserR   (outputs unconnected)
    *
-   * §8.3 allows no extra node at the END of the preview chain; a fan-out does
-   * not change what `destination` receives (audio-parity stays the proof).
+   * §8.3 allows no extra node at the END of the preview chain; Web Audio
+   * guarantees a fan-out does not change what `destination` receives. That
+   * placement is pinned mechanically by `audioGraphTopology.test.ts` — read its
+   * header for why `audio-parity.spec.ts` is NOT evidence here.
    * The tap is an explicit STEREO gain because `master` inherits its channel
    * count from its inputs ('max'), so a lone mono clip would otherwise leave
    * the splitter's right output silent — upmixing here matches §8.5 ("mono

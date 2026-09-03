@@ -80,17 +80,22 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   SIFIR ihlal; 8x'te rAF ~25 fps dürüst maliyet (poc §2.8). Kalkanlar: `engineV1.scrub.test.ts`
   + scheduler lookbehind pinleri + `e2e/jkl-shuttle-frames.spec.ts`; negatif kontrol ×3
   md5-birebir. Defter: `PROGRESS.md` §Özellik turu satır F.
-- Son yeşil sayılar (2026-09-03, `panel-2b` kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 39 sn) · editör **1516** ·
-  şema 235 · Playwright **194/194** (50 spec, 12,2 dk, 0 skip) · build -warnaserror 0 uyarı ·
-  tsc -b + e2e tsc + prod build temiz. (Önceki taban 2026-09-03 `panel-1b`: editör 1493 ·
-  Playwright 185/185 / 48 spec.)
+- Son yeşil sayılar (2026-09-03, `panel-denetim-2` kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 40 sn) · editör **1540** ·
+  şema 235 · Playwright **197/197** (51 spec, 12,5 dk, 0 skip) · build -warnaserror 0 uyarı ·
+  tsc -b + e2e tsc + prod build temiz. `meter.spec.ts` ayrıca ÜÇ ardışık koşumda 3/3
+  (tam suite içinde + iki bağımsız koşum, 14,7/14,9 sn). (Önceki taban 2026-09-03 `panel-2b`:
+  editör 1516 · Playwright 194/194 / 50 spec.)
 
 ## Devam edenler
 
 - **Panel turu (2026-09-02 onaylı plan — 3 panel özelliği + kapanış denetimi): dilim 1 ✅,
-  dilim 2 ✅, dilim 3 ✅ — ÜÇÜ DE TAMAM; kalan tek iş üç rollü kapanış denetimi
-  (baş mimar + baş mühendis + baş geliştirici).** Dilim 3 iki commit: `panel-3a` ölçüm hattı
+  dilim 2 ✅, dilim 3 ✅, kapanış denetimi KOŞTU (baş mimar + baş mühendis + baş geliştirici).**
+  Baş geliştirici ONAY verdi (3 ORTA + 6 DÜŞÜK → `panel-denetim-1`); baş mimar ve baş mühendis
+  İKİ RED çıkardı (boş kanıt cümlesi + ~%50 kırılgan klip mandalı e2e testi) → `panel-denetim-2`.
+  Bulguların HEPSİ, iddiayı kendim koşarak doğruladıktan sonra kapatıldı (review-gate kural 2).
+  KALAN İŞ: review-gate kural 7 gereği iki denetim düzeltilmiş HEAD üzerinde YENİDEN koşulmalı
+  (tek turda onaya çevrilmez). Dilim 3 iki commit: `panel-3a` ölçüm hattı
   (`audioGraph`'a master'ın paralel yaprak tap'i + `readMeter()` null semantiği, saf
   `core/meter.ts`, `engine.meter$`, §8.1 dB dönüşümlerinin `core/gain.ts`'e taşınması, altı
   motor mock'u — DOM'a sıfır dokunuş, tam suite 194/194 ile kanıtlı), `panel-3b` panel
@@ -152,15 +157,23 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    Kullanıcı tavanı kaldırmak ya da değiştirmek isterse tek sabit (`MAX_TIMECODE_US`) ve iki
    test satırı değişir.
 
-## Ortam notu (2026-09-03, `panel-2b` kapanışı)
+## Ortam notu (2026-09-03, `panel-denetim-2` kapanışı)
 
-`panel-1b` turunun yayınları AYAKTA bulundu ve tazeliği doğrulandı: API PID 352088'in YÜKLÜ
-modül yolu `…\api-run-p1\VideoEdit.Api.dll`, worker PID 304040 `…\worker-run-p1\…`; ikisi de
-HEAD'den (`d0f3a3f`) yayınlanmıştı ve bu dilim FRONTEND-only olduğu için yeniden yayın
-GEREKMEDİ. `/health` fonts `f8620403…861d` (16/16). Vite :5173 (200; dev server kaynaktan
-servis eder). Docker üçlüsü healthy; kaçak ffmpeg 0 (TAM suite öncesi sayıldı).
+`panel-3a` turunun yayınları AYAKTA bulundu ve tazeliği doğrulandı: API PID 198200'ün YÜKLÜ
+modül yolu `…\api-run-p3\VideoEdit.Api.dll`, worker PID 350132 `…\worker-run-p3\…`; bu tur
+(dilim 1-3 + iki denetim) FRONTEND-only olduğu için yeniden yayın GEREKMEDİ — backend suite
+yine de tam koşuldu (1626/1626) ve `-warnaserror` 0 uyarı verdi. `/health` fonts
+`f8620403…4861d` (16/16). Vite :5173 (200; dev server kaynaktan servis eder). Docker üçlüsü
+healthy; kaçak ffmpeg 0 (TAM suite öncesi ve sonrasında sayıldı).
 Perf ölçümü için başlı tarayıcı: ms-playwright Chromium bu ortamda başlı modda HÂLÂ
 spawn edilemiyor (`spawn UNKNOWN`) — ölçüm `channel: 'msedge'` ile başlı Edge'de yapıldı
-(geçici config + geçici spec, ölçümden sonra SİLİNDİ; sonuç `performans-raporu §3.6`).
+(geçici config + geçici spec, ölçümden sonra SİLİNDİ; sonuç `performans-raporu §3.6`/§13).
 DİKKAT: yayın dizinleri session-scratchpad'te yaşar (`…\5fc88602-…\scratchpad`) — yeni
 session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.
+
+---
+
+**Bir sonraki session'ın İLK İŞİ:** panel turunun iki denetimini (baş mimar + baş mühendis)
+düzeltilmiş HEAD üzerinde YENİDEN koşmak — review-gate kural 7: bir RED tek turda onaya
+çevrilmez. Denetim yeşil dönerse sıradaki iş `docs/STATE.md §Sıradakiler` 1. maddesidir
+(`git push` — KULLANICI ONAYI BEKLİYOR, kendiliğinden yapılmaz).

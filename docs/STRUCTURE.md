@@ -15,14 +15,24 @@ apps/editor/
   src/app/                   Kabuk: App.tsx, TopBar, queryClient
   src/features/              Dilimler: timeline/ player/ inspector/ library/ export/ text/
                              player/AudioMeter.tsx = timeline'ın sağındaki ses ölçeri;
-                             player/core/meter.ts = ölçerin SAF matematiği + tüm metinleri
+                             player/core/meter.ts = ölçerin SAF matematiği + tüm metinleri;
+                             player/audio/audioGraphTopology.test.ts = tap'in YAPRAK
+                             yerleşiminin kaynak-yapısal muhafızı (§8.3; başlığı neden
+                             davranış testi olmadığını anlatır)
                              keyframes/ shortcuts/ auth/ projects/ versions/ history/
+  …/player/timecodeInput.ts           Transport zaman kodu alanının SAF ayrıştırıcısı: saat
+                             okuması (`1:30:00` = 1 sa 30 dk), tipli redler, hedef µs =
+                             `ceil(kare·den·1e6/num)` (DECISIONS; kapsam: fps < 100)
+  …/player/TransportTimecode.tsx      Alanın teli: commit/revert/kelepçe bildirimi, odaklıyken
+                             ayna donar
   …/timeline/timelineHeight.ts        Timeline satırının yüksekliği: KALICI kullanıcı niyeti
                              (localStorage `videoedit.timelineHeight.v1`) + ÖLÇÜLEN efemeral
                              alanlar ayrı; efektif değer saf `clampTimelineHeight`ten (belgeye
                              YAZILMAZ — DECISIONS)
   …/timeline/TimelineResizeHandle.tsx Sürükle-boyutlandır tutamağı (`role="separator"`,
                              pointer-capture + üçlü çıkış, rAF birleştirme, ok/Home/End)
+  src/lib/browserStorage.ts  Tek localStorage sarmalayıcısı (private-mode/quota redlerini
+                             yutar; fontCatalogue + timelineHeight AYNI yerden alır)
   src/state/                 docStore (patch-undo) · editorStore · assetStore · timelineOps
                              (TÜM doküman mutasyonları tek kapıdan — 4600+ satır, bilinçli)
   src/entities/              API istemci sarmalayıcıları (assets/exports/auth) + progressHub.ts

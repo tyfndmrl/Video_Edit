@@ -254,7 +254,12 @@ test.describe('J geri tarama — kare bütünlüğü', () => {
     await expect(badge).toBeHidden();
 
     // --- Yabancı kare taraması --------------------------------------------
-    expect(samples.length, 'örnekleme çalışmadı').toBeGreaterThan(60);
+    // Bu bir ÖN KOŞUL, iddia değil: örnekleme gerçekten koştu mu? Eşik ölçümle
+    // seçildi — yalıtımda 86-87 örnek (≈27 fps) toplanıyor, TAM suite yükü
+    // altında 57'ye (≈18 fps) düşebiliyor; 60'lık eski eşik payı olmadığı için
+    // yükte YANLIŞ kırmızı veriyordu. 40, 'hiç örnek toplanmadı' ile 'yavaş ama
+    // çalıştı' arasını hâlâ ayırır; asıl iddia aşağıdaki yabancı-kare taramasıdır.
+    expect(samples.length, 'örnekleme çalışmadı').toBeGreaterThan(40);
     let siyah = 0;
     let yanlisRenk = 0;
     let usMin = Number.POSITIVE_INFINITY;

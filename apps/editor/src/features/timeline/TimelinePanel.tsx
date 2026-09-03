@@ -633,8 +633,8 @@ export function TimelinePanel() {
     const t = snapUsToFrameGrid(xToTime(localX, st.scrollUs, st.pxPerUs), d.settings.fps);
     // Cetvel içeriğin bittiği yerden SONRASINI da gösterir (boş şerit); oraya
     // tıklamak playhead'i içeriğin ötesine götürürdü. Üst sınır ok tuşlarıyla
-    // Üst sınır ok tuşlarıyla AYNI fonksiyondan, zaman kodu alanıyla aynı
-    // DEĞERDEN (projectEndUs) gelir — ikizlik birim testiyle çivili.
+    // AYNI fonksiyondan, zaman kodu alanıyla aynı DEĞERDEN (projectEndUs)
+    // gelir — ikizlik birim testiyle çivili.
     st.setPlayheadUs(clampPlayheadUs(t, d));
   }, []);
 

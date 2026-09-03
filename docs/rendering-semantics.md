@@ -126,6 +126,9 @@ tersleyici koşul "formatTimecode geri aynı metni versin"dir. Half-up `usFromFr
 kullanılsaydı 30 fps'te 1. kare 33 333 µs olur ve alan yazılanı (`:01`) tazelenince
 kaybederdi. Ayrıştırıcı app-yereldir (`apps/editor/.../timecodeInput.ts`); C# zaman kodu
 üretir ama AYRIŞTIRMAZ, bu yüzden ters yön çapraz-dil sözleşmesinin parçası değildir.
+Ayrıştırıcının kare alanı İKİ basamakla sınırlıdır: nominal fps ≥ 100 rejiminde ileri yön
+(`formatTimecode`) üç basamaklı kare üretir ve o metin geri yazılamaz — tipli red alır.
+Ürün o rejime giremediği için sınanmamıştır ve KAPSAM DIŞIDIR (`poc-bilinen-sinirlar` §2.10).
 
 29.97'de non-drop timecode gerçek saat zamanından yavaşça sapar — bu bilinçli üründür,
 drop-frame MVP'de yoktur.

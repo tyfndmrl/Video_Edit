@@ -19,6 +19,7 @@
 import type { MicroSec, Uuid } from '@videoedit/timeline-schema';
 import { useEditorStore } from '../../state/editorStore';
 import {
+  clampPlayheadUs,
   addMarkerAtPlayhead,
   addTransitionAtEdge,
   copyClips,
@@ -155,8 +156,16 @@ export function runTimelineMenuAction(
       // "Buraya": playhead tıklanan kareye gider, marker AYNI kareye eklenir.
       // timeUs açıkça geçilir — setPlayheadUs'un yuvarlaması ile marker'ın
       // zamanı arasında fark kalmasın (menüde görülen kare = eklenen kare).
-      useEditorStore.getState().setPlayheadUs(target.timeUs);
-      addMarkerAtPlayhead(target.timeUs);
+      //
+      // KELEPÇE: cetvel içeriğin bittiği yerden sonrasını da gösterir; oraya
+      // sağ tıklamak playhead'i (ve marker'ı) proje sonunun ÖTESİNE atıyordu —
+      // sol tık scrubTo'dan geçtiği için kelepçeliydi, sağ tık değildi. Aynı
+      // sınırdan geçmesi kullanıcı kararı ("tüm yollar kelepçelensin").
+      // Kelepçelenmiş değer İKİSİNE de verilir ki menüde görülen kare ile
+      // eklenen kare aynı kalsın.
+      const markerUs = clampPlayheadUs(target.timeUs, useDocStore.getState().doc);
+      useEditorStore.getState().setPlayheadUs(markerUs);
+      addMarkerAtPlayhead(markerUs);
       return OK;
   }
 }

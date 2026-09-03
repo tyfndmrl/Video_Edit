@@ -88,6 +88,14 @@ describe('ballistics', () => {
     expect(s.holdDb[0]).toBeCloseTo(dbfs(0.5), 10);
   });
 
+  it('never decays below the scale floor (probe surface stays meaningful)', () => {
+    const start = run([live(1, 0)]);
+    // 30 s of silence: an unbounded decay would publish about -600 dBFS.
+    const s = run([idle(1000), idle(16_000), idle(31_000)], start);
+    expect(s.holdDb[0]).toBe(METER_FLOOR_DB);
+    expect(meterReadoutDb(s)).toBe(METER_FLOOR_DB);
+  });
+
   it('is cadence independent: 30 Hz and 12 Hz steps land on the same hold', () => {
     const start = run([live(1, 0)]);
     const fast: MeterFrame[] = [];
@@ -156,8 +164,12 @@ describe('honesty note', () => {
     expect(note).toContain('0,98'); // export limiter
     expect(note).toContain('1,163'); // measured preview peak
     expect(note).toContain('0,950'); // measured export peak
-    expect(note).toContain('0,70 dB'); // measured RMS envelope
-    expect(note).toContain('1,20 dB'); // limiter regime
+    // §2.6 tablosunun ÜÇ satırı da geçmeli: tipik (fade-out 0,70), limiter (1,20)
+    // ve ölçülen MAKSİMUM (hız 2x 1,24). Yalnız 0,70'i çivilemek, tablonun kendi
+    // maksimumundan küçük bir sayıyı kullanıcıya "en çok" diye gösteriyordu.
+    expect(note).toContain('0,70 dB');
+    expect(note).toContain('1,20 dB');
+    expect(note).toContain('1,24 dB');
     expect(note).toContain('4 medya çözücü'); // pool cap
     expect(note).toContain('-3,0 dBFS'); // RMS convention
   });

@@ -539,6 +539,23 @@ export function ensureParityMusic(): TestAudio {
   };
 }
 
+/**
+ * TAM ÖLÇEKLİ test sesi — ölçerin klip mandalı (0 dBFS aşımı) içindir.
+ *
+ * NEDEN AYRI BİR FIXTURE: normal test sesi ölçüldüğünde kaynak -3,7 dBFS,
+ * worker proxy'si mono→stereo matrisiyle -6,5 dBFS oluyor; klip kazancı 2,0
+ * (şemanın tavanı, +6 dB) ile bile önizleme tepesi -0,5 dBFS'te kalıyor, yani
+ * mandalın eşiğinin (1,0 lineer) ALTINDA. Mandal testi o kaynakla ancak bir
+ * decode transient'i eşiği aşarsa yeşil oluyordu (denetimde ~%50 kırılgan).
+ * Bu fixture sinüsü stereo ve tam ölçekte üretir: proxy downmix'i uygulanmaz
+ * (zaten stereo), 2,0 kazançla tepe ~+6 dB paya çıkar.
+ */
+export const LOUD_AUDIO_SPEC = {
+  fileName: 'e2e-loud-3s.m4a',
+  durationSeconds: 3,
+  contentType: 'audio/mp4',
+} as const;
+
 export const TEST_AUDIO_SPEC = {
   fileName: 'e2e-muzik-3s.m4a',
   durationSeconds: 3,
@@ -600,6 +617,56 @@ export function ensureTestAudio(): TestAudio {
     sizeBytes: statSync(path).size,
     durationUs: TEST_AUDIO_SPEC.durationSeconds * 1_000_000,
     contentType: TEST_AUDIO_SPEC.contentType,
+  };
+}
+
+/**
+ * Tam ölçekli STEREO sinüs (bkz. LOUD_AUDIO_SPEC gerekçesi). `volume` filtresi
+ * ÖLÇÜLDÜ: ffmpeg'in `sine` filtresi -18,1 dBFS üretir (mevcut test sesinin
+ * `volume=5`'i de bu yüzden var); `volume=8` (+18,06 dB) tam ölçeğe getirir —
+ * ölçüm: max_volume -0,0 dB. Sinüs iki kanala kopyalanır, böylece
+ * worker proxy'sinin mono→stereo matris zayıflatması devreye girmez.
+ */
+export function ensureLoudAudio(): TestAudio {
+  const path = join(MEDIA_DIR, LOUD_AUDIO_SPEC.fileName);
+
+  if (!existsSync(path)) {
+    if (ffmpegVersion() === null) throw new Error(FFMPEG_SKIP_REASON);
+    mkdirSync(MEDIA_DIR, { recursive: true });
+    const res = spawnSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        `sine=frequency=440:duration=${LOUD_AUDIO_SPEC.durationSeconds}:sample_rate=48000`,
+        '-af',
+        'volume=8,pan=stereo|c0=c0|c1=c0',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '192k',
+        '-ar',
+        '48000',
+        path,
+      ],
+      { encoding: 'utf8', timeout: 120_000 },
+    );
+    if (res.status !== 0 || !existsSync(path)) {
+      throw new Error(`Yüksek seviyeli test sesi üretilemedi: ${res.stderr ?? ''}`);
+    }
+  }
+
+  return {
+    path,
+    fileName: LOUD_AUDIO_SPEC.fileName,
+    sizeBytes: statSync(path).size,
+    durationUs: LOUD_AUDIO_SPEC.durationSeconds * 1_000_000,
+    contentType: LOUD_AUDIO_SPEC.contentType,
   };
 }
 

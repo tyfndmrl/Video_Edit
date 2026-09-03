@@ -745,3 +745,44 @@ describe("menü öğesi -> op eşlemesi (op'u gerçekten çağırır)", () => {
     expect(clips[1].timelineStartUs).toBe(4 * US); // canlı 40 s değil, donmuş 4 s
   });
 });
+
+describe('cetvel menüsü — "İşaret ekle" proje sonunda durur', () => {
+  /**
+   * Cetvel içeriğin bittiği yerden SONRASINI da gösterir. Sol tık scrubTo'dan
+   * geçtiği için kelepçeliydi, sağ tık menüsü DEĞİLDİ: menü hedefi ham
+   * `timeUs` ile geliyordu ve playhead'i de işareti de projenin ötesine
+   * atıyordu. Kullanıcı kararı "tüm playhead yolları kelepçelensin" olduğu
+   * için bu yol da aynı sınırdan (`projectEndUs`) geçer.
+   */
+  it('içeriğin ötesine sağ tık: playhead DE işaret DE proje sonuna oturur', () => {
+    const doc = docWith([track(V1, 'video', [clip(CLIP_A, 0, 10 * US)])]);
+    loadIntoStore(doc, [], 0);
+
+    const result = runTimelineMenuAction('addMarker', {
+      target: { kind: 'ruler', timeUs: 40 * US },
+      selection: [],
+      playheadUs: 0,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(useEditorStore.getState().playheadUs, 'playhead kelepçelenmeli').toBe(10 * US);
+    const markers = useDocStore.getState().doc.markers;
+    expect(markers).toHaveLength(1);
+    // Menüde görülen kare = eklenen kare: ikisi de AYNI kelepçelenmiş değer.
+    expect(markers[0].timeUs, 'işaret playhead ile aynı yerde olmalı').toBe(10 * US);
+  });
+
+  it('içeriğin İÇİNE sağ tık: kelepçe hedefi değiştirmez', () => {
+    const doc = docWith([track(V1, 'video', [clip(CLIP_A, 0, 10 * US)])]);
+    loadIntoStore(doc, [], 0);
+
+    runTimelineMenuAction('addMarker', {
+      target: { kind: 'ruler', timeUs: 3 * US },
+      selection: [],
+      playheadUs: 0,
+    });
+
+    expect(useEditorStore.getState().playheadUs).toBe(3 * US);
+    expect(useDocStore.getState().doc.markers[0].timeUs).toBe(3 * US);
+  });
+});

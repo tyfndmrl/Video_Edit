@@ -28,9 +28,13 @@ export const METER_DECAY_DB_PER_S = 20;
 /** Strictly above this linear peak the clip latch lights (0 dBFS). */
 export const METER_CLIP_LINEAR = 1;
 /**
- * Sampling cadence. The analyser window (METER_FFT_SIZE) is 42.7 ms at 48 kHz,
- * so 33 ms steps OVERLAP: no samples fall between two reads. A 60 Hz cadence
- * would re-read the same window about two and a half times for nothing.
+ * Minimum spacing between samples — a FLOOR on the interval, not a fixed rate.
+ * Sampling rides on the engine's rAF, so the real cadence is this interval
+ * rounded UP to a frame: 33.3 ms (30 Hz) on a 60 Hz display, 36.4 ms (27.5 Hz)
+ * on a 165 Hz one — both MEASURED. Either way the analyser window
+ * (METER_FFT_SIZE, 42.7 ms at 48 kHz) is longer than the step, so consecutive
+ * reads OVERLAP and no audio falls between them. Sampling every frame would
+ * re-read the same window for nothing.
  */
 export const METER_INTERVAL_MS = 33;
 /** Analyser window. See METER_INTERVAL_MS for why this size and not 1024. */
@@ -119,8 +123,10 @@ function advanceChannel(
   if (nowMs - setAt <= METER_HOLD_MS) return { hold, setAt };
   const dtSec = lastMs === null ? 0 : Math.max(0, nowMs - lastMs) / 1000;
   const decayed = hold - METER_DECAY_DB_PER_S * dtSec;
-  // Never fall below the current signal.
-  return { hold: Math.max(instant, decayed), setAt };
+  // Never fall below the current signal — and never below the scale floor:
+  // an unbounded decay published values like -401 dBFS on the probe surface
+  // (measured in review) while the UI clamped them anyway.
+  return { hold: Math.max(METER_FLOOR_DB, Math.max(instant, decayed)), setAt };
 }
 
 /**
@@ -212,7 +218,7 @@ export function meterHonestyNote(): string {
   return [
     'Bu ölçer ÖNİZLEME miksini ölçer, dışa aktarma miksini değil.',
     'Önizlemede limiter yoktur: 0 dBFS aşımında burada kırmızı yanar, dışa aktarımda alimiter (limit=0,98) onu yakalar ve çıktı temiz çıkar (ölçüm: önizleme tepesi 1,163 / export 0,950).',
-    'Önizleme proxy sesi çalar, dışa aktarma orijinali çözer; ölçülen önizleme-export RMS farkı en çok 0,70 dB (limiter rejiminde 1,20 dB).',
+    'Önizleme proxy sesi çalar, dışa aktarma orijinali çözer; ölçülen önizleme-export RMS farkı tipik rejimlerde 0,70 dB’ye kadar, limiter rejiminde 1,20 dB, ölçülen EN BÜYÜK fark hız 2x rejiminde 1,24 dB.',
     'Önizleme aynı anda en fazla 4 medya çözücü kullanır: oynatıcıda eksik-ses notu görünürken ölçer EKSİK miksi ölçüyordur.',
     'Tam ölçekli sinüs RMS değeri -3,0 dBFS okur (sinüs referans ofseti uygulanmaz).',
   ].join(' ');

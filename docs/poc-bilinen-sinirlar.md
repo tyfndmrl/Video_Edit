@@ -875,8 +875,12 @@ renk-ayrımlı gerçek medya, siyah=0 + yanlisRenk=0 taraması).
 ### 2.9 [KAYIT] Ses ölçer ÖNİZLEME miksini ölçer — export miksini DEĞİL (2026-09-03)
 
 Zaman çizelgesinin sağındaki ölçer (`features/player/AudioMeter.tsx`) master bus'a
-PARALEL bir yaprak tap'ten okur; duyulan zincir (`master → destination`) değişmez —
-kanıt: `audio-parity.spec.ts` dosyaya dokunulmadan yeşil kaldı. Ölçtüğü şeyin sınırları:
+PARALEL bir yaprak tap'ten okur; duyulan zincir (`master → destination`) değişmez.
+Bunun muhafızı `audioGraphTopology.test.ts`'tir (kaynak-yapısal: tap master'a
+destination'dan SONRA takılır, gövdesi `destination`'a dokunmaz, analyser çıkışları
+bağlanmaz). Kanıtın SINIRI kayda geçirilmiştir: `audio-parity.spec.ts` bunu kanıtlamaz
+(AudioGraph'ı kullanmaz; `master.gain=0` iken bile yeşil kalıyor — denetimde ölçüldü) ve
+tarayıcının duyulan çıkışını yakalayan bir test bu düzenekte yoktur. Ölçtüğü şeyin sınırları:
 
 - **Limiter asimetrisi (§8.3).** Önizlemede limiter YOKTUR, export zincirinin sonunda
   `alimiter=limit=0.98` vardır. 0 dBFS'i aşan bir tepe ölçerde KIRMIZI yanar ama dışa
@@ -884,12 +888,17 @@ kanıt: `audio-parity.spec.ts` dosyaya dokunulmadan yeşil kaldı. Ölçtüğü 
   **Klip uyarısı, export'ta kusursuz çıkacak malzemede yanabilir; bu kusur değil,
   kayıtlı asimetridir** ve ölçerin tooltip'i bunu aynı cümlelerle söyler.
 - **Kaynak farkı.** Önizleme proxy sesini (AAC 128k) çalar, export orijinali çözer;
-  ölçülen önizleme↔export RMS farkı |Δ|max ≤ 0,70 dB (limiter rejiminde 1,20 dB, §2.6).
+  ölçülen önizleme↔export RMS farkı tipik rejimlerde |Δ|max ≤ 0,70 dB, limiter rejiminde
+  1,20 dB, ve §2.6 tablosunun ÖLÇÜLEN EN BÜYÜĞÜ hız 2x rejiminde 1,24 dB'dir. (Ölçerin
+  dürüstlük notu 2026-09-03 denetiminde düzeltildi: yalnız 0,70'i söylemek, tablonun kendi
+  maksimumundan küçük bir sayıyı kullanıcıya "en çok" diye gösteriyordu.)
 - **Kapasite.** Havuz 4 medya elemanıyla sınırlıdır; 4'ten fazla sesli klipte ölçer
   EKSİK miksi ölçer. Oynatıcıdaki "N / M ses klibi çalıyor" notu bu durumun mevcut
   göstergesidir.
-- **Örnekleme.** Ölçüm sürekli bir integral değil, 30 Hz kadansta 2048 örneklik
-  (48 kHz'de 42,7 ms) pencerelerdir; pencereler örtüşür, yani deliksizdir. rAF kısıldığında
+- **Örnekleme.** Ölçüm sürekli bir integral değil, 2048 örneklik (48 kHz'de 42,7 ms)
+  pencerelerdir; pencereler örtüşür, yani deliksizdir. Aralık (`METER_INTERVAL_MS = 33`)
+  bir TABANDIR: örnekleme rAF'e bindiği için gerçek kadans bir kareye yukarı yuvarlanır —
+  60 Hz ekranda 30 Hz, 165 Hz ekranda 27,5 Hz (ölçüldü). rAF kısıldığında
   (arka plan sekmesi, headless ~12 Hz) kapsama %100'ün altına düşer ve tekil bir transient
   kaçırılabilir — bu yüzden e2e sürekli sinyalle ölçer, transient iddia etmez.
 - **RMS konvansiyonu.** Sinüs referans ofseti UYGULANMAZ: tam ölçekli sinüs −3,0 dBFS
@@ -897,6 +906,19 @@ kanıt: `audio-parity.spec.ts` dosyaya dokunulmadan yeşil kaldı. Ölçtüğü 
 - **Sessizlik ≠ arıza.** Duraklat/scrub/J geri taramada ses YAPISAL olarak yoktur; ölçer
   bunu "0" göstererek değil, gerekçesiyle ("Ölçüm yok" / "Duraklatıldı" / "Ses kapalı" /
   "Engellendi") söyler — ilk oynatmadan önce AudioContext hiç kurulmamıştır.
+
+### 2.10 [KAPSAM DIŞI] Zaman kodu ALANI nominal fps ≥ 100 rejiminde geri yazılamaz (2026-09-03)
+
+Transport zaman kodu alanının ayrıştırıcısı (`apps/editor/.../player/timecodeInput.ts`) iç
+alanları iki basamakla sınırlar (`MAX_INNER_DIGITS = 2`). Nominal fps 100 ve üstündeyse
+`formatTimecode` üç basamaklı kare üretir (120 fps'te `00:00:00:119`) ve o metin AYNI alana
+geri yazılamaz — "anlaşılmadı" tipli reddi alır (sessiz yanlış atlama DEĞİL).
+
+Ürün bugün o rejime giremiyor: proje fps'i UI'dan seçilmiyor, varsayılan 30/1 ve şema
+vektörleri 24000/1001 · 25/1 · 30/1 · 30000/1001 · 60/1 üzerinde. Rejim SINANMAMIŞTIR,
+bu yüzden kapsam dışı ilan edilir. fps seçimi bir gün UI'ya gelirse sabit
+`String(fpsTC - 1).length`'ten türetilmelidir (tek satırlık değişiklik; kaynak yorumu bunu
+söylüyor).
 
 ## 3. Şema / export motoru sınırları (tipli hata verir, sessiz bozulma yok)
 
