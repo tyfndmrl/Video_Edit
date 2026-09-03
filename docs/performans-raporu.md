@@ -40,9 +40,15 @@ kapının izole maliyeti ayrıca ölçüldü (§4.3) — okur, dev sayılarında
 Prod build editör ölçümü KAPSAM DIŞI ilan edildi.
 
 **Tarayıcı notu:** ms-playwright Chromium'u bu ortamda başlı modda spawn edilemedi; aynı motor
-ailesinden Edge 151 kullanıldı. Headless mod ilk denemede rAF'ı ~12 Hz'e kıstığı ölçüldüğü için
-(idle p50 83.3 ms, 16.7'nin katlarına nicelenmiş — ölçüm artefaktı) boyama ölçümlerinde
-KULLANILMADI; rapordaki tüm editör sayıları başlı pencerede, gerçek vsync ile alındı.
+ailesinden Edge 151 kullanıldı. Headless mod O GÜNKÜ denemede rAF'ı ~12 Hz'e kısmıştı
+(idle p50 83.3 ms, 16.7'nin katlarına nicelenmiş — ölçüm artefaktı) ve bu yüzden boyama
+ölçümlerinde KULLANILMADI; §1-§12'deki editör sayıları başlı pencerede, gerçek vsync ile alındı.
+**GÜNCELLEME (2026-09-04, panel-denetim-4 — denetim bulgusu):** aynı kısıtlama BUGÜN YENİDEN
+ÜRETİLEMEDİ. Paketin kendi config'iyle (headless, 1440x900), editör sayfası açıkken 360 kare
+ölçüldü (ilk 60'ı ısınma): **p50 16,665 ms · p95 16,67 · min 16,66 · max 16,67 (n=299)** — yani
+tam 60,0 Hz. Eski gözlem SİLİNMİYOR (o gün ölçülmüştü) ama ARTIK GEÇERLİ DEĞİL; headless'i
+kapsam dışı bırakan gerekçe bu ölçümle çürüdü. §3.6'nın headless dışlaması bu yüzden ASKIYA
+alındı — o ölçümün headless'te yeniden koşulması AÇIK İŞTİR, bu turda yapılmadı.
 Etkileşimler gerçek CDP fare/klavye girdisidir; her senaryoda etkinin gerçekleştiği store
 üzerinden doğrulandı (pan'da scrollUs, zoom'da pxPerUs değişimi, marquee'de seçim sayısı = 200,
 undo'da işaretleyici sayısının sıfıra dönmesi).
@@ -156,7 +162,10 @@ oranı ≤ %1) karşılandı, ek iyileştirme (M1) GEREKMEDİ. Maliyeti düşük
 zaten var: pointermove'ların rAF ile birleştirilmesi (kare başına ≤1 store yazımı),
 panellerin children-as-props ile yeniden render dışında kalması, ve `measure()`'ın
 DEĞİŞMEYEN canvas boyutunu yeniden atamaması (atamak backing store'u sıfırlar).
-Headless ölçüm KAPSAM DIŞI (rAF ~12 Hz'e kısılıyor — §1 tarayıcı notu).
+Bu ölçüm başlı Edge'de yapıldı. Headless o gün kapsam dışı bırakılmıştı (rAF ~12 Hz'e
+kısılıyor gerekçesiyle); GEREKÇE 2026-09-04'te ÇÜRÜDÜ — headless bugün 60,0 Hz ölçüldü
+(§1 tarayıcı notu güncellemesi). Ölçümün headless'te yeniden koşulması açık iştir;
+yeniden koşulmadığı için buradaki sayılar YALNIZCA başlı Edge rejimini temsil eder.
 
 ---
 
@@ -609,6 +618,9 @@ Yöntem §3.2 ile aynı: sayfa içi rAF delta toplayıcı, 60 karelik ısınma +
 GERÇEK medya (440 Hz sinüs, gerçek yükleme + gerçek fare ile transport). A/B tek değişkenle:
 ölçer hücresi mount EDİLİ ve `{false && …}` ile SÖKÜLÜ. Ortam: headless Chromium (vsync 60 Hz,
 ideal kare 16,67 ms), Vite dev, 1440x900. Geçici prob spec'i ölçümden sonra silindi.
+(2026-09-04 denetiminde ortam BAĞIMSIZ olarak doğrulandı: headless rAF p50 16,665 ms, n=299 —
+§1 tarayıcı notu güncellemesi. §13 başlı Edge'de DEĞİL headless'te koşuldu; `STATE.md`'nin
+aksini söyleyen cümlesi aynı turda düzeltildi. §13'ün A/B'si bu turda YENİDEN KOŞULMADI.)
 
 | Koşum | n | p50 (ms) | p95 (ms) | max (ms) | >33,3 ms |
 |---|---|---|---|---|---|

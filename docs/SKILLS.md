@@ -67,7 +67,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   pnpm -r test                                           # editör + timeline-schema vitest
   pnpm --filter @videoedit/editor exec tsc -b            # + apps/editor'da: npx tsc -p e2e/tsconfig.json --noEmit
   ```
-- Doğrulama: 2026-09-03 (panel-denetim-3 sonu) yeşil sayıları: backend 1626 · editör 1541 · şema 235 (bunlar BÜYÜR; skip 0 sabittir).
+- Doğrulama: 2026-09-04 (panel-denetim-4 sonu) yeşil sayıları: backend 1626 · editör 1543 · şema 235 (bunlar BÜYÜR; skip 0 sabittir).
 - Bilinen sınırlar/tuzaklar: MinIO'suz koşumda MinIO+ffmpeg kapılı testler skip'lenir (2026-08-31 ölçümü: 41) —
   skip>0 görürsen önce Docker'a bak. Lint YOK (kullanıcı kararı); "bitti" tanımı: build + testler + tsc.
 - Son doğrulanma: 2026-09-03
@@ -77,7 +77,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
 - Ne zaman tetiklenir: Kapanış doğrulamaları; UI'a dokunan dilimler.
 - Ne zaman KULLANILMAZ: Ortamın TEK SAHİBİ değilsen — paralel ajan/koşum sahte kırmızı üretir (ölçülmüş ders).
 - Girdi: ortam-kaldirma tamam + ikili-tazelik doğrulanmış + kaçak ffmpeg yok (`Get-Process ffmpeg`).
-- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-09-03 (panel-denetim-3 sonu): 197 test / 51 spec / 12,9 dk.
+- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-09-04 (panel-denetim-4 sonu): 197 test / 51 spec / 13,8 dk.
 - Doğrulama: 0 failed, 0 skipped (ffmpeg PATH'teyse koşullu skip'ler tetiklenmez).
 - Bilinen sınırlar/tuzaklar: Sentetik girdi (dispatchEvent) YASAK — kanıt sayılmaz (review-gate kural 3).
   MAKİNE DONMASI SAHTE KIRMIZI ÜRETİR (2026-09-03 panel-denetim-3'te ölçüldü): tam suite 39 dk sürdü ve
@@ -95,7 +95,9 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   `TimelineHarness.clearStoredHeight`; kabul ölçütü: spec paketin ORTASINDA koşarken
   sonrakiler yeşil). BAŞLI (headed) mod: ms-playwright Chromium bu makinede başlı
   spawn edilemiyor (`spawn UNKNOWN`); rAF kadansı gereken ölçümlerde `channel: 'msedge'`
-  ile başlı Edge kullanılır (headless rAF'ı ~12 Hz'e kısar — ölçüm artefaktı).
+  ile başlı Edge kullanılır. (DİKKAT: "headless rAF'ı ~12 Hz'e kısar" gerekçesi 2026-09-04'te
+  ÇÜRÜDÜ — kendi ölçümüm: headless p50 16,665 ms = 60,0 Hz, n=299. Başlı Edge hâlâ 165 Hz'lik
+  eşikleri sınamak için gerekli; headless'i otomatik kapsam dışı SAYMA, önce ÖLÇ.)
 - Son doğrulanma: 2026-09-03
 
 ### negatif-kontrol-protokolu

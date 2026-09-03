@@ -84,11 +84,12 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   SIFIR ihlal; 8x'te rAF ~25 fps dürüst maliyet (poc §2.8). Kalkanlar: `engineV1.scrub.test.ts`
   + scheduler lookbehind pinleri + `e2e/jkl-shuttle-frames.spec.ts`; negatif kontrol ×3
   md5-birebir. Defter: `PROGRESS.md` §Özellik turu satır F.
-- Son yeşil sayılar (2026-09-03, `panel-denetim-3` kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 40 sn) · editör **1541** ·
-  şema 235 · Playwright **197/197** (51 spec, 12,9 dk, 0 skip) · build -warnaserror 0 uyarı ·
-  tsc -b + e2e tsc + prod build temiz. `meter.spec.ts` ayrıca ÜÇ ardışık koşumda 3/3
-  (tam suite içinde + iki bağımsız koşum). ORTAM KAYDI: `panel-denetim-3`'ün İLK tam suite
+- Son yeşil sayılar (2026-09-04, `panel-denetim-4` kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 56 sn — baş mühendisin
+  koşumu) · editör **1543** · şema 235 · Playwright **197/197** (51 spec, 13,8 dk, 0 skip) ·
+  build -warnaserror 0 uyarı ·
+  tsc -b + e2e tsc + prod build temiz. `meter.spec.ts` ayrıca ardışık koşumlarda 3/3
+  (tam suite içinde + iki bağımsız koşum, 16,3/15,7 sn). ORTAM KAYDI: `panel-denetim-3`'ün İLK tam suite
   koşumu 39 dk sürüp bir testi düşürdü — ürün değil MAKİNE donması (API günlüğünde tek istek
   26,6 dk; Postgres'in 5 dakikalık checkpoint zincirinde aynı pencerede ~6 çevrimlik boşluk;
   düşen spec izole koşumda 1,8 sn yeşil). Ayırt etme reçetesi `SKILLS.md §playwright-tam-suite`.
@@ -102,11 +103,17 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   Baş geliştirici ONAY verdi (3 ORTA + 6 DÜŞÜK → `panel-denetim-1`); baş mimar ve baş mühendis
   İKİ RED çıkardı (boş kanıt cümlesi + ~%50 kırılgan klip mandalı e2e testi) → `panel-denetim-2`.
   Bulguların HEPSİ, iddiayı kendim koşarak doğruladıktan sonra kapatıldı (review-gate kural 2).
-  YENİDEN DENETİM 1 (baş mimar) KOŞTU ve **RED** verdi: 1 BLOKER (öldürülen boş-kanıt cümlesi
-  bu dosyanın BAŞLIĞINDA yaşıyordu) + 2 ORTA (topoloji muhafızının gövde-dışı seri bağlantıya
-  KÖR olması — kendi ölçümümle doğrulandı; "30 Hz" düzeltmesinin üç yerde uygulanmamış olması)
-  + 3 DÜŞÜK. Hepsi `panel-denetim-3` ile kapatıldı.
-  KALAN İŞ: baş mühendis yeniden denetimi (aynı kural). Dilim 3 iki commit: `panel-3a` ölçüm hattı
+  YENİDEN DENETİM 1 (baş mimar) **RED**: 1 BLOKER (öldürülen boş-kanıt cümlesi bu dosyanın
+  BAŞLIĞINDA yaşıyordu) + 2 ORTA (topoloji muhafızının gövde-dışı seri bağlantıya KÖR olması;
+  "30 Hz" düzeltmesinin üç yerde uygulanmamış olması) + 3 DÜŞÜK → `panel-denetim-3`.
+  YENİDEN DENETİM 2 (baş mühendis, 2026-09-04) **RED**: 1 BLOKER + 2 ORTA + 4 DÜŞÜK →
+  `panel-denetim-4`. BLOKER, panel turunun TEK perf kanıtının ORTAM kaydıydı: "headless rAF
+  ~12 Hz'e kısılıyor" iddiası KENDİ ölçümümle çürüdü (p50 **16,665 ms = 60,0 Hz**, n=299) ve
+  §13'ün ortamı üç belgede üç farklı yazılmıştı. ORTA'lar: `panel-denetim-3`'te eklediğim
+  "ilişkisel" dürüstlük muhafızı NOKTALAMAYA bağlıydı — yalan 1541/1541 yeşil geçiyordu;
+  `ensureLoudAudio` kardeşlerinin aksine amacını ÖLÇMÜYORDU. İkisi de kapatıldı.
+  Baş mühendis kendi ÖNCEKİ İKİ RED'ini ölçerek KAPALI buldu (klip mandalı payı 5,4 dB).
+  KALAN İŞ: üç denetimin de düzeltilmiş HEAD'de son kez koşulması (review-gate kural 7). Dilim 3 iki commit: `panel-3a` ölçüm hattı
   (`audioGraph`'a master'ın paralel yaprak tap'i + `readMeter()` null semantiği, saf
   `core/meter.ts`, `engine.meter$`, §8.1 dB dönüşümlerinin `core/gain.ts`'e taşınması, altı
   motor mock'u — DOM'a sıfır dokunuş, tam suite 194/194 ile kanıtlı), `panel-3b` panel
@@ -177,15 +184,20 @@ modül yolu `…\api-run-p3\VideoEdit.Api.dll`, worker PID 350132 `…\worker-ru
 yine de tam koşuldu (1626/1626) ve `-warnaserror` 0 uyarı verdi. `/health` fonts
 `f8620403…4861d` (16/16). Vite :5173 (200; dev server kaynaktan servis eder). Docker üçlüsü
 healthy; kaçak ffmpeg 0 (TAM suite öncesi ve sonrasında sayıldı).
-Perf ölçümü için başlı tarayıcı: ms-playwright Chromium bu ortamda başlı modda HÂLÂ
-spawn edilemiyor (`spawn UNKNOWN`) — ölçüm `channel: 'msedge'` ile başlı Edge'de yapıldı
-(geçici config + geçici spec, ölçümden sonra SİLİNDİ; sonuç `performans-raporu §3.6`/§13).
+Perf ölçümü: ms-playwright Chromium bu ortamda başlı modda HÂLÂ spawn edilemiyor
+(`spawn UNKNOWN`). `§3.6` (sürükleme fazı) `channel: 'msedge'` ile BAŞLI Edge'de koşuldu;
+`§13` (ölçer A/B) HEADLESS koşuldu — ikisi ayrı rejimdir, bu satır 2026-09-04 denetiminde
+ikisini birden başlı Edge'e yazdığı için düzeltildi. Geçici config + geçici spec'ler
+ölçümden sonra SİLİNDİ. Headless'in "rAF'ı ~12 Hz'e kısar" gerekçesi AYNI TURDA ÇÜRÜDÜ:
+kendi ölçümüm p50 16,665 ms = 60,0 Hz (n=299) — `performans-raporu §1` tarayıcı notu.
 DİKKAT: yayın dizinleri session-scratchpad'te yaşar (`…\5fc88602-…\scratchpad`) — yeni
 session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapmalı.
 
 ---
 
-**Bir sonraki session'ın İLK İŞİ:** baş mühendis yeniden denetimini düzeltilmiş HEAD üzerinde
-koşmak (baş mimarınki `panel-denetim-3`'te koştu, RED verdi, bulguları kapatıldı) — review-gate
-kural 7: bir RED tek turda onaya çevrilmez. Denetim yeşil dönerse sıradaki iş `docs/STATE.md §Sıradakiler` 1. maddesidir
+**Bir sonraki session'ın İLK İŞİ:** panel turunun kapanış denetimini SON kez koşmak. Üç rol de
+en az bir kez RED verdi ve bulguları kapatıldı (`panel-denetim-1..4`); review-gate kural 7
+gereği düzeltilmiş HEAD'in yeniden denetlenmesi gerekiyor. AÇIK İŞ olarak kayıtlı tek teknik
+madde: `performans-raporu §3.6` sürükleme ölçümünün headless'te yeniden koşulması (headless'i
+dışlayan gerekçe 2026-09-04'te çürüdü, ölçümün kendisi tekrarlanmadı). Denetim yeşil dönerse sıradaki iş `docs/STATE.md §Sıradakiler` 1. maddesidir
 (`git push` — KULLANICI ONAYI BEKLİYOR, kendiliğinden yapılmaz).

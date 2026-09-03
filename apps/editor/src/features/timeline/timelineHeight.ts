@@ -101,9 +101,8 @@ export function clampTimelineHeight(state: TimelineHeightState): number {
 }
 
 // ---------------------------------------------------------------------------
-// localStorage (fontCatalogue.ts'teki browserStorage() sarmalayıcısının aynısı)
+// localStorage (ortak sarmalayıcı: lib/browserStorage.ts — fontCatalogue de oradan alır)
 // ---------------------------------------------------------------------------
-
 
 /**
  * Kayıtlı yükseklik ya da null. Bozuk/aralık dışı değer YOK SAYILIR: eksi,

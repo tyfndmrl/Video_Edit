@@ -556,6 +556,14 @@ export const LOUD_AUDIO_SPEC = {
   contentType: 'audio/mp4',
 } as const;
 
+/**
+ * Kabul eşiği, iki fixture'ın ARASINA ölçülerek kondu (ffmpeg volumedetect):
+ * `e2e-loud-3s.m4a` mean -3,6 dB / max -0,0 dB · `e2e-muzik-3s.m4a` mean
+ * -7,1 dB / max -3,7 dB. Yani normal test sesi bu kapıdan GEÇEMEZ — kapının
+ * ayırt etmesi gereken tam olarak o karışıklıktır.
+ */
+const LOUD_AUDIO_MIN_MEAN_DB = -5;
+
 export const TEST_AUDIO_SPEC = {
   fileName: 'e2e-muzik-3s.m4a',
   durationSeconds: 3,
@@ -659,6 +667,22 @@ export function ensureLoudAudio(): TestAudio {
     if (res.status !== 0 || !existsSync(path)) {
       throw new Error(`Yüksek seviyeli test sesi üretilemedi: ${res.stderr ?? ''}`);
     }
+  }
+
+  // Kardeşleri (ensureSilentVideo/ensureBannerVideo/ensureMisalignedVideo) gibi
+  // ÖLÇEREK doğrular. Dosya koşumlar arasında önbelleklenir; bayat ya da yanlış
+  // bir kopya sessizce kalırsa klip mandalı e2e'si ÜRÜNÜ suçlayarak düşer —
+  // denetimde ölçüldü: dosya sessiz kardeşiyle değiştirildiğinde test
+  // "0 dBFS aşımında klip mandalı yanmalıydı" diyor, fikstür hiç şikâyet
+  // etmiyordu. Bu fixture'ın TEK amacı tam ölçekli olmasıdır.
+  const meanDb = probeMeanVolumeDb(path);
+  if (meanDb === null || meanDb < LOUD_AUDIO_MIN_MEAN_DB) {
+    throw new Error(
+      `"${LOUD_AUDIO_SPEC.fileName}" ortalama seviyesi ${meanDb ?? 'ölçülemedi'} dBFS çıktı, ` +
+        `beklenen ≥ ${LOUD_AUDIO_MIN_MEAN_DB} dBFS. Bu fixture'ın tek amacı TAM ÖLÇEKLİ ses ` +
+        'sağlamaktı (klip mandalı 0 dBFS aşımıyla yanar); amacını kaybetmiş demektir. ' +
+        'Dosyayı silip yeniden üretin: e2e/.artifacts/media.',
+    );
   }
 
   return {

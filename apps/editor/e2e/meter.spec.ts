@@ -6,8 +6,11 @@
  * halves are asserted here, through the throttled data-* surface the component
  * publishes (canvas pixels would be a fragile proxy for the same fact).
  *
- * Timing is polled, never slept: the sampling cadence rides on rAF and headless
- * Chromium throttles rAF, so a fixed wait would be flaky by construction.
+ * Timing is polled, never slept: the sampling cadence rides on rAF, and rAF is
+ * not a promise about wall-clock time -- a background tab, a loaded machine or
+ * a throttled headless run all stretch it. (Headless is not automatically slow:
+ * measured 2026-09-04 at 60.0 Hz here. That is exactly why the wait is polled
+ * rather than sized to any assumed cadence.)
  */
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures/test';

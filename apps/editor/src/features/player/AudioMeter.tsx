@@ -18,11 +18,13 @@
  *    context (before the first play), is blocked by autoplay policy, or is
  *    paused/shuttling, the meter says so in words instead of drawing a zero.
  *
- * 3. The data-meter-* attributes are written ONLY by a real meter$ frame --
- *    never as static JSX defaults. A static default would let the e2e claim
- *    "before any gesture the meter says no-context" pass with the engine
- *    emitting nothing at all (measured in review), i.e. the attributes would
- *    stop being evidence of a live sampling path.
+ * 3. The data-meter-* attributes AND the readout text are written ONLY by a
+ *    real meter$ frame -- never as static JSX defaults. A static default would
+ *    let the e2e claim "before any gesture the meter says no-context" pass with
+ *    the engine emitting nothing at all (measured in review), i.e. they would
+ *    stop being evidence of a live sampling path. The readout therefore ships
+ *    with an em dash placeholder: visible enough that the strip never looks
+ *    broken, but not a sentence the meter would ever produce.
  */
 import { useEffect, useRef, useState } from 'react';
 
@@ -288,7 +290,10 @@ export function AudioMeter(): React.JSX.Element {
         data-testid="audio-meter-readout"
         className="border-t border-edge px-1 py-0.5 text-center font-mono text-[9px] text-fg-muted"
       >
-        Ölçüm yok
+        {/* Yayın ÖNCESİ yer tutucu — bilerek ölçerin SÖYLEYECEĞİ hiçbir cümle
+            değil (rule 3). "Ölçüm yok" yazsaydı e2e'nin o iddiası sıfır yayınla
+            da yeşil geçerdi; boş bırakmak ise şerit bozukmuş gibi görünürdü. */}
+        &mdash;
       </span>
     </div>
   );

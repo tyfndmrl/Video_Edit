@@ -900,7 +900,8 @@ tarayıcının duyulan çıkışını yakalayan bir test bu düzenekte yoktur. �
   pencerelerdir; pencereler örtüşür, yani deliksizdir. Aralık (`METER_INTERVAL_MS = 33`)
   bir TABANDIR: örnekleme rAF'e bindiği için gerçek kadans bir kareye yukarı yuvarlanır —
   60 Hz ekranda 30 Hz, 165 Hz ekranda 27,5 Hz (ölçüldü). rAF kısıldığında
-  (arka plan sekmesi, headless ~12 Hz) kapsama %100'ün altına düşer ve tekil bir transient
+  (arka plan sekmesi; headless'te de olabilir — 2026-09-04 ölçümünde headless 60,0 Hz çıktı,
+  yani kısılma OTOMATİK DEĞİL) kapsama %100'ün altına düşer ve tekil bir transient
   kaçırılabilir — bu yüzden e2e sürekli sinyalle ölçer, transient iddia etmez.
 - **RMS konvansiyonu.** Sinüs referans ofseti UYGULANMAZ: tam ölçekli sinüs −3,0 dBFS
   RMS okur (§2.6 parite tablosuyla aynı cins).

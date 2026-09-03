@@ -1,7 +1,45 @@
 # CHANGELOG — ters kronolojik
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
-## 2026-09-03
+## 2026-09-04
+- panel-denetim-4 — **baş mühendis YENİDEN denetimi RED verdi; bulgular kapatıldı.**
+  Baş mühendisin ÖNCEKİ İKİ RED'i kapandı ve bunu kendi ölçümleriyle kanıtladı: klip mandalı
+  testinin payı artık eşiğin 0,5 dB ALTINDA değil, +5,4 dBFS ile 5,4 dB ÜSTÜNDE (eski fikstüre
+  göre 5,9 dB'lik gerçek kayma); "no-context" iddiası sıfır yayın üretilince kırmızıya dönüyor.
+  **BLOKER — "headless rAF ~12 Hz" ÖLÇÜMLE YANLIŞ ÇIKTI.** Panel turunun TEK perf kanıtı olan
+  §13'ün ortam kaydı, aynı belgenin §1/§3.6'sı ve `STATE.md` ile çelişiyordu. KENDİ ölçümüm
+  (geçici prob spec'i, paketin kendi config'i, editör sayfası açık, 360 kare / ilk 60'ı ısınma):
+  **p50 16,665 ms · p95 16,67 · min 16,66 · max 16,67 (n=299) = 60,0 Hz.** Yani headless bu
+  düzenekte rAF'ı KISMIYOR. Eski gözlem silinmedi (o gün ölçülmüştü) ama "artık geçerli değil"
+  diye tarihlendi; §3.6'nın headless dışlaması ASKIYA alındı ve o ölçümün headless'te yeniden
+  koşulması AÇIK İŞ olarak yazıldı (bu turda YAPILMADI). `STATE.md`'nin "§3.6 ve §13 başlı
+  Edge'de" cümlesi düzeltildi: §3.6 başlı Edge, §13 HEADLESS — ikisi ayrı rejim. Aynı yanlış
+  sayı `SKILLS`, `poc §2.9`, `DECISIONS`, `PROGRESS` ve `meter.spec.ts` başlığından da
+  temizlendi. Prob spec'i ölçümden sonra SİLİNDİ.
+  **ORTA-1 — dürüstlük notunun "ilişkisel" muhafızı KÂĞITTANDI.** `panel-denetim-3`'te
+  eklediğim `/EN B[ÜU]Y[ÜU]K[^.]*1,24 dB/` regex'i tek CÜMLEYE bakıyordu; noktalama değişince
+  "ölçülen EN BÜYÜK … tipik rejimlerde 0,70 dB'dir" yalanı 17/17 ve 1541/1541 YEŞİL geçiyordu —
+  kendi koşumumla doğruladım. Cümle artık VERİDEN türüyor: yeni `PARITY_DELTAS_DB` tablosu
+  (tipik 0,70 · limiter 1,20 · hız 2x 1,24) + `largestParityDelta()`; üstünlüğü kimse elle
+  seçmiyor. Testler de aynı tablodan hesaplıyor + tablo `poc §2.6` ölçümüne ayrıca çivili.
+  NEGATİF KONTROL ×2: üstünlük elle seçilince `expected 0.7 to be 1.24`; tablo maksimumu
+  düşürülünce ÜÇ iddia birden kırmızı. `meter.ts` md5 `e6732180…5cab3` birebir geri.
+  **ORTA-2 — `ensureLoudAudio()` amacını kaybettiğinde SESSİZDİ.** Kardeşleri
+  (`ensureSilentVideo`/`ensureBannerVideo`/`ensureMisalignedVideo`) ffprobe ile amacını doğrulayıp
+  adıyla fırlatırken bu fikstür yalnız dosyanın VARLIĞINA bakıyordu; dosya koşumlar arasında
+  önbelleklendiği için bayat/yanlış bir kopya kırmızıyı ÜRÜNE yıkıyordu. Artık `probeMeanVolumeDb`
+  ile ölçüyor; eşik iki fikstürün ARASINA ölçülerek kondu (kendi ölçümüm: `e2e-loud-3s.m4a`
+  mean −3,6 dB / max −0,0 dB · `e2e-muzik-3s.m4a` mean −7,1 dB / max −3,7 dB → eşik −5 dBFS).
+  NEGATİF KONTROL: dosya sessiz kardeşiyle değiştirildi → artık ÜRÜN değil FİKSTÜR şikâyet
+  ediyor (`"e2e-loud-3s.m4a" ortalama seviyesi -7.1 dBFS çıktı, beklenen ≥ -5 dBFS`);
+  fikstür md5 `79601a04…9559` birebir geri.
+  **DÜŞÜK'ler:** "30 Hz'de React state yok" iki defterde daha duruyordu (kadans ekrana bağlı) →
+  "örnek başına" oldu; `timelineHeight.ts`'in bölüm yorumu `panel-denetim-1`'de taşınan
+  sarmalayıcının ESKİ yerini adresliyordu → `lib/browserStorage.ts`; ölçer okumasının STATİK JSX
+  metni (`Ölçüm yok`) e2e iddiasını markup'la karşılıyordu → yer tutucu ölçerin asla
+  üretmeyeceği bir em dash oldu ve kural 3 okumayı da kapsayacak şekilde genişletildi
+  (NC: motor yayın yaparken okuma yazımı kapatıldı → `Expected: "Ölçüm yok" / Received: "—"`;
+  `AudioMeter.tsx` md5 `0b60be3d…7da1` birebir geri).
 - panel-denetim-3 — **baş mimar YENİDEN denetimi RED verdi; bulgular kapatıldı**
   (review-gate kural 7: bir RED tek turda onaya çevrilmez, düzeltilmiş HEAD yeniden denetlenir).
   **BLOKER:** öldürülen boş-kanıt cümlesi `docs/STATE.md`'nin BAŞLIĞINDA hayatta kalmıştı —
@@ -85,8 +123,8 @@ Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit a
   yokken erken döndüğü için gövdeye konmadı). Altı motor mock'u önce KIRMIZI görülüp
   güncellendi (`readMeter is not a function`).
   **3b (panel + kanıt):** `AudioMeter.tsx` timeline gövde satırının 3. hücresi (canvas wrap'ın
-  KARDEŞİ — wrap'a canvas eklemek e2e'nin iki sözleşmesini birden yeniden yazardı); 30 Hz'de
-  React state yok (canvas + imperatif `textContent`), test yüzeyi 10 Hz throttled
+  KARDEŞİ — wrap'a canvas eklemek e2e'nin iki sözleşmesini birden yeniden yazardı); örnek
+  başına React state yok (canvas + imperatif `textContent`), test yüzeyi 10 Hz throttled
   `data-meter-*` öznitelikleri, sıfırlama düğmesi YALNIZ mandal varken DOM'da (Tab bütçesi).
   Ölçer sessizliği gerekçesiyle söyler: "Ölçüm yok" / "Duraklatıldı" / "Ses kapalı" /
   "Engellendi". Kanıt: yeni `e2e/meter.spec.ts` (2/2, üç ardışık koşumda kararlı) —

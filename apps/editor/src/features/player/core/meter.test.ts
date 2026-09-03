@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   METER_CLIP_LINEAR,
   METER_FLOOR_DB,
+  PARITY_DELTAS_DB,
+  largestParityDelta,
   advanceMeter,
   barFraction,
   createMeterState,
@@ -167,13 +169,36 @@ describe('honesty note', () => {
     // §2.6 tablosunun ÜÇ satırı da geçmeli: tipik (fade-out 0,70), limiter (1,20)
     // ve ölçülen MAKSİMUM (hız 2x 1,24). Yalnız 0,70'i çivilemek, tablonun kendi
     // maksimumundan küçük bir sayıyı kullanıcıya "en çok" diye gösteriyordu.
+    // Tablonun HER satırı notta görünmeli — biri sessizce düşerse kullanıcı
+    // eksik bir sınır tablosu okur.
+    for (const d of PARITY_DELTAS_DB) {
+      expect(note, `${d.regime} satırı notta yok`).toContain(d.regime);
+    }
     expect(note).toContain('0,70 dB');
     expect(note).toContain('1,20 dB');
-    // "EN BÜYÜK" nitelemesi TABLONUN maksimumuna bağlı olmalı: üç sayı da metinde
-    // dururken sadece varlıklarını sınamak, nitelemenin YANLIŞ sayıya kaymasını
-    // görmezdi (denetim bulgusu). Bu yüzden iddia İLİŞKİSEL.
-    expect(note, 'EN BÜYÜK fark 1,24 dB olarak nitelenmeli').toMatch(/EN B[ÜU]Y[ÜU]K[^.]*1,24 dB/);
+    expect(note).toContain('1,24 dB');
     expect(note).toContain('4 medya çözücü'); // pool cap
     expect(note).toContain('-3,0 dBFS'); // RMS convention
+  });
+
+  it('üstünlük cümlesi TABLODAN türer — elle seçilmiş bir sayı olamaz', () => {
+    // Önceki iki muhafız da bu iddiada YETERSİZ çıktı: ilki yalnız sayıların
+    // VARLIĞINI sınadı, ikincisi tek cümleye bakan bir regex'ti ve noktalama
+    // değişince "EN BÜYÜK ... 0,70 dB" yalanı yeşil geçti (denetimde ölçüldü).
+    // Bu yüzden iddia artık metne değil VERİYE bağlı: en büyüğü test de
+    // tablodan hesaplar, cümle de.
+    const worst = largestParityDelta();
+    expect(worst.db).toBe(Math.max(...PARITY_DELTAS_DB.map((d) => d.db)));
+    expect(meterHonestyNote()).toContain(`EN BÜYÜĞÜ ${worst.regime} 1,24 dB'dir`);
+  });
+
+  it('tablo poc-bilinen-sinirlar §2.6 ölçümüyle ÇİVİLİ', () => {
+    // audio-parity.spec.ts her tam koşumda bu üç sayıyı yeniden ölçer; burası
+    // ölçümün UI'ya taşınan kopyasının kaymadığını çiviler.
+    expect(PARITY_DELTAS_DB.map((d) => [d.regime, d.db])).toEqual([
+      ['tipik rejimlerde', 0.7],
+      ['limiter rejiminde', 1.2],
+      ['hız 2x rejiminde', 1.24],
+    ]);
   });
 });

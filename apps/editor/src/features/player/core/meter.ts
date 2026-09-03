@@ -211,14 +211,44 @@ export function meterInactiveHint(reason: MeterReason, shuttleActive: boolean): 
 }
 
 /**
+ * Measured preview<->export RMS deltas, one entry per regime, straight from the
+ * poc-bilinen-sinirlar 2.6 table (which `e2e/audio-parity.spec.ts` re-measures
+ * on every full run).
+ *
+ * These are DATA, not prose: meterHonestyNote() picks the largest entry itself
+ * instead of a human naming one. A hand-written "the largest is X" sentence was
+ * MEASURED to survive review twice -- once with the wrong number entirely, and
+ * once with the qualifier moved onto a smaller number while a regex that only
+ * looked inside one sentence stayed green. Deriving the claim removes the class.
+ */
+export const PARITY_DELTAS_DB: readonly { readonly regime: string; readonly db: number }[] = [
+  { regime: 'tipik rejimlerde', db: 0.7 },
+  { regime: 'limiter rejiminde', db: 1.2 },
+  { regime: 'hız 2x rejiminde', db: 1.24 },
+];
+
+/** Turkish decimal comma, two digits — the note's own number format. */
+function parityDb(db: number): string {
+  return db.toFixed(2).replace('.', ',');
+}
+
+/** The largest measured delta. The note NAMES this one; nobody chooses it by hand. */
+export function largestParityDelta(): { regime: string; db: number } {
+  return PARITY_DELTAS_DB.reduce((a, b) => (b.db > a.db ? b : a));
+}
+
+/**
  * The honesty note (rendering-semantics section 8.3, poc-bilinen-sinirlar 2.6).
  * Kept here so the claim is unit-tested rather than drifting inside JSX.
  */
 export function meterHonestyNote(): string {
+  const worst = largestParityDelta();
+  const listed = PARITY_DELTAS_DB.map((d) => `${d.regime} ${parityDb(d.db)} dB`).join(', ');
   return [
     'Bu ölçer ÖNİZLEME miksini ölçer, dışa aktarma miksini değil.',
     'Önizlemede limiter yoktur: 0 dBFS aşımında burada kırmızı yanar, dışa aktarımda alimiter (limit=0,98) onu yakalar ve çıktı temiz çıkar (ölçüm: önizleme tepesi 1,163 / export 0,950).',
-    'Önizleme proxy sesi çalar, dışa aktarma orijinali çözer; ölçülen önizleme-export RMS farkı tipik rejimlerde 0,70 dB’ye kadar, limiter rejiminde 1,20 dB, ölçülen EN BÜYÜK fark hız 2x rejiminde 1,24 dB.',
+    `Önizleme proxy sesi çalar, dışa aktarma orijinali çözer; ölçülen önizleme-export RMS farkı ${listed}.`,
+    `Bunların EN BÜYÜĞÜ ${worst.regime} ${parityDb(worst.db)} dB'dir.`,
     'Önizleme aynı anda en fazla 4 medya çözücü kullanır: oynatıcıda eksik-ses notu görünürken ölçer EKSİK miksi ölçüyordur.',
     'Tam ölçekli sinüs RMS değeri -3,0 dBFS okur (sinüs referans ofseti uygulanmaz).',
   ].join(' ');
