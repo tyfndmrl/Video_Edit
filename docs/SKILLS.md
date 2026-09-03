@@ -67,7 +67,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   pnpm -r test                                           # editör + timeline-schema vitest
   pnpm --filter @videoedit/editor exec tsc -b            # + apps/editor'da: npx tsc -p e2e/tsconfig.json --noEmit
   ```
-- Doğrulama: 2026-09-03 (panel-denetim-2 sonu) yeşil sayıları: backend 1626 · editör 1540 · şema 235 (bunlar BÜYÜR; skip 0 sabittir).
+- Doğrulama: 2026-09-03 (panel-denetim-3 sonu) yeşil sayıları: backend 1626 · editör 1541 · şema 235 (bunlar BÜYÜR; skip 0 sabittir).
 - Bilinen sınırlar/tuzaklar: MinIO'suz koşumda MinIO+ffmpeg kapılı testler skip'lenir (2026-08-31 ölçümü: 41) —
   skip>0 görürsen önce Docker'a bak. Lint YOK (kullanıcı kararı); "bitti" tanımı: build + testler + tsc.
 - Son doğrulanma: 2026-09-03
@@ -77,9 +77,17 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
 - Ne zaman tetiklenir: Kapanış doğrulamaları; UI'a dokunan dilimler.
 - Ne zaman KULLANILMAZ: Ortamın TEK SAHİBİ değilsen — paralel ajan/koşum sahte kırmızı üretir (ölçülmüş ders).
 - Girdi: ortam-kaldirma tamam + ikili-tazelik doğrulanmış + kaçak ffmpeg yok (`Get-Process ffmpeg`).
-- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-09-03 (panel-denetim-2 sonu): 197 test / 51 spec / 12,5 dk.
+- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-09-03 (panel-denetim-3 sonu): 197 test / 51 spec / 12,9 dk.
 - Doğrulama: 0 failed, 0 skipped (ffmpeg PATH'teyse koşullu skip'ler tetiklenmez).
 - Bilinen sınırlar/tuzaklar: Sentetik girdi (dispatchEvent) YASAK — kanıt sayılmaz (review-gate kural 3).
+  MAKİNE DONMASI SAHTE KIRMIZI ÜRETİR (2026-09-03 panel-denetim-3'te ölçüldü): tam suite 39 dk sürdü ve
+  tek bir test `apiRequestContext.post: Timeout 15000ms` ile düştü. AYIRT ETME REÇETESİ — (1) API
+  günlüğünde o isteğin KENDİ süresine bak: `POST /api/projects responded 201 in 1594504 ms` (26,6 dk)
+  ve hemen ardındaki aynı çağrı 3,7 ms ise sorun üründe değildir; (2) `docker logs videoedit-postgres-1`
+  içindeki 5 dakikalık `checkpoint starting: time` zincirine bak — aynı pencerede BOŞLUK varsa
+  (ölçülen: 18:06→18:37 UTC, ~6 çevrim atlandı) Postgres'in kendi zamanlayıcısı da durmuştur, yani
+  donma ANA MAKİNEDEDİR; (3) düşen spec'i İZOLE koş (ölçülen: 1,8 sn yeşil). Üçü de tutuyorsa suite'i
+  yeniden koş; "flake" deyip geçme, kaydı tut.
   Süite testleri sadece Chromium'da. TARAYICI DEPOLAMASI SPEC'LER ARASINDA YAŞAR: context
   worker-scope'tur (fixtures/test.ts, workers:1), yani bir spec'in bıraktığı localStorage
   değeri sonrakilerin düzenini/geometrisini sessizce değiştirir — kalıcı tercih yazan her

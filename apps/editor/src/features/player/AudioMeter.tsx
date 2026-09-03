@@ -2,24 +2,27 @@
  * Preview level meter (master bus), docked to the right of the timeline.
  *
  * Everything numeric and every sentence comes from core/meter.ts so it can be
- * unit-tested; this file is the wire and the paint. Two rules shape it:
+ * unit-tested; this file is the wire and the paint. Three rules shape it:
  *
- * 1. NO RE-RENDER per sample. The engine emits at 30 Hz; bars go to a canvas
- *    and the readout is written with textContent, the same discipline the
- *    transport timecode already follows. Two low-frequency facts DO live in
- *    React state (why the meter is idle, whether the clip latch is lit) and
- *    their setters run on every sample on purpose: they are called in updater
- *    form and return `prev` unchanged, so React bails out without rendering —
- *    an explicit equality check here would just duplicate that bail-out.
- * 3. The data-meter-* attributes are written ONLY by a real meter$ frame —
- *    never as static JSX defaults. A static default would let the e2e claim
- *    "before any gesture the meter says no-context" pass with the engine
- *    emitting nothing at all (measured in review), i.e. the attributes would
- *    stop being evidence of a live sampling path.
+ * 1. NO RE-RENDER per sample. The engine emits no faster than
+ *    METER_INTERVAL_MS (the real cadence rounds that up to a rAF frame -- see
+ *    core/meter.ts); bars go to a canvas and the readout is written with
+ *    textContent, the same discipline the transport timecode already follows.
+ *    Two low-frequency facts DO live in React state (why the meter is idle,
+ *    whether the clip latch is lit) and their setters run on every sample on
+ *    purpose: they are called in updater form and return `prev` unchanged, so
+ *    React bails out without rendering -- an explicit equality check here would
+ *    just duplicate that bail-out.
  *
  * 2. Silence and "no mix at all" are DIFFERENT. When the engine has no audio
  *    context (before the first play), is blocked by autoplay policy, or is
  *    paused/shuttling, the meter says so in words instead of drawing a zero.
+ *
+ * 3. The data-meter-* attributes are written ONLY by a real meter$ frame --
+ *    never as static JSX defaults. A static default would let the e2e claim
+ *    "before any gesture the meter says no-context" pass with the engine
+ *    emitting nothing at all (measured in review), i.e. the attributes would
+ *    stop being evidence of a live sampling path.
  */
 import { useEffect, useRef, useState } from 'react';
 

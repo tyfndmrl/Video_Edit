@@ -1,10 +1,14 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-03, `panel-3a`+`panel-3b` — **panel turu dilim 3 (ses ölçer) KAPANDI**:
-zaman çizelgesinin sağında master stereo L/R ölçer (dBFS skalası, tepe tutucu, klip mandalı);
-ölçüm master'a PARALEL yaprak tap'ten okunur — duyulan zincir değişmedi (`audio-parity` dosyaya
-DOKUNULMADAN yeşil). Ölçer sessizliği "0" diye göstermez: ses motoru kurulmadıysa "Ölçüm yok",
-duraklatmada "Duraklatıldı", J geri taramada "Ses kapalı" der. FRONTEND-only.
-**Panel turunun ÜÇ dilimi de tamam; sırada üç rollü kapanış denetimi var.**
+Son güncelleme: 2026-09-03, `panel-denetim-2` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
+kapanış denetimi KOŞTU** (bulgular kapatıldı; review-gate kural 7 gereği denetimler düzeltilmiş
+HEAD'de yeniden koşuyor). Dilim 3: zaman çizelgesinin sağında master stereo L/R ölçer (dBFS
+skalası, tepe tutucu, klip mandalı); ölçüm master'a PARALEL yaprak tap'ten okunur, `master →
+destination` aynen kalır (§8.3). Bu YERLEŞİMİN muhafızı `audioGraphTopology.test.ts`'tir
+(kaynak-yapısal). DÜRÜSTLÜK: `audio-parity.spec.ts`'in yeşil kalması bunun kanıtı DEĞİLDİR —
+o spec AudioGraph'ı kullanmaz ve `master.gain=0` iken bile bit-birebir yeşil kalıyor (İKİ ayrı
+denetim koşumunda ölçüldü); tarayıcının duyulan çıkışını yakalayan test bu düzenekte YOKTUR.
+Ölçer sessizliği "0" diye göstermez: ses motoru kurulmadıysa "Ölçüm yok", duraklatmada
+"Duraklatıldı", J geri taramada "Ses kapalı" der. Panel turunun tamamı FRONTEND-only.
 Defter: `PROGRESS.md` §Özellik turu 2. Öncesi: `panel-2a`+`panel-2b` (timeline dikey
 boyutlandırma + `scrollY` kelepçe kusuru), `panel-1a`+`panel-1b` (elle zaman kodu girişi).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
@@ -80,11 +84,15 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   SIFIR ihlal; 8x'te rAF ~25 fps dürüst maliyet (poc §2.8). Kalkanlar: `engineV1.scrub.test.ts`
   + scheduler lookbehind pinleri + `e2e/jkl-shuttle-frames.spec.ts`; negatif kontrol ×3
   md5-birebir. Defter: `PROGRESS.md` §Özellik turu satır F.
-- Son yeşil sayılar (2026-09-03, `panel-denetim-2` kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 40 sn) · editör **1540** ·
-  şema 235 · Playwright **197/197** (51 spec, 12,5 dk, 0 skip) · build -warnaserror 0 uyarı ·
+- Son yeşil sayılar (2026-09-03, `panel-denetim-3` kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 40 sn) · editör **1541** ·
+  şema 235 · Playwright **197/197** (51 spec, 12,9 dk, 0 skip) · build -warnaserror 0 uyarı ·
   tsc -b + e2e tsc + prod build temiz. `meter.spec.ts` ayrıca ÜÇ ardışık koşumda 3/3
-  (tam suite içinde + iki bağımsız koşum, 14,7/14,9 sn). (Önceki taban 2026-09-03 `panel-2b`:
+  (tam suite içinde + iki bağımsız koşum). ORTAM KAYDI: `panel-denetim-3`'ün İLK tam suite
+  koşumu 39 dk sürüp bir testi düşürdü — ürün değil MAKİNE donması (API günlüğünde tek istek
+  26,6 dk; Postgres'in 5 dakikalık checkpoint zincirinde aynı pencerede ~6 çevrimlik boşluk;
+  düşen spec izole koşumda 1,8 sn yeşil). Ayırt etme reçetesi `SKILLS.md §playwright-tam-suite`.
+  Yukarıdaki 197/197 TEMİZ yeniden koşumdur. (Önceki taban 2026-09-03 `panel-2b`:
   editör 1516 · Playwright 194/194 / 50 spec.)
 
 ## Devam edenler
@@ -94,12 +102,16 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   Baş geliştirici ONAY verdi (3 ORTA + 6 DÜŞÜK → `panel-denetim-1`); baş mimar ve baş mühendis
   İKİ RED çıkardı (boş kanıt cümlesi + ~%50 kırılgan klip mandalı e2e testi) → `panel-denetim-2`.
   Bulguların HEPSİ, iddiayı kendim koşarak doğruladıktan sonra kapatıldı (review-gate kural 2).
-  KALAN İŞ: review-gate kural 7 gereği iki denetim düzeltilmiş HEAD üzerinde YENİDEN koşulmalı
-  (tek turda onaya çevrilmez). Dilim 3 iki commit: `panel-3a` ölçüm hattı
+  YENİDEN DENETİM 1 (baş mimar) KOŞTU ve **RED** verdi: 1 BLOKER (öldürülen boş-kanıt cümlesi
+  bu dosyanın BAŞLIĞINDA yaşıyordu) + 2 ORTA (topoloji muhafızının gövde-dışı seri bağlantıya
+  KÖR olması — kendi ölçümümle doğrulandı; "30 Hz" düzeltmesinin üç yerde uygulanmamış olması)
+  + 3 DÜŞÜK. Hepsi `panel-denetim-3` ile kapatıldı.
+  KALAN İŞ: baş mühendis yeniden denetimi (aynı kural). Dilim 3 iki commit: `panel-3a` ölçüm hattı
   (`audioGraph`'a master'ın paralel yaprak tap'i + `readMeter()` null semantiği, saf
   `core/meter.ts`, `engine.meter$`, §8.1 dB dönüşümlerinin `core/gain.ts`'e taşınması, altı
   motor mock'u — DOM'a sıfır dokunuş, tam suite 194/194 ile kanıtlı), `panel-3b` panel
-  (`AudioMeter.tsx` timeline gövde satırının 3. hücresi, 30 Hz canvas + imperatif DOM,
+  (`AudioMeter.tsx` timeline gövde satırının 3. hücresi, örnek başına React state YOK — canvas
+  + imperatif DOM,
   throttled `data-meter-*` test yüzeyi, mandal varken beliren sıfırlama düğmesi) + yeni
   `e2e/meter.spec.ts` (üç ardışık koşumda kararlı) + negatif kontrol ×2 + perf A/B
   (`performans-raporu §13`: p50 farkı −0,04 ms) + `poc §2.9` dürüstlük kaydı.
@@ -173,7 +185,7 @@ session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapma
 
 ---
 
-**Bir sonraki session'ın İLK İŞİ:** panel turunun iki denetimini (baş mimar + baş mühendis)
-düzeltilmiş HEAD üzerinde YENİDEN koşmak — review-gate kural 7: bir RED tek turda onaya
-çevrilmez. Denetim yeşil dönerse sıradaki iş `docs/STATE.md §Sıradakiler` 1. maddesidir
+**Bir sonraki session'ın İLK İŞİ:** baş mühendis yeniden denetimini düzeltilmiş HEAD üzerinde
+koşmak (baş mimarınki `panel-denetim-3`'te koştu, RED verdi, bulguları kapatıldı) — review-gate
+kural 7: bir RED tek turda onaya çevrilmez. Denetim yeşil dönerse sıradaki iş `docs/STATE.md §Sıradakiler` 1. maddesidir
 (`git push` — KULLANICI ONAYI BEKLİYOR, kendiliğinden yapılmaz).

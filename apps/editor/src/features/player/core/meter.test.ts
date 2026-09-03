@@ -169,7 +169,10 @@ describe('honesty note', () => {
     // maksimumundan küçük bir sayıyı kullanıcıya "en çok" diye gösteriyordu.
     expect(note).toContain('0,70 dB');
     expect(note).toContain('1,20 dB');
-    expect(note).toContain('1,24 dB');
+    // "EN BÜYÜK" nitelemesi TABLONUN maksimumuna bağlı olmalı: üç sayı da metinde
+    // dururken sadece varlıklarını sınamak, nitelemenin YANLIŞ sayıya kaymasını
+    // görmezdi (denetim bulgusu). Bu yüzden iddia İLİŞKİSEL.
+    expect(note, 'EN BÜYÜK fark 1,24 dB olarak nitelenmeli').toMatch(/EN B[ÜU]Y[ÜU]K[^.]*1,24 dB/);
     expect(note).toContain('4 medya çözücü'); // pool cap
     expect(note).toContain('-3,0 dBFS'); // RMS convention
   });

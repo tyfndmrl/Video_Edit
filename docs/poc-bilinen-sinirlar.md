@@ -876,9 +876,10 @@ renk-ayrımlı gerçek medya, siyah=0 + yanlisRenk=0 taraması).
 
 Zaman çizelgesinin sağındaki ölçer (`features/player/AudioMeter.tsx`) master bus'a
 PARALEL bir yaprak tap'ten okur; duyulan zincir (`master → destination`) değişmez.
-Bunun muhafızı `audioGraphTopology.test.ts`'tir (kaynak-yapısal: tap master'a
-destination'dan SONRA takılır, gövdesi `destination`'a dokunmaz, analyser çıkışları
-bağlanmaz). Kanıtın SINIRI kayda geçirilmiştir: `audio-parity.spec.ts` bunu kanıtlamaz
+Bunun muhafızı `audioGraphTopology.test.ts`'tir (kaynak-yapısal): yorumlar silinmiş
+kaynakta `destination` kelimesi TEK satırda geçebilir ve o satır master'ın kendi
+bağlantısıdır — yani seri bir tap bu dosyanın NERESİNDE yazılırsa yazılsın (yerel takma ad
+dahil) kırmızıya döner; yanında daha dar gövde taramaları da var. Kanıtın SINIRI kayda geçirilmiştir: `audio-parity.spec.ts` bunu kanıtlamaz
 (AudioGraph'ı kullanmaz; `master.gain=0` iken bile yeşil kalıyor — denetimde ölçüldü) ve
 tarayıcının duyulan çıkışını yakalayan bir test bu düzenekte yoktur. Ölçtüğü şeyin sınırları:
 

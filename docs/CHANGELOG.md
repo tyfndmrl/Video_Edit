@@ -2,6 +2,32 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-03
+- panel-denetim-3 — **baş mimar YENİDEN denetimi RED verdi; bulgular kapatıldı**
+  (review-gate kural 7: bir RED tek turda onaya çevrilmez, düzeltilmiş HEAD yeniden denetlenir).
+  **BLOKER:** öldürülen boş-kanıt cümlesi `docs/STATE.md`'nin BAŞLIĞINDA hayatta kalmıştı —
+  P3 kapanışı STATE'in gövdesini güncellemiş, yeni bir session'ın okuduğu İLK paragrafı
+  güncellememişti (üstelik blok bayattı: "sırada denetim var" diyordu). Başlık `panel-denetim-2`
+  gerçeğine çekildi ve parantez yapısal muhafız + kanıt sınırı beyanıyla değiştirildi.
+  **ORTA-1 — muhafızın KÖR NOKTASI (kendi ölçümümle doğrulandı):** `audioGraphTopology.test.ts`
+  yalnız `buildMeterTap` GÖVDESİNİ tarıyordu; tap'in çıkışı BAŞKA bir metottan (`ensureContext`)
+  `destination`'a bağlanınca — yani §8.3'ün tam ihlalinde — dört iddia da YEŞİL kalıyordu
+  (ölçüldü: 4/4 yeşil, editör 1540/1540 yeşil). Başlıktaki "tap seri yapılırsa kırmızıya döner"
+  cümlesi kanıtlanandan fazlasını iddia ediyordu. Muhafıza DOSYA DÜZEYİNDE yük taşıyan yeni iddia
+  eklendi: yorumlar silinmiş kaynakta `destination` kelimesi TEK satırda geçebilir ve o satır
+  master'ın kendi bağlantısı olmalı. NEGATİF KONTROL ×2: (a) gövde dışı seri bağlantı → kırmızı,
+  suçlu satırı adıyla söylüyor (`+ "this.meterTap?.connect(this.ctx.destination);"`);
+  (b) YEREL TAKMA AD üzerinden bağlantı (`const d = ctx.destination; tap.connect(d)`) → üç iddia
+  birden kırmızı. İkisinden de md5-birebir geri (`audioGraph.ts` `693c7856…1ead`). Başlık artık
+  kapsamı AÇIKÇA yazıyor: iddia BU DOSYAYI kapsar; `meterTap` private olduğu için dışarıdan
+  erişilemez. **ORTA-2 — "30 Hz" düzeltmesi üç yerde uygulanmamıştı:** `AudioMeter.tsx` başlığı
+  ("The engine emits at 30 Hz"), `performans-raporu` §13 ve `STATE.md`. Üçü de tabana çevrildi
+  (aynı turda DECISIONS "ekrana bağlı bir sayıyı sabit gibi göstermek" diyordu — kendi kuralını
+  ihlal ediyordu). **DÜŞÜK'ler:** negatif kontrol md5'i teslim edilen dosyayı değil, NC anındaki
+  (yorum düzeltmesinden ÖNCEKİ) sürümü adresliyordu → kayıt nitelendi ve teslim hash'i eklendi;
+  `AudioMeter.tsx` başlığındaki kurallar 1→3→2 sırasındaydı ve "Two rules" diyordu (üç kural var)
+  → sıralandı; dürüstlük notu testi üç sayının VARLIĞINI sınıyordu, "EN BÜYÜK" NİTELEMESİNİ değil
+  → ilişkisel iddiaya çevrildi (NC: üç sayı da dururken niteleme 0,70'e kaydırıldı → kırmızı,
+  `meter.ts` md5 `e6732180…5cab3` birebir geri).
 - panel-denetim-1 / panel-denetim-2 — **panel turunun üç rollü kapanış denetimi** (baş mimar +
   baş mühendis + baş geliştirici; her biri kendi koşumlarıyla — review-gate kural 2: rapor kanıt
   değildir, iddia bizzat koşularak doğrulandı). **denetim-1 (baş geliştirici, ONAY + 3 ORTA +
@@ -27,7 +53,9 @@ Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit a
   (kaynak-yapısal muhafız: master→destination tap'ten ÖNCE; tap gövdesinde `destination` YOK;
   bağlantı zinciri tam olarak master→tap→splitter→(L,R); `getFloatTimeDomainData` var,
   `getByteTimeDomainData` yok) + kanıtın SINIRINI söyleyen dürüst beyan kondu. Muhafız tap seri
-  yapılarak KIRMIZI görüldü, md5-birebir geri (`30e6ad89…ff35`). (2) **Klip mandalı e2e'si ~%50
+  yapılarak KIRMIZI görüldü, md5-birebir geri. (Hash notu: o koşumdaki sürüm `30e6ad89…ff35`
+  idi — NC, aynı commit'in kendi yorum düzeltmesinden ÖNCE koşuldu; teslim edilen dosya
+  `693c7856…1ead`. Denetim bunu yakaladı, kayıt düzeltildi.) (2) **Klip mandalı e2e'si ~%50
   kırılgandı** — ölçüldü: normal test sesi klip kazancı 2,0'da bile önizleme tepesini eşiğin
   0,5 dB ALTINDA bırakıyordu, test ancak bir decode transient'iyle yeşile dönüyordu; yeni
   `LOUD_AUDIO_SPEC` fikstürü (`volume=8,pan=stereo|c0=c0|c1=c0`; ffmpeg `sine` −18,1 dBFS

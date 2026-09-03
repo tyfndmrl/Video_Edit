@@ -619,4 +619,6 @@ Sonuç: p50 farkı **−0,04 ms** — yani ölçmenin çözebildiği eşiğin al
 oturuyor ve hiçbir kare 33,3 ms'i aşmıyor. (Tabanın max'ının daha yüksek çıkması gürültüdür;
 aynı sonucu güçlendirir.) DÜRÜSTLÜK NOTU: headless vsync 16,67 ms'e kilitlediği için bu koşum
 "p95 ≤ 8 ms" gibi 165 Hz'lik bir eşiği SINAYAMAZ; ölçtüğü şey ölçerin oynatma döngüsüne
-ölçülebilir bir maliyet EKLEMEDİĞİDİR. Ölçüm kadansı zaten 30 Hz'dir (rAF başına iş değil).
+ölçülebilir bir maliyet EKLEMEDİĞİDİR. Örnekleme aralığı bir TABANDIR (33 ms), rAF başına
+iş değil: gerçek kadans aralığın bir kareye yukarı yuvarlanmış hâlidir — bu koşumun 60 Hz'lik
+vsync'inde 30 Hz. Sabit bir hız gibi okunmamalı (`DECISIONS`, panel-denetim-2 bulgusu).

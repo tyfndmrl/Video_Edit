@@ -18,8 +18,19 @@
  * AFTER `master` is already wired to `destination`, and nothing inside the tap
  * ever reaches `destination`. Web Audio guarantees a fan-out does not alter
  * what the other branch receives; this guard keeps the code inside that
- * guarantee. If someone makes the tap serial (master -> tap -> destination),
- * these assertions go red.
+ * guarantee.
+ *
+ * SCOPE, stated exactly: these assertions cover THIS FILE. The first test below
+ * is the load-bearing one -- in executable code (comments stripped), the word
+ * `destination` may appear on exactly ONE line, and that line must be master's
+ * own connect. A serial tap therefore goes red wherever in this file it is
+ * written, including through a local alias. The body scans that follow are
+ * narrower and only pin the shape of buildMeterTap itself. Nothing outside this
+ * file can reach the tap: `meterTap` is private and never returned.
+ *
+ * The body-only version of this guard was MEASURED blind during review: adding
+ * `this.meterTap?.connect(this.ctx.destination)` in ensureContext -- a real
+ * §8.3 violation -- left all four assertions green.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -43,7 +54,25 @@ function bodyOf(fnName: string): string {
   throw new Error(`${fnName} gövdesi kapanmadı`);
 }
 
+/** Yorumlar SİLİNMİŞ kaynak: iddia düzyazıyla karşılanamasın. */
+const CODE = SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
 describe('meter tap yerleşimi (§8.3 yaprak sözleşmesi)', () => {
+  it('ÇALIŞAN kodda `destination` TEK satırda geçer: master’ın kendi bağlantısı', () => {
+    // Bu dosyanın YÜK TAŞIYAN iddiası. Gövde taraması yetmiyordu: tap'in çıkışı
+    // başka bir metottan da (ör. ensureContext) destination'a bağlanabilir ve
+    // eski muhafız bunu göremiyordu — denetimde ÖLÇÜLDÜ, dört iddia da yeşil
+    // kalmıştı. Yerel bir takma ad üzerinden bağlamak da ikinci bir satır
+    // doğurur, o yüzden bu iddia takma adı da yakalar.
+    const lines = CODE.split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.includes('destination'));
+    expect(
+      lines,
+      'destination’a giden TEK bağlantı master’ınki olmalı — tap yaprak kalmalı (§8.3).',
+    ).toEqual(['this.master.connect(this.ctx.destination);']);
+  });
+
   it('master ÖNCE destination’a bağlanır, tap ondan SONRA kurulur', () => {
     const toDestination = SRC.indexOf('this.master.connect(this.ctx.destination)');
     const buildTap = SRC.indexOf('this.buildMeterTap(');
