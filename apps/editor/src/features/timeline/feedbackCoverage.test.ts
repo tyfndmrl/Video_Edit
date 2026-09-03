@@ -6,6 +6,9 @@
  * OpResult.notice / *BlockReason dönüşleri) feedback tablolarının birinde bir
  * Türkçe karşılık bulmak ZORUNDADIR — eşlenmemiş kod, kullanıcıya jenerik
  * "İşlem uygulanamadı" olarak düşer ve neden reddedildiğini asla söylemez.
+ * Kapsam yalnız OP katmanı değildir: GİRDİ DOĞRULAMA katmanı (transport zaman
+ * kodu alanı — `features/player/timecodeInput.ts`) da tipli kodlar üretir ve
+ * aynı sözleşmeye tabidir; onun tablosu `features/player/playerFeedback.ts`.
  * Ters yön de bağlayıcıdır: tabloda kaynakta artık üretilmeyen bir anahtar
  * (bayat çeviri) kalamaz.
  *
@@ -27,20 +30,30 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { opFailureMessage, opNoticeMessage } from './feedback';
 import { inspectorFailureMessage, inspectorNoticeMessage } from '../inspector/inspectorFeedback';
+import { timecodeFailureMessage, timecodeNoticeMessage } from '../player/playerFeedback';
 
 const SRC_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-/** OpResult üreten ya da blockReason döndüren TÜM modüller. */
+/**
+ * OpResult üreten, blockReason döndüren ya da tipli GİRDİ ret kodu üreten TÜM
+ * modüller. Bu iki liste taramanın TEK kör noktasıdır (elle tutulur): yeni bir
+ * kod kaynağı eklendiğinde buraya da yazılmalı, yoksa kodları hiç görülmez.
+ */
 const CODE_SOURCES = [
   'state/timelineOps.ts',
   'features/keyframes/keyframeOps.ts',
   'features/keyframes/keyframeModel.ts',
   'features/timeline/menuActions.ts',
   'features/text/overlayActions.ts',
+  'features/player/timecodeInput.ts',
 ];
 
-/** Çeviri tabloları (timeline balonu + Inspector satır içi). */
-const TABLE_SOURCES = ['features/timeline/feedback.ts', 'features/inspector/inspectorFeedback.ts'];
+/** Çeviri tabloları (timeline balonu + Inspector satır içi + transport alanı). */
+const TABLE_SOURCES = [
+  'features/timeline/feedback.ts',
+  'features/inspector/inspectorFeedback.ts',
+  'features/player/playerFeedback.ts',
+];
 
 const isEnglishCode = (s: string): boolean => /^[a-z][a-z0-9 /'-]*$/.test(s);
 
@@ -113,6 +126,8 @@ describe('feedback tabloları <-> op ret kodları (kaynak diff)', () => {
         inspectorFailureMessage(code),
         opNoticeMessage(code),
         inspectorNoticeMessage(code),
+        timecodeFailureMessage(code),
+        timecodeNoticeMessage(code),
       ];
       const resolved = texts.some((t) => t !== null && t !== generic);
       expect(resolved, `'${code}' hiçbir feedback yüzeyinde çözülmüyor`).toBe(true);
