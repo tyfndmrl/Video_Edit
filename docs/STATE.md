@@ -1,23 +1,12 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-03, `panel-2a`+`panel-2b` — **panel turu dilim 2 (timeline dikey
-yeniden boyutlandırma) KAPANDI**: timeline satırı tutamaktan sürüklenerek (ve klavyeyle)
-büyütülüp küçültülüyor, tercih TARAYICIDA kalıcı (belgeye yazılmaz), yatay düzlem
-dokunulmadan korunuyor; öncesinde keşifte bulunan `scrollY` kelepçe kusuru AYRI commit'le
-kapatıldı (kelepçe artık jestlerde değil TEK yazma yolunda ve sınır değişince yeniden
-uygulanıyor). FRONTEND-only. Defter: `PROGRESS.md` §Özellik turu 2 dilim 2. Öncesi:
-`panel-1a`+`panel-1b` — **panel turu dilim 1 (elle zaman kodu girişi)**: transport çubuğundaki playhead göstergesi düzenlenebilir alan oldu
-(saat okuması, ceil'li ters dönüşüm, tipli ret/bildirim kodları) ve proje sonu kelepçesi
-TEK tanımdan alan + ok/step tuşları + cetvel scrub'ına yayıldı. FRONTEND-only. Defter:
-`PROGRESS.md` §Özellik turu 2 dilim 1. Öncesi: 2026-09-02 `ozellik-fix` — kullanıcının
-bildirdiği "J geri sararken yabancı kare" hatası ölçümle doğrulanıp KAPANDI (scrub
-çukurunda katman arka plana düşüyordu; sahiplik-bağlı son-iyi-kare + seeked tazeliği +
-geriye-preload; 6 probe rejiminde 6/6 sıfır ihlal — `PROGRESS.md` §Özellik turu satır F).
-Öncesi:
-özellik turu 2026-09-01'de KAPANDI + kapanış denetimi ONAY, 3 bulgu `ozellik-duzeltme`
-commit'iyle kapatıldı — 7 dilimin 7'si tamam (şema linkId/groupId + invariant pass +
-codegen; track partisyonu; linkId çekirdeği; otomatik AV ayrımlı ekleme; klip grupları
-Ctrl+G; J sessiz kademeli geri tarama 5a+5b; plan: `capcut-ve-canva-gibi-hashed-penguin.md`,
-defter: `PROGRESS.md` §Özellik turu).
+Son güncelleme: 2026-09-03, `panel-3a`+`panel-3b` — **panel turu dilim 3 (ses ölçer) KAPANDI**:
+zaman çizelgesinin sağında master stereo L/R ölçer (dBFS skalası, tepe tutucu, klip mandalı);
+ölçüm master'a PARALEL yaprak tap'ten okunur — duyulan zincir değişmedi (`audio-parity` dosyaya
+DOKUNULMADAN yeşil). Ölçer sessizliği "0" diye göstermez: ses motoru kurulmadıysa "Ölçüm yok",
+duraklatmada "Duraklatıldı", J geri taramada "Ses kapalı" der. FRONTEND-only.
+**Panel turunun ÜÇ dilimi de tamam; sırada üç rollü kapanış denetimi var.**
+Defter: `PROGRESS.md` §Özellik turu 2. Öncesi: `panel-2a`+`panel-2b` (timeline dikey
+boyutlandırma + `scrollY` kelepçe kusuru), `panel-1a`+`panel-1b` (elle zaman kodu girişi).
 Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arşiv niteliğinde).
 
 ## Tamamlananlar (özet)
@@ -100,68 +89,15 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 ## Devam edenler
 
 - **Panel turu (2026-09-02 onaylı plan — 3 panel özelliği + kapanış denetimi): dilim 1 ✅,
-  dilim 2 ✅, dilim 3 + denetim SIRADA.** Dilim 2 (timeline dikey boyutlandırma) iki
-  commit'te kapandı: `panel-2a` `scrollY` kelepçesi TEK yazma yoluna (`pan.maxScrollY` +
-  `clampScrollY` saf ikizler, `TimelinePanel.applyScrollY`, `[viewport.h, tracks.length]`
-  bağımlı yeniden-kelepçe; iki kopya formül silindi) — kusur commit ÖNCESİ gerçek girdiyle
-  kırmızı gösterildi; `panel-2b` sürüklenebilir yükseklik (`features/timeline/timelineHeight.ts`
-  niyet/ölçüm ayrımı + localStorage `videoedit.timelineHeight.v1`, `TimelineResizeHandle.tsx`
-  pointer-capture + üçlü çıkış + rAF birleştirme + `role="separator"` klavyesi, `App.tsx`
-  `EditorGrid` children-as-props + inline `gridTemplateRows`). Negatif kontrol ×3
-  (md5-birebir), perf ölçümü `performans-raporu §3.6` (resize p95 6,1-6,3 ms, >33,3 ms 0).
-  **Sıradaki iş: dilim 3 — ses ölçer paneli (3a ölçüm hattı: `audioGraph.ts`'e paralel yaprak
-  tap + saf `core/meter.ts`; 3b `AudioMeter.tsx` + kanıt).**
-  Dilim 1 (elle zaman kodu girişi) iki commit'te kapandı:
-  `panel-1a` saf ayrıştırıcı + Türkçe sözlük (`features/player/timecodeInput.ts` +
-  `playerFeedback.ts`; saat okuması, ceil'li ters dönüşüm, `feedbackCoverage` muhafızı
-  genişletildi), `panel-1b` tel + kelepçe (`TransportTimecode.tsx`, `PlayerPanel` teli,
-  `timelineOps.clampPlayheadUs` ile alan + ok/step + cetvel scrub'ı TEK üst sınırdan).
-  FRONTEND-only: backend/şema DEĞİŞMEDİ. Negatif kontrol ×4 (md5-birebir). Doküman:
-  `rendering-semantics §1.5` sözde-kodu floor'a düzeltildi (kod doğruydu). Defter:
-  `PROGRESS.md` §Özellik turu 2 dilim 1.
-
-- Önceki tur: özellik turu 2026-09-01'de KAPANDI (aşağıdaki kayıt tur kapanış özetidir).
-  Kapanış denetimi ONAY verdi; 3 bulgusu (deleteTrack kilitli-eş sessiz bağ silme →
-  tümden RED; Ctrl+X yarım-çift → kes LINK-kapanışlı pano, Ctrl+C bilinçli asimetrik;
-  CLAUDE.md yetenek haritası senkronu) `ozellik-duzeltme` commit'iyle kapatıldı —
-  defter: `PROGRESS.md` §Özellik turu satır D. Denetim-sonrası yeşil: editör
-  1429→**1435** (+4 timelineOps, +2 guardPaths (f)), e2e link-clips 2→3 test;
-  backend/şema değişmedi.
-
-- **Özellik turu (2026-09-01 onaylı plan — 5 timeline özelliği, 7 dilim) — TAMAMLANDI**: dilim 0 ✅
-  (şema `linkId`/`groupId` + `checkLinkAndGroupInvariants` kural 10-12 + codegen; eski
-  dokümanlar değişmeden geçerli; şema testleri 222→235) + dilim 1 ✅ (track partisyonu:
-  `insertTrackPositioned` op-politikası + `trackMoveBlockReason` partisyon kapısı + görsel
-  ayraç yükseklik eklemeden; editör testleri 1342→1350) + dilim 2 ✅ (linkId çekirdeği:
-  `expandSelectionForOp` kapanışı OP İÇİNDE — sil/böl/taşı eşle birlikte, eş kilitliyse
-  silme tümden RED; bölüm-kapsamlı trackDelta; linkClips/unlinkClips + menü + rozet;
-  remint kopyalarda; detachAudio bağlı çift doğurur; trim bağa dokunmaz — negatif pinli;
-  editör 1350→1379; yeni `e2e/link-clips.spec.ts`) + dilim 3 ✅ (otomatik AV ayrımı,
-  FRONTEND-only: SAF `planAddClipFromAsset` — ghost/drop/commit AYNI planı okur; karar
-  tablosu hasAudio üçlüsüne göre; ÇİFT klip TEK mutate + ortak linkId + ikisi seçili;
-  ses dolu şeritte YENİ track (en altta) + notice; kısmi başarı yasak — `MAX_TRACKS=50`
-  aynası; sessiz videoda `buildClipFromAsset` audio:null; gerçek-medya spec'leri yeni
-  davranışa tarandı/güncellendi; editör 1379→1393; yeni `e2e/auto-av-add.spec.ts`) +
-  dilim 4 ✅ (klip grupları, FRONTEND-only: `groupClips` LINK-kapanışlı kümeye TAZE tek
-  groupId — birleştirme semantiği, eski gruptan tek kalan AYNI mutate'te temizlenir;
-  `ungroupClips` dokunulan grupları TÜMDEN dağıtır (üye çıkarma yok), linkId'ye dokunmaz;
-  menü 'Grupla'/'Grubu dağıt' + Ctrl+G/Ctrl+Shift+G + shortcutsHelp; drawTracks 2px grup
-  üst şeridi (geometri değişmedi); taşıma kod değişikliği GEREKMEDİ — dilim-2 'move'
-  kapanışı grup-odaklı pinlerle sabitlendi; editör 1393→1414; yeni
-  `e2e/group-clips.spec.ts`) + dilim 5a ✅ + 5b ✅ (J SESSİZ kademeli geri tarama,
-  FRONTEND-only, `engineV1.ts` dokunulmadı: YENİ `shortcuts/shuttle.ts` — 33 ms
-  metronom + iç float akümülatör, kare-ızgara-yapışık `setPlayheadUs('user')` →
-  mevcut scrub yolu; sessizlik YAPISAL (motor paused, hiçbir element play() almaz);
-  `useTransportStore` ({forwardRate, shuttleRate} — forwardRate modül-let'ten taşındı);
-  iptal tik içinde: isPlaying / dış user seek (userSeekSeq farkı) / BOF'ta TAM 0 + dur;
-  matris: J=pause+shuttle (tekrar: 1→2→4→8, 8'de doyar; e.repeat J VE L'de yutulur),
-  K=dur+pause, L=dur+İLERİ 1x'ten (shuttle hızı devralınmaz), Space=dur AMA OYNATMAZ;
-  PlayerPanel rozeti `transport-shuttle-note` 'Geri tarama {n}x — ses kapalı' /
-  'İleri {n}x'; editör 1414→1429; yeni `e2e/jkl-shuttle.spec.ts` — gerçek klavye,
-  hız ölçümü e2e'de değil birim testte; DECISIONS satırı + tasarım 01 §3.4 dipnotu +
-  poc-bilinen-sinirlar §2.8). Yedi dilimde de dört kapı + prod build + negatif kontrol
-  yeşil (5a/5b'de ×2 md5-birebir), backend 1626/1626 skip 0, kapanış TAM Playwright
-  **173/173**. Defter: `PROGRESS.md` §Özellik turu.
+  dilim 2 ✅, dilim 3 ✅ — ÜÇÜ DE TAMAM; kalan tek iş üç rollü kapanış denetimi
+  (baş mimar + baş mühendis + baş geliştirici).** Dilim 3 iki commit: `panel-3a` ölçüm hattı
+  (`audioGraph`'a master'ın paralel yaprak tap'i + `readMeter()` null semantiği, saf
+  `core/meter.ts`, `engine.meter$`, §8.1 dB dönüşümlerinin `core/gain.ts`'e taşınması, altı
+  motor mock'u — DOM'a sıfır dokunuş, tam suite 194/194 ile kanıtlı), `panel-3b` panel
+  (`AudioMeter.tsx` timeline gövde satırının 3. hücresi, 30 Hz canvas + imperatif DOM,
+  throttled `data-meter-*` test yüzeyi, mandal varken beliren sıfırlama düğmesi) + yeni
+  `e2e/meter.spec.ts` (üç ardışık koşumda kararlı) + negatif kontrol ×2 + perf A/B
+  (`performans-raporu §13`: p50 farkı −0,04 ms) + `poc §2.9` dürüstlük kaydı.
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 

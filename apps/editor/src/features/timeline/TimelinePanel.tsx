@@ -86,6 +86,7 @@ import {
   useLibraryDndStore,
   type LibraryDragPayload,
 } from './libraryDnd';
+import { AudioMeter } from '../player/AudioMeter';
 import { KeyframeStripOverlay } from '../keyframes/KeyframeStripOverlay';
 import { drawRuler } from './render/drawRuler';
 import { drawTracks, type DragVisual } from './render/drawTracks';
@@ -1537,6 +1538,12 @@ export function TimelinePanel() {
           */}
           <KeyframeStripOverlay scrollY={scrollY} />
         </div>
+
+        {/* Preview level meter — a SIBLING of the canvas wrap, never inside it:
+            the e2e harness finds the wrap by "first div with >=3 canvas
+            children" and hashes canvas[1] for its body signature, so a canvas
+            added in there would rewrite two test contracts at once. */}
+        <AudioMeter />
       </div>
 
       {/* Project-loading lock: blocks every pointer interaction with the

@@ -566,7 +566,13 @@ async function zoomUntilClipWide(
   for (let i = 0; i < 25; i++) {
     const box = await editor.timeline.clipBox(clipId);
     if (box.width >= minWidthPx) return;
-    await editor.timeline.ctrlWheel(-120, { x: box.x + box.width / 2, y: box.y + TRACK_H / 2 });
+    // Yakınlaştırma imlecin ALTINDAKİ anı sabit tutar; bu yüzden çapa klibin
+    // ORTASI değil KESİMİ (sağ kenarı) olmalı: ortadan yakınlaştırınca kesim
+    // her adımda sağa kayar ve yeterince dar bir gövdede tuvalin dışına düşer
+    // (rozete tıklanamaz). Kesime çapalayınca rozet olduğu yerde kalır —
+    // kullanıcının da yaptığı jest budur.
+    const anchorX = Math.min(box.x + box.width - 2, box.x + box.width / 2 + 200);
+    await editor.timeline.ctrlWheel(-120, { x: anchorX, y: box.y + TRACK_H / 2 });
   }
   expect(
     (await editor.timeline.clipBox(clipId)).width,

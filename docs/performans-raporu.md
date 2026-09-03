@@ -602,3 +602,21 @@ bu fixtüre DEĞİL compReal'e bağlı.
 açılmadan kullanıcıya soruluyor (STATE açık soruları): hedef ölçümle tutmadı; seçenekler
 (d) N-paralel'i kendi sözleşme turuyla açmak YA DA kapsam ölçütünü gerekçeli daraltmak
 (ör. "gerçekçi bileşim ≥1,8x + örtülü sınıf ≥2x" — mevcut ölçülmüş durum).
+
+## 13. Ses ölçer — oynatma fazı A/B (2026-09-03, panel-3b)
+
+Yöntem §3.2 ile aynı: sayfa içi rAF delta toplayıcı, 60 karelik ısınma + 480 ölçülen kare,
+GERÇEK medya (440 Hz sinüs, gerçek yükleme + gerçek fare ile transport). A/B tek değişkenle:
+ölçer hücresi mount EDİLİ ve `{false && …}` ile SÖKÜLÜ. Ortam: headless Chromium (vsync 60 Hz,
+ideal kare 16,67 ms), Vite dev, 1440x900. Geçici prob spec'i ölçümden sonra silindi.
+
+| Koşum | n | p50 (ms) | p95 (ms) | max (ms) | >33,3 ms |
+|---|---|---|---|---|---|
+| Ölçer MOUNT EDİLİ | 480 | **16,61** | 17,70 | 20,37 | 0 |
+| Ölçer SÖKÜLÜ (taban) | 480 | **16,65** | 17,60 | 32,36 | 0 |
+
+Sonuç: p50 farkı **−0,04 ms** — yani ölçmenin çözebildiği eşiğin altında; iki koşum da vsync'e
+oturuyor ve hiçbir kare 33,3 ms'i aşmıyor. (Tabanın max'ının daha yüksek çıkması gürültüdür;
+aynı sonucu güçlendirir.) DÜRÜSTLÜK NOTU: headless vsync 16,67 ms'e kilitlediği için bu koşum
+"p95 ≤ 8 ms" gibi 165 Hz'lik bir eşiği SINAYAMAZ; ölçtüğü şey ölçerin oynatma döngüsüne
+ölçülebilir bir maliyet EKLEMEDİĞİDİR. Ölçüm kadansı zaten 30 Hz'dir (rAF başına iş değil).

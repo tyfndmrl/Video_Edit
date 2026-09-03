@@ -230,9 +230,27 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/**
+ * Emits whenever the process-wide engine is (un)registered. Features that
+ * follow a live engine stream (the audio meter) cannot poll for it: PlayerPanel
+ * may rebuild its engine after a WebGL loss, and a stale subscription would go
+ * quiet without ever saying why.
+ */
+const engineRegistry$ = createSubject<PlaybackEngine | null>();
+
+/**
+ * Subscribe to the current engine AND to later replacements. The callback runs
+ * immediately with whatever is registered right now (possibly null).
+ */
+export function subscribePlaybackEngine(cb: (engine: PlaybackEngine | null) => void): () => void {
+  cb(currentEngine);
+  return engineRegistry$.subscribe(cb);
+}
+
 /** Called by PlayerPanel when it creates/destroys its engine instance. */
 export function registerPlaybackEngine(engine: PlaybackEngine | null): void {
   currentEngine = engine;
+  engineRegistry$.emit(engine);
   if (!import.meta.env?.DEV || typeof window === 'undefined') return;
   const w = window as unknown as { __videoeditPlayer?: VideoEditPlayerHook };
   const probe = (engine as unknown as { probePixel?: VideoEditPlayerHook['probePixel'] } | null)

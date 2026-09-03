@@ -14,6 +14,8 @@ compose.yml                  Prod compose (Caddy + api + worker + pg + redis + m
 apps/editor/
   src/app/                   Kabuk: App.tsx, TopBar, queryClient
   src/features/              Dilimler: timeline/ player/ inspector/ library/ export/ text/
+                             player/AudioMeter.tsx = timeline'ın sağındaki ses ölçeri;
+                             player/core/meter.ts = ölçerin SAF matematiği + tüm metinleri
                              keyframes/ shortcuts/ auth/ projects/ versions/ history/
   …/timeline/timelineHeight.ts        Timeline satırının yüksekliği: KALICI kullanıcı niyeti
                              (localStorage `videoedit.timelineHeight.v1`) + ÖLÇÜLEN efemeral

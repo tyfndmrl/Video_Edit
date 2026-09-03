@@ -2,6 +2,30 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-03
+- panel-3a / panel-3b — **ses ölçer paneli** (panel turu dilim 3, FRONTEND-only).
+  **3a (ölçüm hattı, DOM'a sıfır dokunuş):** `audioGraph`'ta master'a PARALEL yaprak tap
+  (`master → meterTap(explicit stereo) → ChannelSplitter(2) → analyserL/R`, çıkışlar
+  bağlanmaz); `master → destination` aynen kalır — §8.3'ün "önizleme zincirine seri node
+  konmaz" kuralı korunur ve `audio-parity.spec.ts` DOSYAYA DOKUNULMADAN yeşil kalarak
+  çıkışın değişmediğini kanıtlar. `readMeter()` ctx yok/çalışmıyorken NULL döner (sıfır
+  döndürmek "miks sessiz" yalanı olurdu). Yeni saf `core/meter.ts`: dBFS/bar/format,
+  tepe tutucu (hold 1 s + 20 dB/s, DUVAR SAATİYLE — rAF kısılınca kare-tabanlı düşüş yalan
+  söylerdi), klip mandalı (>1.0, tek pencere, duraklatma silmez) ve TÜM kullanıcı metinleri;
+  §8.1 `linearToDb`/`dbToLinear` `core/gain.ts`'e taşındı (inspector re-export'la aynen
+  çalışır). `engine.meter$` sözleşmesi + engineV1'de LOOP içinde 30 Hz örnekleme (tick model
+  yokken erken döndüğü için gövdeye konmadı). Altı motor mock'u önce KIRMIZI görülüp
+  güncellendi (`readMeter is not a function`).
+  **3b (panel + kanıt):** `AudioMeter.tsx` timeline gövde satırının 3. hücresi (canvas wrap'ın
+  KARDEŞİ — wrap'a canvas eklemek e2e'nin iki sözleşmesini birden yeniden yazardı); 30 Hz'de
+  React state yok (canvas + imperatif `textContent`), test yüzeyi 10 Hz throttled
+  `data-meter-*` öznitelikleri, sıfırlama düğmesi YALNIZ mandal varken DOM'da (Tab bütçesi).
+  Ölçer sessizliği gerekçesiyle söyler: "Ölçüm yok" / "Duraklatıldı" / "Ses kapalı" /
+  "Engellendi". Kanıt: yeni `e2e/meter.spec.ts` (2/2, üç ardışık koşumda kararlı) —
+  jestten önce `no-context`, gerçek yükleme+oynatmada `db-l > -40`, duraklatmada `paused`,
+  `End`+`j` ile `shuttle`. Negatif kontrol ×2 (tap kazancı 0 → seviye kırmızı; `no-context`
+  ayrımı silinince ilk iddia kırmızı), md5-birebir geri. Perf A/B (`performans-raporu §13`):
+  ölçerli p50 16,61 ms ↔ ölçersiz 16,65 ms, >33,3 ms kare 0. Dürüstlük kaydı: `poc §2.9`
+  (ölçer ÖNİZLEME miksini ölçer; limiter asimetrisi, proxy≠orijinal, 4 çözücü tavanı).
 - panel-2a / panel-2b — **timeline dikey yeniden boyutlandırma** (panel turu dilim 2,
   FRONTEND-only). **2a (mevcut kusurun düzeltmesi):** `scrollY` YALNIZ iki jestte (wheel +
   orta-tuş pan) yazılıyordu ve üst sınır formülü ikisine KOPYALANMIŞTI; sınırın kendisi

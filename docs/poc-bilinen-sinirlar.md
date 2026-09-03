@@ -872,6 +872,32 @@ renk-ayrımlı gerçek medya, siyah=0 + yanlisRenk=0 taraması).
 
 ---
 
+### 2.9 [KAYIT] Ses ölçer ÖNİZLEME miksini ölçer — export miksini DEĞİL (2026-09-03)
+
+Zaman çizelgesinin sağındaki ölçer (`features/player/AudioMeter.tsx`) master bus'a
+PARALEL bir yaprak tap'ten okur; duyulan zincir (`master → destination`) değişmez —
+kanıt: `audio-parity.spec.ts` dosyaya dokunulmadan yeşil kaldı. Ölçtüğü şeyin sınırları:
+
+- **Limiter asimetrisi (§8.3).** Önizlemede limiter YOKTUR, export zincirinin sonunda
+  `alimiter=limit=0.98` vardır. 0 dBFS'i aşan bir tepe ölçerde KIRMIZI yanar ama dışa
+  aktarılan dosya temiz çıkar (ölçülmüş: önizleme tepesi 1,163 ↔ export 0,950 — §2.6).
+  **Klip uyarısı, export'ta kusursuz çıkacak malzemede yanabilir; bu kusur değil,
+  kayıtlı asimetridir** ve ölçerin tooltip'i bunu aynı cümlelerle söyler.
+- **Kaynak farkı.** Önizleme proxy sesini (AAC 128k) çalar, export orijinali çözer;
+  ölçülen önizleme↔export RMS farkı |Δ|max ≤ 0,70 dB (limiter rejiminde 1,20 dB, §2.6).
+- **Kapasite.** Havuz 4 medya elemanıyla sınırlıdır; 4'ten fazla sesli klipte ölçer
+  EKSİK miksi ölçer. Oynatıcıdaki "N / M ses klibi çalıyor" notu bu durumun mevcut
+  göstergesidir.
+- **Örnekleme.** Ölçüm sürekli bir integral değil, 30 Hz kadansta 2048 örneklik
+  (48 kHz'de 42,7 ms) pencerelerdir; pencereler örtüşür, yani deliksizdir. rAF kısıldığında
+  (arka plan sekmesi, headless ~12 Hz) kapsama %100'ün altına düşer ve tekil bir transient
+  kaçırılabilir — bu yüzden e2e sürekli sinyalle ölçer, transient iddia etmez.
+- **RMS konvansiyonu.** Sinüs referans ofseti UYGULANMAZ: tam ölçekli sinüs −3,0 dBFS
+  RMS okur (§2.6 parite tablosuyla aynı cins).
+- **Sessizlik ≠ arıza.** Duraklat/scrub/J geri taramada ses YAPISAL olarak yoktur; ölçer
+  bunu "0" göstererek değil, gerekçesiyle ("Ölçüm yok" / "Duraklatıldı" / "Ses kapalı" /
+  "Engellendi") söyler — ilk oynatmadan önce AudioContext hiç kurulmamıştır.
+
 ## 3. Şema / export motoru sınırları (tipli hata verir, sessiz bozulma yok)
 
 Ortak nokta: hiçbiri **sessizce yanlış çıktı vermez**. Ama **kapının NEREDE olduğu** satırdan
