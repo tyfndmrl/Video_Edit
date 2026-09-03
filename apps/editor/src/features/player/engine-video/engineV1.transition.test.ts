@@ -86,6 +86,9 @@ vi.mock('../audio/audioGraph', () => ({
       harness.gainCurves.push({ element, curve: [...curve], durationSec });
     }
     cancelElement(): void {}
+    readMeter(): null {
+      return null; // meter tap is a real-AudioContext concern; engine tests stub it
+    }
     dispose(): void {}
   },
 }));

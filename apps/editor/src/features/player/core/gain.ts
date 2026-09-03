@@ -230,3 +230,23 @@ export function shouldMicroFadeIn(
 export function shouldMicroFadeOut(clip: MediaClip, next: MediaClip | null): boolean {
   return !(next !== null && isSeamlessSplice(clip, next));
 }
+
+// ---------------------------------------------------------------------------
+// dB conversions (§8.1)
+//
+// These live HERE, next to the gain contract they belong to, because a second
+// copy of the same formula is how two views of one number silently drift
+// apart. The inspector keeps re-exporting them for its existing callers.
+// ---------------------------------------------------------------------------
+
+/** Linear gain -> dB (rendering-semantics §8.1). 0 maps to -Infinity. */
+export function linearToDb(volume: number): number {
+  if (!(volume > 0)) return Number.NEGATIVE_INFINITY;
+  return 20 * Math.log10(volume);
+}
+
+/** dB -> linear gain (inverse of linearToDb; -Infinity maps to 0). */
+export function dbToLinear(db: number): number {
+  if (!Number.isFinite(db)) return db === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : 0;
+  return 10 ** (db / 20);
+}

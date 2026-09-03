@@ -40,6 +40,7 @@ import type {
   Subject,
 } from '../engine';
 import { createSubject } from '../engine';
+import { METER_INTERVAL_MS, type MeterFrame, type MeterReason } from '../core/meter';
 import { setIsPlayingSafe } from '../editorBridge';
 import { forceRefreshMediaUrls } from '../mediaUrls';
 import {
@@ -229,6 +230,8 @@ export class VideoPlaybackEngine implements PlaybackEngine {
   readonly previewStatus$: Subject<PreviewStatus> = createSubject<PreviewStatus>();
   /** Element-rate clamping (clip speed x transport rate) — emits on change. */
   readonly previewRate$: Subject<PreviewRateStatus> = createSubject<PreviewRateStatus>();
+  readonly meter$: Subject<MeterFrame> = createSubject<MeterFrame>();
+  private lastMeterMs = 0;
 
   private model: LoadedModel | null = null;
   private compositor: Compositor;
@@ -325,6 +328,10 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     const loop = () => {
       if (this.disposed) return;
       this.tick();
+      // Meter sampling lives in the LOOP, not inside tick(): tick() returns
+      // early when there is no model, and a meter that stopped reporting then
+      // could not say "no audio path yet" — which is its most honest state.
+      this.sampleMeter();
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -529,6 +536,38 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     return this.playing;
   }
 
+  /**
+   * Sample the preview master bus at METER_INTERVAL_MS (30 Hz). The analyser
+   * window is longer than the step, so the reads OVERLAP and no audio falls
+   * between two samples; sampling every frame would re-read the same window.
+   *
+   * `live: false` is not "silence": while paused/scrubbing the engine zeroes
+   * every element gain, so there is genuinely no mix to measure, and before
+   * the first play there is no AudioContext at all.
+   */
+  private sampleMeter(): void {
+    const now = performance.now();
+    if (now - this.lastMeterMs < METER_INTERVAL_MS) return;
+    this.lastMeterMs = now;
+    const reading = this.playing ? this.audio.readMeter() : null;
+    if (reading === null) {
+      const reason: MeterReason = this.blocked
+        ? 'blocked'
+        : this.audio.context === null
+          ? 'no-context'
+          : 'paused';
+      this.meter$.emit({ live: false, reason, peak: [0, 0], rms: [0, 0], atMs: now });
+      return;
+    }
+    this.meter$.emit({
+      live: true,
+      reason: 'running',
+      peak: [reading.peakL, reading.peakR],
+      rms: [reading.rmsL, reading.rmsR],
+      atMs: now,
+    });
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -537,6 +576,7 @@ export class VideoPlaybackEngine implements PlaybackEngine {
     this.playing = false;
     this.pool.dispose();
     this.audio.dispose();
+    this.meter$.clear();
     for (const [, tex] of this.slotTextures) this.compositor.deleteTexture(tex);
     this.slotTextures.clear();
     this.slotFrames.clear();

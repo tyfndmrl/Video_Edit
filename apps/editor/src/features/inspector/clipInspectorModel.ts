@@ -34,6 +34,9 @@ import {
   type Track,
   type Uuid,
 } from '@videoedit/timeline-schema';
+// §8.1 conversions live next to the gain contract (player/core/gain) so the
+// meter and the inspector read one formula; re-exported below for callers.
+import { dbToLinear, linearToDb } from '../player/core/gain';
 import {
   SCALE_MAX,
   SCALE_MIN,
@@ -625,17 +628,10 @@ function readColorParam(effect: Effect | undefined, key: ColorParamKey): number 
 // Formatting (labels only — the document always stores the raw linear value)
 // ---------------------------------------------------------------------------
 
-/** Linear gain -> dB (rendering-semantics §8.1). 0 maps to -Infinity. */
-export function linearToDb(volume: number): number {
-  if (!(volume > 0)) return Number.NEGATIVE_INFINITY;
-  return 20 * Math.log10(volume);
-}
-
-/** dB -> linear gain (inverse of linearToDb; -Infinity maps to 0). */
-export function dbToLinear(db: number): number {
-  if (!Number.isFinite(db)) return db === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : 0;
-  return 10 ** (db / 20);
-}
+// The §8.1 conversions moved next to the gain contract itself (player/core/gain)
+// once the audio meter needed them too — one formula, one home. Re-exported
+// here so every existing inspector caller keeps its import untouched.
+export { linearToDb, dbToLinear };
 
 /** "0.0 dB" / "+6.0 dB" / "-6.0 dB" / "-∞ dB". `null` (mixed) -> "—". */
 export function formatDb(volume: CommonNumber): string {

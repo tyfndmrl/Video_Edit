@@ -10,6 +10,7 @@
  * The v2 WebCodecs engine (M4) implements the same interface and swaps in
  * behind this accessor without touching call sites.
  */
+import type { MeterFrame } from './core/meter';
 import type { MicroSec, TimelineDoc, Uuid } from '@videoedit/timeline-schema';
 
 /** Minimal observable — deliberately not rxjs; just enough for a clock feed. */
@@ -151,6 +152,16 @@ export interface PlaybackEngine {
    * that does not match the document.
    */
   readonly previewRate$?: Observable<PreviewRateStatus>;
+  /**
+   * Optional: sampled level of the PREVIEW master bus (see core/meter).
+   *
+   * Unlike previewStatus$/previewRate$ this one emits on EVERY sampling tick,
+   * change or not: a meter that only spoke when the number moved would look
+   * frozen exactly when the mix goes quiet. `live: false` carries the reason
+   * there is nothing to measure — an engine must never report silence and
+   * "no audio path at all" as the same thing.
+   */
+  readonly meter$?: Observable<MeterFrame>;
   setPlaybackRate(r: number): void;
   /** Current playback rate multiplier (1 = realtime). */
   getPlaybackRate(): number;

@@ -53,6 +53,9 @@ vi.mock('../audio/audioGraph', () => ({
     setElementGain(): void {}
     setElementGainCurve(): void {}
     cancelElement(): void {}
+    readMeter(): null {
+      return null; // meter tap is a real-AudioContext concern; engine tests stub it
+    }
     suspend(): Promise<void> {
       return Promise.resolve();
     }
