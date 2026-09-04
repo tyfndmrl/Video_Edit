@@ -1620,10 +1620,13 @@ out.a   = src.a + dst.a * (1 - src.a)
     alanları başka düğümlere yeniden bağlanmaz (bir düğüm diğerinin yerine geçemez),
     (d) tap explicit stereo'dur (`channelCount=2`, `'explicit'`, `'speakers'`) — `master`
     kanal sayısını girdilerinden aldığı için tek mono klipte splitter'ın sağ çıkışı sessiz
-    kalırdı; upmix §8.5 ile birebirdir. Muhafız `audioGraphTopology.test.ts`'tir ve bir
-    KAYNAK TARAMASIDIR: kaynağın bu şartları hâlâ yazdığını kanıtlar, çalışan önizlemenin
-    duyulur olduğunu KANITLAMAZ (bu düzenekte tarayıcı çıkışını yakalayan test yoktur —
-    `poc-bilinen-sinirlar.md` §2.9).
+    kalırdı; upmix §8.5 ile birebirdir. Muhafız `audioGraphTopology.test.ts`'tir ve bir DAVRANIŞ
+    TESTİDİR: sahte bir AudioContext ile graf GERÇEKTEN kurulur ve (a)-(d) şartları oluşan
+    graf üzerinde erişilebilirlikle sınanır — yazılıştan bağımsız. KURULAN grafın doğruluğunu
+    kanıtlar; tarayıcının ses ÇIKARDIĞINI kanıtlamaz (sahte context ses üretmez; bu düzenekte
+    tarayıcı çıkışını yakalayan test yoktur — `poc-bilinen-sinirlar.md` §2.9). (d) maddesi
+    ayrıca gerçek girdiyle de çivilidir: `e2e/meter.spec.ts` MONO fikstürle çalarken
+    `data-meter-db-r > -40` iddia eder — upmix düşerse sağ kanal ölür ve test kırmızıya döner.
 
 ### 8.4 Micro-fade (kesim tıklaması önleme) — 5 ms kuralı
 

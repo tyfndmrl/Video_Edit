@@ -30,7 +30,10 @@ function meterAttr(page: Page, name: string): Promise<string | null> {
   return page.locator(METER).getAttribute(name);
 }
 
-async function meterDb(page: Page, name: 'data-meter-db-l' | 'data-meter-hold-db'): Promise<number> {
+async function meterDb(
+  page: Page,
+  name: 'data-meter-db-l' | 'data-meter-db-r' | 'data-meter-hold-db',
+): Promise<number> {
   const raw = await meterAttr(page, name);
   return raw === null || raw === '-inf' ? Number.NEGATIVE_INFINITY : Number(raw);
 }
@@ -127,6 +130,14 @@ test.describe('Ses ölçer — gerçek girdi, gerçek miks', () => {
       .toBeGreaterThan(-40);
     expect(await meterAttr(page, 'data-meter-live'), 'Çalarken ölçer CANLI olmalı.').toBe('true');
     expect(await meterAttr(page, 'data-meter-reason')).toBe('running');
+    // SAĞ KANAL da ölçülmeli. Fikstür MONO'dur; sağ kanalın dolması yalnız
+    // tap'in explicit stereo olmasıyla mümkündür (§8.5 upmix). Bu iddia
+    // olmadan tap'in `channelCountMode` özelliği düşse mono klipte sağ kanal
+    // sessizce ölürdü ve hiçbir test kırmızıya dönmezdi (denetim bulgusu).
+    expect(
+      await meterDb(page, 'data-meter-db-r'),
+      'Sağ kanal tabanda kaldı — mono kaynak stereo tap ile upmix EDİLMEMİŞ olabilir (§8.5).',
+    ).toBeGreaterThan(-40);
 
     // --- 4. Duraklat: ölçer susar ve NEDENİNİ söyler ---
     await transport.click();

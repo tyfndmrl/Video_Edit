@@ -18,7 +18,7 @@ kırpma/kesme/ayırma/taşıma; frame/zoom/timecode/player/kısayollar (transpor
 ELLE değer yazıp atlama + proje sonu kelepçesi — panel turu dilim 1, 2026-09-03; timeline'ın
 sürükle/klavye ile DİKEY boyutlandırılması — dilim 2, yükseklik tarayıcıda kalıcı, belgeye
 YAZILMAZ; timeline'ın sağında her zaman açık master stereo SES ÖLÇERİ — tepe tutucu + klip
-mandalı + dBFS skalası, dilim 3, ÖNİZLEME miksini ölçer: export'un limiteri yoktur, poc §2.9);
+mandalı + dBFS skalası, dilim 3, ÖNİZLEME miksini ölçer — önizlemede limiter YOKTUR, limiter export'tadır; poc §2.9);
 undo-redo + işlem geçmişi; geçişler; metin/şekil/sticker; colorAdjust + LUT (.cube); hız; keyframe;
 ses/müzik miksi; export profilleri (720p/1080p/2160p/dikey); hesap + kota + versiyon geçmişi;
 SignalR canlı ilerleme (worker→Redis→`/hubs/progress`; polling YEDEK — 2026-08-31; `user:{id}`

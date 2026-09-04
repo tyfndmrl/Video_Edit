@@ -16,7 +16,8 @@
  *  - Muhafız TARİHE bakar, İÇERİĞE değil. Damgayı elle ileri almak testi
  *    susturur; muhafızın işi kazayla unutmayı yakalamaktır, kasti delmeyi değil.
  *  - KAPSAMDA: `STATE.md`'nin damgası (her kapanışta güncellenmesi ZORUNLU,
- *    CLAUDE.md P3) ve `SKILLS.md`'nin kendi içindeki tutarlılığı.
+ *    CLAUDE.md P3) ile `SKILLS.md` ve `DECISIONS.md`'nin kendi içindeki
+ *    tutarlılığı (damga, dosyanın İÇİNDEKİ en yeni tarihten eski olamaz).
  *  - KAPSAM DIŞI: `STRUCTURE.md` ve tek tek SKILLS girdilerinin "Son doğrulanma"
  *    tarihleri. Bunlar P3'e göre yalnız DOKUNULDUĞUNDA tazelenir; "dokunuldu mu"
  *    sorusunu yanıtlamak git geçmişi okumayı gerektirir ve bu muhafız git'e
@@ -81,10 +82,28 @@ describe('doküman damgaları (CLAUDE.md P3)', () => {
     ).toBe(true);
   });
 
+  it('DECISIONS.md damgası, tablodaki en yeni karar tarihinden eski DEĞİL', () => {
+    // SKILLS ile aynı git'siz iç tutarlılık kalıbı: bir karar 2026-09-04'te
+    // eklendiyse dosya o gün DOKUNULMUŞTUR. Denetimde ölçüldü — damga
+    // 2026-09-03'te kalmışken tabloya iki kez 2026-09-04 satırı yazılmıştı.
+    const rows = [...read('DECISIONS.md').matchAll(/^\|[^|]*\|\s*(\d{4}-\d{2}-\d{2})\s*\|/gm)].map(
+      (m) => m[1],
+    );
+    expect(rows.length, 'DECISIONS tablosunda tarihli satır yok — muhafız kör.').toBeGreaterThan(0);
+    const newestRow = rows.reduce((a, b) => (b > a ? b : a));
+    const stamp = stampOf('DECISIONS.md');
+    expect(
+      stamp >= newestRow,
+      `DECISIONS.md damgası ${stamp}, ama tablodaki en yeni karar ${newestRow}. ` +
+        'Karar eklendiyse dosya o gün dokunulmuştur; başlık damgası da tazelenmeli.',
+    ).toBe(true);
+  });
+
   it('damga biçimi ayrıştırılabilir kalır (muhafız sessizce körelmesin)', () => {
     // Biçim değişirse yukarıdaki iddia "bulamadım" diye susmaz, BURASI kırmızı olur.
     expect(stampOf('STATE.md')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(stampOf('SKILLS.md')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(stampOf('DECISIONS.md')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(newestChangelogDate()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });

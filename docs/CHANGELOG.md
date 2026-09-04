@@ -2,6 +2,40 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-04
+- panel-denetim-7 — **baş mimarın 4. turu RED verdi; muhafız KAYNAK TARAMASINDAN
+  DAVRANIŞ TESTİNE çevrildi.** Bu tur denetim düzeni değiştirildi: üç rol de AYNI HEAD'i
+  denetliyor (aralarında düzeltme yok, böylece bulgular zincirlenmiyor) ve her bulgu
+  MADDİ / KANIT / KOZMETİK diye sınıflanıp "sürüm engelleyici mi?" sorusuna cevap veriyor.
+  **MADDİ — atama envanteri KİMLİĞİ değil YAZILIŞI çiviliyordu.** Baş mimar iki bağımsız yol
+  gösterdi, ikisini de kendim ölçtüm ve muhafız 7/7 YEŞİL kaldı: (a) `this['master'] = tap;`
+  (köşeli parantez — regex `this.master =` şeklini arıyordu), (b) `master.disconnect();`
+  (kenar EKLEME değil SİLME — süzgeç `disconnect`'i bilerek dışlıyordu). İkisi de
+  `this.master = tap;` ile aynı semantik: önizleme SUSAR, ölçer miksi göstermeye devam eder.
+  **Çözüm yamamak değil sınıfı kapatmak oldu:** `audioGraphTopology.test.ts` artık bir DAVRANIŞ
+  TESTİ. Sahte bir AudioContext `connect`/`disconnect` çağrılarını kaydediyor,
+  `ensureContext()` + `attachElement()` GERÇEKTEN koşuyor ve iddialar oluşan grafta
+  ERİŞİLEBİLİRLİK soruyor: her klip kazancından `destination`'a yol VAR · `destination`'ın
+  gelen kenarı TEK ve o düğüm kliplerin bağlandığı master · klip kazancından analyser'lara yol
+  VAR (ölçer duyulan miksi ölçüyor) · analyser'dan `destination`'a yol YOK · tap explicit
+  stereo · okuma float veriyle · `dispose` sonrası bağlı düğüm kalmıyor. **NEGATİF KONTROL ×6,
+  altısı da kırmızı:** kimlik değişimi (nokta ve köşeli parantez yazılışlarıyla), kenar silme,
+  girdi tarafından seri halka, analyser'ın `destination`'a bağlanması, explicit-stereo
+  özelliğinin düşürülmesi. Kaynak-tarayan BEŞ sürümün beşi de ölçülerek kör çıkmıştı; kök
+  neden dosya başlığında ve `poc §2.9`/`DECISIONS`/`STATE`/`§8.3`'te kayıtlı.
+  **Yeni muhafız hemen gerçek bir kusur buldu:** `dispose()` analyser/splitter/tap'i söküyor
+  ama `master`'ı hiç `disconnect` etmiyordu (baş mühendisin bir önceki turda "kayda değer"
+  dediği asimetri) → `master` de listeye eklendi.
+  **KANIT — §8.3'ün (d) maddesi (tap explicit stereo) HİÇBİR ŞEY tarafından çivili değildi.**
+  Baş mimar üç satırı silip 7/7 yeşil kaldığını ölçtü; `data-meter-db-r` hiçbir e2e'de
+  okunmuyordu, yani mono klipte sağ kanal sessizce ölebilirdi. İki kapı birden eklendi: yeni
+  davranış testi (`tap.channelCount/Mode/Interpretation`) ve `meter.spec.ts`'e GERÇEK girdiyle
+  `data-meter-db-r > -40` (fikstür MONO'dur; sağ kanalın dolması ancak upmix ile mümkün).
+  **KOZMETİK'ler:** `DECISIONS.md` damgası bayattı (damga sınıfının 5. tekrarı) → `docsFreshness`
+  aynı git'siz kalıpla DECISIONS'a genişletildi (damga ≥ tablodaki en yeni karar tarihi) ve
+  muhafız eklenir eklenmez gerçek bayat damgayı yakaladı; `STATE.md` başlığı bir önceki commit'i
+  adlandırıyordu; `WORKFLOWS.md` damgası kendi oluşturulduğu commit'ten (ae700cf, 2026-08-31)
+  geriydi — panel turu dışı ama olgusal hata, düzeltildi; `CLAUDE.md`'nin "export'un limiteri
+  yoktur" ifadesi §8.3'ü ters okutabiliyordu → "önizlemede limiter YOKTUR, limiter export'tadır".
 - panel-denetim-6 — **baş mühendisin 3. turu RED verdi; bulgular kapatıldı.**
   **BLOKER — topoloji muhafızının ÜÇÜNCÜ kör noktası: envanter DÜĞÜM KİMLİĞİNE kördü.**
   Kenar envanteri, tanımlayıcılar ARASINDAKİ `.connect(` ifadelerini çiviliyor; bir

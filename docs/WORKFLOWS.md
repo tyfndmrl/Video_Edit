@@ -1,5 +1,5 @@
 # WORKFLOWS — uçtan uca akışlar
-Son güncelleme: 2026-08-25. Skill'lerin hangi sırayla bağlandığı. Skill ayrıntıları: `docs/SKILLS.md`.
+Son güncelleme: 2026-08-31. Skill'lerin hangi sırayla bağlandığı. Skill ayrıntıları: `docs/SKILLS.md`.
 
 ## W1 — Borç/madde kapama (yerleşik ana akış)
 

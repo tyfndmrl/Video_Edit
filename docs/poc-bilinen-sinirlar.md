@@ -887,23 +887,28 @@ renk-ayrımlı gerçek medya, siyah=0 + yanlisRenk=0 taraması).
 
 Zaman çizelgesinin sağındaki ölçer (`features/player/AudioMeter.tsx`) master bus'a
 PARALEL bir yaprak tap'ten okur; duyulan zincir (`master → destination`) değişmez.
-Bunun muhafızı `audioGraphTopology.test.ts`'tir ve NE OLDUĞU açıkça yazılmalıdır: bir
-KAYNAK TARAMASIDIR. İki envanter tutar — (a) yorumsuz kaynaktaki her `.connect(` çağrısı izin
-verilen kenar listesiyle birebir eşleşmeli, (b) grafı tanımlayan alanların (`this.master`,
-`this.meterTap`) atamaları birebir eşleşmeli.
+Bunun muhafızı `audioGraphTopology.test.ts`'tir ve artık bir DAVRANIŞ TESTİDİR: sahte bir
+AudioContext `connect`/`disconnect` çağrılarını kaydeder, `ensureContext()` + `attachElement()`
+GERÇEKTEN koşar ve iddialar oluşan graf üzerinde ERİŞİLEBİLİRLİK sorar — her klip kazancından
+`destination`'a yol VAR, `destination`'ın gelen kenarı TEK ve o düğüm kliplerin bağlandığı
+master, klip kazancından analyser'lara yol VAR (ölçer duyulan miksi ölçüyor), analyser'lardan
+`destination`'a yol YOK, tap explicit stereo, okuma float veriyle, `dispose` sonrası bağlı
+düğüm kalmıyor.
 
-**KANITLADIĞI:** bu dosyanın KAYNAĞI hâlâ §8.3 topolojisini yazıyor.
-**KANITLAMADIĞI:** çalışan önizlemenin duyulur olduğunu ya da tap'in duyulmadığını. Bu
-düzenekte tarayıcının duyulan çıkışını yakalayan HİÇBİR test yoktur; muhafız dinlemez.
+**KANITLADIĞI:** `AudioGraph`'ın KURDUĞU grafta duyulan yol sağlam ve tap yaprak — YAZILIŞTAN
+BAĞIMSIZ olarak.
+**KANITLAMADIĞI:** tarayıcının gerçekten ses çıkardığını. Sahte context ses üretmez; bu
+düzenekte tarayıcı çıkışını yakalayan HİÇBİR test yoktur.
 
-Bu darlık bilerek yazıldı: muhafızın ARDIŞIK ÜÇ sürümü "yeterli" ilan edildi ve üçü de
-denetimde ÖLÇÜLEREK kör çıktı — (1) yalnız `buildMeterTap` gövdesini taramak: tap
-`ensureContext`'ten `destination`'a bağlanınca yeşil kaldı; (2) yalnız `destination`
-kelimesini taramak: klip kazancı `gain→meterTap→master` diye yönlendirilip tap duyulan
-zincirin SERİ HALKASI yapılınca yeşil kaldı; (3) yalnız kenar envanteri: `this.master = tap;`
-tek satırı (içinde `.connect(` YOK) bütün klipleri tap'in üstüne taşıyıp gerçek master'ı
-sinyalsiz bırakınca — yani ÖNİZLEME SUSARKEN ölçer miksi göstermeye devam ederken — altı
-iddia da, 1546 birim testi de, gerçek girdili ölçer e2e'si de yeşil kaldı. Kanıtın SINIRI kayda geçirilmiştir: `audio-parity.spec.ts` bunu kanıtlamaz
+Davranışa geçilmesinin sebebi ölçümdür: muhafızın ARDIŞIK BEŞ kaynak-tarayan sürümü "yeterli"
+ilan edildi ve beşi de denetimde ÖLÇÜLEREK kör çıktı — (1) `buildMeterTap` gövdesini taramak:
+tap `ensureContext`'ten `destination`'a bağlanınca yeşil; (2) `destination` kelimesini taramak:
+klip kazancı `gain→meterTap→master` ile tap SERİ HALKA yapılınca yeşil; (3) `.connect(` kenar
+envanteri: `this.master = tap;` tek satırı (içinde `.connect(` YOK) bütün klipleri tap'e taşıyıp
+ÖNİZLEMEYİ SUSTURURKEN yeşil — üstelik 1546 birim testi ve gerçek girdili ölçer e2e'si de
+yeşildi; (4) atama envanteri: aynı ihlal `this['master'] = tap;` yazılışıyla yeşil; (5) aynı
+envanter: `master.disconnect();` (kenar EKLEME değil SİLME) yeşil. Ortak kök neden: kaynak
+taraması ancak SAYDIĞI YAZILIŞI savunur, graf hakkında hiçbir şey bilmez. Kanıtın SINIRI kayda geçirilmiştir: `audio-parity.spec.ts` bunu kanıtlamaz
 (AudioGraph'ı kullanmaz; `master.gain=0` iken bile yeşil kalıyor — denetimde ölçüldü) ve
 tarayıcının duyulan çıkışını yakalayan bir test bu düzenekte yoktur. Ölçtüğü şeyin sınırları:
 

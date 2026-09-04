@@ -236,7 +236,16 @@ export class AudioGraph {
     }
     this.nodes.clear();
     this.pendingElements.clear();
-    for (const node of [this.analyserL, this.analyserR, this.meterSplitter, this.meterTap]) {
+    // `master` de listede: `ctx.close()` zaten her şeyi bırakır ama sökümü ona
+    // bırakmak, grafın kalan düğümleriyle asimetri yaratıyordu (denetim notu) ve
+    // "dispose grafı söker" iddiasını yanlışlıyordu.
+    for (const node of [
+      this.analyserL,
+      this.analyserR,
+      this.meterSplitter,
+      this.meterTap,
+      this.master,
+    ]) {
       try {
         node?.disconnect();
       } catch {
