@@ -63,6 +63,13 @@ import { fileURLToPath } from 'node:url';
 import { test, expect } from './fixtures/test';
 import { createProject, saveTimeline } from './fixtures/seed';
 import { fetchProxyUrls, uploadAssetViaApi, waitAssetReady } from './support/apiUpload';
+// Editör kaynağından import: `e2e/` altında ev deseni (geometry, format, cubeLut,
+// timelineHeight… 11 örnek daha). Tek kaynak, kopyadan iyidir. KAYITLI YAN ETKİ:
+// bu import `core/meter.ts` ve `core/gain.ts`'i `e2e/tsconfig.json` altında DA tip
+// denetimine sokar; o config app'inkinden farklıdır (`jsx`,
+// `allowImportingTsExtensions`, `noUncheckedSideEffectImports` yok). Bugün temiz, ama
+// o iki dosyaya app tarafında geçerli olup e2e config'inde olmayan bir sözdizimi
+// girerse app yeşil kalırken e2e tsc kırılır — belirti orada aranmalı.
 import { PARITY_DELTAS_DB } from '../src/features/player/core/meter';
 import {
   FFMPEG_SKIP_REASON,
@@ -732,8 +739,11 @@ test.describe('Ses paritesi — önizleme (OfflineAudioContext, uygulama modüll
       expect(
         measured,
         `ölçerin dürüstlük notu "${entry.regime} ${entry.db} dB" diyor ama ÖLÇÜLEN ` +
-          `${measured.toFixed(2)} dB. Not artık YALAN — core/meter.ts PARITY_DELTAS_DB ile ` +
-          'poc-bilinen-sinirlar §2.6 tablosu BİRLİKTE güncellenmeli.',
+          `${measured.toFixed(2)} dB — gösterilen sayı BAYAT. Bu bir SÖZLEŞME İHLALİ ` +
+          `DEĞİLDİR (§2.6 normatif tavanları ayrı ve daha geniştir; onları yukarıdaki ` +
+          `LIMITS iddiaları sınar). Doğru yanıt: core/meter.ts PARITY_DELTAS_DB ile ` +
+          'poc-bilinen-sinirlar §2.6 tablosunu BİRLİKTE yeniden ölçüp güncellemek — ' +
+          'buradaki payı gevşetmek DEĞİL.',
       ).toBeLessThanOrEqual(entry.db + TABLE_TOLERANCE_DB);
     }
   });

@@ -12,9 +12,20 @@
  * Bu, "her kapanışta CHANGELOG + STATE birlikte güncellenir" protokolünün
  * doğrudan mekanik karşılığıdır.
  *
- * KAPSAM (fazla iddia etmemek için): bu muhafız TARİHE bakar, İÇERİĞE değil.
- * Damgayı elle ileri almak testi susturur — ama o, protokolü bilerek delmektir;
- * muhafızın işi kazayla unutmayı yakalamaktır.
+ * KAPSAM — fazla iddia etmemek için tek tek yazılıyor:
+ *  - Muhafız TARİHE bakar, İÇERİĞE değil. Damgayı elle ileri almak testi
+ *    susturur; muhafızın işi kazayla unutmayı yakalamaktır, kasti delmeyi değil.
+ *  - KAPSAMDA: `STATE.md`'nin damgası (her kapanışta güncellenmesi ZORUNLU,
+ *    CLAUDE.md P3) ve `SKILLS.md`'nin kendi içindeki tutarlılığı.
+ *  - KAPSAM DIŞI: `STRUCTURE.md` ve tek tek SKILLS girdilerinin "Son doğrulanma"
+ *    tarihleri. Bunlar P3'e göre yalnız DOKUNULDUĞUNDA tazelenir; "dokunuldu mu"
+ *    sorusunu yanıtlamak git geçmişi okumayı gerektirir ve bu muhafız git'e
+ *    bakmaz. Denetimde `STRUCTURE.md` damgası 34 gün geriye alındığında bu
+ *    dosyanın YEŞİL kaldığı ÖLÇÜLDÜ — o boşluk bilinçli olarak açık bırakıldı,
+ *    kapatıldığı sanılmasın.
+ *  - Yanlış-pozitif profili: CHANGELOG'a GELECEK tarihli bir gün başlığı
+ *    eklenirse muhafız haksız kırmızı verir. Önlenmedi (böyle bir girdi zaten
+ *    kayıt hatasıdır).
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -51,6 +62,22 @@ describe('doküman damgaları (CLAUDE.md P3)', () => {
       `STATE.md "Son güncelleme" damgası ${stamp}, CHANGELOG'un en yeni günü ${newest}. ` +
         'Kapanışta gövdeyi güncelleyip başlığı unutmak bu projede üç kez tekrarladı — ' +
         'ilk paragraf yeni session’ın okuduğu ilk cümledir.',
+    ).toBe(true);
+  });
+
+  it('SKILLS.md damgası, İÇİNDEKİ en yeni "Son doğrulanma"dan eski DEĞİL', () => {
+    // İç tutarlılık: bir girdi 2026-09-04'te doğrulandıysa dosya o gün
+    // DOKUNULMUŞTUR, dolayısıyla dosyanın kendi damgası da o günden eski olamaz.
+    // Bu, git'e bakmadan kurulabilen tek dürüst SKILLS iddiasıdır.
+    const body = read('SKILLS.md');
+    const verified = [...body.matchAll(/^- Son doğrulanma: (\d{4}-\d{2}-\d{2})/gm)].map((m) => m[1]);
+    expect(verified.length, 'SKILLS girdilerinde "Son doğrulanma" satırı yok.').toBeGreaterThan(0);
+    const newestEntry = verified.reduce((a, b) => (b > a ? b : a));
+    const stamp = stampOf('SKILLS.md');
+    expect(
+      stamp >= newestEntry,
+      `SKILLS.md damgası ${stamp}, ama içindeki en yeni "Son doğrulanma" ${newestEntry}. ` +
+        'Bir girdi doğrulandıysa dosya o gün dokunulmuştur; başlık damgası da tazelenmeli.',
     ).toBe(true);
   });
 

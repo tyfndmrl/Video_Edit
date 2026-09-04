@@ -1610,6 +1610,20 @@ out.a   = src.a + dst.a * (1 - src.a)
     −9,033 → −8,864 dB). Duyulmaz (JND ~1 dB) ve BİLİNÇLİ olarak düzeltilmedi: `level=0`
     yazmak ya da limit'i değiştirmek mevcut snapshot/golden sözleşmesini oynatır. Sayısal
     sınırları `poc-bilinen-sinirlar.md` §2.6 tablosu, muhafızı `e2e/audio-parity.spec.ts`.
+  - **Ölçer tap'i (NORMATİF, 2026-09-04'te eklendi).** Önizleme grafiğinde master bus'a
+    DAİMA bir ölçüm tap'i asılıdır (`master → meterTap → ChannelSplitter → analyserL/R`,
+    analyser çıkışları BAĞLANMAZ). Bu, yukarıdaki "zincirin sonuna node KONMAZ" kuralının
+    istisnası DEĞİLDİR: tap bir YAPRAK daldır, `master → destination` bağı ve o bağa giden
+    sinyal değişmez; Web Audio'da fan-out diğer dalın aldığını değiştirmez. NORMATİF
+    şartlar: (a) tap `master`'ın `destination`'a bağlanmasından SONRA kurulur, (b) tap'in
+    ve altındaki hiçbir düğümün çıkışı `destination`'a gitmez, (c) `master` ve `meterTap`
+    alanları başka düğümlere yeniden bağlanmaz (bir düğüm diğerinin yerine geçemez),
+    (d) tap explicit stereo'dur (`channelCount=2`, `'explicit'`, `'speakers'`) — `master`
+    kanal sayısını girdilerinden aldığı için tek mono klipte splitter'ın sağ çıkışı sessiz
+    kalırdı; upmix §8.5 ile birebirdir. Muhafız `audioGraphTopology.test.ts`'tir ve bir
+    KAYNAK TARAMASIDIR: kaynağın bu şartları hâlâ yazdığını kanıtlar, çalışan önizlemenin
+    duyulur olduğunu KANITLAMAZ (bu düzenekte tarayıcı çıkışını yakalayan test yoktur —
+    `poc-bilinen-sinirlar.md` §2.9).
 
 ### 8.4 Micro-fade (kesim tıklaması önleme) — 5 ms kuralı
 

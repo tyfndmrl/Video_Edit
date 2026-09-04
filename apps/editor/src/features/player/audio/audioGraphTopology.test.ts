@@ -20,27 +20,34 @@
  * what the other branch receives; this guard keeps the code inside that
  * guarantee.
  *
- * SCOPE, stated exactly: these assertions cover the connect graph of THIS FILE.
- * The load-bearing test is the INVENTORY below -- every `.connect(` in
- * executable code (comments stripped) must match the expected list exactly, so
- * ANY new edge, anywhere in the file, goes red until someone updates the list
- * on purpose. Nothing outside this file can reach the graph: `master` and
- * `meterTap` are private and never returned.
+ * SCOPE -- READ THIS BEFORE TRUSTING THE FILE. This is a SOURCE SCAN. It pins
+ * the graph AS WRITTEN in this file: which edges exist (the connect inventory)
+ * and which nodes the two graph-defining fields are bound to (the assignment
+ * inventory). It CANNOT execute the graph, and no test in this harness can
+ * capture the browser's audible output. So the honest claim is narrow:
  *
- * Two narrower guards died in review before this one, and both are recorded
- * here because each looked sufficient at the time:
+ *   PROVEN:     the source of this file still spells out the §8.3 topology.
+ *   NOT PROVEN: that the running preview is audible, or that the tap is
+ *               inaudible. Nothing here listens.
  *
- *  1. A scan of the `buildMeterTap` BODY. Measured blind: adding
- *     `this.meterTap?.connect(this.ctx.destination)` in ensureContext -- a real
- *     §8.3 violation -- left all four assertions green.
- *  2. A file-wide scan of the word `destination`. It defended only the OUTPUT
- *     side. Measured blind: rewiring connectElement to
- *     `gain -> meterTap -> master` makes the tap a SERIAL LINK of the audible
- *     chain (its explicit-stereo upmix and its gain now sit on the signal) and
- *     all five assertions stayed green.
+ * That narrowness is stated because THREE successively wider versions of this
+ * guard were each declared sufficient and each MEASURED blind in review:
  *
- * The lesson those two share: a guard that names one forbidden shape only ever
- * defends that shape. The inventory names the ALLOWED graph instead.
+ *  1. A scan of the `buildMeterTap` BODY. Blind to
+ *     `this.meterTap?.connect(this.ctx.destination)` in ensureContext.
+ *  2. A file-wide scan of the word `destination`. Defended only the OUTPUT
+ *     side; blind to rewiring connectElement as `gain -> meterTap -> master`,
+ *     which makes the tap a SERIAL LINK of the audible chain.
+ *  3. The connect inventory alone. It pins edges BETWEEN IDENTIFIERS, not what
+ *     an identifier points at: `this.master = tap;` (one line, no `.connect(`
+ *     at all) silently rebinds every clip onto the tap, leaves the real master
+ *     receiving nothing -- preview goes SILENT while the meter still shows a
+ *     mix -- and all six assertions stayed green, along with 1546 unit tests
+ *     and the real-input meter e2e.
+ *
+ * Hence the assignment inventory below. It closes case 3; it does not turn a
+ * source scan into a behavioural one, and this comment must not be rewritten
+ * to suggest otherwise.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -86,6 +93,26 @@ describe('meter tap yerleşimi (§8.3 yaprak sözleşmesi)', () => {
       'tap.connect(splitter);',
       'splitter.connect(left, 0);',
       'splitter.connect(right, 1);',
+    ]);
+  });
+
+  it('ATAMA envanteri: grafı tanımlayan alanlar başka düğüme bağlanamaz', () => {
+    // Kenar envanteri kenarları çiviler, KİMLİKLERİ değil. `this.master = tap;`
+    // tek satırdır, içinde `.connect(` YOKTUR ve tüm klipleri sessizce tap'in
+    // üstüne taşır: gerçek master hiçbir şey almaz (önizleme SUSAR), ölçer ise
+    // miksi göstermeye devam eder. Denetimde ölçüldü — altı iddia da, 1546
+    // birim testi de, gerçek girdili ölçer e2e'si de yeşil kalmıştı.
+    const assignments = CODE.split('\n')
+      .map((l) => l.trim())
+      .filter((l) => /^this\.(master|meterTap)\s*=/.test(l));
+    expect(
+      assignments,
+      'Grafı tanımlayan alanların atamaları değişmiş — bir düğüm başkasının yerine geçiyor olabilir.',
+    ).toEqual([
+      'this.master = this.ctx.createGain();',
+      'this.meterTap = tap;',
+      'this.meterTap = null;',
+      'this.master = null;',
     ]);
   });
 

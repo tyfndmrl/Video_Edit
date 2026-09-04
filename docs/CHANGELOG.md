@@ -2,6 +2,50 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-04
+- panel-denetim-6 — **baş mühendisin 3. turu RED verdi; bulgular kapatıldı.**
+  **BLOKER — topoloji muhafızının ÜÇÜNCÜ kör noktası: envanter DÜĞÜM KİMLİĞİNE kördü.**
+  Kenar envanteri, tanımlayıcılar ARASINDAKİ `.connect(` ifadelerini çiviliyor; bir
+  tanımlayıcının HANGİ DÜĞÜMÜ gösterdiğini değil. `buildMeterTap` sonuna tek satır —
+  `this.master = tap;`, içinde `.connect(` YOK — bütün klipleri tap'in üstüne taşıyor, gerçek
+  master hiçbir sinyal almıyor: **önizleme SUSARKEN ölçer miksi göstermeye devam ediyor.**
+  Kendi ölçümüm: muhafız **6/6 yeşil**, `tsc -b` temiz, 1546 birim testi yeşil, gerçek girdili
+  `meter.spec` 3/3 ve `audio-export` yeşil. Muhafıza ATAMA ENVANTERİ eklendi (`this.master` /
+  `this.meterTap` atamalarının tam listesi); NC: `+ "this.master = tap;"` ile kırmızı,
+  `audioGraph.ts` ELLE geri kondu. **Daha önemlisi İDDİA DARALTILDI:** muhafızın kapsamı artık
+  dört yerde (test başlığı, `poc §2.9`, `DECISIONS`, `STATE`) açıkça yazıyor —
+  KANITLADIĞI: kaynağın hâlâ §8.3 topolojisini yazdığı; KANITLAMADIĞI: çalışan önizlemenin
+  duyulur olduğu. Üç ardışık sürümün "yeterli" ilan edilip ölçülerek kör çıkması bu satırların
+  gerekçesi olarak kayda geçti. Ayrıca §8.3 (NORMATİF) ölçer tap'inden HİÇ söz etmiyordu —
+  dört maddelik normatif şart eklendi (tap destination'dan SONRA kurulur; hiçbir alt düğüm
+  destination'a gitmez; `master`/`meterTap` alanları yeniden bağlanmaz; tap explicit stereo).
+  **ORTA-1 — NC hash kayıtları, kuralı YAZAN commit'te ihlal edildi (sınıfın 4. tekrarı).**
+  `docs/STATE.md` için yazdığım `7c9e8508…f80e` deponun HİÇBİR sürümüne uymuyor (kendim
+  doğruladım: tüm tarih iki satır-sonu biçiminde tarandı, sıfır eşleşme) — NC anındaki ara
+  hâldi, sonra dosyayı düzenlemeye devam etmiştim. **Kuralı beşinci kez yamamak yerine KANIT
+  BİÇİMİ DEĞİŞTİRİLDİ:** prozada duran, kısaltılmış, satır-sonu biçimi belirsiz bir hash zaten
+  okuyucu tarafından doğrulanamaz. NC kaydı bundan sonra (a) tam kırmızı imzayı, (b) geri
+  koymanın ELLE yapıldığını, (c) commit diff'inde NC artığı bulunmadığını taşır — okuyucunun
+  gerçekten doğrulayabileceği tek şey budur (`SKILLS §negatif-kontrol-protokolu` madde 5).
+  **ORTA-2 — `docsFreshness.test.ts` dört damgadan yalnız birini koruyordu** ve kapsamını
+  söylemiyordu. Kendi ölçümüm: `STRUCTURE.md` damgası 34 gün geriye alındığında dosya YEŞİL
+  kalıyor. Kapsam paragrafı açıkça yazıldı (STRUCTURE ve tek tek SKILLS girdileri KAPSAM DIŞI —
+  "dokunuldu mu" sorusu git geçmişi ister, bu muhafız git'e bakmaz) ve git'siz kurulabilen tek
+  dürüst ek iddia eklendi: `SKILLS.md`'nin damgası, İÇİNDEKİ en yeni "Son doğrulanma"dan eski
+  olamaz (NC: damga 2026-09-01'e çekildi → kırmızı).
+  **ORTA-3 — parite tablosu iddiası §2.6'nın NORMATİF sınırlarını sessizce daralttı.**
+  Efektif kırmızı çizgi artık `min(normatif tavan, gösterilen + 0,10)`: rampa 1,20 → 0,80,
+  limiter 4,50 → 1,30, atempo 2,50 → 1,34. Sözleşme İÇİNDE kalan bir kayma da suite'i kırmızıya
+  düşürür. Ödünç BİLEREK verildi (ölçerin "ölçülen" diye gösterdiği sayının sessizce bayatlaması
+  daha zararlı) ama artık `poc §2.6`'da alıntı bloğu olarak YAZILI ve e2e mesajı "bu bir
+  SÖZLEŞME İHLALİ DEĞİLDİR, gösterilen sayı bayat" diye yanlış teşhisi engelliyor.
+  **DÜŞÜK'ler:** `panel-denetim-5`'in parite NC'si iddiayı İZOLE ETMİYORDU (tabloyu değiştirmek
+  birim testini de kırmızı yapıyor; e2e'nin BENZERSİZ değeri "tablo sabit, ÖLÇÜM kayıyor"
+  hâlidir) → izole NC koşuldu: önizleme zarfı %1,5 kısıldı, tabloya DOKUNULMADI → birim testleri
+  **19/19 yeşil**, e2e kırmızı (`"tipik rejimlerde 0.7 dB" diyor ama ÖLÇÜLEN 0.83 dB`,
+  `Expected: <= 0.80 / Received: 0.828`) ve `LIMITS` tavanları da yeşil kaldı — yani iddia
+  gerçekten sözleşme tavanlarının göremediğini yakalıyor; `gain.ts` ELLE geri kondu.
+  "30 Hz pencere" son defterden de temizlendi (pencere 2048 örnek = 42,7 ms, kadans ayrı şey).
+  `audio-parity`'nin `src` import'unun `e2e/tsconfig` yan etkisi kayda geçti.
 - panel-denetim-5 — **baş mimarın ÜÇÜNCÜ turu RED verdi; bulgular kapatıldı.**
   **BLOKER — topoloji muhafızının KALAN kör noktası + üç yerde evrensel over-claim.**
   `panel-denetim-3`'te muhafızı "dosya düzeyi" yaptım ve üç yere "seri bir tap bu dosyanın
@@ -35,8 +79,8 @@ Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit a
   "Son güncelleme" satırları ile `SKILLS`'in iki girdisinin "Son doğrulanma" tarihleri
   gövdeleri güncellenirken geride kalmıştı. Bu kez sadece düzeltmedim: YENİ
   `src/docsFreshness.test.ts` — STATE'in damgası CHANGELOG'un en yeni gününden ESKİ OLAMAZ
-  (CLAUDE.md P3'ün mekanik yarısı). NC: damga denetimin bulduğu hâle geri alındı → kırmızı,
-  `docs/STATE.md` md5 `7c9e8508…f80e` birebir geri.
+  (CLAUDE.md P3'ün mekanik yarısı). NC: damga denetimin bulduğu hâle geri alındı → kırmızı
+  ('damgası 2026-09-03, CHANGELOG'un en yeni günü 2026-09-04'), sonra ELLE geri kondu.
   **DÜŞÜK'ler:** `STATE`'in "açık iş olarak kayıtlı TEK teknik madde" cümlesi kapsamsızdı
   (ci.yml redis boşluğu da açık) → "panel turunun" diye daraltıldı; `CHANGELOG`'un
   `meter.spec (2/2)` kaydı bugünkü sayı sanılıyordu → tarihlendi (bugün 3/3); `git log`'un

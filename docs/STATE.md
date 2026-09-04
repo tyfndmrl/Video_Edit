@@ -3,8 +3,10 @@ Son güncelleme: 2026-09-04, `panel-denetim-5` — **panel turunun ÜÇ dilimi d
 kapanış denetimi KOŞTU** (bulgular kapatıldı; review-gate kural 7 gereği denetimler düzeltilmiş
 HEAD'de yeniden koşuyor). Dilim 3: zaman çizelgesinin sağında master stereo L/R ölçer (dBFS
 skalası, tepe tutucu, klip mandalı); ölçüm master'a PARALEL yaprak tap'ten okunur, `master →
-destination` aynen kalır (§8.3). Bu YERLEŞİMİN muhafızı `audioGraphTopology.test.ts`'tir
-(kaynak-yapısal). DÜRÜSTLÜK: `audio-parity.spec.ts`'in yeşil kalması bunun kanıtı DEĞİLDİR —
+destination` aynen kalır (§8.3). Bu yerleşimin muhafızı `audioGraphTopology.test.ts`'tir ve
+bir KAYNAK TARAMASIDIR (kenar + atama envanteri): kaynağın topolojiyi hâlâ yazdığını kanıtlar,
+çalışan önizlemenin DUYULUR olduğunu KANITLAMAZ — bu düzenekte tarayıcı çıkışını yakalayan test
+yoktur (muhafızın üç ardışık sürümü ölçülerek kör çıktı; `poc §2.9`). DÜRÜSTLÜK: `audio-parity.spec.ts`'in yeşil kalması bunun kanıtı DEĞİLDİR —
 o spec AudioGraph'ı kullanmaz ve `master.gain=0` iken bile bit-birebir yeşil kalıyor (İKİ ayrı
 denetim koşumunda ölçüldü); tarayıcının duyulan çıkışını yakalayan test bu düzenekte YOKTUR.
 Ölçer sessizliği "0" diye göstermez: ses motoru kurulmadıysa "Ölçüm yok", duraklatmada
@@ -84,9 +86,10 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   SIFIR ihlal; 8x'te rAF ~25 fps dürüst maliyet (poc §2.8). Kalkanlar: `engineV1.scrub.test.ts`
   + scheduler lookbehind pinleri + `e2e/jkl-shuttle-frames.spec.ts`; negatif kontrol ×3
   md5-birebir. Defter: `PROGRESS.md` §Özellik turu satır F.
-- Son yeşil sayılar (2026-09-04, `panel-denetim-5` kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 56 sn — baş mühendisin
-  koşumu) · editör **1546** · şema 235 · Playwright **197/197** (51 spec, 12,3 dk, 0 skip) ·
+- Son yeşil sayılar (2026-09-04, `panel-denetim-6` kapanışında bizzat koşuldu — dört kapı +
+  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 35 sn — baş mühendisin
+  bu turdaki koşumu) · editör **1548** · şema 235 · Playwright **197/197** (51 spec, 12,6 dk,
+  0 skip) ·
   build -warnaserror 0 uyarı ·
   tsc -b + e2e tsc + prod build temiz. `meter.spec.ts` ayrıca ardışık koşumlarda 3/3
   (tam suite içinde + iki bağımsız koşum, 16,3/15,7 sn). ORTAM KAYDI: `panel-denetim-3`'ün İLK tam suite
@@ -120,7 +123,16 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   adlandıran bir BAĞLANTI ENVANTERİ. Ayrıca ölçerin parite tablosu gerçek ölçüme bağlandı
   (`audio-parity.spec.ts` artık `PARITY_DELTAS_DB`'yi import ediyor) ve damga bayatlığına
   karşı `src/docsFreshness.test.ts` muhafızı eklendi.
-  KALAN İŞ: üç denetimin de düzeltilmiş HEAD'de son kez koşulması (review-gate kural 7). Dilim 3 iki commit: `panel-3a` ölçüm hattı
+  YENİDEN DENETİM 4 (baş mühendis, 2026-09-04) **RED**: 1 BLOKER + 3 ORTA + 4 DÜŞÜK →
+  `panel-denetim-6`. BLOKER yine ses tap'i muhafızıydı — DÖRDÜNCÜ kör nokta: kenar envanteri
+  düğüm KİMLİĞİNE kördü (`this.master = tap;` tek satırı önizlemeyi SUSTURUP ölçeri çalışır
+  gösterirken muhafız 6/6, 1546 birim ve gerçek girdili e2e YEŞİL kalıyordu — kendim ölçtüm).
+  Atama envanteri eklendi VE iddia dört yerde daraltıldı; §8.3'e ölçer tap'inin normatif
+  şartları yazıldı. Ayrıca NC hash kaydı sınıfı DÖRDÜNCÜ kez tekrarladığı için kural
+  yamanmadı, KANIT BİÇİMİ değiştirildi (`SKILLS §negatif-kontrol-protokolu` madde 5).
+  KALAN İŞ: bu HEAD'in son kez denetlenmesi (review-gate kural 7). DÖRT turdur her tur
+  gerçek bir kusur buluyor ama bulgular ARTIK ÖZELLİĞİN KENDİSİNDE DEĞİL, düzeltmelerin
+  kalitesinde — turu sürdürme kararı KULLANICININ. Dilim 3 iki commit: `panel-3a` ölçüm hattı
   (`audioGraph`'a master'ın paralel yaprak tap'i + `readMeter()` null semantiği, saf
   `core/meter.ts`, `engine.meter$`, §8.1 dB dönüşümlerinin `core/gain.ts`'e taşınması, altı
   motor mock'u — DOM'a sıfır dokunuş, tam suite 194/194 ile kanıtlı), `panel-3b` panel

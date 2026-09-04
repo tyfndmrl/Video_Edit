@@ -772,6 +772,17 @@ sınıflandırıldı (export tarafı atempo=WSOLA).
 **Ölçüm (2026-08-25, Chromium/Playwright + ffmpeg 8.0; görevin beş vaka sınıfını dokuz
 pencere kümesinde ölçen 17 sn'lik tek belge; Δ = önizleme − export, 100 ms RMS
 pencereleri; "sınır" = testin kırmızı çizgisi = NORMATİF).**
+
+> **EFEKTİF KIRMIZI ÇİZGİ DEĞİŞTİ (2026-09-04, `panel-denetim-5`).** Aşağıdaki "Normatif
+> sınır" sütunu SÖZLEŞMENİN tavanıdır ve öyle kalır. Ama `audio-parity.spec.ts` artık ayrıca
+> ölçerin kullanıcıya gösterdiği tabloyu (`core/meter.ts` → `PARITY_DELTAS_DB`) ÖLÇÜME bağlıyor:
+> her rejimde `|Δ|max ≤ gösterilen değer + 0,10 dB`. Yani suite'in efektif kırmızı çizgisi
+> `min(normatif tavan, gösterilen + 0,10)`'dur — rampa 0,80 · limiter 1,30 · atempo 1,34.
+> SONUÇ: sözleşme İÇİNDE kalan bir kayma (ör. limiter 1,5 dB) de suite'i kırmızıya düşürür.
+> Bu bir sözleşme ihlali DEĞİL, "gösterilen sayı bayatladı" sinyalidir; doğru yanıt tabloyu ve
+> bu bölümü BİRLİKTE yeniden ölçüp güncellemektir, eşiği gevşetmek değil. (Bu ödünç bilerek
+> verildi: ölçerin tooltip'i "ölçülen" diyerek kullanıcıya bir sayı gösteriyor; o sayının
+> sessizce bayatlaması, sözleşme içinde kalan bir kaymadan daha zararlıdır.)
 Üç ardışık koşumda (her biri kendi yüklemesi + kendi export işiyle) tablo iki ondalıkta
 BİREBİR aynı çıktı — boru hattı bu belge için belirlenimci davranıyor:
 
@@ -876,17 +887,23 @@ renk-ayrımlı gerçek medya, siyah=0 + yanlisRenk=0 taraması).
 
 Zaman çizelgesinin sağındaki ölçer (`features/player/AudioMeter.tsx`) master bus'a
 PARALEL bir yaprak tap'ten okur; duyulan zincir (`master → destination`) değişmez.
-Bunun muhafızı `audioGraphTopology.test.ts`'tir (kaynak-yapısal). Yük taşıyan iddia bir
-BAĞLANTI ENVANTERİDİR: yorumlar silinmiş kaynaktaki her `.connect(` çağrısı, izin verilen
-grafın listesiyle BİREBİR eşleşmelidir (`source→gain→master→destination` artı yaprak
-`master→tap→splitter→L/R`). Yani grafa eklenen HERHANGİ bir kenar — çıkış tarafında, girdi
-tarafında, takma adla — listeyi bozar ve kırmızı verir. KAPSAM açıkça sınırlıdır: iddia BU
-DOSYANIN bağlantı grafını kapsar (`master` ve `meterTap` private, dışarıdan erişilemez);
-tarayıcının duyulan çıkışını yakalayan bir test bu düzenekte YOKTUR. Bu envanter, daha dar
-iki muhafızın denetimde ÖLÇÜLEREK kör çıkmasından sonra yazıldı: önce yalnız `buildMeterTap`
-gövdesi taranıyordu (tap `ensureContext`'ten `destination`'a bağlanınca yeşil kaldı), sonra
-yalnız `destination` kelimesi taranıyordu (klip kazancı `gain→meterTap→master` diye yeniden
-yönlendirilip tap duyulan zincirin SERİ HALKASI yapılınca yeşil kaldı). Kanıtın SINIRI kayda geçirilmiştir: `audio-parity.spec.ts` bunu kanıtlamaz
+Bunun muhafızı `audioGraphTopology.test.ts`'tir ve NE OLDUĞU açıkça yazılmalıdır: bir
+KAYNAK TARAMASIDIR. İki envanter tutar — (a) yorumsuz kaynaktaki her `.connect(` çağrısı izin
+verilen kenar listesiyle birebir eşleşmeli, (b) grafı tanımlayan alanların (`this.master`,
+`this.meterTap`) atamaları birebir eşleşmeli.
+
+**KANITLADIĞI:** bu dosyanın KAYNAĞI hâlâ §8.3 topolojisini yazıyor.
+**KANITLAMADIĞI:** çalışan önizlemenin duyulur olduğunu ya da tap'in duyulmadığını. Bu
+düzenekte tarayıcının duyulan çıkışını yakalayan HİÇBİR test yoktur; muhafız dinlemez.
+
+Bu darlık bilerek yazıldı: muhafızın ARDIŞIK ÜÇ sürümü "yeterli" ilan edildi ve üçü de
+denetimde ÖLÇÜLEREK kör çıktı — (1) yalnız `buildMeterTap` gövdesini taramak: tap
+`ensureContext`'ten `destination`'a bağlanınca yeşil kaldı; (2) yalnız `destination`
+kelimesini taramak: klip kazancı `gain→meterTap→master` diye yönlendirilip tap duyulan
+zincirin SERİ HALKASI yapılınca yeşil kaldı; (3) yalnız kenar envanteri: `this.master = tap;`
+tek satırı (içinde `.connect(` YOK) bütün klipleri tap'in üstüne taşıyıp gerçek master'ı
+sinyalsiz bırakınca — yani ÖNİZLEME SUSARKEN ölçer miksi göstermeye devam ederken — altı
+iddia da, 1546 birim testi de, gerçek girdili ölçer e2e'si de yeşil kaldı. Kanıtın SINIRI kayda geçirilmiştir: `audio-parity.spec.ts` bunu kanıtlamaz
 (AudioGraph'ı kullanmaz; `master.gain=0` iken bile yeşil kalıyor — denetimde ölçüldü) ve
 tarayıcının duyulan çıkışını yakalayan bir test bu düzenekte yoktur. Ölçtüğü şeyin sınırları:
 
