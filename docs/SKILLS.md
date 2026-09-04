@@ -1,5 +1,5 @@
 # SKILLS — operasyonel prosedür envanteri
-Son güncelleme: 2026-09-03. Bu dosya, oturum hafızasında yaşayıp tekrar tekrar keşfedilen
+Son güncelleme: 2026-09-04. Bu dosya, oturum hafızasında yaşayıp tekrar tekrar keşfedilen
 prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutlardan türetildi.
 
 ### ortam-kaldirma
@@ -67,17 +67,17 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   pnpm -r test                                           # editör + timeline-schema vitest
   pnpm --filter @videoedit/editor exec tsc -b            # + apps/editor'da: npx tsc -p e2e/tsconfig.json --noEmit
   ```
-- Doğrulama: 2026-09-04 (panel-denetim-4 sonu) yeşil sayıları: backend 1626 · editör 1543 · şema 235 (bunlar BÜYÜR; skip 0 sabittir).
+- Doğrulama: 2026-09-04 (panel-denetim-5 sonu) yeşil sayıları: backend 1626 · editör 1546 · şema 235 (bunlar BÜYÜR; skip 0 sabittir).
 - Bilinen sınırlar/tuzaklar: MinIO'suz koşumda MinIO+ffmpeg kapılı testler skip'lenir (2026-08-31 ölçümü: 41) —
   skip>0 görürsen önce Docker'a bak. Lint YOK (kullanıcı kararı); "bitti" tanımı: build + testler + tsc.
-- Son doğrulanma: 2026-09-03
+- Son doğrulanma: 2026-09-04
 
 ### playwright-tam-suite
 - Amaç: Gerçek fare/klavye e2e paketinin tamamı.
 - Ne zaman tetiklenir: Kapanış doğrulamaları; UI'a dokunan dilimler.
 - Ne zaman KULLANILMAZ: Ortamın TEK SAHİBİ değilsen — paralel ajan/koşum sahte kırmızı üretir (ölçülmüş ders).
 - Girdi: ortam-kaldirma tamam + ikili-tazelik doğrulanmış + kaçak ffmpeg yok (`Get-Process ffmpeg`).
-- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-09-04 (panel-denetim-4 sonu): 197 test / 51 spec / 13,8 dk.
+- Çalıştırma: `pnpm exec playwright test` (apps/editor içinde). 2026-09-04 (panel-denetim-5 sonu): 197 test / 51 spec / 12,3 dk.
 - Doğrulama: 0 failed, 0 skipped (ffmpeg PATH'teyse koşullu skip'ler tetiklenmez).
 - Bilinen sınırlar/tuzaklar: Sentetik girdi (dispatchEvent) YASAK — kanıt sayılmaz (review-gate kural 3).
   MAKİNE DONMASI SAHTE KIRMIZI ÜRETİR (2026-09-03 panel-denetim-3'te ölçüldü): tam suite 39 dk sürdü ve
@@ -98,7 +98,7 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   ile başlı Edge kullanılır. (DİKKAT: "headless rAF'ı ~12 Hz'e kısar" gerekçesi 2026-09-04'te
   ÇÜRÜDÜ — kendi ölçümüm: headless p50 16,665 ms = 60,0 Hz, n=299. Başlı Edge hâlâ 165 Hz'lik
   eşikleri sınamak için gerekli; headless'i otomatik kapsam dışı SAYMA, önce ÖLÇ.)
-- Son doğrulanma: 2026-09-03
+- Son doğrulanma: 2026-09-04
 
 ### negatif-kontrol-protokolu
 - Amaç: Yeni/değişen her korumanın gerçekten yük taşıdığını kanıtlamak.
@@ -111,7 +111,16 @@ prosedürleri kalıcılaştırır. Her girdi bu depoda fiilen koşulmuş komutla
   autocrlf smudge'ı satır sonlarını değiştirebilir — bayt-birebirlik iddiasını hash'le kur.
   (4) `git stash push/pop` de AYNI smudge'ı yapar: dosyayı Edit ile boz + Edit ile geri al
   (git'e uğratmadan) — md5 birebir kalır; 2026-09-03'te ölçüldü.
-- Son doğrulanma: 2026-09-03
+  (5) DEFTERE YAZILAN HASH, TESLİM EDİLEN DOSYANINKİDİR — NC anındaki değil. Aynı commit içinde
+  dosyayı NC'den sonra bir daha düzenlersen (yorum, ek test, yeniden yazım) kayıttaki hash artık
+  başka bir sürümü adresler ve NC'nin anlattığı bozma o sürümde koşulamaz bile olabilir. Commit'i
+  kapatmadan `md5sum` YENİDEN koş. Bu tuzak iki ayrı turda (`panel-denetim-3` ve `-4`) gerçekleşti;
+  ikincisinde `audioGraph.ts` doğru, `meter.ts` yanlış kaydedilmişti.
+  (6) BİR MUHAFIZI KIRMAK ONU DOĞRULAMAZ — yalnız kırdığın YOLU doğrular. Muhafız "X yasak" diyorsa
+  aynı ihlali BAŞKA bir yoldan da dene (gövde dışından, takma adla, girdi tarafından). Ölçüldü:
+  ses tap'i muhafızı üç ayrı turda üç kez "yeterli" sanıldı; her seferinde ikinci bir yol yeşil
+  geçti. İZİN VERİLEN grafı adlandıran envanter iddiası, yasak şekli adlandırandan güçlüdür.
+- Son doğrulanma: 2026-09-04
 
 ### migration-uygulama
 - Amaç: EF migration'ını canlı DB'ye uygulamak.

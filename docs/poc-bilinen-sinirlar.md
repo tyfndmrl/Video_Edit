@@ -876,10 +876,17 @@ renk-ayrımlı gerçek medya, siyah=0 + yanlisRenk=0 taraması).
 
 Zaman çizelgesinin sağındaki ölçer (`features/player/AudioMeter.tsx`) master bus'a
 PARALEL bir yaprak tap'ten okur; duyulan zincir (`master → destination`) değişmez.
-Bunun muhafızı `audioGraphTopology.test.ts`'tir (kaynak-yapısal): yorumlar silinmiş
-kaynakta `destination` kelimesi TEK satırda geçebilir ve o satır master'ın kendi
-bağlantısıdır — yani seri bir tap bu dosyanın NERESİNDE yazılırsa yazılsın (yerel takma ad
-dahil) kırmızıya döner; yanında daha dar gövde taramaları da var. Kanıtın SINIRI kayda geçirilmiştir: `audio-parity.spec.ts` bunu kanıtlamaz
+Bunun muhafızı `audioGraphTopology.test.ts`'tir (kaynak-yapısal). Yük taşıyan iddia bir
+BAĞLANTI ENVANTERİDİR: yorumlar silinmiş kaynaktaki her `.connect(` çağrısı, izin verilen
+grafın listesiyle BİREBİR eşleşmelidir (`source→gain→master→destination` artı yaprak
+`master→tap→splitter→L/R`). Yani grafa eklenen HERHANGİ bir kenar — çıkış tarafında, girdi
+tarafında, takma adla — listeyi bozar ve kırmızı verir. KAPSAM açıkça sınırlıdır: iddia BU
+DOSYANIN bağlantı grafını kapsar (`master` ve `meterTap` private, dışarıdan erişilemez);
+tarayıcının duyulan çıkışını yakalayan bir test bu düzenekte YOKTUR. Bu envanter, daha dar
+iki muhafızın denetimde ÖLÇÜLEREK kör çıkmasından sonra yazıldı: önce yalnız `buildMeterTap`
+gövdesi taranıyordu (tap `ensureContext`'ten `destination`'a bağlanınca yeşil kaldı), sonra
+yalnız `destination` kelimesi taranıyordu (klip kazancı `gain→meterTap→master` diye yeniden
+yönlendirilip tap duyulan zincirin SERİ HALKASI yapılınca yeşil kaldı). Kanıtın SINIRI kayda geçirilmiştir: `audio-parity.spec.ts` bunu kanıtlamaz
 (AudioGraph'ı kullanmaz; `master.gain=0` iken bile yeşil kalıyor — denetimde ölçüldü) ve
 tarayıcının duyulan çıkışını yakalayan bir test bu düzenekte yoktur. Ölçtüğü şeyin sınırları:
 

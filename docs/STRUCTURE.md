@@ -1,5 +1,5 @@
 # STRUCTURE — dizin haritası
-Son güncelleme: 2026-09-03. (İşaret: `[G]` = üretilen/derlenen, elle düzenlenmez.)
+Son güncelleme: 2026-09-04. (İşaret: `[G]` = üretilen/derlenen, elle düzenlenmez.)
 
 ```
 CLAUDE.md                    Giriş noktası (süreklilik seti)
@@ -31,6 +31,9 @@ apps/editor/
                              YAZILMAZ — DECISIONS)
   …/timeline/TimelineResizeHandle.tsx Sürükle-boyutlandır tutamağı (`role="separator"`,
                              pointer-capture + üçlü çıkış, rAF birleştirme, ok/Home/End)
+  src/docsFreshness.test.ts  Damga muhafızı: `STATE.md`'nin "Son güncelleme" tarihi
+                             CHANGELOG'un en yeni gününden eski olamaz (CLAUDE.md P3'ün
+                             mekanik yarısı; aynı kusur üç kez tekrarladı)
   src/lib/browserStorage.ts  Tek localStorage sarmalayıcısı (private-mode/quota redlerini
                              yutar; fontCatalogue + timelineHeight AYNI yerden alır)
   src/state/                 docStore (patch-undo) · editorStore · assetStore · timelineOps

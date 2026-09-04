@@ -2,6 +2,46 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-04
+- panel-denetim-5 — **baş mimarın ÜÇÜNCÜ turu RED verdi; bulgular kapatıldı.**
+  **BLOKER — topoloji muhafızının KALAN kör noktası + üç yerde evrensel over-claim.**
+  `panel-denetim-3`'te muhafızı "dosya düzeyi" yaptım ve üç yere "seri bir tap bu dosyanın
+  NERESİNDE yazılırsa yazılsın kırmızıya döner" yazdım. YANLIŞ: iddia yalnız ÇIKIŞ tarafını
+  (`destination`) savunuyordu. Kendi ölçümüm — `connectElement`'te klip kazancı
+  `gain → meterTap → master` diye yönlendirildi, yani tap duyulan zincirin SERİ HALKASI oldu
+  (explicit-stereo upmix'i ve gain'i artık sinyalin üstünde): **5/5 YEŞİL**. Aynı şekilde
+  `DECISIONS`'ın kendi reddettiği alternatif (önizleme zincirine `DynamicsCompressor`) da
+  yeşil geçiyordu. Muhafız YASAK ŞEKLİ adlandırmayı bırakıp İZİN VERİLEN GRAFI adlandırıyor:
+  yorumsuz kaynaktaki her `.connect(` çağrısı yedi kenarlık listeyle BİREBİR eşleşmeli
+  (`source→gain→master→destination` + yaprak `master→tap→splitter→L/R`). NC ×2 — girdi tarafı
+  (`+ "gain.connect(this.meterTap);" / + "this.meterTap.connect(this.master);"`) ve
+  DynamicsCompressor (`+ "gain.connect(limiter);" / + "limiter.connect(this.master);"`), ikisi
+  de kırmızı, `audioGraph.ts` md5 `693c7856…1ead` birebir geri. Over-claim cümleleri
+  `poc §2.9` ve `DECISIONS`'tan kaldırıldı; kapsam açıkça yazıldı.
+  **ORTA-1 — `panel-denetim-4`'ün NC md5'i teslim edilen dosyayı adreslemiyordu.** Kayıtta
+  `e6732180…5cab3` yazıyordu; teslim edilen `meter.ts` `9592db1a…4ba7`. Üstelik anlatılan iki
+  NC (`PARITY_DELTAS_DB` üzerinde) o sürümde KOŞULAMAZ — tablo orada yok. Bu, `panel-denetim-3`
+  DÜŞÜK-1'de bulunup "kayıt nitelendi" diye kapatılan sınıfın BİR COMMIT SONRAKİ tekrarı.
+  Kayıtlar düzeltildi ve kural `SKILLS §negatif-kontrol-protokolu`'na yazıldı (madde 5).
+  **ORTA-2 — `PARITY_DELTAS_DB` "poc §2.6'ya çivili" DEĞİLDİ.** Hiçbir test belgeyi okumuyordu;
+  birim testi literal-literale bakıyordu; `audio-parity`'nin `LIMITS`'i ise TAVAN (0,8/1,2/4,5/2,5),
+  ölçülen değer değil. Ölçülen tipik fark 0,70 → 0,79'a kaysa ÜÇÜ DE yeşil kalır ve ölçer
+  kullanıcıya bayat sayıyı "ölçülen" diye gösterirdi (kendi ölçümüm: belge tablosunu kaydırdım,
+  birim testi 19/19 yeşil kaldı). `audio-parity.spec.ts` artık `PARITY_DELTAS_DB`'yi import edip
+  her rejimin ÖLÇÜLEN `maxAbsDb`'sini tablo + 0,10 dB payla karşılaştırıyor — tablo HER tam
+  koşumda yük taşıyor. Yalnız üst taraf çivili (ölçüm küçülürse kullanıcı kötümser sayı görür).
+  NC: tipik 0,70 → 0,55 → `Expected: <= 0.65 / Received: 0.6967` kırmızı. Karar `DECISIONS`'a
+  YENİ SATIR olarak eklendi (eksikti); birim testinin başlığı da "asıl çivi e2e'de" diye dürüstleşti.
+  **ORTA-3 — damga bayatlığı, aynı sınıf ÜÇÜNCÜ kez.** `STATE.md` ve `STRUCTURE.md`'nin
+  "Son güncelleme" satırları ile `SKILLS`'in iki girdisinin "Son doğrulanma" tarihleri
+  gövdeleri güncellenirken geride kalmıştı. Bu kez sadece düzeltmedim: YENİ
+  `src/docsFreshness.test.ts` — STATE'in damgası CHANGELOG'un en yeni gününden ESKİ OLAMAZ
+  (CLAUDE.md P3'ün mekanik yarısı). NC: damga denetimin bulduğu hâle geri alındı → kırmızı,
+  `docs/STATE.md` md5 `7c9e8508…f80e` birebir geri.
+  **DÜŞÜK'ler:** `STATE`'in "açık iş olarak kayıtlı TEK teknik madde" cümlesi kapsamsızdı
+  (ci.yml redis boşluğu da açık) → "panel turunun" diye daraltıldı; `CHANGELOG`'un
+  `meter.spec (2/2)` kaydı bugünkü sayı sanılıyordu → tarihlendi (bugün 3/3); `git log`'un
+  `aaef61c` gövdesinin çürütülmüş ÇIKARIMI hâlâ taşıdığı kayda geçti (commit mesajları
+  düzeltilemez — geçerli kayıt CHANGELOG + `poc §2.9`).
 - panel-denetim-4 — **baş mühendis YENİDEN denetimi RED verdi; bulgular kapatıldı.**
   Baş mühendisin ÖNCEKİ İKİ RED'i kapandı ve bunu kendi ölçümleriyle kanıtladı: klip mandalı
   testinin payı artık eşiğin 0,5 dB ALTINDA değil, +5,4 dBFS ile 5,4 dB ÜSTÜNDE (eski fikstüre
@@ -23,7 +63,11 @@ Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit a
   (tipik 0,70 · limiter 1,20 · hız 2x 1,24) + `largestParityDelta()`; üstünlüğü kimse elle
   seçmiyor. Testler de aynı tablodan hesaplıyor + tablo `poc §2.6` ölçümüne ayrıca çivili.
   NEGATİF KONTROL ×2: üstünlük elle seçilince `expected 0.7 to be 1.24`; tablo maksimumu
-  düşürülünce ÜÇ iddia birden kırmızı. `meter.ts` md5 `e6732180…5cab3` birebir geri.
+  düşürülünce ÜÇ iddia birden kırmızı. `meter.ts` md5 `9592db1a…4ba7` birebir geri — bu,
+  TESLİM EDİLEN dosyanın hash'idir. (İlk yazımda `e6732180…5cab3` yazılmıştı; o, bir önceki
+  commit'in sürümü ve anlatılan iki NC orada KOŞULAMAZ bile — tablo o sürümde yok. Aynı
+  sınıf `panel-denetim-3` DÜŞÜK-1'de bulunmuş, bir commit sonra tekrarlamıştı; `panel-denetim-5`
+  denetiminde yakalandı ve `SKILLS §negatif-kontrol-protokolu`'na kural olarak yazıldı.)
   **ORTA-2 — `ensureLoudAudio()` amacını kaybettiğinde SESSİZDİ.** Kardeşleri
   (`ensureSilentVideo`/`ensureBannerVideo`/`ensureMisalignedVideo`) ffprobe ile amacını doğrulayıp
   adıyla fırlatırken bu fikstür yalnız dosyanın VARLIĞINA bakıyordu; dosya koşumlar arasında
@@ -114,7 +158,13 @@ Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit a
   (master→destination tap'ten önce; tap gövdesinde `destination` yok; analyser'lar yaprak).
   `audio-parity.spec.ts`'in yeşil kalması bu iddianın kanıtı DEĞİLDİR ve öyle sunulmaz:
   o spec AudioGraph'ı kullanmaz, denetimde `master.gain=0` ile (tam sessizlik) yeşil
-  kaldığı ÖLÇÜLDÜ (bkz. panel-denetim-2). `readMeter()` ctx yok/çalışmıyorken NULL döner (sıfır
+  kaldığı ÖLÇÜLDÜ (bkz. panel-denetim-2).
+  **TARİHÇE UYARISI:** `git log` DEĞİŞMEZ. `aaef61c` (panel-3a) gövdesi çürütülmüş ÇIKARIMI
+  hâlâ taşır: "audio-parity.spec.ts DOSYAYA DOKUNULMADAN yesil kaldi: yaprak tap'in duyulan
+  cikisi degistirmediginin kaniti budur". (`d77fa05` yalnız OLGUYU söyler — "audio-parity ve
+  a11y-smoke dosyaya dokunulmadan yeşil" — o cümle doğrudur, çürütülen ondan çıkarılan
+  sonuçtur.) Commit mesajları düzeltilemez (rebase yasak, push bekliyor); geçerli kayıt
+  BURASI ve `poc §2.9`'dur. `git log`'dan alıntı yapan biri bu satırı görmeli. `readMeter()` ctx yok/çalışmıyorken NULL döner (sıfır
   döndürmek "miks sessiz" yalanı olurdu). Yeni saf `core/meter.ts`: dBFS/bar/format,
   tepe tutucu (hold 1 s + 20 dB/s, DUVAR SAATİYLE — rAF kısılınca kare-tabanlı düşüş yalan
   söylerdi), klip mandalı (>1.0, tek pencere, duraklatma silmez) ve TÜM kullanıcı metinleri;
@@ -127,7 +177,7 @@ Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit a
   başına React state yok (canvas + imperatif `textContent`), test yüzeyi 10 Hz throttled
   `data-meter-*` öznitelikleri, sıfırlama düğmesi YALNIZ mandal varken DOM'da (Tab bütçesi).
   Ölçer sessizliği gerekçesiyle söyler: "Ölçüm yok" / "Duraklatıldı" / "Ses kapalı" /
-  "Engellendi". Kanıt: yeni `e2e/meter.spec.ts` (2/2, üç ardışık koşumda kararlı) —
+  "Engellendi". Kanıt: yeni `e2e/meter.spec.ts` (o gün 2 test, 2/2, üç ardışık koşumda kararlı; `panel-denetim-1`'de üçüncü test eklendi — bugünkü sayı 3/3) —
   jestten önce `no-context`, gerçek yükleme+oynatmada `db-l > -40`, duraklatmada `paused`,
   `End`+`j` ile `shuttle`. Negatif kontrol ×2 (tap kazancı 0 → seviye kırmızı; `no-context`
   ayrımı silinince ilk iddia kırmızı), md5-birebir geri. Perf A/B (`performans-raporu §13`):

@@ -20,17 +20,27 @@
  * what the other branch receives; this guard keeps the code inside that
  * guarantee.
  *
- * SCOPE, stated exactly: these assertions cover THIS FILE. The first test below
- * is the load-bearing one -- in executable code (comments stripped), the word
- * `destination` may appear on exactly ONE line, and that line must be master's
- * own connect. A serial tap therefore goes red wherever in this file it is
- * written, including through a local alias. The body scans that follow are
- * narrower and only pin the shape of buildMeterTap itself. Nothing outside this
- * file can reach the tap: `meterTap` is private and never returned.
+ * SCOPE, stated exactly: these assertions cover the connect graph of THIS FILE.
+ * The load-bearing test is the INVENTORY below -- every `.connect(` in
+ * executable code (comments stripped) must match the expected list exactly, so
+ * ANY new edge, anywhere in the file, goes red until someone updates the list
+ * on purpose. Nothing outside this file can reach the graph: `master` and
+ * `meterTap` are private and never returned.
  *
- * The body-only version of this guard was MEASURED blind during review: adding
- * `this.meterTap?.connect(this.ctx.destination)` in ensureContext -- a real
- * §8.3 violation -- left all four assertions green.
+ * Two narrower guards died in review before this one, and both are recorded
+ * here because each looked sufficient at the time:
+ *
+ *  1. A scan of the `buildMeterTap` BODY. Measured blind: adding
+ *     `this.meterTap?.connect(this.ctx.destination)` in ensureContext -- a real
+ *     §8.3 violation -- left all four assertions green.
+ *  2. A file-wide scan of the word `destination`. It defended only the OUTPUT
+ *     side. Measured blind: rewiring connectElement to
+ *     `gain -> meterTap -> master` makes the tap a SERIAL LINK of the audible
+ *     chain (its explicit-stereo upmix and its gain now sit on the signal) and
+ *     all five assertions stayed green.
+ *
+ * The lesson those two share: a guard that names one forbidden shape only ever
+ * defends that shape. The inventory names the ALLOWED graph instead.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -58,6 +68,27 @@ function bodyOf(fnName: string): string {
 const CODE = SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 
 describe('meter tap yerleşimi (§8.3 yaprak sözleşmesi)', () => {
+  it('bağlantı ENVANTERİ birebir: izin verilen graf dışında kenar YOK', () => {
+    // YÜK TAŞIYAN iddia. Yasak bir şekli adlandırmak yerine İZİN VERİLEN grafı
+    // adlandırır: duyulan zincir (source -> gain -> master -> destination) artı
+    // master'dan sarkan YAPRAK tap (master -> tap -> splitter -> L/R).
+    // Bir kenar eklenirse -- çıkış tarafında, girdi tarafında, takma adla, fark
+    // etmez -- liste tutmaz ve test kırmızıya döner. Listeyi güncellemek
+    // BİLİNÇLİ bir eylemdir; §8.3'ü yeniden okumadan yapılmamalıdır.
+    const edges = CODE.split('\n')
+      .map((l) => l.trim())
+      .filter((l) => /(?<!dis)\.connect\(/.test(l));
+    expect(edges, 'audioGraph bağlantı grafı değişmiş — §8.3 sözleşmesini yeniden oku.').toEqual([
+      'source.connect(gain);',
+      'gain.connect(this.master);',
+      'this.master.connect(this.ctx.destination);',
+      'master.connect(tap);',
+      'tap.connect(splitter);',
+      'splitter.connect(left, 0);',
+      'splitter.connect(right, 1);',
+    ]);
+  });
+
   it('ÇALIŞAN kodda `destination` TEK satırda geçer: master’ın kendi bağlantısı', () => {
     // Bu dosyanın YÜK TAŞIYAN iddiası. Gövde taraması yetmiyordu: tap'in çıkışı
     // başka bir metottan da (ör. ensureContext) destination'a bağlanabilir ve

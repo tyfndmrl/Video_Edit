@@ -63,6 +63,7 @@ import { fileURLToPath } from 'node:url';
 import { test, expect } from './fixtures/test';
 import { createProject, saveTimeline } from './fixtures/seed';
 import { fetchProxyUrls, uploadAssetViaApi, waitAssetReady } from './support/apiUpload';
+import { PARITY_DELTAS_DB } from '../src/features/player/core/meter';
 import {
   FFMPEG_SKIP_REASON,
   ensureParityMusic,
@@ -696,6 +697,44 @@ test.describe('Ses paritesi — önizleme (OfflineAudioContext, uygulama modüll
       } else {
         expect(r.maxAbsDb, label).toBeLessThanOrEqual(LIMITS.atempoMaxDb);
       }
+    }
+
+    // -----------------------------------------------------------------------
+    // ÖLÇERİN KULLANICIYA GÖSTERDİĞİ TABLO, BU ÖLÇÜMÜN KENDİSİNE BAĞLANIR.
+    //
+    // Yukarıdaki `LIMITS` TAVANDIR (ölçülen + pay): 0,8 / 1,2 / 4,5 / 2,5.
+    // Ölçerin dürüstlük notundaki sayılar ise ÖLÇÜLEN değerlerdir
+    // (0,70 / 1,20 / 1,24) ve denetime kadar yalnız KENDİ birim testindeki
+    // literallere karşı sınanıyordu — kopya kopyayı sınıyordu. Ölçülen değer
+    // tavanın ALTINDA kayarsa (ör. tipik rejim 0,70 -> 0,79) her şey yeşil kalır
+    // ve ölçer kullanıcıya BAYAT bir sayıyı "ölçülen" diye gösterirdi. Bu iddia
+    // o boşluğu kapatır: tabloyu HER tam koşumda ölçümün kendisine bağlar.
+    //
+    // Yön: yalnız ÜST taraf çivilenir. Ölçülen fark tablodakinden KÜÇÜK çıkarsa
+    // (iyileşme) kullanıcı kötümser bir sayı görür — güvenli taraf. BÜYÜK çıkarsa
+    // gösterilen sayı yalan olur. Pay 0,10 dB: gözlenen koşumlarda değerler
+    // bit-birebir tekrarlandı; pay yalnız ffmpeg/çözücü sürüm oynamaları içindir.
+    // -----------------------------------------------------------------------
+    const TABLE_TOLERANCE_DB = 0.1;
+    const measuredMax = (kinds: readonly string[]): number =>
+      Math.max(...results.filter((r) => kinds.includes(r.kind)).map((r) => r.maxAbsDb));
+    const measuredByRegime: Record<string, number> = {
+      'tipik rejimlerde': measuredMax(['steady', 'ramp']),
+      'limiter rejiminde': measuredMax(['limiter']),
+      'hız 2x rejiminde': measuredMax(['atempo']),
+    };
+    for (const entry of PARITY_DELTAS_DB) {
+      const measured = measuredByRegime[entry.regime];
+      expect(
+        measured,
+        `${entry.regime}: ölçerin tablosunda bu rejimin ölçüm vakası yok — eşleme koptu`,
+      ).toBeGreaterThan(0);
+      expect(
+        measured,
+        `ölçerin dürüstlük notu "${entry.regime} ${entry.db} dB" diyor ama ÖLÇÜLEN ` +
+          `${measured.toFixed(2)} dB. Not artık YALAN — core/meter.ts PARITY_DELTAS_DB ile ` +
+          'poc-bilinen-sinirlar §2.6 tablosu BİRLİKTE güncellenmeli.',
+      ).toBeLessThanOrEqual(entry.db + TABLE_TOLERANCE_DB);
     }
   });
 });

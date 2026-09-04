@@ -220,6 +220,13 @@ export function meterInactiveHint(reason: MeterReason, shuttleActive: boolean): 
  * MEASURED to survive review twice -- once with the wrong number entirely, and
  * once with the qualifier moved onto a smaller number while a regex that only
  * looked inside one sentence stayed green. Deriving the claim removes the class.
+ *
+ * The values themselves are load-bearing at the e2e end: audio-parity.spec.ts
+ * imports this table and asserts each regime's MEASURED maxAbsDb stays within
+ * 0.1 dB above its entry, so a preview regression that drifts under the spec's
+ * own (looser) ceilings still turns red instead of leaving this note stale.
+ * The unit test in meter.test.ts only pins literal against literal -- it cannot
+ * see a measurement drift, and says so.
  */
 export const PARITY_DELTAS_DB: readonly { readonly regime: string; readonly db: number }[] = [
   { regime: 'tipik rejimlerde', db: 0.7 },

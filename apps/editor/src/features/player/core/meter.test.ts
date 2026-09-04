@@ -192,9 +192,13 @@ describe('honesty note', () => {
     expect(meterHonestyNote()).toContain(`EN BÜYÜĞÜ ${worst.regime} 1,24 dB'dir`);
   });
 
-  it('tablo poc-bilinen-sinirlar §2.6 ölçümüyle ÇİVİLİ', () => {
-    // audio-parity.spec.ts her tam koşumda bu üç sayıyı yeniden ölçer; burası
-    // ölçümün UI'ya taşınan kopyasının kaymadığını çiviler.
+  it('tablo değerleri bu dosyada da SABİTLENİR (asıl çivi e2e tarafındadır)', () => {
+    // DÜRÜSTLÜK: burası literal-literale karşıdır, yani kopyanın kopyaya
+    // uyduğunu gösterir — ÖLÇÜMLE bağı YOKTUR. Denetimde ölçüldü: `poc §2.6`
+    // tablosundaki sayı kaydırıldığında bu dosya yeşil kalıyor. Tabloyu gerçek
+    // ölçüme bağlayan iddia `e2e/audio-parity.spec.ts`'in sonundadır (her tam
+    // koşumda ölçülen maxAbsDb ≤ tablo + 0,10 dB). Buradaki iddia yalnız
+    // "birisi sayıyı kazara değiştirdi" hâlini ucuza yakalar.
     expect(PARITY_DELTAS_DB.map((d) => [d.regime, d.db])).toEqual([
       ['tipik rejimlerde', 0.7],
       ['limiter rejiminde', 1.2],

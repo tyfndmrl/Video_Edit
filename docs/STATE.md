@@ -1,5 +1,5 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-03, `panel-denetim-2` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
+Son güncelleme: 2026-09-04, `panel-denetim-5` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
 kapanış denetimi KOŞTU** (bulgular kapatıldı; review-gate kural 7 gereği denetimler düzeltilmiş
 HEAD'de yeniden koşuyor). Dilim 3: zaman çizelgesinin sağında master stereo L/R ölçer (dBFS
 skalası, tepe tutucu, klip mandalı); ölçüm master'a PARALEL yaprak tap'ten okunur, `master →
@@ -84,9 +84,9 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   SIFIR ihlal; 8x'te rAF ~25 fps dürüst maliyet (poc §2.8). Kalkanlar: `engineV1.scrub.test.ts`
   + scheduler lookbehind pinleri + `e2e/jkl-shuttle-frames.spec.ts`; negatif kontrol ×3
   md5-birebir. Defter: `PROGRESS.md` §Özellik turu satır F.
-- Son yeşil sayılar (2026-09-04, `panel-denetim-4` kapanışında bizzat koşuldu — dört kapı +
+- Son yeşil sayılar (2026-09-04, `panel-denetim-5` kapanışında bizzat koşuldu — dört kapı +
   prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 56 sn — baş mühendisin
-  koşumu) · editör **1543** · şema 235 · Playwright **197/197** (51 spec, 13,8 dk, 0 skip) ·
+  koşumu) · editör **1546** · şema 235 · Playwright **197/197** (51 spec, 12,3 dk, 0 skip) ·
   build -warnaserror 0 uyarı ·
   tsc -b + e2e tsc + prod build temiz. `meter.spec.ts` ayrıca ardışık koşumlarda 3/3
   (tam suite içinde + iki bağımsız koşum, 16,3/15,7 sn). ORTAM KAYDI: `panel-denetim-3`'ün İLK tam suite
@@ -113,6 +113,13 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   "ilişkisel" dürüstlük muhafızı NOKTALAMAYA bağlıydı — yalan 1541/1541 yeşil geçiyordu;
   `ensureLoudAudio` kardeşlerinin aksine amacını ÖLÇMÜYORDU. İkisi de kapatıldı.
   Baş mühendis kendi ÖNCEKİ İKİ RED'ini ölçerek KAPALI buldu (klip mandalı payı 5,4 dB).
+  YENİDEN DENETİM 3 (baş mimar, 2026-09-04) **RED**: 1 BLOKER + 3 ORTA + 3 DÜŞÜK →
+  `panel-denetim-5`. BLOKER yine ses tap'i muhafızıydı: `panel-denetim-3`'te "dosya düzeyi"
+  yapılan iddia yalnız ÇIKIŞ tarafını savunuyordu; tap GİRDİ tarafından seri halkaya
+  çevrilince 5/5 yeşil kalıyordu (kendi ölçümüm). Muhafız artık İZİN VERİLEN GRAFI
+  adlandıran bir BAĞLANTI ENVANTERİ. Ayrıca ölçerin parite tablosu gerçek ölçüme bağlandı
+  (`audio-parity.spec.ts` artık `PARITY_DELTAS_DB`'yi import ediyor) ve damga bayatlığına
+  karşı `src/docsFreshness.test.ts` muhafızı eklendi.
   KALAN İŞ: üç denetimin de düzeltilmiş HEAD'de son kez koşulması (review-gate kural 7). Dilim 3 iki commit: `panel-3a` ölçüm hattı
   (`audioGraph`'a master'ın paralel yaprak tap'i + `readMeter()` null semantiği, saf
   `core/meter.ts`, `engine.meter$`, §8.1 dB dönüşümlerinin `core/gain.ts`'e taşınması, altı
@@ -176,7 +183,7 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    Kullanıcı tavanı kaldırmak ya da değiştirmek isterse tek sabit (`MAX_TIMECODE_US`) ve iki
    test satırı değişir.
 
-## Ortam notu (2026-09-03, `panel-denetim-2` kapanışı)
+## Ortam notu (2026-09-04, `panel-denetim-5` kapanışı)
 
 `panel-3a` turunun yayınları AYAKTA bulundu ve tazeliği doğrulandı: API PID 198200'ün YÜKLÜ
 modül yolu `…\api-run-p3\VideoEdit.Api.dll`, worker PID 350132 `…\worker-run-p3\…`; bu tur
@@ -197,7 +204,9 @@ session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapma
 
 **Bir sonraki session'ın İLK İŞİ:** panel turunun kapanış denetimini SON kez koşmak. Üç rol de
 en az bir kez RED verdi ve bulguları kapatıldı (`panel-denetim-1..4`); review-gate kural 7
-gereği düzeltilmiş HEAD'in yeniden denetlenmesi gerekiyor. AÇIK İŞ olarak kayıtlı tek teknik
-madde: `performans-raporu §3.6` sürükleme ölçümünün headless'te yeniden koşulması (headless'i
-dışlayan gerekçe 2026-09-04'te çürüdü, ölçümün kendisi tekrarlanmadı). Denetim yeşil dönerse sıradaki iş `docs/STATE.md §Sıradakiler` 1. maddesidir
+gereği düzeltilmiş HEAD'in yeniden denetlenmesi gerekiyor. PANEL TURUNUN açık teknik maddesi
+bir tane: `performans-raporu §3.6` sürükleme ölçümünün headless'te yeniden koşulması
+(headless'i dışlayan gerekçe 2026-09-04'te çürüdü, ölçümün kendisi tekrarlanmadı). Turun
+DIŞINDA duran açık maddeler §Bilinen sorunlar ve §Sıradakiler altındadır (ör. ci.yml e2e
+job'unun redis'i başlatmaması — push öncesi kapatılmalı). Denetim yeşil dönerse sıradaki iş `docs/STATE.md §Sıradakiler` 1. maddesidir
 (`git push` — KULLANICI ONAYI BEKLİYOR, kendiliğinden yapılmaz).
