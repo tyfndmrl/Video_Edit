@@ -189,18 +189,18 @@ jobs:
       #             (presigned URL; compose.dev.yml'deki MINIO_API_CORS_ALLOW_ORIGIN
       #             = http://localhost:5173 tam da bunun icin) ve Worker orijinali
       #             oradan indirip proxy/filmstrip/export ciktisini oraya yazar.
-      # - redis   : BU JOB'DA BASLATILMIYOR — ve bu artik bir ACIK SORUDUR.
-      #             Yorumun eski hali "kod tabaninda tek tuketicisi yok" diyordu;
-      #             2026-08-31 SignalR ilerleme kanalindan beri YANLIS: worker
-      #             Redis `job-progress` kanalina publish eder, API'deki
-      #             RedisProgressForwarder dinler. Redis'siz API/Worker yine
-      #             acilir ve polling yedegi tasir (Hangfire storage = PostgreSQL),
-      #             AMA hub'i olcen spec'ler (or. export-progress-hub) Redis'in
-      #             ayakta olmasini bekler. Bu adima redis eklemek bir CI davranis
-      #             degisikligidir ve dokuman-senkron diliminde bilerek yapilmadi;
-      #             kayit: docs/STATE.md "Bilinen sorunlar".
-      - name: Altyapi servisleri (postgres + minio)
-        run: docker compose -f compose.dev.yml up -d postgres minio
+      # - redis   : ZORUNLU (2026-09-05'te eklendi). 2026-08-31 SignalR ilerleme
+      #             kanalindan beri worker Redis `job-progress` kanalina publish
+      #             eder, API'deki RedisProgressForwarder dinler. Redis'siz
+      #             API/Worker yine acilir ve polling yedegi tasir (Hangfire
+      #             storage = PostgreSQL), AMA hub'in CANLI yolunu olcen spec
+      #             duser. OLCULDU (2026-09-05, yerel): redis durduruldu ve
+      #             export-progress-hub.spec.ts kosuldu ->
+      #             "Hub'dan 'running' mesaji gelmedi" ile KIRMIZI. Yani bu job
+      #             redis'siz kosarsa e2e paketi kirmizi doner; eksiklik bir
+      #             "acik soru" degil GERCEK bir bosluktu.
+      - name: Altyapi servisleri (postgres + minio + redis)
+        run: docker compose -f compose.dev.yml up -d postgres minio redis
 
       - name: Postgres hazir olsun
         run: |
@@ -213,6 +213,14 @@ jobs:
         run: |
           timeout 120 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" $(docker compose -f compose.dev.yml ps -q minio))" = "healthy" ]; do sleep 2; done'
           echo "MinIO healthy."
+
+      # Redis'in healthcheck'i (redis-cli ping) yesillenmeden API acilirsa
+      # forwarder abone olamaz ve hub sessiz kalir — spec'in olctugu tam olarak
+      # o kanaldir, o yuzden beklenir.
+      - name: Redis hazir olsun
+        run: |
+          timeout 60 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" $(docker compose -f compose.dev.yml ps -q redis))" = "healthy" ]; do sleep 2; done'
+          echo "Redis healthy."
 
       - name: Veritabani migrasyonlari
         run: dotnet run --project backend/src/VideoEdit.Api --no-launch-profile -- --migrate-only

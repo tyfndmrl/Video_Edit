@@ -2,6 +2,15 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-05
+- ci-redis — **CI'ın e2e job'undaki redis boşluğu KAPANDI** (kullanıcının sıradaki iş listesinin
+  1. maddesi; `git push`'un tek teknik ön koşuluydu). Kayıt "ilk koşumda bu job kırmızı DÜŞEBİLİR"
+  diyordu; ölçtüm ve kesinleştirdi: yerelde `videoedit-redis-1` durdurulup
+  `e2e/export-progress-hub.spec.ts` koşuldu → **`Hub'dan 'running' mesajı gelmedi` ile KIRMIZI**.
+  Yani boşluk teorik değildi, CI koşsaydı e2e paketi DÜŞERDİ. Düzeltme: altyapı adımı
+  `postgres minio redis` başlatıyor + redis healthcheck kapısı eklendi (forwarder abone olamadan
+  API açılırsa hub sessiz kalır ve spec'in ölçtüğü tam da o kanaldır). API/Worker Redis adresini
+  `appsettings.Development.json`'dan (`localhost:6379`) alıyor, ek env GEREKMEDİ. `ci.yml`'deki
+  "ACIK SORU" yorumu ölçülmüş gerçeğe çevrildi; YAML `yaml.safe_load` ile doğrulandı (4 job).
 - panel-denetim-10 — **baş mühendis ONAY verdi → PANEL TURU KAPANDI** (üç rolün üçü de 0 MADDİ).
   Baş mühendis dört kapıyı ve TAM suite'i KENDİ koştu — 197/197 (51 spec, 12,2 dk, 0 skip) ·
   backend 1626/1626 (0 skip, 2 dk 11 sn) · editör 1552 · şema 235 · `-warnaserror` 0 uyarı — ve

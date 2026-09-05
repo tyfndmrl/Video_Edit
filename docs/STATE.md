@@ -172,8 +172,8 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
-1. `git push` — **kullanıcı onayı bekliyor** (origin 25+ commit geride; öncesinde ci.yml e2e
-   redis boşluğu kapatılmalı — bkz. Bilinen sorunlar).
+1. `git push` — **kullanıcı onayı bekliyor** (origin 39+ commit geride). Teknik ön koşulu olan
+   ci.yml redis boşluğu 2026-09-05'te KAPATILDI; geriye yalnız kullanıcı kararı kaldı.
 2. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
 3. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
   #11 upload resume sertleştirme. (SignalR maddesi 2026-08-31'de KAPANDI; komşusu backlog B6 —
@@ -194,12 +194,11 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   tespitleriydi). e2e birikimi için kalıcı mekanizma ELLE koşulan betiktir (otomatik değil —
   yeniden şişerse `SKILLS e2e-hesap-temizligi`).
 - Dev bağımlılığı: nanoid <3.3.18 high (yalnız vite zinciri, prod'a girmez).
-- **ci.yml e2e job'u redis BAŞLATMIYOR** (SignalR-öncesi kalıntı; gelistirme-3 #1'de tespit):
-  backend'in artık Redis tüketicisi var ve `export-progress-hub.spec.ts` Redis'in ayakta
-  olmasını bekler — CI, SignalR sonrası hiç koşmadı (push beklemede), ilk koşumda bu job
-  kırmızı düşebilir. Compose adımına redis eklemek DAVRANIŞ değişikliği olduğundan doküman
-  diliminde yapılmadı; ci.yml'deki redis yorumu gerçeğe çevrildi + ayrı görev fişi açıldı.
-  Push'tan önce kapatılmalı.
+- ~~ci.yml e2e job'u redis BAŞLATMIYOR~~ — **KAPANDI 2026-09-05** (`ci-redis`). Boşluk ÖLÇÜLDÜ:
+  yerelde redis durdurulup `export-progress-hub.spec.ts` koşuldu → "Hub'dan 'running' mesajı
+  gelmedi" ile KIRMIZI, yani CI koşsaydı e2e job'u düşerdi ("düşebilir" değil, DÜŞERDİ).
+  `docker compose up -d postgres minio redis` + healthcheck kapısı eklendi; API/Worker Redis
+  adresini `appsettings.Development.json`'dan (`localhost:6379`) alıyor, ek env gerekmedi.
 
 ## Açık sorular (insana sorulacaklar)
 
@@ -243,9 +242,8 @@ session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapma
 ---
 
 **Bir sonraki session'ın İLK İŞİ:** panel turu KAPANDI (üç rol de ONAY, 0 MADDİ) — sıradaki iş
-kullanıcının seçtiği listedir, bu sırayla: (1) **ci.yml e2e job'u redis BAŞLATMIYOR** —
-`git push`'un tek teknik ön koşulu, o yüzden ilk sırada; (2) defter/doküman senkronu;
-(3) silme senkronu + retention; (4) export perf 2. tur.
+kullanıcının seçtiği listedir: ~~(1) ci.yml redis boşluğu~~ **KAPANDI (`ci-redis`)** →
+sıradaki: (2) defter/doküman senkronu; (3) silme senkronu + retention; (4) export perf 2. tur.
 PANEL TURUNDAN KALAN TEK AÇIK TEKNİK MADDE: `performans-raporu §3.6` sürükleme ölçümünün
 headless'te yeniden koşulması. Baş mühendis kapanış turunda ölçtü ki o bölümün
 "p95 ≤ 16,7 ms" bütçesi headless'te (idle p95 = 16,670 ms, pay 0,030 ms) maliyet ölçümü
