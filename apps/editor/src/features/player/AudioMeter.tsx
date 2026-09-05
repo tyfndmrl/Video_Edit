@@ -57,6 +57,8 @@ const COLOR_OVER = '#ef4444';
 
 /** Attribute cadence for e2e/probes — far below the sampling rate on purpose. */
 const ATTR_INTERVAL_MS = 100;
+/** Sabit metin; tablodan bir kez türetilir (bkz. paint içindeki gerekçe). */
+const HONESTY_NOTE = meterHonestyNote();
 
 interface Geometry {
   width: number;
@@ -192,7 +194,14 @@ export function AudioMeter(): React.JSX.Element {
       if (readout !== null) {
         const text = label ?? formatDbfs(meterReadoutDb(next));
         if (readout.textContent !== text) readout.textContent = text;
-        readout.title = meterInactiveHint(effectiveReason, shuttleActive) ?? meterHonestyNote();
+        // Değişmeyen başlığı HER örnekte yeniden kurmayız. `meterHonestyNote()`
+        // artık düz bir cümle değil, tablodan türeyen bir metin (map/join +
+        // toFixed) ve `running` rejiminde ipucu null olduğu için her örnekte o
+        // koşardı. Denetimde ölçüldü: çağrı başına 0,223 µs → 1,487 µs, yani
+        // 30 Hz'de +0,038 ms/s. Kare bütçesinin binde biri ama bedava
+        // kaçınılabilir; not sabit olduğu için bir kez üretilir.
+        const title = meterInactiveHint(effectiveReason, shuttleActive) ?? HONESTY_NOTE;
+        if (readout.title !== title) readout.title = title;
       }
 
       setReason((prev) => (prev === effectiveReason ? prev : effectiveReason));
@@ -254,7 +263,7 @@ export function AudioMeter(): React.JSX.Element {
       aria-label="Ses seviyesi ölçer (önizleme miksi)"
       data-testid="audio-meter"
       className="flex w-16 shrink-0 flex-col border-l border-edge bg-surface-1"
-      title={inactiveHint ?? meterHonestyNote()}
+      title={inactiveHint ?? HONESTY_NOTE}
       onClick={clipped ? clearLatch : undefined}
     >
       {/* Aligns the bars with the track area, mirroring the ruler strip. */}

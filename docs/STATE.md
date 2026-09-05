@@ -1,7 +1,7 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-05, `panel-denetim-9` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
-kapanış denetimi KOŞTU** (bulgular kapatıldı; review-gate kural 7 gereği denetimler düzeltilmiş
-HEAD'de yeniden koşuyor). Dilim 3: zaman çizelgesinin sağında master stereo L/R ölçer (dBFS
+Son güncelleme: 2026-09-05, `panel-denetim-10` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
+kapanış denetimi KAPANDI — ÜÇ ROL DE ONAY VERDİ, üçünde de 0 MADDİ bulgu** (baş geliştirici,
+baş mimar, baş mühendis; sekiz RED turundan sonra). Dilim 3: zaman çizelgesinin sağında master stereo L/R ölçer (dBFS
 skalası, tepe tutucu, klip mandalı); ölçüm master'a PARALEL yaprak tap'ten okunur, `master →
 destination` aynen kalır (§8.3). Bu yerleşimin muhafızı `audioGraphTopology.test.ts`'tir ve
 artık bir DAVRANIŞ TESTİDİR: sahte AudioContext ile graf GERÇEKTEN kurulur, iddialar
@@ -87,10 +87,10 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   SIFIR ihlal; 8x'te rAF ~25 fps dürüst maliyet (poc §2.8). Kalkanlar: `engineV1.scrub.test.ts`
   + scheduler lookbehind pinleri + `e2e/jkl-shuttle-frames.spec.ts`; negatif kontrol ×3
   md5-birebir. Defter: `PROGRESS.md` §Özellik turu satır F.
-- Son yeşil sayılar (2026-09-05, `panel-denetim-9` kapanışında bizzat koşuldu — dört kapı +
-  prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 35 sn — baş mühendisin
-  `-6` turundaki koşumu; `-7`…`-9` frontend/doküman-only, `backend/` DEĞİŞMEDİ) ·
-  editör **1552** · şema 235 · Playwright **197/197** (51 spec, 12,2 dk, 0 skip) ·
+- Son yeşil sayılar (2026-09-05, `panel-denetim-10` kapanışı — dört kapı + prod build + TAM
+  Playwright): backend **1626/1626** (0 skip, 2 dk 11 sn — baş mühendisin KAPANIŞ turundaki
+  koşumu; `-10` frontend/doküman-only, `backend/` DEĞİŞMEDİ) · editör **1553** · şema 235 ·
+  Playwright **197/197** (51 spec, 11,9 dk, 0 skip) ·
   build -warnaserror 0 uyarı ·
   tsc -b + e2e tsc + prod build temiz. `meter.spec.ts` ayrıca ardışık koşumlarda 3/3
   (tam suite içinde + iki bağımsız koşum, 16,3/15,7 sn). ORTAM KAYDI: `panel-denetim-3`'ün İLK tam suite
@@ -116,7 +116,8 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   §13'ün ortamı üç belgede üç farklı yazılmıştı. ORTA'lar: `panel-denetim-3`'te eklediğim
   "ilişkisel" dürüstlük muhafızı NOKTALAMAYA bağlıydı — yalan 1541/1541 yeşil geçiyordu;
   `ensureLoudAudio` kardeşlerinin aksine amacını ÖLÇMÜYORDU. İkisi de kapatıldı.
-  Baş mühendis kendi ÖNCEKİ İKİ RED'ini ölçerek KAPALI buldu (klip mandalı payı 5,4 dB).
+  Baş mühendis kendi ÖNCEKİ İKİ RED'ini ölçerek KAPALI buldu (klip mandalı payı o turda 5,4 dB;
+  kapanış turunda 5,6–5,7 dB yeniden ölçüldü — koşumlar arası 0,2-0,3 dB oynama, pay bol).
   YENİDEN DENETİM 3 (baş mimar, 2026-09-04) **RED**: 1 BLOKER + 3 ORTA + 3 DÜŞÜK →
   `panel-denetim-5`. BLOKER yine ses tap'i muhafızıydı: `panel-denetim-3`'te "dosya düzeyi"
   yapılan iddia yalnız ÇIKIŞ tarafını savunuyordu; tap GİRDİ tarafından seri halkaya
@@ -150,7 +151,16 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   BAĞLAYICI: `review-gate` kural 8 (üç rol + MADDİ/KANIT/KOZMETİK + RED yalnız MADDİ
   için — döngünün kapanma şartı), kural 9 (AYNI HEAD), kural 10 (bir muhafızı kırmak onu
   doğrulamaz). `WORKFLOWS` W2 ve `CLAUDE.md` yetenek haritası üç role çekildi.
-  KALAN İŞ: baş mühendisin bu HEAD'de koşması (dört kapı + TAM suite). Dilim 3 iki commit: `panel-3a` ölçüm hattı
+  **Baş mühendis 4. turu da ONAY verdi** (0 MADDİ · 6 KANIT · 4 KOZMETİK — `panel-denetim-10`).
+  **ÜÇ ROLÜN ÜÇÜ DE ONAY: PANEL TURU KAPANDI.** Baş mühendis dört kapıyı ve TAM suite'i
+  kendi koştu (197/197, 12,2 dk; backend 1626/1626; editör 1552; şema 235) ve kullanıcıya
+  gösterilen HER sayıyı yeniden ölçtü (0,70/1,20/1,24 dB · 1,163/0,950 tepe · 16,665 ms ·
+  −5 dBFS eşiği) — hepsi tuttu.
+  DÜRÜST KAYIT — **kural 9 (AYNI HEAD) bu turda İHLAL EDİLDİ**: üç rol sırasıyla `205303d`,
+  `b0f8570` ve `4f27bef`'i denetledi, yani aralarında düzeltme yapıldı. Kuralı yazan tur
+  kuralı uygulamadı; baş mühendis bunu ölçerek yakaladı (muhafızın iddia sayısı 7 → 9 → 10).
+  Onayları geçersiz kılmıyor (her rol kendi HEAD'inde MADDİ bulmadı ve son HEAD tam koşuldu)
+  ama bir sonraki turda kural 9'a HARFİYEN uyulmalı. Dilim 3 iki commit: `panel-3a` ölçüm hattı
   (`audioGraph`'a master'ın paralel yaprak tap'i + `readMeter()` null semantiği, saf
   `core/meter.ts`, `engine.meter$`, §8.1 dB dönüşümlerinin `core/gain.ts`'e taşınması, altı
   motor mock'u — DOM'a sıfır dokunuş, tam suite 194/194 ile kanıtlı), `panel-3b` panel
@@ -213,7 +223,7 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    Kullanıcı tavanı kaldırmak ya da değiştirmek isterse tek sabit (`MAX_TIMECODE_US`) ve iki
    test satırı değişir.
 
-## Ortam notu (2026-09-05, `panel-denetim-9` kapanışı)
+## Ortam notu (2026-09-05, `panel-denetim-10` kapanışı)
 
 `panel-3a` turunun yayınları AYAKTA bulundu ve tazeliği doğrulandı: API PID 198200'ün YÜKLÜ
 modül yolu `…\api-run-p3\VideoEdit.Api.dll`, worker PID 350132 `…\worker-run-p3\…`; bu tur
@@ -232,11 +242,15 @@ session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapma
 
 ---
 
-**Bir sonraki session'ın İLK İŞİ:** panel turunun kapanış denetimini SON kez koşmak. Üç rol de
-en az bir kez RED verdi ve bulguları kapatıldı (`panel-denetim-1..4`); review-gate kural 7
-gereği düzeltilmiş HEAD'in yeniden denetlenmesi gerekiyor. PANEL TURUNUN açık teknik maddesi
-bir tane: `performans-raporu §3.6` sürükleme ölçümünün headless'te yeniden koşulması
-(headless'i dışlayan gerekçe 2026-09-04'te çürüdü, ölçümün kendisi tekrarlanmadı). Turun
-DIŞINDA duran açık maddeler §Bilinen sorunlar ve §Sıradakiler altındadır (ör. ci.yml e2e
-job'unun redis'i başlatmaması — push öncesi kapatılmalı). Denetim yeşil dönerse sıradaki iş `docs/STATE.md §Sıradakiler` 1. maddesidir
-(`git push` — KULLANICI ONAYI BEKLİYOR, kendiliğinden yapılmaz).
+**Bir sonraki session'ın İLK İŞİ:** panel turu KAPANDI (üç rol de ONAY, 0 MADDİ) — sıradaki iş
+kullanıcının seçtiği listedir, bu sırayla: (1) **ci.yml e2e job'u redis BAŞLATMIYOR** —
+`git push`'un tek teknik ön koşulu, o yüzden ilk sırada; (2) defter/doküman senkronu;
+(3) silme senkronu + retention; (4) export perf 2. tur.
+PANEL TURUNDAN KALAN TEK AÇIK TEKNİK MADDE: `performans-raporu §3.6` sürükleme ölçümünün
+headless'te yeniden koşulması. Baş mühendis kapanış turunda ölçtü ki o bölümün
+"p95 ≤ 16,7 ms" bütçesi headless'te (idle p95 = 16,670 ms, pay 0,030 ms) maliyet ölçümü
+değil ikili bir "kare düştü mü" testine dönüşür — dürüst formu §13'teki gibi idle↔sürükleme
+A/B'sidir; öylece yeniden yazılmadan koşmanın anlamı yok.
+DÜRÜST KAYIT: kapanış turunda **review-gate kural 9 (AYNI HEAD) ihlal edildi** — üç rol üç
+farklı commit'i denetledi. Bir sonraki denetimde kurala HARFİYEN uyulmalı.
+`git push` HÂLÂ KULLANICI ONAYI BEKLİYOR (origin 38+ commit geride).

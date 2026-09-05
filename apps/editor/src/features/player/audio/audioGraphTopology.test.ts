@@ -134,9 +134,17 @@ class FakeNode {
     return this.edges.find((e) => e.dst === dst)?.output ?? -1;
   }
 
+  /**
+   * Gerçek API tamponun TAMAMINI değil, yalnız `fftSize` örneği yazar; gerisine
+   * DOKUNMAZ (gerçek Chromium'da ölçüldü: fftSize=2048, 8192'lik tamponun
+   * kuyruğu el değmeden kalıyor). Sahte bunu taklit etmezse, tamponu pencereden
+   * BÜYÜK açan bir hata görünmez olur: tepe aynı kalır ama RMS düşer — ölçerin
+   * bar GÖVDESİ RMS'ten çizildiği için kullanıcı 6 dB yanlış seviye görürdü,
+   * tepeye bakan e2e ve klip mandalı ise yapı gereği kör kalırdı.
+   */
   getFloatTimeDomainData(buf: Float32Array): void {
     this.floatReads++;
-    buf.fill(this.signal);
+    buf.fill(this.signal, 0, Math.min(buf.length, this.#fftSize));
   }
 
   getByteTimeDomainData(): void {
@@ -150,6 +158,12 @@ class FakeContext {
   readonly created: FakeNode[] = [this.destination];
   state: 'running' | 'suspended' | 'closed' = 'running';
   currentTime = 0;
+  readonly sampleRate: number;
+  private readonly elements = new Set<unknown>();
+
+  constructor(sampleRate = 48000) {
+    this.sampleRate = sampleRate;
+  }
 
   private make(label: string, numberOfOutputs = 1): FakeNode {
     const n = new FakeNode(label, numberOfOutputs);
@@ -171,7 +185,14 @@ class FakeContext {
     return this.make('analyser');
   }
 
-  createMediaElementSource(): FakeNode {
+  /** Gerçek API aynı eleman için İKİNCİ çağrıda fırlatır. */
+  createMediaElementSource(el: unknown): FakeNode {
+    if (this.elements.has(el)) {
+      throw new Error(
+        'InvalidStateError: HTMLMediaElement already connected previously to a different MediaElementSourceNode.',
+      );
+    }
+    this.elements.add(el);
     return this.make('source');
   }
 
@@ -195,8 +216,9 @@ beforeEach(() => {
   ctx = null;
   seq = 0;
   (globalThis as { AudioContext?: unknown }).AudioContext = class {
-    constructor() {
-      ctx = new FakeContext();
+    constructor(options?: { sampleRate?: number }) {
+      // Seçenekler SAKLANIR: §8.5 örnekleme hızı sözleşmesinin tek kalkanı bu.
+      ctx = new FakeContext(options?.sampleRate);
       return ctx as unknown as AudioContext;
     }
   };
@@ -343,6 +365,16 @@ describe('meter tap yerleşimi — KURULAN graf (§8.3)', () => {
       reading?.peakR,
       'peakR, splitter’ın 1 numaralı (SAĞ) çıkışından beslenmeli — kanallar takas edilmiş.',
     ).toBeCloseTo(0.75, 6);
+    // RMS de TAM pencereden gelmeli: tampon `fftSize`'tan büyük açılırsa gerçek
+    // API kuyruğu boş bırakır, RMS düşer ve ölçerin BAR GÖVDESİ (RMS'ten çizilir)
+    // yanlış seviye gösterir — tepe değişmediği için e2e ve klip mandalı bunu
+    // GÖREMEZ. Denetimde ölçüldü: tampon 4 katına çıkarılınca 10/10, 1552 birim
+    // ve gerçek girdili meter.spec'in HEPSİ yeşil kalıyordu.
+    expect(
+      reading?.rmsL,
+      'rmsL, sinyalin tamamını görmeli — ölçüm tamponu analyser penceresinden büyük olabilir.',
+    ).toBeCloseTo(0.25, 6);
+    expect(reading?.rmsR, 'rmsR, sinyalin tamamını görmeli.').toBeCloseTo(0.75, 6);
   });
 
   it('duyulan yol tap’ten ÖNCE kurulur (§8.3 (a) — inşa SIRASI)', async () => {
@@ -380,6 +412,16 @@ describe('meter tap yerleşimi — KURULAN graf (§8.3)', () => {
       expect(a.floatReads, 'getFloatTimeDomainData çağrılmalı').toBeGreaterThan(0);
       expect(a.byteReads, 'getByteTimeDomainData ±1’e KIRPAR — klip mandalı yalan söylerdi').toBe(0);
     }
+  });
+
+  it('context PROJE örnekleme hızıyla kurulur (§8.5)', async () => {
+    // `ensureContext`'ten `{ sampleRate }` düşerse tarayıcı KENDİ varsayılanını
+    // seçer ve önizleme, belgenin ilan ettiği hızdan başka bir hızda çalar.
+    // Denetimde ölçüldü: bu sözleşmenin başka HİÇBİR kalkanı yoktu.
+    const graph = new AudioGraph();
+    graph.setSampleRate(44100);
+    await graph.ensureContext();
+    expect((ctx as FakeContext).sampleRate, 'AudioContext proje hızıyla kurulmalı').toBe(44100);
   });
 
   it('dispose grafı söker: hiçbir düğümün giden kenarı kalmaz', async () => {

@@ -2,12 +2,49 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-05
+- panel-denetim-10 — **baş mühendis ONAY verdi → PANEL TURU KAPANDI** (üç rolün üçü de 0 MADDİ).
+  Baş mühendis dört kapıyı ve TAM suite'i KENDİ koştu — 197/197 (51 spec, 12,2 dk, 0 skip) ·
+  backend 1626/1626 (0 skip, 2 dk 11 sn) · editör 1552 · şema 235 · `-warnaserror` 0 uyarı — ve
+  kullanıcıya gösterilen HER sayıyı yeniden ölçtü: 0,70/1,20/1,24 dB, limiter tepe 1,163/0,950,
+  headless rAF 16,665 ms (n=300), −5 dBFS fikstür eşiği. Hepsi tuttu. `meter.spec.ts` 4/4 kararlı.
+  **KANIT — sahtenin ÜÇ YENİ sapması (hepsi kapatıldı).** (1) `getFloatTimeDomainData` tamponun
+  TAMAMINI dolduruyordu; gerçek API yalnız `fftSize` örnek yazar, gerisine dokunmaz (denetçi
+  gerçek Chromium'da ölçtü). Sonucu ölçtüm: tampon `fftSize * 4` yapılınca muhafız **10/10**,
+  editör **1552/1552** ve gerçek girdili `meter.spec` **3/3** YEŞİL kalıyor — oysa gerçek
+  tarayıcıda RMS 6,02 dB düşer ve ölçerin BAR GÖVDESİ (RMS'ten çizilir) kullanıcıya yanlış
+  seviye gösterir; tepe değişmediği için e2e ve klip mandalı yapı gereği kör. Sahte artık
+  `fftSize` kadar yazıyor + yeni iddia RMS'in TAM pencereden geldiğini çiviliyor (NC: `expected
+  0.125 to be close to 0.25` — tam olarak √(1/4)). (2) `AudioContext` constructor seçenekleri
+  yok sayılıyordu; §8.5 örnekleme hızı sözleşmesinin HİÇBİR kalkanı yoktu → sahte `sampleRate`'i
+  saklıyor + yeni iddia (NC: `{ sampleRate }` düşürülünce `expected 48000 to be 44100`).
+  (3) `createMediaElementSource` aynı eleman için tekrar çağrılabiliyordu; gerçek API
+  `InvalidStateError` fırlatır → taklit edildi.
+  **ÜÇ KAYIT HATASI yakalandı ve düzeltildi (hepsi benim kayıtlarımda):** (a) `-9`'un
+  "iki takas da 10/10 yeşil" NC imzası ARİTMETİK OLARAK İMKÂNSIZDI — o commit'te dosyada 9 iddia
+  vardı ve 10.'su zaten o bulguyu kapatmak için eklendi; imza 9/9 olmalıydı. (b) `-9`'un
+  CHANGELOG'u `DECISIONS`'ın da 7 → 10'a çekildiğini söylüyordu, ama `git show 4f27bef --
+  docs/DECISIONS.md` BOŞ döner: dosyaya hiç dokunulmamıştı ve satır hâlâ `-9`'un yanlış ilan
+  ettiği "erişilebilirlik sorar" ifadesini taşıyordu. Şimdi gerçekten güncellendi.
+  (c) **KURAL 9 (AYNI HEAD) BU TURDA İHLAL EDİLDİ:** üç rol sırasıyla `205303d`, `b0f8570` ve
+  `4f27bef`'i denetledi — yani aralarında düzeltme yapıldı; kuralı YAZAN tur kuralı uygulamadı.
+  Denetçi bunu ölçerek yakaladı (muhafızın iddia sayısı 7 → 9 → 10). Onayları geçersiz kılmaz
+  (her rol kendi HEAD'inde MADDİ bulmadı, son HEAD tam koşuldu) ama kayda geçti.
+  **KOZMETİK:** `meterHonestyNote()` `running` rejiminde HER örnekte koşuyordu (`readout.title`
+  yolundan; `-8`/`-9` onu literal cümleden tablodan-türetmeye çevirmişti) — denetçi ölçtü:
+  0,223 → 1,487 µs/çağrı, 30 Hz'de +0,038 ms/s. Modül sabitine alındı ve `title` yalnız
+  değişince yazılıyor. Klip mandalı payı kaydı 5,4 → **5,6-5,7 dB** (yeniden ölçüldü).
+  `performans-raporu §3.6`'nın headless yeniden koşumu AÇIK İŞ olarak KALIYOR: denetçi ölçtü ki
+  o bölümün "p95 ≤ 16,7 ms" bütçesi headless'te (idle p95 = 16,670 ms, pay 0,030 ms) maliyet
+  ölçümü değil ikili bir "kare düştü mü" testine dönüşür — dürüst formu §13'teki gibi A/B'dir.
 - panel-denetim-9 — **baş mimar ONAY verdi** (0 MADDİ · 3 KANIT · 5 KOZMETİK); bulgular kapatıldı
   ve turun PROSEDÜR dersi bağlayıcı belgelere yazıldı.
   **KANIT-1 — muhafız splitter kablolamasını çiviliyordu ama RAPORLAMAYI değil.** `analyserL`/
   `analyserR` atamalarını ya da `readMeter()`'ın dönüşünü takas etmek, sol/sağ kanalı KALICI
-  olarak yer değiştiriyor ve her kapıdan geçiyordu — kendi ölçümüm: iki takas da **10/10 yeşil**
-  (denetçinin koşumunda birim 393 + gerçek girdili `meter.spec` 3/3 de yeşildi). e2e'nin
+  olarak yer değiştiriyor ve her kapıdan geçiyordu — kendi ölçümüm: iki takas da **9/9 yeşil**
+  (denetçinin koşumunda birim 393 + gerçek girdili `meter.spec` 3/3 de yeşildi). (DÜZELTME:
+  ilk yazımda "10/10" yazılmıştı; o commit'te dosyada 9 iddia vardı ve 10.'su zaten bu
+  bulguyu kapatmak için eklendi — aritmetik olarak imkânsız bir imzaydı, baş mühendisin
+  kapanış turunda yakalandı.) e2e'nin
   kapatması YAPI GEREĞİ imkânsız: fikstür MONO (`ffprobe` → `channels=1`), L ve R özdeş.
   Sahtenin analyser'ları artık düğüme özgü bir sinyal "duyuyor"; yeni iddia okunan `peakL`/`peakR`'nin
   splitter'ın 0 ve 1 numaralı çıkışlarına BU SIRAYLA karşılık geldiğini çiviliyor. NC ×2 kırmızı
@@ -31,7 +68,10 @@ Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit a
   **10** (bir muhafızı kırmak onu doğrulamaz; kaynak taraması yalnız saydığı yazılışı savunur —
   grafı doğrulamak için grafı KURMAK gerekir). Ölçülmüş gerekçe kurala iliştirildi: kural 8'den
   önce ALTI ardışık tur RED verdi ve hiçbiri ürün kusuru değildi.
-  **KOZMETİK 2-5:** `poc §2.9` + `DECISIONS` iddia listesi 7 → 10'a çekildi; `STRUCTURE`
+  **KOZMETİK 2-5:** `poc §2.9` iddia listesi 7 → 10'a çekildi (DÜZELTME: bu satır ilk yazımında
+  `DECISIONS`'ın da güncellendiğini söylüyordu — YANLIŞTI, `git show 4f27bef -- docs/DECISIONS.md`
+  BOŞ döner. `DECISIONS` `panel-denetim-10`'da güncellendi; hata baş mühendisin kapanış turunda
+  yakalandı); `STRUCTURE`
   `docsFreshness`'i üç iddiasıyla ve kapsam dışı listesiyle anlatıyor; `§8.3`'ün "erişilebilirlikle
   sınanır" ifadesi mekanizmayı yanlış adlandırıyordu ((a) kenar SIRASI, (d) düğüm ÖZELLİĞİ);
   iki test başlığı kanıtladığından fazlasını söylüyordu ("önizleme duyulur" — `master.gain=0`
