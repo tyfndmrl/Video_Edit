@@ -1,5 +1,5 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-04, `panel-denetim-7` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
+Son güncelleme: 2026-09-05, `panel-denetim-8` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
 kapanış denetimi KOŞTU** (bulgular kapatıldı; review-gate kural 7 gereği denetimler düzeltilmiş
 HEAD'de yeniden koşuyor). Dilim 3: zaman çizelgesinin sağında master stereo L/R ölçer (dBFS
 skalası, tepe tutucu, klip mandalı); ölçüm master'a PARALEL yaprak tap'ten okunur, `master →
@@ -87,10 +87,10 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   SIFIR ihlal; 8x'te rAF ~25 fps dürüst maliyet (poc §2.8). Kalkanlar: `engineV1.scrub.test.ts`
   + scheduler lookbehind pinleri + `e2e/jkl-shuttle-frames.spec.ts`; negatif kontrol ×3
   md5-birebir. Defter: `PROGRESS.md` §Özellik turu satır F.
-- Son yeşil sayılar (2026-09-04, `panel-denetim-7` kapanışında bizzat koşuldu — dört kapı +
+- Son yeşil sayılar (2026-09-05, `panel-denetim-8` kapanışında bizzat koşuldu — dört kapı +
   prod build + TAM Playwright): backend **1626/1626** (0 skip, 2 dk 35 sn — baş mühendisin
-  `-6` turundaki koşumu; `-7` frontend/doküman-only) · editör **1549** · şema 235 ·
-  Playwright **197/197** (51 spec, 12,5 dk, 0 skip) ·
+  `-6` turundaki koşumu; `-7`/`-8` frontend/doküman-only, `backend/` DEĞİŞMEDİ) ·
+  editör **1551** · şema 235 · Playwright **197/197** (51 spec, 12,2 dk, 0 skip) ·
   build -warnaserror 0 uyarı ·
   tsc -b + e2e tsc + prod build temiz. `meter.spec.ts` ayrıca ardışık koşumlarda 3/3
   (tam suite içinde + iki bağımsız koşum, 16,3/15,7 sn). ORTAM KAYDI: `panel-denetim-3`'ün İLK tam suite
@@ -139,7 +139,11 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   ilerle"): artık üç rol de AYNI HEAD'i denetliyor ve her bulgu MADDİ/KANIT/KOZMETİK diye
   sınıflanıp "sürüm engelleyici mi?" sorusuna cevap veriyor — KANIT/KOZMETİK bulgular ONAY'ı
   engellemiyor, backlog'a yazılıyor. Döngüyü kapatan ölçüt budur.
-  KALAN İŞ: üç rolün bu HEAD'de tek turda koşması. Dilim 3 iki commit: `panel-3a` ölçüm hattı
+  KAPANIŞ TURU BAŞLADI (üç rol de aynı HEAD'de): **baş geliştirici 2. tur ONAY verdi**
+  (0 MADDİ · 3 KANIT · 4 KOZMETİK — hepsi kapatıldı, `panel-denetim-8`). KANIT bulguları
+  ölçer muhafızının sahte AudioContext'inin gerçek Web Audio'dan SAPMASIYDI (çıkış indeksi
+  ve splitter çıkış sayısı yok sayılıyordu; denetçi gerçek Chromium'da ölçtü).
+  KALAN İŞ: baş mimar + baş mühendisin bu HEAD'de koşması. Dilim 3 iki commit: `panel-3a` ölçüm hattı
   (`audioGraph`'a master'ın paralel yaprak tap'i + `readMeter()` null semantiği, saf
   `core/meter.ts`, `engine.meter$`, §8.1 dB dönüşümlerinin `core/gain.ts`'e taşınması, altı
   motor mock'u — DOM'a sıfır dokunuş, tam suite 194/194 ile kanıtlı), `panel-3b` panel
@@ -202,7 +206,7 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
    Kullanıcı tavanı kaldırmak ya da değiştirmek isterse tek sabit (`MAX_TIMECODE_US`) ve iki
    test satırı değişir.
 
-## Ortam notu (2026-09-04, `panel-denetim-7` kapanışı)
+## Ortam notu (2026-09-05, `panel-denetim-8` kapanışı)
 
 `panel-3a` turunun yayınları AYAKTA bulundu ve tazeliği doğrulandı: API PID 198200'ün YÜKLÜ
 modül yolu `…\api-run-p3\VideoEdit.Api.dll`, worker PID 350132 `…\worker-run-p3\…`; bu tur

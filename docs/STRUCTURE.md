@@ -1,5 +1,5 @@
 # STRUCTURE — dizin haritası
-Son güncelleme: 2026-09-04. (İşaret: `[G]` = üretilen/derlenen, elle düzenlenmez.)
+Son güncelleme: 2026-09-05. (İşaret: `[G]` = üretilen/derlenen, elle düzenlenmez.)
 
 ```
 CLAUDE.md                    Giriş noktası (süreklilik seti)
@@ -17,8 +17,9 @@ apps/editor/
                              player/AudioMeter.tsx = timeline'ın sağındaki ses ölçeri;
                              player/core/meter.ts = ölçerin SAF matematiği + tüm metinleri;
                              player/audio/audioGraphTopology.test.ts = tap'in YAPRAK
-                             yerleşiminin kaynak-yapısal muhafızı (§8.3; başlığı neden
-                             davranış testi olmadığını anlatır)
+                             yerleşiminin DAVRANIŞ muhafızı (§8.3): sahte AudioContext ile
+                             graf gerçekten kurulur, iddialar erişilebilirlik sorar; başlığı
+                             kör çıkan BEŞ kaynak-tarayan sürümü tek tek kaydeder
                              keyframes/ shortcuts/ auth/ projects/ versions/ history/
   …/player/timecodeInput.ts           Transport zaman kodu alanının SAF ayrıştırıcısı: saat
                              okuması (`1:30:00` = 1 sa 30 dk), tipli redler, hedef µs =

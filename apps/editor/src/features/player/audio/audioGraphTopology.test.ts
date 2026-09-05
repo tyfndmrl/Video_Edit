@@ -34,9 +34,30 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AudioGraph } from './audioGraph';
 
-/** Kaydedilen graf düğümü: giden kenarları tutar, `disconnect` onları siler. */
+/** Kurulum SIRASI: hangi kenarın önce bağlandığını çivilemek için. */
+let seq = 0;
+
+interface Edge {
+  readonly dst: FakeNode;
+  /** Web Audio çıkış indeksi — splitter'da KANAL SEÇER, süs değildir. */
+  readonly output: number;
+  readonly seq: number;
+}
+
+/**
+ * Kaydedilen graf düğümü. Sahtenin gerçek Web Audio'dan SAPMASI, muhafızın
+ * yanlış şeyi kanıtlaması demektir; bu yüzden iki kural taklit ediliyor:
+ *  - `connect(dst, output)` çıkış indeksini SAKLAR (sahte önce yok sayıyordu:
+ *    `splitter.connect(right, 0)` yapıldığında 7/7 yeşil kalıyordu, oysa gerçek
+ *    tarayıcıda sağ analyser SOL kanalı okur — denetimde ölçüldü).
+ *  - `output >= numberOfOutputs` FIRLATIR (gerçek Chromium: "IndexSizeError…
+ *    output index (1) exceeds number of outputs (1)"). Sahte önce kabul ediyordu,
+ *    yani `createChannelSplitter(1)` ile önizlemenin HİÇ başlamadığı bir kurulum
+ *    yeşil geçiyordu.
+ */
 class FakeNode {
-  readonly outs: FakeNode[] = [];
+  readonly edges: Edge[] = [];
+  numberOfOutputs = 1;
   channelCount = 2;
   channelCountMode = 'max';
   channelInterpretation = 'speakers';
@@ -51,21 +72,40 @@ class FakeNode {
     setValueCurveAtTime(): void {},
   };
 
-  constructor(readonly label: string) {}
+  constructor(
+    readonly label: string,
+    numberOfOutputs = 1,
+  ) {
+    this.numberOfOutputs = numberOfOutputs;
+  }
 
-  connect(dst: FakeNode): FakeNode {
-    this.outs.push(dst);
+  get outs(): FakeNode[] {
+    return this.edges.map((e) => e.dst);
+  }
+
+  connect(dst: FakeNode, output = 0): FakeNode {
+    if (output >= this.numberOfOutputs) {
+      throw new Error(
+        `IndexSizeError: output index (${output}) exceeds number of outputs (${this.numberOfOutputs})`,
+      );
+    }
+    this.edges.push({ dst, output, seq: seq++ });
     return dst;
   }
 
   /** Web Audio: argümansız `disconnect()` TÜM giden kenarları koparır. */
   disconnect(dst?: FakeNode): void {
     if (dst === undefined) {
-      this.outs.length = 0;
+      this.edges.length = 0;
       return;
     }
-    const i = this.outs.indexOf(dst);
-    if (i >= 0) this.outs.splice(i, 1);
+    const i = this.edges.findIndex((e) => e.dst === dst);
+    if (i >= 0) this.edges.splice(i, 1);
+  }
+
+  /** `dst`'ye giden kenarın çıkış indeksi (yoksa -1). */
+  outputTo(dst: FakeNode): number {
+    return this.edges.find((e) => e.dst === dst)?.output ?? -1;
   }
 
   getFloatTimeDomainData(): void {
@@ -83,8 +123,8 @@ class FakeContext {
   state: 'running' | 'suspended' | 'closed' = 'running';
   currentTime = 0;
 
-  private make(label: string): FakeNode {
-    const n = new FakeNode(label);
+  private make(label: string, numberOfOutputs = 1): FakeNode {
+    const n = new FakeNode(label, numberOfOutputs);
     this.created.push(n);
     return n;
   }
@@ -93,8 +133,10 @@ class FakeContext {
     return this.make('gain');
   }
 
-  createChannelSplitter(): FakeNode {
-    return this.make('splitter');
+  createChannelSplitter(numberOfOutputs: number): FakeNode {
+    // Argüman SAKLANIR: gerçek API'de çıkış sayısını o belirler ve fazlasına
+    // bağlanmak IndexSizeError fırlatır.
+    return this.make('splitter', numberOfOutputs);
   }
 
   createAnalyser(): FakeNode {
@@ -103,10 +145,6 @@ class FakeContext {
 
   createMediaElementSource(): FakeNode {
     return this.make('source');
-  }
-
-  createDynamicsCompressor(): FakeNode {
-    return this.make('compressor');
   }
 
   async resume(): Promise<void> {
@@ -127,6 +165,7 @@ const realAudioContext = (globalThis as { AudioContext?: unknown }).AudioContext
 
 beforeEach(() => {
   ctx = null;
+  seq = 0;
   (globalThis as { AudioContext?: unknown }).AudioContext = class {
     constructor() {
       ctx = new FakeContext();
@@ -229,6 +268,35 @@ describe('meter tap yerleşimi — KURULAN graf (§8.3)', () => {
       ).toBe(false);
       expect(a.outs, 'analyser çıkışı bağlanmamalı (yaprak).').toHaveLength(0);
     }
+  });
+
+  it('splitter KANALLARI ayırır: sol analyser çıkış 0’dan, sağ analyser çıkış 1’den', async () => {
+    // Çıkış indeksi süs değil, KANAL SEÇER. `splitter.connect(right, 0)` yapılsa
+    // sağ analyser SOL kanalın kopyasını okurdu ve `data-meter-db-r` kalıcı
+    // olarak yalan söylerdi — mono fikstürlü e2e bunu AYIRT EDEMEZ (denetimde
+    // gerçek Chromium'da ölçüldü: iki çıkış da -6,02 dBFS okuyor).
+    const { c, analysers } = await buildGraph();
+    const splitter = inEdges(c, analysers[0])[0];
+    expect(splitter.numberOfOutputs, 'splitter STEREO kurulmalı').toBe(2);
+    const outputs = analysers.map((a) => splitter.outputTo(a));
+    expect(outputs, 'sol analyser çıkış 0, sağ analyser çıkış 1 olmalı').toEqual([0, 1]);
+  });
+
+  it('duyulan yol tap’ten ÖNCE kurulur (§8.3 (a) — inşa SIRASI)', async () => {
+    // Erişilebilirlik iddiaları oluşan grafa bakar; SIRA grafta görünmez.
+    // (a) şartının duyulur bir sonucu yok ama sözleşmede yazılı, o yüzden
+    // kenarların kurulma sırası ayrıca çivileniyor (denetim bulgusu: bu iddia
+    // olmadan §8.3'ün "(a)-(d) sınanır" cümlesi (a) için yanlıştı).
+    const { c } = await buildGraph();
+    const master = inEdges(c, c.destination)[0];
+    const toDestination = master.edges.find((e) => e.dst === c.destination);
+    const tapEdge = master.edges.find((e) => e.dst !== c.destination);
+    expect(toDestination, 'master → destination kenarı yok').toBeDefined();
+    expect(tapEdge, 'master → tap kenarı yok').toBeDefined();
+    expect(
+      (toDestination as { seq: number }).seq < (tapEdge as { seq: number }).seq,
+      'Tap, master destination’a bağlanmadan ÖNCE kurulmuş (§8.3 (a)).',
+    ).toBe(true);
   });
 
   it('tap explicit STEREO’dur (§8.5 upmix; mono klipte sağ kanal ölmesin)', async () => {

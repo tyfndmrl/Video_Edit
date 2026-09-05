@@ -18,12 +18,14 @@
  *  - KAPSAMDA: `STATE.md`'nin damgası (her kapanışta güncellenmesi ZORUNLU,
  *    CLAUDE.md P3) ile `SKILLS.md` ve `DECISIONS.md`'nin kendi içindeki
  *    tutarlılığı (damga, dosyanın İÇİNDEKİ en yeni tarihten eski olamaz).
- *  - KAPSAM DIŞI: `STRUCTURE.md` ve tek tek SKILLS girdilerinin "Son doğrulanma"
- *    tarihleri. Bunlar P3'e göre yalnız DOKUNULDUĞUNDA tazelenir; "dokunuldu mu"
- *    sorusunu yanıtlamak git geçmişi okumayı gerektirir ve bu muhafız git'e
- *    bakmaz. Denetimde `STRUCTURE.md` damgası 34 gün geriye alındığında bu
- *    dosyanın YEŞİL kaldığı ÖLÇÜLDÜ — o boşluk bilinçli olarak açık bırakıldı,
- *    kapatıldığı sanılmasın.
+ *  - KAPSAM DIŞI, adıyla: `CLAUDE.md`, `STRUCTURE.md`, `WORKFLOWS.md` ve tek tek
+ *    SKILLS girdilerinin "Son doğrulanma" tarihleri. Bunlar P3'e göre yalnız
+ *    DOKUNULDUĞUNDA tazelenir; "dokunuldu mu" sorusunu yanıtlamak git geçmişi
+ *    okumayı gerektirir ve bu muhafız git'e BAKMAZ. Denetimde ölçüldü:
+ *    `STRUCTURE.md` damgası 34 gün, `CLAUDE.md` damgası 6 yıl geriye alındığında
+ *    bu dosya YEŞİL kalıyor. O boşluk bilinçli açık — kapatıldığı SANILMASIN.
+ *    Bayat damga sınıfı bu projede ALTI kez tekrarladı; mekanik kapı yalnız
+ *    aşağıdaki üç iddia kadardır, gerisi prosedürdür (CLAUDE.md P3).
  *  - Yanlış-pozitif profili: CHANGELOG'a GELECEK tarihli bir gün başlığı
  *    eklenirse muhafız haksız kırmızı verir. Önlenmedi (böyle bir girdi zaten
  *    kayıt hatasıdır).

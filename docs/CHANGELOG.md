@@ -1,7 +1,34 @@
 # CHANGELOG — ters kronolojik
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
-## 2026-09-04
+## 2026-09-05
+- panel-denetim-8 — **baş geliştirici ONAY verdi** (0 MADDİ · 3 KANIT · 4 KOZMETİK); bulgular
+  yine de kapatıldı, çünkü hepsi ölçer muhafızının KENDİ kanıt zincirindeydi.
+  **KANIT-1 + KANIT-2 — sahte AudioContext, gerçek Web Audio'dan SAPIYORDU.** Denetçi bunu
+  gerçek Chromium'da `OfflineAudioContext` ile ölçtü, ben de kendi koşumumla doğruladım:
+  (a) `FakeNode.connect(dst)` ÇIKIŞ İNDEKSİNİ yok sayıyordu → `splitter.connect(right, 0)`
+  yapıldığında 7/7 yeşil kalıyor, oysa gerçek tarayıcıda sağ analyser SOL kanalı okur ve
+  `data-meter-db-r` kalıcı olarak yalan söylerdi; mono fikstürlü e2e bunu AYIRT EDEMEZ
+  (ölçüm: iki çıkış da −6,02 dBFS). (b) `createChannelSplitter(n)` argümanı yok sayılıyordu →
+  `createChannelSplitter(1)` ile 7/7 yeşil, oysa gerçek Chromium `IndexSizeError: output index
+  (1) exceeds number of outputs (1)` fırlatır ve `ensureContext()` reddedilir — yani ÖNİZLEME
+  HİÇ BAŞLAMAZ. Sahte artık ikisini de taklit ediyor: kenarlar `{dst, output, seq}` olarak
+  kaydediliyor ve `output >= numberOfOutputs` fırlatıyor. Yeni iddia: sol analyser çıkış 0'dan,
+  sağ analyser çıkış 1'den beslenir. NC ×2 kırmızı — ikincisi gerçek tarayıcının hata mesajını
+  BİREBİR üretiyor.
+  **KANIT-3 — §8.3'ün "(a)-(d) erişilebilirlikle sınanır" cümlesi (a)'yı kapsamıyordu.**
+  (a) bir İNŞA SIRASI şartıdır ve oluşan grafta görünmez; denetçi iki satırı yer değiştirip
+  7/7 yeşil kaldığını ölçtü. Sahte artık kenar SIRASINI da kaydediyor ve yeni bir iddia
+  `master → destination` kenarının `master → tap`'ten ÖNCE kurulduğunu çiviliyor (NC kırmızı).
+  Cümle daraltılmadı çünkü artık DOĞRU.
+  **KOZMETİK'ler:** `CLAUDE.md` damgası bayattı — bayat damga sınıfının ALTINCI tekrarı;
+  `docsFreshness`'in kapsam paragrafı `CLAUDE.md`/`STRUCTURE.md`/`WORKFLOWS.md`'yi artık ADIYLA
+  kapsam dışı sayıyor ve boşluğun bilinçli olduğunu söylüyor (denetçi ölçtü: `CLAUDE.md`
+  damgası 6 yıl geriye alınınca muhafız yeşil kalıyor). Sahtedeki ölü `createDynamicsCompressor`
+  silindi. `MeterTapReading.windowSamples` üretiliyor ama hiç tüketilmiyordu ve yorumu
+  ("ölçer ne ölçtüğünü bildirir") olmayan bir raporu iddia ediyordu → alan kaldırıldı.
+  `fontCatalogue.ts`'te `browserStorage` çıkarımından kalan çift boş satır temizlendi.
+  **Denetçinin ONAY'ı `205303d` içindir; bu commit onun önerdiği düzeltmeleri uygular.**
 - panel-denetim-7 — **baş mimarın 4. turu RED verdi; muhafız KAYNAK TARAMASINDAN
   DAVRANIŞ TESTİNE çevrildi.** Bu tur denetim düzeni değiştirildi: üç rol de AYNI HEAD'i
   denetliyor (aralarında düzeltme yok, böylece bulgular zincirlenmiyor) ve her bulgu

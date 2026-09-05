@@ -48,8 +48,6 @@ export interface MeterTapReading {
   peakR: number;
   rmsL: number;
   rmsR: number;
-  /** Window length actually read — the meter reports what it measured. */
-  windowSamples: number;
 }
 
 export class AudioGraph {
@@ -182,7 +180,7 @@ export class AudioGraph {
     right.getFloatTimeDomainData(bufR);
     const l = measureWindow(bufL);
     const r = measureWindow(bufR);
-    return { peakL: l.peak, peakR: r.peak, rmsL: l.rms, rmsR: r.rms, windowSamples: bufL.length };
+    return { peakL: l.peak, peakR: r.peak, rmsL: l.rms, rmsR: r.rms };
   }
 
   /** Immediate gain (scrub/pause/mute). Cancels any scheduled envelope. */

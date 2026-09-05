@@ -78,7 +78,6 @@ export function toEntries(response: FontCatalogueResponse): FontManifestEntry[] 
 // localStorage cache (branch 2 of the failure policy)
 // ---------------------------------------------------------------------------
 
-
 export function readCachedCatalogue(): FontCatalogueResponse | null {
   const store = browserStorage();
   if (!store) return null;

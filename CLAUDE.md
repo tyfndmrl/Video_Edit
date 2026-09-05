@@ -1,5 +1,5 @@
 # VideoEdit
-Son güncelleme: 2026-09-03
+Son güncelleme: 2026-09-05
 
 ## Nedir
 
