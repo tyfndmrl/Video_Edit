@@ -1,5 +1,5 @@
 # WORKFLOWS — uçtan uca akışlar
-Son güncelleme: 2026-08-31. Skill'lerin hangi sırayla bağlandığı. Skill ayrıntıları: `docs/SKILLS.md`.
+Son güncelleme: 2026-09-05. Skill'lerin hangi sırayla bağlandığı. Skill ayrıntıları: `docs/SKILLS.md`.
 
 ## W1 — Borç/madde kapama (yerleşik ana akış)
 
@@ -15,17 +15,27 @@ Son güncelleme: 2026-08-31. Skill'lerin hangi sırayla bağlandığı. Skill ay
 - Çıktı: kapanmış madde + kanıt satırı.
 - Başarı kriteri: dört kapı yeşil + negatif kontrol kanıtı + PROGRESS güncel.
 
-## W2 — Denetim turu (baş mimar / baş geliştirici çifti)
+## W2 — Denetim turu (ÜÇ rol: baş mimar / baş mühendis / baş geliştirici)
 
 - Tetikleyici: Dilim ailesi bitti; kullanıcı denetim istedi; teslim öncesi.
 - Adımlar:
-  1. İki paralel rol — Geliştirici: tüm paketleri ve canlı ölçümleri KENDİ koşar (ortamın tek sahibi);
-     Mimar: kod/sözleşme/doküman okuması + gerçek ffmpeg ölçümleri (canlı servisleri YÖNETMEZ).
-  2. Triyaj: kritik/yüksek bulgular bağımsız YENİDEN ÜRETİLİR; üretilemeyen reddedilir.
-  3. Kabul edilenler W1 ile kapatılır; ertelenenler gerekçesiyle `docs/backlog.md`'ye.
+  1. ÜÇ mercek, SIRAYLA (paralel DEĞİL — ortamın tek sahibi kuralı):
+     **Baş mühendis** dört kapıyı + TAM Playwright'ı KENDİ koşar (ağır koşumların sahibi odur);
+     **baş mimar** sözleşme/belge ↔ kod okuması + hedefli koşumlar (canlı servisleri YÖNETMEZ);
+     **baş geliştirici** kod kalitesi, muhafız defterleri, sahte/mock SADAKATİ (mock gerçek
+     API'den saparsa muhafız yanlış şeyi kanıtlıyor demektir — ölçülmüş bulgu sınıfı).
+  2. **AYNI HEAD** (review-gate kural 9): roller aynı commit'i denetler, ARALARINDA DÜZELTME
+     YAPILMAZ. Sırayla düzeltmek bulguları zincirler ve tur kapanmaz.
+  3. Her bulgu **MADDİ / KANIT / KOZMETİK** diye sınıflanır ve rapor "sürüm engelleyici kusur
+     var mı?" sorusuna AÇIKÇA cevap verir (review-gate kural 8). RED yalnız MADDİ için.
+  4. Triyaj: MADDİ bulgular bağımsız YENİDEN ÜRETİLİR; üretilemeyen reddedilir.
+  5. Kabul edilenler W1 ile kapatılır; KANIT/KOZMETİK olanlar gerekçesiyle `docs/backlog.md`'ye.
 - Başarı kriteri: her bulgu "kendi koşumumla" kanıtlı; rapor kanıt sayılmaz (review-gate kural 2).
 - Bilinen tuzak: iki ajan aynı anda Playwright/servis yönetirse sahte kırmızılar doğar — canlı ortamın
-  TEK sahibi olur, diğeri backend-only kalır.
+  TEK sahibi olur, diğerleri hedefli/okuma kalır.
+- ÖLÇÜLMÜŞ DERS (panel turu, 8 commit): kural 8 yazılmadan önce altı ardışık tur RED verdi ve
+  HİÇBİRİ ürün kusuru değildi — her tur bir öncekinin yamasında daha dar bir delik buldu.
+  Sınıflandırma ölçütü olmadan denetim döngüsü kendiliğinden kapanmaz.
 
 ## W3 — Kapanış doğrulaması (tur sonu mühür)
 

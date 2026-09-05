@@ -889,11 +889,17 @@ Zaman çizelgesinin sağındaki ölçer (`features/player/AudioMeter.tsx`) maste
 PARALEL bir yaprak tap'ten okur; duyulan zincir (`master → destination`) değişmez.
 Bunun muhafızı `audioGraphTopology.test.ts`'tir ve artık bir DAVRANIŞ TESTİDİR: sahte bir
 AudioContext `connect`/`disconnect` çağrılarını kaydeder, `ensureContext()` + `attachElement()`
-GERÇEKTEN koşar ve iddialar oluşan graf üzerinde ERİŞİLEBİLİRLİK sorar — her klip kazancından
-`destination`'a yol VAR, `destination`'ın gelen kenarı TEK ve o düğüm kliplerin bağlandığı
-master, klip kazancından analyser'lara yol VAR (ölçer duyulan miksi ölçüyor), analyser'lardan
-`destination`'a yol YOK, tap explicit stereo, okuma float veriyle, `dispose` sonrası bağlı
-düğüm kalmıyor.
+GERÇEKTEN koşar; iddialar çoğunlukla ERİŞİLEBİLİRLİK, bir kısmı da kenar SIRASI ve düğüm
+ÖZELLİĞİ sorar (bugün 10 iddia): her klip kazancından `destination`'a yol VAR · `destination`'ın
+gelen kenarı TEK ve o düğüm kliplerin bağlandığı master · klip kazancından analyser'lara yol VAR
+(ölçer duyulan miksi ölçüyor) · analyser'lardan `destination`'a yol YOK · splitter KANALLARI
+ayırır (sol analyser çıkış 0, sağ analyser çıkış 1) · okunan `peakL`/`peakR` o çıkışlara BU
+SIRAYLA karşılık gelir (kablolama doğruyken RAPORLAMA ters olabilir — takas 9/9 yeşil geçiyordu,
+mono fikstürlü e2e yapı gereği ayırt edemez) · duyulan yol tap'ten ÖNCE kurulur (§8.3 (a),
+kenar sırası) · tap explicit stereo · okuma float veriyle · `dispose` sonrası bağlı düğüm yok.
+Sahte, gerçek Web Audio'nun REDDETTİKLERİNİ de reddeder (çıkış indeksi > çıkış sayısı,
+2'nin kuvveti olmayan `fftSize`, [0,1] dışı `smoothingTimeConstant`) — sahte gerçekten saparsa
+muhafız yanlış şeyi kanıtlar, bu üç kural denetimde ölçülerek eklendi.
 
 **KANITLADIĞI:** `AudioGraph`'ın KURDUĞU grafta duyulan yol sağlam ve tap yaprak — YAZILIŞTAN
 BAĞIMSIZ olarak.

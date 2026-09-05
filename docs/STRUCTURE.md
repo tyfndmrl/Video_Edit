@@ -32,9 +32,12 @@ apps/editor/
                              YAZILMAZ — DECISIONS)
   …/timeline/TimelineResizeHandle.tsx Sürükle-boyutlandır tutamağı (`role="separator"`,
                              pointer-capture + üçlü çıkış, rAF birleştirme, ok/Home/End)
-  src/docsFreshness.test.ts  Damga muhafızı: `STATE.md`'nin "Son güncelleme" tarihi
-                             CHANGELOG'un en yeni gününden eski olamaz (CLAUDE.md P3'ün
-                             mekanik yarısı; aynı kusur üç kez tekrarladı)
+  src/docsFreshness.test.ts  Damga muhafızı (CLAUDE.md P3'ün mekanik yarısı): `STATE.md`
+                             damgası ≥ CHANGELOG'un en yeni günü · `SKILLS.md` ve
+                             `DECISIONS.md` damgaları ≥ KENDİ içlerindeki en yeni tarih ·
+                             damga biçimi ayrıştırılabilir. KAPSAM DIŞI (adıyla, dosya
+                             başlığında): `CLAUDE.md`, `STRUCTURE.md`, `WORKFLOWS.md`.
+                             Bayat damga sınıfı ALTI kez tekrarladı
   src/lib/browserStorage.ts  Tek localStorage sarmalayıcısı (private-mode/quota redlerini
                              yutar; fontCatalogue + timelineHeight AYNI yerden alır)
   src/state/                 docStore (patch-undo) · editorStore · assetStore · timelineOps

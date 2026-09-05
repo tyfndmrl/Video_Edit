@@ -1,4 +1,5 @@
 # Baş Mimar Denetim Kapısı (bağlayıcı)
+Son güncelleme: 2026-09-05.
 
 Hiçbir iş dilimi (milestone parçası, alt sistem, düzeltme turu) bu kapıdan geçmeden
 "tamam" sayılmaz ve kullanıcıya teslim edilmez.
@@ -43,6 +44,31 @@ kanıtı sorgulamadı. Aşağıdaki kurallar o hatanın tekrarını engeller.
 7. **Teslim kararı ONAY/RED.** Nihai değerlendirmede baş mimar açık karar verir. RED ise
    her blocker için somut çözüm tarifi yazılır; blocker'lar kapatılıp değerlendirme
    TEKRARLANIR (tek turda onaya çevrilmez).
+
+8. **ÜÇ ROL ve BULGU SINIFLARI** (2026-09-05, panel turunun 8 commit'lik denetim
+   döngüsünden çıkan kural). Denetim ÜÇ merceklidir: **baş mimar** (sözleşmeler, belge ↔
+   kod), **baş mühendis** (dört kapı + tam suite + perf + kararlılık), **baş geliştirici**
+   (kod kalitesi, muhafız defterleri, sahte/mock sadakati). Her rol her bulguyu şu üç
+   sınıftan birine koyar ve sınıfı GEREKÇELENDİRİR:
+   - **MADDİ** — ürünün DAVRANIŞINI ya da kullanıcıya GÖSTERİLEN bir iddiayı yanlış yapar.
+   - **KANIT** — davranış doğru ama bir ispat, iddia ettiğinden zayıf.
+   - **KOZMETİK** — okunabilirlik/tutarlılık/borç.
+   Rapor AÇIKÇA şuna cevap verir: *"Bu HEAD'i sürüm engelleyici bir kusur taşıyor mu?"*
+   **RED yalnız MADDİ bulgu için verilir**; KANIT/KOZMETİK bulgular ONAY'ı ENGELLEMEZ,
+   `docs/backlog.md`'ye yazılır. Bu ölçüt DÖNGÜNÜN KAPANMA ŞARTIDIR: onsuz her tur bir
+   öncekinin yamasında daha dar bir delik bulur ve kapanış gelmez (ölçüldü: kural 8'den
+   önce altı ardışık tur, hepsi RED, hiçbiri ürün kusuru değil).
+
+9. **AYNI HEAD kuralı.** Kapanış turunda roller AYNI commit'i denetler ve ARALARINDA
+   DÜZELTME YAPILMAZ. Sırayla düzeltmek, her denetçiye bir öncekinin taze yamasını
+   inceletir ve bulguları zincirler; ölçülen sonuç ping-pong'dur.
+
+10. **Bir muhafızı kırmak onu DOĞRULAMAZ** — yalnız kırdığın YOLU doğrular. Aynı ihlali
+    en az iki farklı yoldan dene. Kaynak taraması yalnız SAYDIĞI YAZILIŞI savunur; bir
+    grafı/durumu doğrulamak için onu KURMAK gerekir. (Ölçüldü: ses tap'i muhafızının beş
+    kaynak-tarayan sürümü ardışık beş turda kör çıktı — sonuncusu önizleme tamamen
+    susarken tüm paketi yeşil bırakıyordu. Davranış testine geçildi; sonra onun SAHTESİ
+    gerçek Web Audio'dan üç noktada sapıyor çıktı.)
 
 ## Denetimden geçmiş dilimler
 

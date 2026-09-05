@@ -2,6 +2,41 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-05
+- panel-denetim-9 — **baş mimar ONAY verdi** (0 MADDİ · 3 KANIT · 5 KOZMETİK); bulgular kapatıldı
+  ve turun PROSEDÜR dersi bağlayıcı belgelere yazıldı.
+  **KANIT-1 — muhafız splitter kablolamasını çiviliyordu ama RAPORLAMAYI değil.** `analyserL`/
+  `analyserR` atamalarını ya da `readMeter()`'ın dönüşünü takas etmek, sol/sağ kanalı KALICI
+  olarak yer değiştiriyor ve her kapıdan geçiyordu — kendi ölçümüm: iki takas da **10/10 yeşil**
+  (denetçinin koşumunda birim 393 + gerçek girdili `meter.spec` 3/3 de yeşildi). e2e'nin
+  kapatması YAPI GEREĞİ imkânsız: fikstür MONO (`ffprobe` → `channels=1`), L ve R özdeş.
+  Sahtenin analyser'ları artık düğüme özgü bir sinyal "duyuyor"; yeni iddia okunan `peakL`/`peakR`'nin
+  splitter'ın 0 ve 1 numaralı çıkışlarına BU SIRAYLA karşılık geldiğini çiviliyor. NC ×2 kırmızı
+  (`expected 0.75 to be close to 0.25`). Böylece `panel-denetim-8`'in "`data-meter-db-r` yalan
+  söylerdi" gerekçesinin AÇIK KALAN yarısı da kapandı.
+  **KANIT-2 — sahte, gerçek Chromium'un reddettiği analyser ayarlarını kabul ediyordu.** Denetçi
+  gerçek tarayıcıda ölçtü: `fftSize = 1500` → `IndexSizeError: … not a power of two`,
+  `smoothingTimeConstant = 2` → `… outside the range [0, 1]`. Sahtede ikisi de yeşil geçiyordu,
+  oysa tarayıcıda `buildMeterTap` fırlatır ve **önizleme hiç başlamaz**. Sahteye setter
+  doğrulaması eklendi; NC: `METER_FFT_SIZE = 1500` → gerçek mesajla birebir kırmızı.
+  **KANIT-3 — sahtenin `destination`'ı 1 çıkışlıydı; gerçekte 0.** `DECISIONS` reddedilen
+  alternatif olarak "`destination`'ı taplamak (imkânsız — çıkışı yok)" diyor; sahte tam onu yasal
+  modelliyordu. `numberOfOutputs = 0` yapıldı. (Denetçi dürüstçe not etti: sömürülebilir bir
+  delik DEĞİLDİ, tutarsızlıktı.)
+  **KOZMETİK-1 (turun asıl dersi) — protokol belgeleri yürürlükteki düzeni ANLATMIYORDU.**
+  `WORKFLOWS.md` W2 hâlâ "baş mimar / baş geliştirici ÇİFTİ" ve "İki paralel rol" diyordu;
+  `review-gate.md` (BAĞLAYICI) MADDİ/KANIT/KOZMETİK ölçütünü hiç bilmiyordu ve damgası yoktu;
+  `CLAUDE.md` yetenek haritası iki rol sayıyordu. Üçü de düzeltildi ve `review-gate`'e ÜÇ YENİ
+  BAĞLAYICI KURAL eklendi: **8** (üç rol + bulgu sınıfları + "RED yalnız MADDİ için" — döngünün
+  kapanma şartı), **9** (AYNI HEAD: roller arasında düzeltme yapılmaz, yoksa bulgular zincirlenir),
+  **10** (bir muhafızı kırmak onu doğrulamaz; kaynak taraması yalnız saydığı yazılışı savunur —
+  grafı doğrulamak için grafı KURMAK gerekir). Ölçülmüş gerekçe kurala iliştirildi: kural 8'den
+  önce ALTI ardışık tur RED verdi ve hiçbiri ürün kusuru değildi.
+  **KOZMETİK 2-5:** `poc §2.9` + `DECISIONS` iddia listesi 7 → 10'a çekildi; `STRUCTURE`
+  `docsFreshness`'i üç iddiasıyla ve kapsam dışı listesiyle anlatıyor; `§8.3`'ün "erişilebilirlikle
+  sınanır" ifadesi mekanizmayı yanlış adlandırıyordu ((a) kenar SIRASI, (d) düğüm ÖZELLİĞİ);
+  iki test başlığı kanıtladığından fazlasını söylüyordu ("önizleme duyulur" — `master.gain=0`
+  ile iddia yeşil kalıyor; "tap yapraktır" — o mutasyonu başka iddia yakalıyor) → başlıklar
+  daraltıldı ve gerekçe yorumda.
 - panel-denetim-8 — **baş geliştirici ONAY verdi** (0 MADDİ · 3 KANIT · 4 KOZMETİK); bulgular
   yine de kapatıldı, çünkü hepsi ölçer muhafızının KENDİ kanıt zincirindeydi.
   **KANIT-1 + KANIT-2 — sahte AudioContext, gerçek Web Audio'dan SAPIYORDU.** Denetçi bunu

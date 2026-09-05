@@ -35,7 +35,8 @@ KAPANDI, `yarim-is-2 #5`.) Ayrıntı: `docs/poc-bilinen-sinirlar.md`.
 - Ortamı sıfırdan kaldırıp dört test paketini koşmak (`docs/SKILLS.md` → ortam-kaldirma, test-paketleri)
 - Yeni bir borç/özellik maddesini yerleşik protokole uygun kapatmak (`docs/WORKFLOWS.md` → borç kapama)
 - Canlı ikilinin tazeliğini kanıtlamak, negatif kontrol koşmak, perf ölçmek (SKILLS.md ilgili girdiler)
-- Denetim (baş mimar / baş geliştirici) turu düzenlemek (`docs/WORKFLOWS.md` → denetim turu)
+- ÜÇ rollü denetim turu düzenlemek — baş mimar + baş mühendis + baş geliştirici, aynı HEAD'de,
+  MADDİ/KANIT/KOZMETİK ölçütüyle (`docs/WORKFLOWS.md` → W2; `docs/review-gate.md` kural 8-10)
 - Demo verisi kurup uçtan uca akışı gerçek fare/klavye ile doğrulamak
 - e2e hesap birikimini güvenli silmek (`docs/SKILLS.md` → e2e-hesap-temizligi; demo korumalı)
 

@@ -61,10 +61,36 @@ class FakeNode {
   channelCount = 2;
   channelCountMode = 'max';
   channelInterpretation = 'speakers';
-  fftSize = 2048;
-  smoothingTimeConstant = 1;
   floatReads = 0;
   byteReads = 0;
+  /** Bu analyser'ın "duyduğu" sabit örnek — L/R eşlemesini izlenebilir yapar. */
+  signal = 0;
+  #fftSize = 2048;
+  #smoothing = 1;
+
+  /** Gerçek API 2'nin kuvveti olmayan değeri REDDEDER (IndexSizeError). */
+  set fftSize(v: number) {
+    if (v < 32 || v > 32768 || (v & (v - 1)) !== 0) {
+      throw new Error(`IndexSizeError: The value provided (${v}) is not a power of two.`);
+    }
+    this.#fftSize = v;
+  }
+
+  get fftSize(): number {
+    return this.#fftSize;
+  }
+
+  /** Gerçek API [0,1] dışını REDDEDER. */
+  set smoothingTimeConstant(v: number) {
+    if (v < 0 || v > 1) {
+      throw new Error(`IndexSizeError: The value provided (${v}) is outside the range [0, 1].`);
+    }
+    this.#smoothing = v;
+  }
+
+  get smoothingTimeConstant(): number {
+    return this.#smoothing;
+  }
   readonly gain = {
     value: 1,
     cancelScheduledValues(): void {},
@@ -108,8 +134,9 @@ class FakeNode {
     return this.edges.find((e) => e.dst === dst)?.output ?? -1;
   }
 
-  getFloatTimeDomainData(): void {
+  getFloatTimeDomainData(buf: Float32Array): void {
     this.floatReads++;
+    buf.fill(this.signal);
   }
 
   getByteTimeDomainData(): void {
@@ -118,7 +145,8 @@ class FakeNode {
 }
 
 class FakeContext {
-  readonly destination = new FakeNode('destination');
+  // Gerçek `destination`'ın ÇIKIŞI YOKTUR (DECISIONS: "taplamak imkânsız").
+  readonly destination = new FakeNode('destination', 0);
   readonly created: FakeNode[] = [this.destination];
   state: 'running' | 'suspended' | 'closed' = 'running';
   currentTime = 0;
@@ -219,7 +247,10 @@ async function buildGraph(): Promise<{
 }
 
 describe('meter tap yerleşimi — KURULAN graf (§8.3)', () => {
-  it('her klip kazancından `destination`’a bir yol VARDIR (önizleme duyulur)', async () => {
+  it('her klip kazancından `destination`’a bir yol VARDIR', async () => {
+    // BAŞLIK KASITLI OLARAK "önizleme duyulur" DEMİYOR: erişilebilirlik ≠
+    // duyulabilirlik. `master.gain.value = 0` (tam sessizlik) bu iddiayı yeşil
+    // bırakır — denetimde ölçüldü. Kanıtlanan şey yolun VAR olmasıdır.
     const { c, clipGains } = await buildGraph();
     expect(clipGains).toHaveLength(2);
     for (const [i, g] of clipGains.entries()) {
@@ -259,7 +290,10 @@ describe('meter tap yerleşimi — KURULAN graf (§8.3)', () => {
     }
   });
 
-  it('analyser’lardan `destination`’a yol YOKTUR (tap yapraktır)', async () => {
+  it('analyser’lardan `destination`’a yol YOKTUR', async () => {
+    // "Tap yapraktır" DEMİYOR: bu iddia analyser'ların yaprak olduğunu söyler.
+    // Tap'in duyulan zincire girdi tarafından sokulmasını yukarıdaki master
+    // iddiası yakalar (denetimde ölçüldü: o mutasyonda BU iddia yeşil kalıyor).
     const { c, analysers } = await buildGraph();
     for (const a of analysers) {
       expect(
@@ -280,6 +314,35 @@ describe('meter tap yerleşimi — KURULAN graf (§8.3)', () => {
     expect(splitter.numberOfOutputs, 'splitter STEREO kurulmalı').toBe(2);
     const outputs = analysers.map((a) => splitter.outputTo(a));
     expect(outputs, 'sol analyser çıkış 0, sağ analyser çıkış 1 olmalı').toEqual([0, 1]);
+  });
+
+  it('okunan L/R, splitter’ın 0 ve 1 numaralı çıkışlarına BU SIRAYLA karşılık gelir', async () => {
+    // Kablolama doğru olsa bile RAPORLAMA ters olabilir: `analyserL`/`analyserR`
+    // atamalarını ya da `readMeter()`'ın dönüşünü takas etmek, kanalları kalıcı
+    // olarak yer değiştirir. Denetimde ölçüldü: her iki takas da 9/9 yeşil
+    // geçiyordu ve MONO fikstürlü e2e bunu YAPI GEREĞİ ayırt edemez (L ve R
+    // özdeş). Bu yüzden her analyser'a kendi sinyali veriliyor ve okunan
+    // değerin hangi çıkıştan geldiği izleniyor.
+    const { graph, c, analysers } = await buildGraph();
+    const splitter = inEdges(c, analysers[0])[0];
+    const fromOutput = (output: number): FakeNode => {
+      const node = analysers.find((a) => splitter.outputTo(a) === output);
+      expect(node, `splitter çıkış ${output} bir analyser'a bağlı değil`).toBeDefined();
+      return node as FakeNode;
+    };
+    fromOutput(0).signal = 0.25;
+    fromOutput(1).signal = 0.75;
+
+    const reading = graph.readMeter();
+    expect(reading, 'readMeter null dönmemeli').not.toBeNull();
+    expect(
+      reading?.peakL,
+      'peakL, splitter’ın 0 numaralı (SOL) çıkışından beslenmeli — kanallar takas edilmiş.',
+    ).toBeCloseTo(0.25, 6);
+    expect(
+      reading?.peakR,
+      'peakR, splitter’ın 1 numaralı (SAĞ) çıkışından beslenmeli — kanallar takas edilmiş.',
+    ).toBeCloseTo(0.75, 6);
   });
 
   it('duyulan yol tap’ten ÖNCE kurulur (§8.3 (a) — inşa SIRASI)', async () => {
