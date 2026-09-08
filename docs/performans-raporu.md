@@ -162,10 +162,30 @@ oranı ≤ %1) karşılandı, ek iyileştirme (M1) GEREKMEDİ. Maliyeti düşük
 zaten var: pointermove'ların rAF ile birleştirilmesi (kare başına ≤1 store yazımı),
 panellerin children-as-props ile yeniden render dışında kalması, ve `measure()`'ın
 DEĞİŞMEYEN canvas boyutunu yeniden atamaması (atamak backing store'u sıfırlar).
-Bu ölçüm başlı Edge'de yapıldı. Headless o gün kapsam dışı bırakılmıştı (rAF ~12 Hz'e
-kısılıyor gerekçesiyle); GEREKÇE 2026-09-04'te ÇÜRÜDÜ — headless bugün 60,0 Hz ölçüldü
-(§1 tarayıcı notu güncellemesi). Ölçümün headless'te yeniden koşulması açık iştir;
-yeniden koşulmadığı için buradaki sayılar YALNIZCA başlı Edge rejimini temsil eder.
+Yukarıdaki tablo başlı Edge'de (165 Hz) alındı. Headless o gün kapsam dışı bırakılmıştı
+(rAF ~12 Hz'e kısılıyor gerekçesiyle); GEREKÇE 2026-09-04'te ÇÜRÜDÜ — headless 60,0 Hz
+ölçüldü (§1 tarayıcı notu).
+
+**HEADLESS A/B (2026-09-08, açık iş KAPANDI).** Bölümün SABİT BÜTÇESİ headless'te
+sınanamaz — 60 Hz vsync'te idle p95 zaten 16,67 ms, yani "p95 ≤ 16,7 ms" maliyet ölçümü
+değil ikili bir "kare düştü mü" testine döner (bunu baş mühendis panel kapanış turunda
+ölçtü). Bu yüzden yeniden koşum §3.2 bütçesiyle değil, §13 YÖNTEMİYLE — bölümün ASIL
+iddiasını sınayan idle ↔ sürükleme A/B'siyle — yapıldı. Geçici prob spec'i, gerçek CDP
+fare girdisi (`dragHandleBy`: pointer-down + 16 kademe + up), üç tekrar, her tekrarda DOM
+etkisi doğrulandı (wrap yüksekliği +100 px'ten fazla arttı); prob ölçümden sonra SİLİNDİ.
+
+| Faz | n (kare) | p50 ms | p95 ms | max ms | >33,3 ms |
+|---|---|---|---|---|---|
+| idle (taban) | 301 | 16,665 | 16,670 | 16,670 | 0 |
+| resize — tekrar 1 | 98 | 16,665 | 16,670 | 16,670 | 0 |
+| resize — tekrar 2 | 93 | 16,665 | 16,670 | 16,670 | 0 |
+| resize — tekrar 3 | 91 | 16,665 | 16,670 | 16,670 | 0 |
+
+**Sonuç: iddia İKİNCİ ve BAĞIMSIZ bir rejimde de tuttu** — sürükleme fazı idle'dan
+ayrışmıyor (dört fazın p50/p95/max'ı BİREBİR aynı), 583 karenin hiçbiri 33,3 ms'i aşmadı.
+DÜRÜSTLÜK: headless bu iddianın DAHA ZAYIF sınayıcısıdır — 60 Hz'de kare bütçesi 16,67 ms,
+165 Hz'deki 6,1 ms'nin 2,7 katı pay demek. Yani başlı Edge ölçümü hâlâ GÜÇLÜ olanıdır;
+headless koşumu onu doğrular, yerine geçmez.
 
 ---
 

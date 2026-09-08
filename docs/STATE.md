@@ -1,5 +1,5 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-05, `panel-denetim-10` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
+Son güncelleme: 2026-09-08, `perf-3.6-headless` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
 kapanış denetimi KAPANDI — ÜÇ ROL DE ONAY VERDİ, üçünde de 0 MADDİ bulgu** (baş geliştirici,
 baş mimar, baş mühendis; sekiz RED turundan sonra). Dilim 3: zaman çizelgesinin sağında master stereo L/R ölçer (dBFS
 skalası, tepe tutucu, klip mandalı); ölçüm master'a PARALEL yaprak tap'ten okunur, `master →
@@ -172,7 +172,8 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
-1. `git push` — **kullanıcı onayı bekliyor** (origin 39+ commit geride). Teknik ön koşulu olan
+1. `git push` — **kullanıcı onayı bekliyor** (origin **70** commit geride — sayı 2026-09-08'de
+   `git rev-list --count` ile ölçüldü; defterde 39 yazıyordu, bayattı). Teknik ön koşulu olan
    ci.yml redis boşluğu 2026-09-05'te KAPATILDI; geriye yalnız kullanıcı kararı kaldı.
 2. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
 3. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
@@ -244,11 +245,12 @@ session onları bulamaz/güvenemez, `ortam-kaldirma` ile kendi yayınını yapma
 **Bir sonraki session'ın İLK İŞİ:** panel turu KAPANDI (üç rol de ONAY, 0 MADDİ) — sıradaki iş
 kullanıcının seçtiği listedir: ~~(1) ci.yml redis boşluğu~~ **KAPANDI (`ci-redis`)** →
 sıradaki: (2) defter/doküman senkronu; (3) silme senkronu + retention; (4) export perf 2. tur.
-PANEL TURUNDAN KALAN TEK AÇIK TEKNİK MADDE: `performans-raporu §3.6` sürükleme ölçümünün
-headless'te yeniden koşulması. Baş mühendis kapanış turunda ölçtü ki o bölümün
-"p95 ≤ 16,7 ms" bütçesi headless'te (idle p95 = 16,670 ms, pay 0,030 ms) maliyet ölçümü
-değil ikili bir "kare düştü mü" testine dönüşür — dürüst formu §13'teki gibi idle↔sürükleme
-A/B'sidir; öylece yeniden yazılmadan koşmanın anlamı yok.
+PANEL TURUNUN AÇIK TEKNİK MADDESİ KALMADI: `performans-raporu §3.6`'nın headless yeniden
+koşumu 2026-09-08'de KAPANDI. Sabit bütçe yerine §13 yöntemiyle (idle ↔ sürükleme A/B,
+gerçek CDP fare girdisi, 3 tekrar, DOM etkisi doğrulanmış) ölçüldü: dört fazın p50/p95/max'ı
+BİREBİR aynı (16,665 / 16,670 / 16,670), 583 karede >33,3 ms YOK. İddia ikinci ve bağımsız
+bir rejimde de tuttu. Dürüstlük: headless DAHA ZAYIF sınayıcıdır (60 Hz'de bütçe 16,67 ms =
+165 Hz'deki 6,1 ms'nin 2,7 katı pay), başlı Edge ölçümü güçlü olanı olarak kalır.
 DÜRÜST KAYIT: kapanış turunda **review-gate kural 9 (AYNI HEAD) ihlal edildi** — üç rol üç
 farklı commit'i denetledi. Bir sonraki denetimde kurala HARFİYEN uyulmalı.
 `git push` HÂLÂ KULLANICI ONAYI BEKLİYOR (origin 38+ commit geride).

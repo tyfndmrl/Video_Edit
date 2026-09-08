@@ -1,6 +1,24 @@
 # CHANGELOG — ters kronolojik
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
+## 2026-09-08
+- perf-3.6-headless — **panel turunun son açık teknik maddesi KAPANDI.** `performans-raporu §3.6`
+  (timeline dikey boyutlandırma, sürükleme fazı) başlı Edge/165 Hz'de ölçülmüştü; headless'i
+  dışlayan gerekçe 2026-09-04'te çürümüş ama ölçüm tekrarlanmamıştı. Yeniden koşum **sabit
+  bütçeyle DEĞİL** yapıldı: baş mühendisin ölçtüğü gibi "p95 ≤ 16,7 ms" headless'te (60 Hz vsync,
+  idle p95 zaten 16,670 ms) maliyet ölçümü değil ikili bir "kare düştü mü" testine döner. Onun
+  yerine §13 YÖNTEMİ — bölümün ASIL iddiasını ("sürükleme fazı boştan ayrışmıyor") sınayan
+  idle ↔ sürükleme A/B'si. Geçici prob spec'i, GERÇEK CDP fare girdisi (`dragHandleBy`:
+  pointer-down + 16 kademe + up), üç tekrar, her tekrarda DOM etkisi doğrulandı (wrap yüksekliği
+  +100 px'ten fazla arttı); prob ölçümden sonra SİLİNDİ (spec sayısı 51'de kaldı).
+  SONUÇ: idle p50/p95/max **16,665 / 16,670 / 16,670** ms (n=301) ↔ resize tekrarları
+  **birebir aynı** (n=98/93/91), 583 karede >33,3 ms **YOK**. İddia ikinci ve BAĞIMSIZ bir
+  rejimde de tuttu. DÜRÜSTLÜK kayda geçti: headless bu iddianın DAHA ZAYIF sınayıcısıdır
+  (60 Hz'de bütçe 16,67 ms = 165 Hz'deki 6,1 ms'nin 2,7 katı pay); başlı Edge ölçümü güçlü
+  olanı olarak KALIR, headless onu doğrular ama yerine geçmez.
+  Ayrıca defter tazeliği: `STATE`'in "origin 39+ commit geride" kaydı `git rev-list --count`
+  ile ölçülüp **70**'e çekildi (bayattı).
+
 ## 2026-09-05
 - ci-redis — **CI'ın e2e job'undaki redis boşluğu KAPANDI** (kullanıcının sıradaki iş listesinin
   1. maddesi; `git push`'un tek teknik ön koşuluydu). Kayıt "ilk koşumda bu job kırmızı DÜŞEBİLİR"
