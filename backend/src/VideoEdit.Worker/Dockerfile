@@ -1,6 +1,14 @@
 # VideoEdit.Worker — multi-stage build (Hangfire server + ffmpeg)
 # Build context: ./backend (compose.yml'de tanimli)
 
+# ---------- ffmpeg (SURUM SABITLI) ----------
+# Statik ffmpeg 8.0, DIGEST ile sabitli (etiket yeniden isaretlenemez).
+# Neden: golden kareler, raster golden'lar ve ses paritesi tablosu TEK bir surume
+# kalibre. 2026-09-09'a kadar burada `apt-get install ffmpeg` vardi ve OLCULDU:
+# dotnet/runtime:10.0 imajinda apt **ffmpeg 6.1.1** veriyor — yani test edilen (8.0)
+# ile URETILEN (6.1.1) iki major surum ayriydi.
+FROM mwader/static-ffmpeg@sha256:415a41fa3167b890b9703d20bd0f00bf1e9dab8a4b6c27fef1445b2bf5f1ab4a AS ffmpeg
+
 # ---------- build ----------
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
@@ -29,11 +37,11 @@ FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
 # KARAR: audiowaveform paketi Debian depolarinda YOK (imaj build edilemiyordu) — bagimlilik
 # tamamen kaldirildi. Waveform peaks.json M1'de .NET icinde uretilecek:
 # ffmpeg ile PCM decode -> C# tarafinda downsample (bkz. docs/design/02 §3.5 alternatifi).
-# NOT: apt surumu distro'ya baglidir — ileride surum sabitlemek icin statik ffmpeg binary'si
-# (johnvansickle/BtbN build'leri) COPY ile imaja gomulmeli. MVP icin apt yeterli.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+# SURUM SABITLENDI (2026-09-09, kullanici karari): apt yerine yukaridaki digest'li
+# statik 8.0 imajindan KOPYALANIYOR. Eski notun "MVP icin apt yeterli" varsayimi
+# olcumle curudu (apt = 6.1.1, korpus = 8.0).
+COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /ffprobe /usr/local/bin/ffprobe
 
 WORKDIR /app
 COPY --from=build /app/publish .

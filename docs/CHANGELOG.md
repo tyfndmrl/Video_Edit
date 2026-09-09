@@ -2,6 +2,31 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-09
+- **ffmpeg-8-pin** — **ffmpeg sürümü CI'da VE PROD'DA 8.0'a sabitlendi** (kullanıcı kararı).
+  Asıl kusur "eski sürüm" değildi: **test edilen sürümle ÜRETİLEN sürüm farklıydı.** Ölçüm:
+  yerel (golden'ların kalibre edildiği yer) **8.0**, CI `apt` **6.1.1**, ve — bu turda fark
+  edildi — **prod Worker imajı da `apt` ile 6.1.1** (`docker run mcr.microsoft.com/dotnet/
+  runtime:10.0` içinde ölçüldü). İki major sürüm ayrıydı. Worker Dockerfile'ının kendi notu
+  bunu zaten öngörmüştü ("ileride sürüm sabitlemek için statik ffmpeg binary'si COPY ile
+  gömülmeli. MVP icin apt yeterli") — o varsayım ölçümle çürüdü.
+  **Kaynak seçimi ölçülerek yapıldı, tahminle değil:** `johnvansickle old-releases/8.0` → 404;
+  `johnvansickle releases/` → HAREKETLİ ve bugün **7.0.2**; `BtbN` `latest` → yalnız master
+  derlemesi (`N-126482`), 8.0 varlığı yok. Kalan sağlam kaynak
+  `mwader/static-ffmpeg` ve orada **8.0 etiketi VAR** — DIGEST ile sabitlendi
+  (`sha256:415a41fa…ab4a`), böylece etiket yeniden işaretlenemez.
+  **Uygulama:** (a) Worker Dockerfile'ında `apt-get install ffmpeg` yerine digest'li imajdan
+  `COPY --from=ffmpeg /ffmpeg /ffprobe`; (b) CI'ın `dotnet` ve `e2e` job'larında apt yerine
+  aynı digest'ten `docker cp` + `$GITHUB_PATH`. Her iki CI adımı ALDIĞI sürümü ayrıca
+  DOĞRULAR (`grep -qE "version 8\.0"`) ve tutmazsa `::error::` ile düşer — yanlış sürüm
+  sessizce geçemez.
+  **KANIT:** Worker imajı gerçekten derlendi ve içinde ölçüldü → `ffmpeg version 8.0` +
+  `ffprobe version 8.0` (öncesi: 6.1.1).
+  **DÜRÜSTLÜK — bu, CI'daki TÜM kırmızıları çözmeyebilir:** yereldeki 8.0 bir *gyan.dev
+  Windows* derlemesi, sabitlenen ise *statik Alpine* derlemesi — aynı sürüm, farklı
+  `configure` bayrakları ve muhtemelen farklı x264. Golden'lar Windows derlemesine kalibre
+  olduğu için piksel toleransı hatalarının sürmesi MÜMKÜN. Çözülmesi beklenen: `scale`
+  ifadesi farkı (`dsth out of range`) — o bir SÜRÜM davranışı. Sonucu CI söyleyecek;
+  tahmin edilmedi.
 - **push + `harfbuzz-linux`** — 71 commit `origin/main`'e gitti (kullanıcı kararı) ve İLK CI koşumu
   **GERÇEK BİR ÜRÜN KUSURU** ortaya çıkardı: `HarfBuzzSharp.NativeAssets.Linux` paketi hiç
   referanslı değildi.

@@ -23,7 +23,9 @@ Okuma sırası: önce **§1 kullanıcıyı ilk gün ısırabilecekler**, sonra �
     paragrafında çoktan 2026-08-20 / `a1b3a73` / 10.–11. tur sayılarını taşıyordu: başlık ile
     gövde birbirini yalanlıyordu. İç tutarsızlık 12. turda kapatıldı.*
 - Ölçüm makinesi: Intel Core i9-10850K (10 çekirdek / 20 iş parçacığı), 32 GB RAM, Windows 11
-- Yığın: .NET 10.0.302, Node v22.14.0, ffmpeg 8.0, PostgreSQL 17, Redis 7, MinIO (R2 yerine)
+- Yığın: .NET 10.0.302, Node v22.14.0, ffmpeg 8.0, PostgreSQL 17, Redis 7, MinIO (R2 yerine).
+  ffmpeg 2026-09-09'dan beri CI ve PROD imajında da DIGEST ile 8.0'a sabit (`mwader/static-ffmpeg`);
+  öncesinde ikisi de apt'ten 6.1.1 alıyordu — ölçümler 8.0'a kalibre olduğu hâlde.
 
 > **§1'de ÜÇ kapanmış madde var.** §1.1 (görsel/sticker önizlemesi), §1.2 (frame ızgarası) ve
 > §1.8 (müzik/ses dosyasıyla export) teslim düzeltme turlarında kapandı. Numaraları ve yerleri

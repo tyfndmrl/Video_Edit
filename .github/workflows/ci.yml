@@ -78,10 +78,30 @@ jobs:
 
       # [FfmpegFact]/[MinioAndFfmpegFact] testleri icin — yoksa Skip olurlar,
       # kuruluyken gercekten kosarlar.
-      - name: Install ffmpeg
+      # ffmpeg SURUM SABITLI (2026-09-09, kullanici karari). apt KULLANILMAZ:
+      # golden kareler / raster golden'lar / ses paritesi tablosu TEK bir surume
+      # (8.0) kalibre; apt ise dagitima bagli surum verir — OLCULDU: CI ve prod
+      # imajinda 6.1.1, yani test edilenle URETILEN iki major surum ayriydi.
+      # Kaynak DIGEST ile sabit (etiket yeniden isaretlenemez) ve adim ALDIGI
+      # surumu ayrica DOGRULAR: yanlis surum sessizce gecmez, yuksek sesle duser.
+      - name: ffmpeg 8.0 (digest ile sabit)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          set -euo pipefail
+          image="mwader/static-ffmpeg@sha256:415a41fa3167b890b9703d20bd0f00bf1e9dab8a4b6c27fef1445b2bf5f1ab4a"
+          mkdir -p "$HOME/ffbin"
+          docker create --name ffpin "$image" > /dev/null
+          docker cp ffpin:/ffmpeg "$HOME/ffbin/ffmpeg"
+          docker cp ffpin:/ffprobe "$HOME/ffbin/ffprobe"
+          docker rm ffpin > /dev/null
+          chmod +x "$HOME/ffbin/ffmpeg" "$HOME/ffbin/ffprobe"
+          echo "$HOME/ffbin" >> "$GITHUB_PATH"
+          for bin in ffmpeg ffprobe; do
+            "$HOME/ffbin/$bin" -version | head -n 1
+            if ! "$HOME/ffbin/$bin" -version | head -n 1 | grep -qE "version 8\.0([^0-9]|$)"; then
+              echo "::error::$bin 8.0 DEGIL — golden korpusu 8.0'a kalibre, kosum guvenilmez."
+              exit 1
+            fi
+          done
 
       # MinIO: [MinioFact]/[MinioAndFfmpegFact] testleri CI'da GERCEK kossun.
       # GitHub `services:` blogu imaj komutunu override EDEMEZ ve resmi
@@ -189,12 +209,30 @@ jobs:
       #      KOSUM SIRASINDA uretir (repo'da ikili dosya yok),
       #   2. VideoEdit.Worker — Program.cs'teki EnsureMediaToolAvailable boot
       #      kontrolu ffmpeg/ffprobe yoksa worker'i HIC ayaga kaldirmaz.
-      - name: Install ffmpeg
+      # ffmpeg SURUM SABITLI (2026-09-09, kullanici karari). apt KULLANILMAZ:
+      # golden kareler / raster golden'lar / ses paritesi tablosu TEK bir surume
+      # (8.0) kalibre; apt ise dagitima bagli surum verir — OLCULDU: CI ve prod
+      # imajinda 6.1.1, yani test edilenle URETILEN iki major surum ayriydi.
+      # Kaynak DIGEST ile sabit (etiket yeniden isaretlenemez) ve adim ALDIGI
+      # surumu ayrica DOGRULAR: yanlis surum sessizce gecmez, yuksek sesle duser.
+      - name: ffmpeg 8.0 (digest ile sabit)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
-          ffmpeg -version | head -n 1
-          ffprobe -version | head -n 1
+          set -euo pipefail
+          image="mwader/static-ffmpeg@sha256:415a41fa3167b890b9703d20bd0f00bf1e9dab8a4b6c27fef1445b2bf5f1ab4a"
+          mkdir -p "$HOME/ffbin"
+          docker create --name ffpin "$image" > /dev/null
+          docker cp ffpin:/ffmpeg "$HOME/ffbin/ffmpeg"
+          docker cp ffpin:/ffprobe "$HOME/ffbin/ffprobe"
+          docker rm ffpin > /dev/null
+          chmod +x "$HOME/ffbin/ffmpeg" "$HOME/ffbin/ffprobe"
+          echo "$HOME/ffbin" >> "$GITHUB_PATH"
+          for bin in ffmpeg ffprobe; do
+            "$HOME/ffbin/$bin" -version | head -n 1
+            if ! "$HOME/ffbin/$bin" -version | head -n 1 | grep -qE "version 8\.0([^0-9]|$)"; then
+              echo "::error::$bin 8.0 DEGIL — golden korpusu 8.0'a kalibre, kosum guvenilmez."
+              exit 1
+            fi
+          done
 
       - name: Install (node)
         run: pnpm install --frozen-lockfile

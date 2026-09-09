@@ -1,5 +1,5 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-09, `harfbuzz-linux` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
+Son güncelleme: 2026-09-09, `ffmpeg-8-pin` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
 kapanış denetimi KAPANDI — ÜÇ ROL DE ONAY VERDİ, üçünde de 0 MADDİ bulgu** (baş geliştirici,
 baş mimar, baş mühendis; sekiz RED turundan sonra). Dilim 3: zaman çizelgesinin sağında master stereo L/R ölçer (dBFS
 skalası, tepe tutucu, klip mandalı); ölçüm master'a PARALEL yaprak tap'ten okunur, `master →
@@ -197,15 +197,16 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   tespitleriydi). e2e birikimi için kalıcı mekanizma ELLE koşulan betiktir (otomatik değil —
   yeniden şişerse `SKILLS e2e-hesap-temizligi`).
 - Dev bağımlılığı: nanoid <3.3.18 high (yalnız vite zinciri, prod'a girmez).
-- **CI kırmızı: ffmpeg SÜRÜM farkı + piksel toleransı** (2026-09-09, ilk gerçek CI koşumunda
-  ölçüldü). 37 düşen testin HarfBuzz kaynaklı olanları `harfbuzz-linux` ile kapandı; geriye iki
-  sınıf kalıyor: (a) CI `apt-get install ffmpeg` ile gelen sürümü kullanıyor, korpus ise
-  **ffmpeg 8.0**'a kalibre (`GoldenFrameTests.ScaleBoxTruncated_MatchesRealFfmpeg` →
-  `Value 0.000000 for parameter 'dsth' out of range`, `Conversion failed!`); (b) farklı
-  swscale/x264 derlemesi piksel toleranslarını aşıyor (`(137,70,24)` ↔ beklenen
-  `(132,68,28)±4`; LUT `(22,66,134)` ↔ `(32,64,128)`). İKİSİ DE SÖZLEŞME KARARI İSTER — CI'da
-  ffmpeg 8.0 sabitlemek mi, toleransı platform-duyarlı yapmak mı? Kullanıcı onayı bekliyor;
-  onaysız DOKUNULMADI.
+- **CI kırmızı — kısmen kapatıldı, sonucu BEKLENİYOR** (2026-09-09). İlk gerçek CI koşumundaki
+  37 düşen testten HarfBuzz kaynaklı olanlar `harfbuzz-linux` ile, ffmpeg SÜRÜM farkı ise
+  `ffmpeg-8-pin` ile kapatıldı (CI'ın iki job'u + prod Worker imajı digest'li statik 8.0'a
+  sabitlendi; imaj derlenip içinde `ffmpeg version 8.0` ÖLÇÜLDÜ — öncesi 6.1.1).
+  AÇIK KALABİLİR: piksel toleransı sınıfı (`(137,70,24)` ↔ beklenen `(132,68,28)±4`;
+  LUT `(22,66,134)` ↔ `(32,64,128)`). Yereldeki 8.0 *gyan.dev Windows*, sabitlenen *statik
+  Alpine* derlemesi — aynı sürüm, farklı `configure`/x264. Golden'lar Windows derlemesine
+  kalibre olduğu için bu sınıfın sürmesi MÜMKÜN; sonucu bir sonraki CI koşumu söyleyecek.
+  Sürerse karar gerekir: golden'ları CI derlemesine yeniden kalibre etmek mi, toleransı
+  platform-duyarlı yapmak mı — İKİSİ DE kullanıcı onayı ister.
 - ~~ci.yml e2e job'u redis BAŞLATMIYOR~~ — **KAPANDI 2026-09-05** (`ci-redis`). Boşluk ÖLÇÜLDÜ:
   yerelde redis durdurulup `export-progress-hub.spec.ts` koşuldu → "Hub'dan 'running' mesajı
   gelmedi" ile KIRMIZI, yani CI koşsaydı e2e job'u düşerdi ("düşebilir" değil, DÜŞERDİ).
