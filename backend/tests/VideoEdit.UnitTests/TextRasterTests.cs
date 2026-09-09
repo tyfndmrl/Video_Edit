@@ -263,11 +263,19 @@ public sealed class TextRasterTests : IDisposable
         Assert.NotEqual(plain.Sha256, dotted.Sha256);
     }
 
-    [FontFact]
+    [CuratedFontFact]
     public async Task Emoji_WithoutAnEmojiFont_IsReportedAsMissingGlyph()
     {
         // Küratörlü sette emoji fontu YOKTUR (fonts/README.md): .notdef kutusu çizilir ama
         // SESSİZ KALINMAZ — sonuç işaretlenir, worker uyarı loglar.
+        //
+        // KAPI NEDEN [CuratedFontFact]: bu iddia bir DEĞİŞMEZ değil, KÜRATÖRLÜ SETİN
+        // özelliğidir ("bu sette emoji fontu yok"). Sistem fontuyla koşarsa font
+        // rastgeledir ve iddia anlamını yitirir. CI'da ÖLÇÜLDÜ: fontlar indirilmediği
+        // için test sistem fontuna (Ubuntu'da DejaVu Sans) düşüyordu ve DejaVu
+        // U+1F600 için glif TAŞIYOR (glyph 5857) — iddia haklı olarak kırmızıya döndü.
+        // Küratörlü Roboto'da aynı kod noktası glif 0 verir (Linux'ta ölçüldü), yani
+        // ÜRÜN doğruydu; kusur testin kapısındaydı.
         var result = await RenderAsync(OverlayTestDocs.Text("selam \U0001F600"), "emoji.png");
 
         Assert.True(result.HasMissingGlyphs);

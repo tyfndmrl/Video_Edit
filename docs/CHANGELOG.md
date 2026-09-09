@@ -2,6 +2,20 @@
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
 ## 2026-09-09
+- **emoji-test-gate** — CI'daki SON kırmızı kapandı; **ürün doğruydu, kusur testin KAPISINDAYDI.**
+  `TextRasterTests.Emoji_WithoutAnEmojiFont_IsReportedAsMissingGlyph` `[FontFact]` ile kapılıydı
+  (= "herhangi bir font varsa koş"), oysa iddiası bir DEĞİŞMEZ değil KÜRATÖRLÜ SETİN özelliği:
+  "bu sette emoji fontu yok". Zincir ölçümle çıkarıldı: CI `fetch-fonts` KOŞMUYOR → küratörlü
+  TTF'ler yok → altyapı sistem fontuna düşüyor (Ubuntu'da `DejaVuSans.ttf`) → **DejaVu Sans
+  U+1F600 için glif TAŞIYOR** (Linux konteynerde ölçüldü: `glyph=5857`, `ContainsAllGlyphs=True`)
+  → iddia HAKLI OLARAK kırmızıya döndü. Aynı probu küratörlü Roboto ile koştum: `glyph=0`,
+  `HasMissingGlyphs=True` — yani tespit mantığı ve `SKTypeface.GetGlyph` Linux'ta DOĞRU çalışıyor,
+  ürün kusurlu DEĞİL. Kapı `[CuratedFontFact]`'e çevrildi (projenin kendi tasarımı: piksel
+  golden'ları gibi küratörlü sete özgü iddialar o kapıdan geçer; sistem fontuyla koşanlar yalnız
+  DEĞİŞMEZLERİ doğrular). Yerel: 1626/1626, 0 skip.
+  **AÇIK KAPSAM BOŞLUĞU (kullanıcı kararı bekliyor):** CI küratörlü fontları HİÇ indirmiyor, yani
+  metin golden'ları ve küratörlü kapılı testler orada HİÇ koşmuyor — sessizce atlanıyorlar.
+  CI'a `fetch-fonts` adımı eklemek kapsamı genişletir; onaysız yapılmadı.
 - **ffmpeg-8-pin** — **ffmpeg sürümü CI'da VE PROD'DA 8.0'a sabitlendi** (kullanıcı kararı).
   Asıl kusur "eski sürüm" değildi: **test edilen sürümle ÜRETİLEN sürüm farklıydı.** Ölçüm:
   yerel (golden'ların kalibre edildiği yer) **8.0**, CI `apt` **6.1.1**, ve — bu turda fark

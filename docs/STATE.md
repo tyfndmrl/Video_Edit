@@ -1,5 +1,5 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-09, `ffmpeg-8-pin` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
+Son güncelleme: 2026-09-09, `emoji-test-gate` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
 kapanış denetimi KAPANDI — ÜÇ ROL DE ONAY VERDİ, üçünde de 0 MADDİ bulgu** (baş geliştirici,
 baş mimar, baş mühendis; sekiz RED turundan sonra). Dilim 3: zaman çizelgesinin sağında master stereo L/R ölçer (dBFS
 skalası, tepe tutucu, klip mandalı); ölçüm master'a PARALEL yaprak tap'ten okunur, `master →
@@ -197,6 +197,10 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   tespitleriydi). e2e birikimi için kalıcı mekanizma ELLE koşulan betiktir (otomatik değil —
   yeniden şişerse `SKILLS e2e-hesap-temizligi`).
 - Dev bağımlılığı: nanoid <3.3.18 high (yalnız vite zinciri, prod'a girmez).
+- **CI'da küratörlü FONTLAR indirilmiyor** (2026-09-09'da ölçüldü) → metin golden'ları ve
+  `[CuratedFontFact]` kapılı testler CI'da HİÇ koşmuyor, sessizce atlanıyor. Yani metin
+  render'ının Linux davranışı CI tarafından SINANMIYOR. Kapsam genişletmek için `fetch-fonts`
+  adımı eklenmeli — kullanıcı onayı bekliyor, onaysız yapılmadı.
 - **CI kırmızı — kısmen kapatıldı, sonucu BEKLENİYOR** (2026-09-09). İlk gerçek CI koşumundaki
   37 düşen testten HarfBuzz kaynaklı olanlar `harfbuzz-linux` ile, ffmpeg SÜRÜM farkı ise
   `ffmpeg-8-pin` ile kapatıldı (CI'ın iki job'u + prod Worker imajı digest'li statik 8.0'a
