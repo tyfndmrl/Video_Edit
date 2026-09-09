@@ -15,11 +15,23 @@
       NativeAssets: Windows (geliştirme + testler) ve Linux/NoDependencies (worker imajı,
       Debian runtime; 'nodependencies' varyantı libfontconfig gerektirmez — fontları biz
       manifest'ten dosya olarak yüklüyoruz, sistem font veritabanı kullanılmıyor).
+
+      DİKKAT — SkiaSharp ve HarfBuzzSharp AYRI native paket aileleridir ve AYRI sürüm
+      numaraları taşır (Skia 3.116.1, HarfBuzz 8.3.0.1). `SkiaSharp.HarfBuzz` yalnız
+      YÖNETİLEN köprüdür; `libHarfBuzzSharp` native'i ondan GELMEZ. Bu liste 2026-09-09'a
+      kadar yalnız Skia'nın Linux native'ini taşıyordu ve yukarıdaki "worker imajı" cümlesi
+      kapsanmayan bir şeyi kapsanmış gibi gösteriyordu. Sonuç CI'da ÖLÇÜLDÜ: Linux'ta metin
+      render eden testler "DllNotFoundException: Unable to load shared library
+      'libHarfBuzzSharp'" ile düştü — ve aynı hata PROD Linux konteynerinde de olurdu, çünkü
+      Dockerfile'lar libharfbuzz KURMUYOR (Worker yalnız ffmpeg, Api yalnız curl kurar).
+      Yeni bir native bağımlılık eklenirse HER İKİ platformun paketi de eklenmelidir.
     -->
     <PackageReference Include="SkiaSharp" Version="3.116.1" />
     <PackageReference Include="SkiaSharp.HarfBuzz" Version="3.116.1" />
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.116.1" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.116.1" />
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.Win32" Version="8.3.0.1" />
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" Version="8.3.0.1" />
   </ItemGroup>
 
   <PropertyGroup>

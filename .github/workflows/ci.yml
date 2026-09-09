@@ -105,6 +105,26 @@ jobs:
       - name: Build
         run: dotnet build backend/VideoEdit.sln
 
+      # DAGITIM PLATFORMU KAPISI. Prod Api/Worker LINUX konteynerde kosar ve
+      # Dockerfile'lar native kutuphane KURMAZ — hepsi NuGet native asset
+      # paketlerinden gelir. SkiaSharp ile HarfBuzzSharp AYRI paket aileleridir;
+      # 2026-09-09'a kadar yalnizca Skia'nin Linux native'i referansliydi ve
+      # libHarfBuzzSharp.so hicbir Linux ciktisina dusmuyordu. Sonuc: CI'da metin
+      # testleri DllNotFoundException ile dustu ve AYNI hata prod'da metin iceren
+      # her export'u dusururdu. Bu adim YAZILISI degil CIKTIYI dogrular.
+      - name: Linux native asset kapisi (libSkiaSharp + libHarfBuzzSharp)
+        run: |
+          out=$(mktemp -d)
+          dotnet publish backend/src/VideoEdit.Worker/VideoEdit.Worker.csproj -c Release -r linux-x64 --self-contained false -o "$out" > /dev/null
+          eksik=0
+          for lib in libSkiaSharp.so libHarfBuzzSharp.so; do
+            if [ -f "$out/$lib" ]; then echo "OK  $lib"; else echo "EKSIK $lib"; eksik=1; fi
+          done
+          if [ "$eksik" != "0" ]; then
+            echo "::error::linux-x64 yayininda native kutuphane eksik — prod konteynerde metin render EDILEMEZ."
+            exit 1
+          fi
+
       - name: Test
         run: dotnet test backend/VideoEdit.sln --no-build
         env:

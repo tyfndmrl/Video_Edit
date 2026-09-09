@@ -1,5 +1,5 @@
 # STATE — mevcut durum
-Son güncelleme: 2026-09-08, `perf-3.6-headless` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
+Son güncelleme: 2026-09-09, `harfbuzz-linux` — **panel turunun ÜÇ dilimi de TAMAM ve üç rollü
 kapanış denetimi KAPANDI — ÜÇ ROL DE ONAY VERDİ, üçünde de 0 MADDİ bulgu** (baş geliştirici,
 baş mimar, baş mühendis; sekiz RED turundan sonra). Dilim 3: zaman çizelgesinin sağında master stereo L/R ölçer (dBFS
 skalası, tepe tutucu, klip mandalı); ölçüm master'a PARALEL yaprak tap'ten okunur, `master →
@@ -172,9 +172,11 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
 
 ## Sıradakiler (öncelik sırasıyla — `DURUM.md` §6-7'nin kalanları)
 
-1. `git push` — **kullanıcı onayı bekliyor** (origin **70** commit geride — sayı 2026-09-08'de
-   `git rev-list --count` ile ölçüldü; defterde 39 yazıyordu, bayattı). Teknik ön koşulu olan
-   ci.yml redis boşluğu 2026-09-05'te KAPATILDI; geriye yalnız kullanıcı kararı kaldı.
+1. ~~`git push`~~ — **YAPILDI 2026-09-09** (kullanıcı kararı): 71 commit `origin/main`'e gitti,
+   fast-forward, 0 ileri / 0 geride. İLK CI koşumu gerçek bir ÜRÜN kusuru buldu ve düzeltildi
+   (`harfbuzz-linux`: prod Linux konteynerinde `libHarfBuzzSharp.so` hiç yoktu → metin içeren
+   her export düşerdi). AÇIK KALAN: CI'daki diğer iki başarısızlık sınıfı (ffmpeg sürüm farkı +
+   piksel toleransı) — SÖZLEŞME kararı ister, kullanıcı onayı bekliyor. Bkz. §Bilinen sorunlar.
 2. **Gerçek R2 + dağıtım** — kullanıcı anahtarları verince (`deploy/README.md` §4 adımları hazır).
 3. Seçilmemiş borçlar (kullanıcı onayı yok): #9 `POST /api/overlays/measure`, #10 kota advisory-lock,
   #11 upload resume sertleştirme. (SignalR maddesi 2026-08-31'de KAPANDI; komşusu backlog B6 —
@@ -195,6 +197,15 @@ Ayrıntılı fotoğraf: `DURUM.md` (2026-08-25 çift-rol denetim raporu — arş
   tespitleriydi). e2e birikimi için kalıcı mekanizma ELLE koşulan betiktir (otomatik değil —
   yeniden şişerse `SKILLS e2e-hesap-temizligi`).
 - Dev bağımlılığı: nanoid <3.3.18 high (yalnız vite zinciri, prod'a girmez).
+- **CI kırmızı: ffmpeg SÜRÜM farkı + piksel toleransı** (2026-09-09, ilk gerçek CI koşumunda
+  ölçüldü). 37 düşen testin HarfBuzz kaynaklı olanları `harfbuzz-linux` ile kapandı; geriye iki
+  sınıf kalıyor: (a) CI `apt-get install ffmpeg` ile gelen sürümü kullanıyor, korpus ise
+  **ffmpeg 8.0**'a kalibre (`GoldenFrameTests.ScaleBoxTruncated_MatchesRealFfmpeg` →
+  `Value 0.000000 for parameter 'dsth' out of range`, `Conversion failed!`); (b) farklı
+  swscale/x264 derlemesi piksel toleranslarını aşıyor (`(137,70,24)` ↔ beklenen
+  `(132,68,28)±4`; LUT `(22,66,134)` ↔ `(32,64,128)`). İKİSİ DE SÖZLEŞME KARARI İSTER — CI'da
+  ffmpeg 8.0 sabitlemek mi, toleransı platform-duyarlı yapmak mı? Kullanıcı onayı bekliyor;
+  onaysız DOKUNULMADI.
 - ~~ci.yml e2e job'u redis BAŞLATMIYOR~~ — **KAPANDI 2026-09-05** (`ci-redis`). Boşluk ÖLÇÜLDÜ:
   yerelde redis durdurulup `export-progress-hub.spec.ts` koşuldu → "Hub'dan 'running' mesajı
   gelmedi" ile KIRMIZI, yani CI koşsaydı e2e job'u düşerdi ("düşebilir" değil, DÜŞERDİ).

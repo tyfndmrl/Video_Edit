@@ -1,6 +1,35 @@
 # CHANGELOG — ters kronolojik
 Kaynaklar: `git log`, `PROGRESS.md`, `docs/backlog.md` tur kayıtları. Commit aralıkları doğrulanabilir.
 
+## 2026-09-09
+- **push + `harfbuzz-linux`** — 71 commit `origin/main`'e gitti (kullanıcı kararı) ve İLK CI koşumu
+  **GERÇEK BİR ÜRÜN KUSURU** ortaya çıkardı: `HarfBuzzSharp.NativeAssets.Linux` paketi hiç
+  referanslı değildi.
+  **BAĞLAM:** CI bu depoda HİÇ yeşil olmamış (2 koşum, 2 başarısız — diğeri 2026-08-19, 71 commit
+  önce, aynı job). Yani push bir şey kırmadı; hiç koşmamış bir boru hattını ilk kez ölçtü.
+  **KUSUR — CI'dan büyük, PROD'u vuruyor:** `csproj` `SkiaSharp.NativeAssets.Win32` +
+  `SkiaSharp.NativeAssets.Linux.NoDependencies` taşıyordu ama HarfBuzz'ın Linux native'ini DEĞİL.
+  `SkiaSharp.HarfBuzz` yalnız YÖNETİLEN köprüdür; `libHarfBuzzSharp` native'i ondan gelmez —
+  HarfBuzzSharp ayrı bir paket ailesidir ve AYRI sürüm numarası taşır (Skia 3.116.1 ↔ HarfBuzz
+  8.3.0.1). Çözülen grafta `.Win32` ve `.macOS` vardı, `.Linux` yoktu. Prod Api/Worker LİNUX
+  konteynerde koşar ve Dockerfile'lar libharfbuzz KURMAZ (Worker yalnız `ffmpeg`, Api yalnız
+  `curl`) → **metin içeren her export prod'da `DllNotFoundException` ile düşerdi.** Üstelik
+  csproj yorumu "Linux/NoDependencies (worker imajı)" diyerek kapsanmayan bir şeyi kapsanmış
+  gibi gösteriyordu (over-claim sınıfı, bu kez csproj yorumunda).
+  **KANIT ZİNCİRİ:** Worker `-r linux-x64` publish edildi → paket VARKEN `libHarfBuzzSharp.so`
+  çıktıda, `libSkiaSharp.so` ile yan yana. NEGATİF KONTROL: paket çıkarılıp yeniden publish →
+  çıktıda YALNIZ `libSkiaSharp.so` kaldı, CI hatasının birebir sebebi. Yerel backend paketi
+  düzeltmeden sonra **1626/1626** yeşil (Windows'ta regresyon yok), `-warnaserror` 0 uyarı.
+  **KALICI KAPI:** CI'ın `dotnet` job'una YAZILIŞI değil ÇIKTIYI doğrulayan adım eklendi —
+  linux-x64 publish edip `libSkiaSharp.so` + `libHarfBuzzSharp.so` varlığını sınıyor.
+  **KALAN İKİ SINIF (bu commit KAPSAMINDA DEĞİL, kullanıcı kararı bekliyor):** 37 düşenin geri
+  kalanı (a) ffmpeg SÜRÜM farkı — CI apt'ten alıyor, korpus 8.0'a kalibre
+  (`GoldenFrameTests.ScaleBoxTruncated_MatchesRealFfmpeg` → `dsth out of range`, `Conversion
+  failed!`) ve (b) piksel toleransı — farklı swscale/x264 derlemesi
+  (`(137,70,24)` ↔ beklenen `(132,68,28)±4`; LUT `(22,66,134)` ↔ `(32,64,128)`).
+  İkisi de SÖZLEŞME kararı ister (CI'da ffmpeg 8.0 sabitlemek mi, toleransı platforma göre
+  gevşetmek mi) — onaysız yapılmadı.
+
 ## 2026-09-08
 - perf-3.6-headless — **panel turunun son açık teknik maddesi KAPANDI.** `performans-raporu §3.6`
   (timeline dikey boyutlandırma, sürükleme fazı) başlı Edge/165 Hz'de ölçülmüştü; headless'i
